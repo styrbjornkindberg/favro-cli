@@ -360,6 +360,39 @@ describeOrSkip('Dry-run — no mutations', () => {
 // =============================================================================
 
 describeOrSkip('CSV import — bulk create from fixture file', () => {
+  it('CSV dry-run shows preview without creating cards', async () => {
+    // Run dry-run BEFORE the real import so no CSV cards exist yet
+    const result = await runCLI([
+      'cards', 'create', 'ignored-title',
+      '--csv', CSV_FIXTURE,
+      '--board', TEST_BOARD_ID,
+      '--dry-run',
+    ]);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('[dry-run]');
+    expect(result.stdout).toContain('10 cards from CSV');
+
+    // Verify via API that no cards were actually created
+    await sleep(3000);
+    const api = makeAPI();
+    const cards = await api.listCards(TEST_BOARD_ID, 100);
+    const csvCardNames = [
+      '[integration-test] CSV Card 1',
+      '[integration-test] CSV Card 2',
+      '[integration-test] CSV Card 3',
+      '[integration-test] CSV Card 4',
+      '[integration-test] CSV Card 5',
+      '[integration-test] CSV Card 6',
+      '[integration-test] CSV Card 7',
+      '[integration-test] CSV Card 8',
+      '[integration-test] CSV Card 9',
+      '[integration-test] CSV Card 10',
+    ];
+    // None of the CSV card names should be present on the board (dry-run must not create any)
+    const found = cards.filter(c => csvCardNames.includes(c.name));
+    expect(found).toHaveLength(0);
+  }, 60000);
+
   it('imports 10 cards from sample-cards.csv fixture', async () => {
     const result = await runCLI([
       'cards', 'create', 'ignored-title',
@@ -378,18 +411,6 @@ describeOrSkip('CSV import — bulk create from fixture file', () => {
     expect(csvCards.length).toBeGreaterThanOrEqual(10);
     csvCards.forEach(c => allCreatedCardIds.push(c.cardId));
   }, 120000);
-
-  it('CSV dry-run shows preview without creating cards', async () => {
-    const result = await runCLI([
-      'cards', 'create', 'ignored-title',
-      '--csv', CSV_FIXTURE,
-      '--board', TEST_BOARD_ID,
-      '--dry-run',
-    ]);
-    expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain('[dry-run]');
-    expect(result.stdout).toContain('10 cards from CSV');
-  }, 30000);
 
   it('CSV import fails gracefully when file does not exist', async () => {
     const result = await runCLI([
@@ -442,7 +463,10 @@ describeOrSkip('Export — cards to JSON and CSV', () => {
   let tmpDir: string;
 
   beforeAll(async () => {
-    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'favro-export-'));
+    // Use in-project tmp/ dir to avoid path restriction in cli.ts (must be within cwd)
+    const projectTmp = path.join(process.cwd(), 'tmp');
+    await fs.mkdir(projectTmp, { recursive: true });
+    tmpDir = await fs.mkdtemp(path.join(projectTmp, 'favro-export-'));
   });
 
   afterAll(async () => {
