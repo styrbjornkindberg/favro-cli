@@ -24,6 +24,24 @@ function formatCardsTable(cards: Card[]): void {
   console.table(rows);
 }
 
+function formatCardsCSV(cards: Card[]): void {
+  const header = ['ID', 'Title', 'Status', 'Assignees', 'Tags', 'DueDate', 'Created', 'Updated'];
+  const rows = cards.map(card => [
+    card.cardId,
+    card.name,
+    card.status || '',
+    (card.assignees || []).join(';'),
+    (card.tags || []).join(';'),
+    card.dueDate || '',
+    card.createdAt ? card.createdAt.slice(0, 10) : '',
+    card.updatedAt ? card.updatedAt.slice(0, 10) : '',
+  ]);
+
+  const escape = (v: string) => `"${String(v).replace(/"/g, '""')}"`;
+  console.log(header.map(escape).join(','));
+  rows.forEach(row => console.log(row.map(escape).join(',')));
+}
+
 export function registerCardsListCommand(program: Command): void {
   program
     .command('cards list')
@@ -34,6 +52,7 @@ export function registerCardsListCommand(program: Command): void {
     .option('--tag <tag>', 'Filter by tag')
     .option('--limit <number>', 'Maximum number of cards to return', '50')
     .option('--json', 'Output as JSON')
+    .option('--csv', 'Output as CSV')
     .action(async (_listArg, options) => {
       try {
         const token = process.env.FAVRO_API_TOKEN;
@@ -66,6 +85,8 @@ export function registerCardsListCommand(program: Command): void {
 
         if (options.json) {
           console.log(JSON.stringify(cards, null, 2));
+        } else if (options.csv) {
+          formatCardsCSV(cards);
         } else {
           console.log(`Found ${cards.length} card(s):`);
           formatCardsTable(cards);

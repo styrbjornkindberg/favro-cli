@@ -6,6 +6,7 @@
  *   favro cards export <board> --format json --out report.json
  *   favro cards export <board> --format csv --out report.csv
  *   favro cards export <board> --format csv --filter "assignee:alice" --out alice.csv
+ *   favro cards export <board> --format csv --filter "assignee:alice" --filter "status:done" --out done.csv
  */
 import { Command } from 'commander';
 import { Card } from '../lib/cards-api';
@@ -23,6 +24,10 @@ export declare function parseFilter(filter: string): {
  * Supported fields: assignee, status, label, tag
  */
 export declare function applyFilter(cards: Card[], filter: string): Card[];
+/**
+ * Apply multiple filters to cards (AND logic — all filters must match).
+ */
+export declare function applyFilters(cards: Card[], filters: string[]): Card[];
 export declare function registerCardsExportCommand(program: Command): void;
 export default registerCardsExportCommand;
 //# sourceMappingURL=cards-export.d.ts.map

@@ -103,6 +103,7 @@ describe('Cards List Command', () => {
     expect(optionNames).toContain('--tag');
     expect(optionNames).toContain('--limit');
     expect(optionNames).toContain('--json');
+    expect(optionNames).toContain('--csv');
   });
 
   // --- Happy path ---
@@ -169,6 +170,53 @@ describe('Cards List Command', () => {
     expect(parsed[0]).toHaveProperty('cardId', 'card-1');
     expect(parsed[0]).toHaveProperty('name', 'Fix login bug');
     expect(parsed[0]).toHaveProperty('status', 'in-progress');
+  });
+
+  // --- CSV output format ---
+
+  test('outputs CSV when --csv flag is set', async () => {
+    buildMockApi();
+
+    const program = new Command();
+    registerCardsListCommand(program);
+    await program.parseAsync(['node', 'test', 'cards', 'list', '--board', 'board-123', '--csv']);
+
+    // Should NOT call console.table or output JSON
+    expect(tableSpy).not.toHaveBeenCalled();
+    // Should have CSV header as first log call
+    const calls = consoleSpy.mock.calls.map(c => c[0]);
+    const headerCall = calls.find(c => typeof c === 'string' && c.includes('"ID"') && c.includes('"Title"'));
+    expect(headerCall).toBeDefined();
+    expect(headerCall).toContain('"Status"');
+    expect(headerCall).toContain('"Assignees"');
+  });
+
+  test('CSV output contains card data', async () => {
+    buildMockApi([sampleCards[0]]);
+
+    const program = new Command();
+    registerCardsListCommand(program);
+    await program.parseAsync(['node', 'test', 'cards', 'list', '--board', 'board-123', '--csv']);
+
+    const calls = consoleSpy.mock.calls.map(c => c[0]);
+    // Should have at least header + one data row
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+    const dataRow = calls.find(c => typeof c === 'string' && c.includes('"card-1"'));
+    expect(dataRow).toBeDefined();
+    expect(dataRow).toContain('"Fix login bug"');
+  });
+
+  test('CSV output does not include JSON or table', async () => {
+    buildMockApi(sampleCards);
+
+    const program = new Command();
+    registerCardsListCommand(program);
+    await program.parseAsync(['node', 'test', 'cards', 'list', '--board', 'board-123', '--csv']);
+
+    expect(tableSpy).not.toHaveBeenCalled();
+    const calls = consoleSpy.mock.calls.map(c => c[0]);
+    const jsonCall = calls.find(c => typeof c === 'string' && c.startsWith('['));
+    expect(jsonCall).toBeUndefined();
   });
 
   // --- Filtering ---

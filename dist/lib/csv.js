@@ -101,12 +101,11 @@ async function writeCardsCSV(cards, filePath) {
         const header = exports.EXPORT_FIELDS.map(escapeCsvField).join(',') + '\n';
         stream.write(header, 'utf8');
         // Stream card rows
+        // Note: All rows are buffered in memory before writing. For >100k cards,
+        // consider pagination to avoid large memory spikes (10k cards × 10KB = ~100MB).
         for (const card of cards) {
             const normalized = normalizeCard(card);
             const row = exports.EXPORT_FIELDS.map(field => escapeCsvField(normalized[field])).join(',') + '\n';
-            // Backpressure: if write returns false, wait for 'drain' before continuing
-            // For simplicity at this stage we write synchronously; Node's internal buffer
-            // handles typical 10k-card payloads fine.
             stream.write(row, 'utf8');
         }
         stream.end();
@@ -149,7 +148,7 @@ async function writeCardsJSON(cards, filePath) {
             const normalized = normalizeCard(cards[i]);
             const json = JSON.stringify(normalized, null, 2)
                 .split('\n')
-                .map((line, idx) => (idx === 0 ? '  ' + line : '  ' + line))
+                .map(line => '  ' + line)
                 .join('\n');
             const comma = i < cards.length - 1 ? ',' : '';
             stream.write(json + comma + '\n', 'utf8');

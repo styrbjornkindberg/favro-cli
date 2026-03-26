@@ -21,6 +21,22 @@ function formatCardsTable(cards) {
     }));
     console.table(rows);
 }
+function formatCardsCSV(cards) {
+    const header = ['ID', 'Title', 'Status', 'Assignees', 'Tags', 'DueDate', 'Created', 'Updated'];
+    const rows = cards.map(card => [
+        card.cardId,
+        card.name,
+        card.status || '',
+        (card.assignees || []).join(';'),
+        (card.tags || []).join(';'),
+        card.dueDate || '',
+        card.createdAt ? card.createdAt.slice(0, 10) : '',
+        card.updatedAt ? card.updatedAt.slice(0, 10) : '',
+    ]);
+    const escape = (v) => `"${String(v).replace(/"/g, '""')}"`;
+    console.log(header.map(escape).join(','));
+    rows.forEach(row => console.log(row.map(escape).join(',')));
+}
 function registerCardsListCommand(program) {
     program
         .command('cards list')
@@ -31,10 +47,16 @@ function registerCardsListCommand(program) {
         .option('--tag <tag>', 'Filter by tag')
         .option('--limit <number>', 'Maximum number of cards to return', '50')
         .option('--json', 'Output as JSON')
+        .option('--csv', 'Output as CSV')
         .action(async (_listArg, options) => {
         try {
+            const token = process.env.FAVRO_API_TOKEN;
+            if (!token) {
+                console.error('✗ Missing required environment variable: FAVRO_API_TOKEN');
+                process.exit(1);
+            }
             const client = new http_client_1.default({
-                auth: { token: process.env.FAVRO_API_TOKEN || 'demo-token' }
+                auth: { token }
             });
             const api = new cards_api_1.default(client);
             const limit = parseInt(options.limit, 10) || 50;
@@ -51,6 +73,9 @@ function registerCardsListCommand(program) {
             }
             if (options.json) {
                 console.log(JSON.stringify(cards, null, 2));
+            }
+            else if (options.csv) {
+                formatCardsCSV(cards);
             }
             else {
                 console.log(`Found ${cards.length} card(s):`);

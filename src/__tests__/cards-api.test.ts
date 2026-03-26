@@ -70,6 +70,97 @@ describe('Cards API', () => {
     await expect(api.listCards('board-1')).rejects.toThrow('Network error');
   });
 
+  test('listCards fetches second page when pages > 1', async () => {
+    const page0Cards = [
+      { cardId: 'p0-1', name: 'Page0 Card1', createdAt: '2026-01-01', updatedAt: '2026-01-01' },
+      { cardId: 'p0-2', name: 'Page0 Card2', createdAt: '2026-01-01', updatedAt: '2026-01-01' },
+    ];
+    const page1Cards = [
+      { cardId: 'p1-1', name: 'Page1 Card1', createdAt: '2026-01-01', updatedAt: '2026-01-01' },
+    ];
+
+    mockClient.get
+      .mockResolvedValueOnce({
+        entities: page0Cards,
+        requestId: 'req-abc-123',
+        pages: 2,
+        page: 0,
+      })
+      .mockResolvedValueOnce({
+        entities: page1Cards,
+        requestId: 'req-abc-123',
+        pages: 2,
+        page: 1,
+      });
+
+    const result = await api.listCards('board-1', 50);
+
+    expect(result).toHaveLength(3);
+    expect(result[0].cardId).toBe('p0-1');
+    expect(result[2].cardId).toBe('p1-1');
+
+    // Second call should include requestId and page params
+    expect(mockClient.get).toHaveBeenCalledTimes(2);
+    const secondCall = mockClient.get.mock.calls[1];
+    expect(secondCall[1]).toEqual({ params: expect.objectContaining({ requestId: 'req-abc-123', page: 1 }) });
+  });
+
+  test('listCards stops fetching when entities is empty on a page', async () => {
+    mockClient.get
+      .mockResolvedValueOnce({
+        entities: [{ cardId: 'c1', name: 'Card', createdAt: '2026-01-01', updatedAt: '2026-01-01' }],
+        requestId: 'req-xyz',
+        pages: 3,
+        page: 0,
+      })
+      .mockResolvedValueOnce({
+        entities: [],
+        requestId: 'req-xyz',
+        pages: 3,
+        page: 1,
+      });
+
+    const result = await api.listCards('board-1', 50);
+
+    // Should stop after empty page
+    expect(mockClient.get).toHaveBeenCalledTimes(2);
+    expect(result).toHaveLength(1);
+  });
+
+  test('listCards stops at limit even with more pages available', async () => {
+    const page0Cards = Array.from({ length: 5 }, (_, i) => ({
+      cardId: `c${i}`, name: `Card ${i}`, createdAt: '2026-01-01', updatedAt: '2026-01-01'
+    }));
+
+    mockClient.get
+      .mockResolvedValueOnce({
+        entities: page0Cards,
+        requestId: 'req-limit',
+        pages: 10,
+        page: 0,
+      });
+
+    // Request only 5 cards
+    const result = await api.listCards('board-1', 5);
+
+    // Should only make one request since we've hit the limit
+    expect(mockClient.get).toHaveBeenCalledTimes(1);
+    expect(result).toHaveLength(5);
+  });
+
+  test('listCards handles single-page response without requestId', async () => {
+    const cards = [
+      { cardId: 'single', name: 'Single Card', createdAt: '2026-01-01', updatedAt: '2026-01-01' }
+    ];
+    // Response without requestId = single page
+    mockClient.get.mockResolvedValue({ entities: cards });
+
+    const result = await api.listCards('board-1', 50);
+
+    expect(mockClient.get).toHaveBeenCalledTimes(1);
+    expect(result).toHaveLength(1);
+  });
+
   // --- getCard ---
 
   test('getCard fetches single card by id', async () => {

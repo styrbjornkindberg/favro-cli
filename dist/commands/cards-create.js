@@ -48,10 +48,15 @@ function registerCardsCreateCommand(program) {
         .option('--status <status>', 'Card status')
         .option('--bulk <file>', 'Bulk create from JSON file')
         .option('--json', 'Output as JSON')
-        .action(async (title, options) => {
+        .action(async (_createArg, title, options) => {
         try {
+            const token = process.env.FAVRO_API_TOKEN;
+            if (!token) {
+                console.error('✗ Missing required environment variable: FAVRO_API_TOKEN');
+                process.exit(1);
+            }
             const client = new http_client_1.default({
-                auth: { token: process.env.FAVRO_API_TOKEN || 'demo-token' }
+                auth: { token },
             });
             const api = new cards_api_1.default(client);
             if (options.bulk) {
@@ -69,7 +74,7 @@ function registerCardsCreateCommand(program) {
                     name: title,
                     description: options.description,
                     status: options.status,
-                    boardId: options.board
+                    boardId: options.board,
                 });
                 console.log(`✓ Card created: ${card.cardId}`);
                 if (options.json)
@@ -77,7 +82,8 @@ function registerCardsCreateCommand(program) {
             }
         }
         catch (error) {
-            console.error(`✗ Error: ${error}`);
+            const msg = error instanceof Error ? error.message : String(error);
+            console.error(`✗ Error: ${msg}`);
             process.exit(1);
         }
     });
