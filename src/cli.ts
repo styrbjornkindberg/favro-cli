@@ -3,14 +3,17 @@
  * Favro CLI — Entry Point
  *
  * Usage:
+ *   favro auth login                  # set up API key interactively
+ *   favro auth check                  # verify API key is valid
  *   favro cards list [--board <id>] [--status <s>] [--assignee <a>] [--limit <n>]
  *   favro cards create <title> [--description <d>] [--status <s>] [--board <id>] [--dry-run]
  *   favro cards create --csv <file> --board <id> [--dry-run]
  *   favro cards update <cardId> [--name <n>] [--status <s>] [--assignees <a>] [--dry-run]
  *   favro cards export <board> --format json|csv [--out <file>] [--filter <expr>]
  *
- * Environment:
- *   FAVRO_API_TOKEN  Required. Favro API bearer token.
+ * Config (priority: --api-key flag > FAVRO_API_KEY env > ~/.favro/config.json):
+ *   FAVRO_API_KEY    API key (new preferred env var)
+ *   FAVRO_API_TOKEN  API key (legacy env var, still supported)
  */
 
 import { Command } from 'commander';
@@ -20,6 +23,7 @@ import FavroHttpClient from './lib/http-client';
 import { writeCardsCSV, writeCardsJSON, normalizeCard, cardsToCSV } from './lib/csv';
 import { parseFilter, applyFilters, ExportFormat } from './commands/cards-export';
 import { Card } from './lib/cards-api';
+import { registerAuthCommand } from './commands/auth';
 
 const program = new Command();
 
@@ -27,6 +31,9 @@ program
   .name('favro')
   .description('Favro command-line interface')
   .version('0.1.0');
+
+// ─── auth commands ────────────────────────────────────────────────────────────
+registerAuthCommand(program);
 
 // ─── boards parent ────────────────────────────────────────────────────────────
 const boardsCmd = program.command('boards').description('Board operations');
