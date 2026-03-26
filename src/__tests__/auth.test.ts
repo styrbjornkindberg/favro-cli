@@ -1,20 +1,24 @@
 /**
- * Tests for auth login/check functionality
+ * Tests for auth / token validation behavior
  * CLA-1774: Unit Tests — All Commands
  *
- * Note: Auth commands may not be a separate file yet. These tests cover
- * config loading/saving patterns and validate auth behavior
- * via environment variable overrides and HTTP client setup.
+ * Tests:
+ * - FAVRO_API_TOKEN env var missing → commands exit with helpful error
+ * - Token interceptor behavior
+ * - Request auth headers
  */
 import FavroHttpClient from '../lib/http-client';
-import CardsAPI from '../lib/cards-api';
 import BoardsAPI from '../lib/boards-api';
-import * as fs from 'fs';
-import * as path from 'path';
-import * as os from 'os';
+import { registerCardsCreateCommand } from '../commands/cards-create';
+import { registerCardsListCommand } from '../commands/cards-list';
+import { registerCardsUpdateCommand } from '../commands/cards-update';
+import { Command } from 'commander';
 
 jest.mock('axios');
 import axios from 'axios';
+
+// Mock command-level dependencies (used in fast-fail tests)
+jest.mock('../lib/cards-api');
 
 const mockedAxios = axios as jest.Mocked<typeof axios>;
 
@@ -44,26 +48,13 @@ describe('Auth Configuration', () => {
     process.env.FAVRO_API_TOKEN = 'env-token-xyz';
 
     const client = new FavroHttpClient({
-      auth: { token: process.env.FAVRO_API_TOKEN || 'demo-token' }
+      auth: { token: process.env.FAVRO_API_TOKEN }
     });
 
-    // Check that auth is stored correctly
     expect((client as any).auth).toEqual({ token: 'env-token-xyz' });
 
-    process.env.FAVRO_API_TOKEN = originalToken;
-  });
-
-  test('falls back to demo-token when FAVRO_API_TOKEN not set', () => {
-    const originalToken = process.env.FAVRO_API_TOKEN;
-    delete process.env.FAVRO_API_TOKEN;
-
-    const client = new FavroHttpClient({
-      auth: { token: process.env.FAVRO_API_TOKEN || 'demo-token' }
-    });
-
-    expect((client as any).auth).toEqual({ token: 'demo-token' });
-
-    process.env.FAVRO_API_TOKEN = originalToken;
+    if (originalToken === undefined) delete process.env.FAVRO_API_TOKEN;
+    else process.env.FAVRO_API_TOKEN = originalToken;
   });
 
   test('overrides auth token via setAuth', () => {
@@ -95,7 +86,6 @@ describe('Auth Configuration', () => {
 
     const config = { headers: {} };
     const result = requestInterceptor(config);
-    // Empty string is falsy, so header should not be set
     expect(result.headers['Authorization']).toBeUndefined();
   });
 
@@ -121,35 +111,6 @@ describe('Auth Configuration', () => {
     await expect(client.get('/cards')).rejects.toThrow('Unauthorized');
   });
 
-  // --- Config file loading simulation ---
-
-  test('can save and load config from a JSON file', () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'favro-auth-test-'));
-    const configPath = path.join(tmpDir, 'config.json');
-
-    // Save config
-    const config = { token: 'saved-token', organizationId: 'org-123' };
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
-
-    // Load config
-    const loaded = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-    expect(loaded.token).toBe('saved-token');
-    expect(loaded.organizationId).toBe('org-123');
-
-    // Cleanup
-    fs.rmSync(tmpDir, { recursive: true });
-  });
-
-  test('can override config values when multiple configs are merged', () => {
-    const baseConfig = { token: 'base-token', organizationId: 'org-base', timeout: 30000 };
-    const overrideConfig = { token: 'override-token' };
-
-    const merged = { ...baseConfig, ...overrideConfig };
-    expect(merged.token).toBe('override-token');
-    expect(merged.organizationId).toBe('org-base');
-    expect(merged.timeout).toBe(30000);
-  });
-
   // --- Auth check simulation (verify API is reachable with token) ---
 
   test('auth check succeeds when API responds with 200', async () => {
@@ -173,24 +134,74 @@ describe('Auth Configuration', () => {
   });
 });
 
-describe('Auth Environment Variables', () => {
-  test('FAVRO_API_TOKEN takes precedence over default', () => {
-    const originalEnv = process.env.FAVRO_API_TOKEN;
-    process.env.FAVRO_API_TOKEN = 'env-var-token';
+describe('Missing FAVRO_API_TOKEN — command fast-fail', () => {
+  let consoleErrorSpy: jest.SpyInstance;
+  let exitSpy: jest.SpyInstance;
 
-    const token = process.env.FAVRO_API_TOKEN || 'demo-token';
-    expect(token).toBe('env-var-token');
-
-    process.env.FAVRO_API_TOKEN = originalEnv;
+  beforeEach(() => {
+    consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => { throw new Error('process.exit'); });
+    delete process.env.FAVRO_API_TOKEN;
   });
 
-  test('default token is used when env var is missing', () => {
-    const originalEnv = process.env.FAVRO_API_TOKEN;
-    delete process.env.FAVRO_API_TOKEN;
+  afterEach(() => {
+    consoleErrorSpy.mockRestore();
+    exitSpy.mockRestore();
+  });
 
-    const token = process.env.FAVRO_API_TOKEN || 'demo-token';
-    expect(token).toBe('demo-token');
+  test('registerCardsCreateCommand exits with helpful error when FAVRO_API_TOKEN is missing', async () => {
+    const program = new Command();
+    registerCardsCreateCommand(program);
 
-    process.env.FAVRO_API_TOKEN = originalEnv;
+    await expect(
+      program.parseAsync(['node', 'test', 'cards', 'create', 'Test Card'])
+    ).rejects.toThrow('process.exit');
+
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('FAVRO_API_TOKEN')
+    );
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  test('registerCardsListCommand exits with helpful error when FAVRO_API_TOKEN is missing', async () => {
+    const program = new Command();
+    registerCardsListCommand(program);
+
+    await expect(
+      program.parseAsync(['node', 'test', 'cards', 'list'])
+    ).rejects.toThrow('process.exit');
+
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('FAVRO_API_TOKEN')
+    );
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  test('registerCardsUpdateCommand exits with helpful error when FAVRO_API_TOKEN is missing', async () => {
+    const program = new Command();
+    registerCardsUpdateCommand(program);
+
+    await expect(
+      program.parseAsync(['node', 'test', 'cards', 'update', 'card-123', '--yes'])
+    ).rejects.toThrow('process.exit');
+
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('FAVRO_API_TOKEN')
+    );
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  test('error message includes helpful hint about env var', async () => {
+    const program = new Command();
+    registerCardsCreateCommand(program);
+
+    await expect(
+      program.parseAsync(['node', 'test', 'cards', 'create', 'Test'])
+    ).rejects.toThrow('process.exit');
+
+    // The error message should contain the env var name so user knows what to set
+    const errorMsg = consoleErrorSpy.mock.calls[0][0];
+    expect(errorMsg).toContain('FAVRO_API_TOKEN');
+    expect(typeof errorMsg).toBe('string');
   });
 });

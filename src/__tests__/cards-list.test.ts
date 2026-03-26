@@ -315,6 +315,28 @@ describe('Cards List Command', () => {
     expect(mockListCards).toHaveBeenCalledWith(undefined, 100);
   });
 
+  test('--limit 0 falls back to default 50 (no falsy coercion bug)', async () => {
+    const mockListCards = buildMockApi([]);
+
+    const program = new Command();
+    registerCardsListCommand(program);
+    await program.parseAsync(['node', 'test', 'cards', 'list', '--limit', '0']);
+
+    // 0 is invalid (< 1), so should fall back to default 50
+    expect(mockListCards).toHaveBeenCalledWith(undefined, 50);
+  });
+
+  test('--limit -1 falls back to default 50 (negative values invalid)', async () => {
+    const mockListCards = buildMockApi([]);
+
+    const program = new Command();
+    registerCardsListCommand(program);
+    await program.parseAsync(['node', 'test', 'cards', 'list', '--limit', '-1']);
+
+    // Negative values are invalid, should fall back to 50
+    expect(mockListCards).toHaveBeenCalledWith(undefined, 50);
+  });
+
   test('handles large result sets (100+ cards)', async () => {
     const largeCardSet = Array.from({ length: 120 }, (_, i) => ({
       cardId: `card-${i}`,

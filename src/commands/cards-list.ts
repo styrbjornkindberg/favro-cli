@@ -65,7 +65,8 @@ export function registerCardsListCommand(program: Command): void {
         });
         const api = new CardsAPI(client);
 
-        const limit = parseInt(options.limit, 10) || 50;
+        const parsedLimit = parseInt(options.limit, 10);
+        const limit = isNaN(parsedLimit) || parsedLimit < 1 ? 50 : parsedLimit;
         let cards = await api.listCards(options.board, limit);
 
         // Apply client-side filters

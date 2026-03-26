@@ -145,35 +145,52 @@ describe('FavroHttpClient', () => {
     expect(result.headers['Authorization']).toBeUndefined();
   });
 
-  test('response interceptor retries on 429 status', async () => {
+  test('response interceptor retries on 429 status (first attempt)', async () => {
     const client = new FavroHttpClient();
-    const [successHandler, errorHandler] = mockAxiosInstance.interceptors.response.use.mock.calls[0];
+    const [, errorHandler] = mockAxiosInstance.interceptors.response.use.mock.calls[0];
 
-    // Simulate a 429 error
+    // First attempt: _retryCount is 0 (not set)
     const error429 = {
       response: { status: 429 },
       config: {},
     };
 
-    // Mock the retry request to succeed
     mockAxiosInstance.request.mockResolvedValue({ data: { success: true } });
 
-    const result = await errorHandler(error429);
+    await errorHandler(error429);
     expect(mockAxiosInstance.request).toHaveBeenCalledWith(error429.config);
-    expect(error429.config).toHaveProperty('_retried', true);
+    // After retry, _retryCount becomes 1
+    expect((error429.config as any)._retryCount).toBe(1);
   }, 10000);
 
-  test('response interceptor does NOT retry on second attempt (hasRetried)', async () => {
+  test('response interceptor retries up to 3 times (retryCount < 3)', async () => {
     const client = new FavroHttpClient();
     const [, errorHandler] = mockAxiosInstance.interceptors.response.use.mock.calls[0];
 
-    // Simulate 429 on already-retried request
-    const error429 = {
+    // 3rd retry: retryCount = 2, should still retry (2 < 3)
+    const error429AtRetry2 = {
       response: { status: 429 },
-      config: { _retried: true },
+      config: { _retryCount: 2 },
     };
 
-    await expect(errorHandler(error429)).rejects.toEqual(error429);
+    mockAxiosInstance.request.mockResolvedValue({ data: { success: true } });
+
+    await errorHandler(error429AtRetry2);
+    expect(mockAxiosInstance.request).toHaveBeenCalled();
+    expect((error429AtRetry2.config as any)._retryCount).toBe(3);
+  }, 15000);
+
+  test('response interceptor does NOT retry after 3rd attempt (retryCount=3)', async () => {
+    const client = new FavroHttpClient();
+    const [, errorHandler] = mockAxiosInstance.interceptors.response.use.mock.calls[0];
+
+    // retryCount already at max — no more retries
+    const error429Exhausted = {
+      response: { status: 429 },
+      config: { _retryCount: 3 },
+    };
+
+    await expect(errorHandler(error429Exhausted)).rejects.toEqual(error429Exhausted);
     expect(mockAxiosInstance.request).not.toHaveBeenCalled();
   });
 

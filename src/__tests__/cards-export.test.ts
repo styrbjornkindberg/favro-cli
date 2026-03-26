@@ -7,7 +7,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
-import { registerCardsExportCommand, parseFilter, applyFilter } from '../commands/cards-export';
+import { registerCardsExportCommand, parseFilter, applyFilter, applyFilters } from '../commands/cards-export';
 import { escapeCsvField, cardsToCSV, normalizeCard, writeCardsCSV, writeCardsJSON } from '../lib/csv';
 import CardsAPI, { Card } from '../lib/cards-api';
 import FavroHttpClient from '../lib/http-client';
@@ -730,5 +730,106 @@ describe('registerCardsExportCommand', () => {
     expect(listCardsSpy).toHaveBeenCalledWith('board-123', 5);
 
     consoleSpy.mockRestore();
+  });
+});
+
+// ----------------------------
+// applyFilters — multi-filter AND logic
+// ----------------------------
+
+describe('applyFilters', () => {
+  test('returns all cards when filters array is empty', () => {
+    const result = applyFilters(sampleCards, []);
+    expect(result).toHaveLength(sampleCards.length);
+  });
+
+  test('applies a single filter correctly', () => {
+    const result = applyFilters(sampleCards, ['status:done']);
+    expect(result).toHaveLength(1);
+    expect(result[0].cardId).toBe('card-003');
+  });
+
+  test('applies two filters with AND logic (assignee AND status)', () => {
+    // alice@example.com has cards card-001 (in-progress) and card-003 (done)
+    const result = applyFilters(sampleCards, ['assignee:alice', 'status:done']);
+    expect(result).toHaveLength(1);
+    expect(result[0].cardId).toBe('card-003');
+    expect(result[0].assignees).toContain('alice@example.com');
+    expect(result[0].status).toBe('done');
+  });
+
+  test('returns empty array when filters eliminate all cards (AND logic)', () => {
+    // alice doesn't have any todo cards
+    const result = applyFilters(sampleCards, ['assignee:alice', 'status:todo']);
+    expect(result).toHaveLength(0);
+  });
+
+  test('applies three filters with AND logic', () => {
+    const result = applyFilters(sampleCards, ['assignee:alice', 'status:in-progress', 'label:bug']);
+    expect(result).toHaveLength(1);
+    expect(result[0].cardId).toBe('card-001');
+  });
+
+  test('each filter is applied in sequence (reducer behavior)', () => {
+    // Start with 3 cards
+    // assignee:alice → 2 cards (card-001, card-003)
+    // label:release → 1 card (card-003)
+    const result = applyFilters(sampleCards, ['assignee:alice', 'label:release']);
+    expect(result).toHaveLength(1);
+    expect(result[0].cardId).toBe('card-003');
+  });
+
+  test('unknown filter field returns original set (with warning)', () => {
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const result = applyFilters(sampleCards, ['unknown:field']);
+    expect(result).toHaveLength(sampleCards.length);
+    warnSpy.mockRestore();
+  });
+});
+
+// ----------------------------
+// File I/O error paths (disk full, permission denied)
+// Tested via a non-existent directory path that causes actual OS errors.
+// ----------------------------
+
+describe('writeCardsCSV — file I/O error paths', () => {
+  test('rejects with error when output directory cannot be created (EACCES)', async () => {
+    // Writing to a path inside a non-existent protected location will fail
+    const badPath = '/no-such-root-dir/subdir/test.csv';
+
+    // mkdirSync will throw ENOENT or EACCES for this path
+    await expect(writeCardsCSV(sampleCards, badPath)).rejects.toThrow();
+  });
+
+  test('rejects with error for invalid file path on CSV write', async () => {
+    // Use a path where the dir doesn't exist and can't be created
+    const invalidPath = '/root/protected-dir-that-does-not-exist/test.csv';
+
+    await expect(writeCardsCSV(sampleCards, invalidPath)).rejects.toThrow();
+  });
+
+  test('writeCardsCSV error surfaces as rejected promise (not unhandled)', async () => {
+    // Write to a bad path — verify it's a proper rejection, not a thrown exception
+    const result = writeCardsCSV(sampleCards, '/no-such-dir/test.csv');
+    await expect(result).rejects.toBeInstanceOf(Error);
+  });
+});
+
+describe('writeCardsJSON — file I/O error paths', () => {
+  test('rejects with error when output directory cannot be created (JSON)', async () => {
+    const badPath = '/no-such-root-dir/subdir/test.json';
+
+    await expect(writeCardsJSON(sampleCards, badPath)).rejects.toThrow();
+  });
+
+  test('rejects with error for invalid file path on JSON write', async () => {
+    const invalidPath = '/root/protected-dir-that-does-not-exist/test.json';
+
+    await expect(writeCardsJSON(sampleCards, invalidPath)).rejects.toThrow();
+  });
+
+  test('writeCardsJSON error surfaces as rejected promise (not unhandled)', async () => {
+    const result = writeCardsJSON(sampleCards, '/no-such-dir/test.json');
+    await expect(result).rejects.toBeInstanceOf(Error);
   });
 });

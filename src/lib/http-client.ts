@@ -24,9 +24,11 @@ export class FavroHttpClient {
     this.client.interceptors.response.use(
       (response) => response,
       async (error: AxiosError) => {
-        if (this.shouldRetry(error) && !this.hasRetried(error.config)) {
-          this.markRetried(error.config);
-          await new Promise(resolve => setTimeout(resolve, 1000));
+        const retryCount = (error.config as any)?._retryCount ?? 0;
+        if (this.shouldRetry(error) && retryCount < 3) {
+          (error.config as any)._retryCount = retryCount + 1;
+          const delay = Math.pow(2, retryCount) * 1000; // 1s, 2s, 4s
+          await new Promise(resolve => setTimeout(resolve, delay));
           return this.client.request(error.config!);
         }
         return Promise.reject(error);
@@ -37,14 +39,6 @@ export class FavroHttpClient {
   private shouldRetry(error: AxiosError): boolean {
     const status = error.response?.status;
     return !status || status === 408 || status === 429 || (status >= 500);
-  }
-
-  private hasRetried(config: any): boolean {
-    return config?._retried === true;
-  }
-
-  private markRetried(config: any): void {
-    if (config) config._retried = true;
   }
 
   async get<T = any>(url: string, config?: any): Promise<T> {
