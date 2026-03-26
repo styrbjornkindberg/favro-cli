@@ -19,8 +19,8 @@ class FavroHttpClient {
             return cfg;
         });
         this.client.interceptors.response.use((response) => response, async (error) => {
-            if (this.shouldRetry(error) && !error.config?.['_retry']) {
-                error.config['_retry'] = true;
+            if (this.shouldRetry(error) && !this.hasRetried(error.config)) {
+                this.markRetried(error.config);
                 await new Promise(resolve => setTimeout(resolve, 1000));
                 return this.client.request(error.config);
             }
@@ -30,6 +30,13 @@ class FavroHttpClient {
     shouldRetry(error) {
         const status = error.response?.status;
         return !status || status === 408 || status === 429 || (status >= 500);
+    }
+    hasRetried(config) {
+        return config?._retried === true;
+    }
+    markRetried(config) {
+        if (config)
+            config._retried = true;
     }
     async get(url, config) {
         return (await this.client.get(url, config)).data;
