@@ -8,7 +8,7 @@ import * as path from 'path';
 import * as os from 'os';
 
 import { registerCardsExportCommand, parseFilter, applyFilter } from '../commands/cards-export';
-import { escapeCsvField, cardsToCSV, normalizeCard } from '../lib/csv';
+import { escapeCsvField, cardsToCSV, normalizeCard, writeCardsCSV, writeCardsJSON } from '../lib/csv';
 import CardsAPI, { Card } from '../lib/cards-api';
 import FavroHttpClient from '../lib/http-client';
 
@@ -87,6 +87,18 @@ describe('normalizeCard', () => {
     expect(card.labels).toBe('');
     expect(card.dueDate).toBe('');
   });
+
+  test('maps dueDate field from Card interface (type-safe, no any cast)', () => {
+    const cardWithDue: Card = {
+      cardId: 'card-due',
+      name: 'Task with due date',
+      dueDate: '2026-12-31',
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+    };
+    const result = normalizeCard(cardWithDue);
+    expect(result.dueDate).toBe('2026-12-31');
+  });
 });
 
 // ----------------------------
@@ -106,7 +118,7 @@ describe('escapeCsvField', () => {
     expect(escapeCsvField('a,b,c')).toBe('"a,b,c"');
   });
 
-  test('handles newlines inside field', () => {
+  test('handles newlines inside field (RFC 4180)', () => {
     expect(escapeCsvField('line1\nline2')).toBe('"line1\nline2"');
   });
 
@@ -116,6 +128,26 @@ describe('escapeCsvField', () => {
 
   test('converts non-string values', () => {
     expect(escapeCsvField(42 as any)).toBe('"42"');
+  });
+
+  // Fix #10: Unicode and emoji edge cases
+  test('handles emoji in field values', () => {
+    expect(escapeCsvField('🚀 Launch feature')).toBe('"🚀 Launch feature"');
+  });
+
+  test('handles multi-byte unicode characters', () => {
+    expect(escapeCsvField('日本語テスト')).toBe('"日本語テスト"');
+  });
+
+  test('handles 1000+ char description', () => {
+    const longStr = 'a'.repeat(1200);
+    const result = escapeCsvField(longStr);
+    expect(result).toBe(`"${longStr}"`);
+    expect(result.length).toBe(1202); // 1200 + 2 quotes
+  });
+
+  test('handles embedded CRLF newlines (RFC 4180)', () => {
+    expect(escapeCsvField('line1\r\nline2')).toBe('"line1\r\nline2"');
   });
 });
 
@@ -166,6 +198,49 @@ describe('cardsToCSV', () => {
     const csv = cardsToCSV([]);
     const lines = csv.trim().split('\n');
     expect(lines.length).toBe(1); // header only
+  });
+
+  // Fix #10: Unicode edge cases in cardsToCSV
+  test('handles card with emoji title in CSV output', () => {
+    const emojiCard: Card = {
+      cardId: 'card-emoji',
+      name: '🚀 Rocket feature',
+      description: 'Ship it! 🎉',
+      status: 'todo',
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+    };
+    const csv = cardsToCSV([normalizeCard(emojiCard)]);
+    expect(csv).toContain('🚀 Rocket feature');
+    expect(csv).toContain('🎉');
+  });
+
+  test('handles card with embedded newlines in description', () => {
+    const newlineCard: Card = {
+      cardId: 'card-nl',
+      name: 'Multi-line',
+      description: 'Step 1: Do this\nStep 2: Do that\nStep 3: Done',
+      status: 'todo',
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+    };
+    const csv = cardsToCSV([normalizeCard(newlineCard)]);
+    // Newlines should be inside quotes (valid RFC 4180)
+    expect(csv).toContain('"Step 1: Do this\nStep 2: Do that\nStep 3: Done"');
+  });
+
+  test('handles 1000+ char description in CSV', () => {
+    const longDesc = 'x'.repeat(1500);
+    const longCard: Card = {
+      cardId: 'card-long',
+      name: 'Long description card',
+      description: longDesc,
+      status: 'todo',
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-01T00:00:00Z',
+    };
+    const csv = cardsToCSV([normalizeCard(longCard)]);
+    expect(csv).toContain(longDesc);
   });
 });
 
@@ -238,6 +313,91 @@ describe('applyFilter', () => {
     const result = applyFilter(sampleCards, 'assignee:nobody');
     expect(result.length).toBe(0);
   });
+
+  // Fix #6: empty filter value should call process.exit
+  test('exits with error when filter value is empty', () => {
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => { throw new Error('process.exit'); });
+
+    expect(() => applyFilter(sampleCards, 'assignee:')).toThrow('process.exit');
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Filter value cannot be empty'));
+
+    errorSpy.mockRestore();
+    exitSpy.mockRestore();
+  });
+});
+
+// ----------------------------
+// Large export test (10k+ cards) — Fix #9
+// ----------------------------
+
+describe('Large exports (10k+ cards)', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'favro-large-test-'));
+  });
+
+  afterEach(() => {
+    try { fs.rmSync(tmpDir, { recursive: true }); } catch (_) {}
+  });
+
+  function generateCards(count: number): Card[] {
+    return Array.from({ length: count }, (_, i) => ({
+      cardId: `card-${i.toString().padStart(6, '0')}`,
+      name: `Card ${i} - 🚀 feature`,
+      description: `Description for card ${i}. `.repeat(10),
+      status: i % 3 === 0 ? 'done' : i % 3 === 1 ? 'in-progress' : 'todo',
+      assignees: [`user${i % 5}@example.com`],
+      tags: [`tag${i % 10}`],
+      dueDate: i % 2 === 0 ? `2026-${String((i % 12) + 1).padStart(2, '0')}-15` : undefined,
+      createdAt: '2026-01-01T00:00:00Z',
+      updatedAt: '2026-01-02T00:00:00Z',
+    }));
+  }
+
+  test('writes 10,000+ cards to CSV without error', async () => {
+    const cards = generateCards(10000);
+    const outFile = path.join(tmpDir, 'large.csv');
+    await writeCardsCSV(cards, outFile);
+
+    expect(fs.existsSync(outFile)).toBe(true);
+    const content = fs.readFileSync(outFile, 'utf-8');
+    const lines = content.trim().split('\n');
+    // 1 header + 10000 data rows
+    expect(lines.length).toBe(10001);
+  });
+
+  test('writes 10,000+ cards to JSON without error', async () => {
+    const cards = generateCards(10000);
+    const outFile = path.join(tmpDir, 'large.json');
+    await writeCardsJSON(cards, outFile);
+
+    expect(fs.existsSync(outFile)).toBe(true);
+    const content = fs.readFileSync(outFile, 'utf-8');
+    const parsed = JSON.parse(content);
+    expect(Array.isArray(parsed)).toBe(true);
+    expect(parsed.length).toBe(10000);
+  });
+
+  test('10k CSV includes dueDate values (type-safe Card.dueDate)', async () => {
+    const cards = generateCards(100);
+    const outFile = path.join(tmpDir, 'due.csv');
+    await writeCardsCSV(cards, outFile);
+
+    const content = fs.readFileSync(outFile, 'utf-8');
+    // Even-indexed cards have dueDate set
+    expect(content).toContain('2026-01-15');
+  });
+
+  test('10k CSV preserves emoji in card names', async () => {
+    const cards = generateCards(100);
+    const outFile = path.join(tmpDir, 'emoji.csv');
+    await writeCardsCSV(cards, outFile);
+
+    const content = fs.readFileSync(outFile, 'utf-8');
+    expect(content).toContain('🚀 feature');
+  });
 });
 
 // ----------------------------
@@ -246,15 +406,25 @@ describe('applyFilter', () => {
 
 describe('registerCardsExportCommand', () => {
   let tmpDir: string;
+  const originalEnv = process.env.FAVRO_API_TOKEN;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'favro-export-test-'));
+    // Use a temp dir WITHIN cwd so path traversal check passes
+    tmpDir = fs.mkdtempSync(path.join(process.cwd(), '.test-tmp-'));
+    // Set token so tests don't fail on missing token check
+    process.env.FAVRO_API_TOKEN = 'test-token';
     (FavroHttpClient as jest.MockedClass<typeof FavroHttpClient>).mockImplementation(() => ({} as any));
   });
 
   afterEach(() => {
     // Clean up temp files
     try { fs.rmSync(tmpDir, { recursive: true }); } catch (_) {}
+    // Restore env
+    if (originalEnv === undefined) {
+      delete process.env.FAVRO_API_TOKEN;
+    } else {
+      process.env.FAVRO_API_TOKEN = originalEnv;
+    }
     jest.clearAllMocks();
   });
 
@@ -428,5 +598,137 @@ describe('registerCardsExportCommand', () => {
 
     consoleSpy.mockRestore();
     exitSpy.mockRestore();
+  });
+
+  // Fix #2: FAVRO_API_TOKEN missing should exit with error
+  test('exits with error when FAVRO_API_TOKEN is not set', async () => {
+    delete process.env.FAVRO_API_TOKEN;
+    mockApi(sampleCards);
+
+    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => { throw new Error('process.exit'); });
+
+    const program = new Command();
+    registerCardsExportCommand(program);
+
+    await expect(
+      program.parseAsync([
+        'node', 'test',
+        'cards', 'export', 'board-123',
+        '--format', 'json',
+        '--out', path.join(tmpDir, 'out.json'),
+      ])
+    ).rejects.toThrow('process.exit');
+
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('FAVRO_API_TOKEN'));
+
+    consoleSpy.mockRestore();
+    exitSpy.mockRestore();
+  });
+
+  // Fix #1: --limit 0 should NOT silently become 10000 (uses safeLimit = 10000 as fallback for <1)
+  test('--limit 0 falls back to default 10000 (not silently coerced by ||)', async () => {
+    mockApi(sampleCards);
+    const outFile = path.join(tmpDir, 'limit0.json');
+
+    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    const listCardsSpy = jest.fn().mockResolvedValue(sampleCards);
+    (CardsAPI as jest.MockedClass<typeof CardsAPI>).mockImplementation(() => ({
+      listCards: listCardsSpy,
+    } as any));
+
+    const program = new Command();
+    registerCardsExportCommand(program);
+
+    await program.parseAsync([
+      'node', 'test',
+      'cards', 'export', 'board-123',
+      '--format', 'json',
+      '--limit', '0',
+      '--out', outFile,
+    ]);
+
+    // With safeLimit: 0 < 1 → falls back to 10000
+    expect(listCardsSpy).toHaveBeenCalledWith('board-123', 10000);
+
+    consoleSpy.mockRestore();
+  });
+
+  // Fix #5: --limit -5 should be rejected, falls back to 10000
+  test('--limit -5 falls back to default 10000 (negative values rejected)', async () => {
+    mockApi(sampleCards);
+    const outFile = path.join(tmpDir, 'limit-neg.json');
+
+    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    const listCardsSpy = jest.fn().mockResolvedValue(sampleCards);
+    (CardsAPI as jest.MockedClass<typeof CardsAPI>).mockImplementation(() => ({
+      listCards: listCardsSpy,
+    } as any));
+
+    const program = new Command();
+    registerCardsExportCommand(program);
+
+    await program.parseAsync([
+      'node', 'test',
+      'cards', 'export', 'board-123',
+      '--format', 'json',
+      '--limit', '-5',
+      '--out', outFile,
+    ]);
+
+    // With safeLimit: -5 < 1 → falls back to 10000
+    expect(listCardsSpy).toHaveBeenCalledWith('board-123', 10000);
+
+    consoleSpy.mockRestore();
+  });
+
+  // Fix #3: path traversal protection
+  test('exits with error when --out path is outside cwd', async () => {
+    mockApi(sampleCards);
+
+    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => { throw new Error('process.exit'); });
+
+    const program = new Command();
+    registerCardsExportCommand(program);
+
+    await expect(
+      program.parseAsync([
+        'node', 'test',
+        'cards', 'export', 'board-123',
+        '--format', 'json',
+        '--out', '/tmp/traversal-attack.json',
+      ])
+    ).rejects.toThrow('process.exit');
+
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Output path must be within current directory'));
+
+    consoleSpy.mockRestore();
+    exitSpy.mockRestore();
+  });
+
+  // Fix #1: --limit 5 (valid positive value) passes correctly
+  test('--limit 5 passes valid value to API', async () => {
+    const outFile = path.join(tmpDir, 'limit5.json');
+    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    const listCardsSpy = jest.fn().mockResolvedValue(sampleCards);
+    (CardsAPI as jest.MockedClass<typeof CardsAPI>).mockImplementation(() => ({
+      listCards: listCardsSpy,
+    } as any));
+
+    const program = new Command();
+    registerCardsExportCommand(program);
+
+    await program.parseAsync([
+      'node', 'test',
+      'cards', 'export', 'board-123',
+      '--format', 'json',
+      '--limit', '5',
+      '--out', outFile,
+    ]);
+
+    expect(listCardsSpy).toHaveBeenCalledWith('board-123', 5);
+
+    consoleSpy.mockRestore();
   });
 });

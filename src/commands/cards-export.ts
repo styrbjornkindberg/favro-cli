@@ -8,6 +8,7 @@
  *   favro cards export <board> --format csv --filter "assignee:alice" --out alice.csv
  */
 import { Command } from 'commander';
+import path from 'path';
 import CardsAPI, { Card } from '../lib/cards-api';
 import FavroHttpClient from '../lib/http-client';
 import { writeCardsCSV, writeCardsJSON } from '../lib/csv';
@@ -38,6 +39,12 @@ export function applyFilter(cards: Card[], filter: string): Card[] {
   }
 
   const { field, value } = parsed;
+
+  // Validate filter value is non-empty
+  if (!value.trim()) {
+    console.error('✗ Filter value cannot be empty');
+    process.exit(1);
+  }
 
   switch (field) {
     case 'assignee':
@@ -84,16 +91,33 @@ export function registerCardsExportCommand(program: Command): void {
         process.exit(1);
       }
 
-      const limit = parseInt(options.limit ?? '10000', 10) || 10000;
+      // Fix #1 & #5: explicit NaN and range check — prevents --limit 0 and --limit -5 silently becoming 10000
+      const parsedLimit = parseInt(options.limit ?? '10000', 10);
+      const safeLimit = isNaN(parsedLimit) || parsedLimit < 1 ? 10000 : parsedLimit;
+
+      // Fix #2: explicit token check — never silently fall back to demo-token
+      const token = process.env.FAVRO_API_TOKEN;
+      if (!token) {
+        console.error('✗ Missing FAVRO_API_TOKEN. Run: favro auth login');
+        process.exit(1);
+      }
+
+      // Fix #3: path traversal protection — output must be within current working directory
+      const resolvedOut = path.resolve(options.out!);
+      const cwd = process.cwd();
+      if (!resolvedOut.startsWith(cwd)) {
+        console.error('✗ Output path must be within current directory');
+        process.exit(1);
+      }
 
       try {
         const client = new FavroHttpClient({
-          auth: { token: process.env.FAVRO_API_TOKEN || 'demo-token' },
+          auth: { token },
         });
         const api = new CardsAPI(client);
 
         // Fetch cards
-        let cards = await api.listCards(board, limit);
+        let cards = await api.listCards(board, safeLimit);
 
         // Apply optional filter
         if (options.filter) {
@@ -109,9 +133,9 @@ export function registerCardsExportCommand(program: Command): void {
 
         // Write output
         if (format === 'csv') {
-          await writeCardsCSV(cards, options.out!);
+          await writeCardsCSV(cards, resolvedOut);
         } else {
-          await writeCardsJSON(cards, options.out!);
+          await writeCardsJSON(cards, resolvedOut);
         }
 
         console.log(`✓ Exported ${cards.length} card(s) to "${options.out}" (${format.toUpperCase()})`);

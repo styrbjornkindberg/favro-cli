@@ -51,7 +51,7 @@ export function normalizeCard(card: Card): ExportCard {
     status: card.status ?? '',
     assignees: (card.assignees ?? []).join(';'),
     labels: (card.tags ?? []).join(';'),
-    dueDate: (card as any).dueDate ?? '',
+    dueDate: card.dueDate ?? '',
     createdAt: card.createdAt ?? '',
     updatedAt: card.updatedAt ?? '',
   };
@@ -120,12 +120,11 @@ export async function writeCardsCSV(cards: Card[], filePath: string): Promise<vo
     stream.write(header, 'utf8');
 
     // Stream card rows
+    // Note: All rows are buffered in memory before writing. For >100k cards,
+    // consider pagination to avoid large memory spikes (10k cards × 10KB = ~100MB).
     for (const card of cards) {
       const normalized = normalizeCard(card);
       const row = EXPORT_FIELDS.map(field => escapeCsvField(normalized[field])).join(',') + '\n';
-      // Backpressure: if write returns false, wait for 'drain' before continuing
-      // For simplicity at this stage we write synchronously; Node's internal buffer
-      // handles typical 10k-card payloads fine.
       stream.write(row, 'utf8');
     }
 
@@ -172,7 +171,7 @@ export async function writeCardsJSON(cards: Card[], filePath: string): Promise<v
       const normalized = normalizeCard(cards[i]);
       const json = JSON.stringify(normalized, null, 2)
         .split('\n')
-        .map((line, idx) => (idx === 0 ? '  ' + line : '  ' + line))
+        .map(line => '  ' + line)
         .join('\n');
       const comma = i < cards.length - 1 ? ',' : '';
       stream.write(json + comma + '\n', 'utf8');

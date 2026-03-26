@@ -7,6 +7,7 @@ export interface Card {
   status?: string;
   assignees?: string[];
   tags?: string[];
+  dueDate?: string;
   createdAt: string;
   updatedAt: string;
 }
