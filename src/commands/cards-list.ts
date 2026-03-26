@@ -36,8 +36,13 @@ export function registerCardsListCommand(program: Command): void {
     .option('--json', 'Output as JSON')
     .action(async (_listArg, options) => {
       try {
+        const token = process.env.FAVRO_API_TOKEN;
+        if (!token) {
+          console.error('✗ Missing required environment variable: FAVRO_API_TOKEN');
+          process.exit(1);
+        }
         const client = new FavroHttpClient({
-          auth: { token: process.env.FAVRO_API_TOKEN || 'demo-token' }
+          auth: { token }
         });
         const api = new CardsAPI(client);
 

@@ -23,16 +23,16 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">100% </span>
+                <span class="strong">92.3% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>21/21</span>
+                <span class='fraction'>24/26</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">100% </span>
+                <span class="strong">71.42% </span>
                 <span class="quiet">Branches</span>
-                <span class='fraction'>6/6</span>
+                <span class='fraction'>5/7</span>
             </div>
         
             
@@ -44,9 +44,9 @@
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">100% </span>
+                <span class="strong">91.66% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>19/19</span>
+                <span class='fraction'>22/24</span>
             </div>
         
             
@@ -113,7 +113,20 @@
 <a name='L48'></a><a href='#L48'>48</a>
 <a name='L49'></a><a href='#L49'>49</a>
 <a name='L50'></a><a href='#L50'>50</a>
-<a name='L51'></a><a href='#L51'>51</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<a name='L51'></a><a href='#L51'>51</a>
+<a name='L52'></a><a href='#L52'>52</a>
+<a name='L53'></a><a href='#L53'>53</a>
+<a name='L54'></a><a href='#L54'>54</a>
+<a name='L55'></a><a href='#L55'>55</a>
+<a name='L56'></a><a href='#L56'>56</a>
+<a name='L57'></a><a href='#L57'>57</a>
+<a name='L58'></a><a href='#L58'>58</a>
+<a name='L59'></a><a href='#L59'>59</a>
+<a name='L60'></a><a href='#L60'>60</a>
+<a name='L61'></a><a href='#L61'>61</a>
+<a name='L62'></a><a href='#L62'>62</a>
+<a name='L63'></a><a href='#L63'>63</a>
+<a name='L64'></a><a href='#L64'>64</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -131,7 +144,19 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">11x</span>
+<span class="cline-any cline-yes">11x</span>
+<span class="cline-any cline-yes">11x</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">11x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -158,6 +183,7 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">5x</span>
 <span class="cline-any cline-yes">5x</span>
+<span class="cline-any cline-yes">5x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -180,10 +206,22 @@ export function registerCardsCreateCommand(program: Command): void {
     .option('--status &lt;status&gt;', 'Card status')
     .option('--bulk &lt;file&gt;', 'Bulk create from JSON file')
     .option('--json', 'Output as JSON')
-    .action(async (_createArg, title, options) =&gt; {
+    .action(async (_createArg: string, title: string, options: {
+      board?: string;
+      description?: string;
+      status?: string;
+      bulk?: string;
+      json?: boolean;
+    }) =&gt; {
       try {
-        const client = new FavroHttpClient({ 
-          auth: { token: process.env.FAVRO_API_TOKEN || 'demo-token' }
+        const token = process.env.FAVRO_API_TOKEN;
+        <span class="missing-if-branch" title="if path not taken" >I</span>if (!token) {
+<span class="cstat-no" title="statement not covered" >          console.error('✗ Missing required environment variable: FAVRO_API_TOKEN');</span>
+<span class="cstat-no" title="statement not covered" >          process.exit(1);</span>
+        }
+&nbsp;
+        const client = new FavroHttpClient({
+          auth: { token },
         });
         const api = new CardsAPI(client);
 &nbsp;
@@ -200,13 +238,14 @@ export function registerCardsCreateCommand(program: Command): void {
             name: title,
             description: options.description,
             status: options.status,
-            boardId: options.board
+            boardId: options.board,
           });
           console.log(`✓ Card created: ${card.cardId}`);
           if (options.json) console.log(JSON.stringify(card));
         }
       } catch (error) {
-        console.error(`✗ Error: ${error}`);
+        const msg = error instanceof Error ? error.message : <span class="branch-1 cbranch-no" title="branch not covered" >String(error);</span>
+        console.error(`✗ Error: ${msg}`);
         process.exit(1);
       }
     });
@@ -220,7 +259,7 @@ export default registerCardsCreateCommand;
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-03-26T19:07:58.926Z
+                at 2026-03-26T19:19:52.827Z
             </div>
         <script src="../prettify.js"></script>
         <script>

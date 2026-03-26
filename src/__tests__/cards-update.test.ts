@@ -30,15 +30,22 @@ describe('Cards Update Command', () => {
   let consoleSpy: jest.SpyInstance;
   let consoleErrorSpy: jest.SpyInstance;
   let exitSpy: jest.SpyInstance;
+  const originalEnv = process.env.FAVRO_API_TOKEN;
 
   beforeEach(() => {
     jest.clearAllMocks();
+    process.env.FAVRO_API_TOKEN = 'test-token';
     consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
     consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => { throw new Error('process.exit'); });
   });
 
   afterEach(() => {
+    if (originalEnv === undefined) {
+      delete process.env.FAVRO_API_TOKEN;
+    } else {
+      process.env.FAVRO_API_TOKEN = originalEnv;
+    }
     consoleSpy.mockRestore();
     consoleErrorSpy.mockRestore();
     exitSpy.mockRestore();
@@ -175,7 +182,7 @@ describe('Cards Update Command', () => {
 
     // Should NOT include description, status, assignees, tags
     expect(api.updateCard).toHaveBeenCalledWith('card-partial', { name: 'Partial' });
-    const callArg = api.updateCard.mock.calls[0][1];
+    const callArg = (api.updateCard as jest.Mock).mock.calls[0][1];
     expect(callArg).not.toHaveProperty('description');
     expect(callArg).not.toHaveProperty('status');
     expect(callArg).not.toHaveProperty('assignees');
@@ -242,7 +249,7 @@ describe('Cards Update Command', () => {
 
     expect(api.updateCard).toHaveBeenCalledTimes(cardIds.length);
     cardIds.forEach((id, idx) => {
-      expect(api.updateCard.mock.calls[idx][0]).toBe(id);
+      expect((api.updateCard as jest.Mock).mock.calls[idx][0]).toBe(id);
     });
   });
 });

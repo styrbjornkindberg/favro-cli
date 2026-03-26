@@ -1,5 +1,9 @@
+/**
+ * Cards Update Command
+ * FAVRO-007: Cards Update Command
+ */
 import { Command } from 'commander';
-import CardsAPI from '../lib/cards-api';
+import CardsAPI, { UpdateCardRequest } from '../lib/cards-api';
 import FavroHttpClient from '../lib/http-client';
 
 export function registerCardsUpdateCommand(program: Command): void {
@@ -12,14 +16,27 @@ export function registerCardsUpdateCommand(program: Command): void {
     .option('--assignees <list>', 'Assignees (comma-separated)')
     .option('--tags <list>', 'Tags (comma-separated)')
     .option('--json', 'Output as JSON')
-    .action(async (_updateArg, cardId, options) => {
+    .action(async (_updateArg: string, cardId: string, options: {
+      name?: string;
+      description?: string;
+      status?: string;
+      assignees?: string;
+      tags?: string;
+      json?: boolean;
+    }) => {
       try {
-        const client = new FavroHttpClient({ 
-          auth: { token: process.env.FAVRO_API_TOKEN || 'demo-token' }
+        const token = process.env.FAVRO_API_TOKEN;
+        if (!token) {
+          console.error('✗ Missing required environment variable: FAVRO_API_TOKEN');
+          process.exit(1);
+        }
+
+        const client = new FavroHttpClient({
+          auth: { token },
         });
         const api = new CardsAPI(client);
 
-        const updateData: any = {};
+        const updateData: UpdateCardRequest = {};
         if (options.name) updateData.name = options.name;
         if (options.description) updateData.description = options.description;
         if (options.status) updateData.status = options.status;
@@ -30,7 +47,8 @@ export function registerCardsUpdateCommand(program: Command): void {
         console.log(`✓ Card updated: ${card.cardId}`);
         if (options.json) console.log(JSON.stringify(card));
       } catch (error) {
-        console.error(`✗ Error: ${error}`);
+        const msg = error instanceof Error ? error.message : String(error);
+        console.error(`✗ Error: ${msg}`);
         process.exit(1);
       }
     });

@@ -60,9 +60,11 @@ describe('Cards List Command', () => {
   let consoleErrorSpy: jest.SpyInstance;
   let tableSpy: jest.SpyInstance;
   let exitSpy: jest.SpyInstance;
+  const originalEnv = process.env.FAVRO_API_TOKEN;
 
   beforeEach(() => {
     jest.clearAllMocks();
+    process.env.FAVRO_API_TOKEN = 'test-token';
     consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
     consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     tableSpy = jest.spyOn(console, 'table').mockImplementation(() => {});
@@ -70,6 +72,11 @@ describe('Cards List Command', () => {
   });
 
   afterEach(() => {
+    if (originalEnv === undefined) {
+      delete process.env.FAVRO_API_TOKEN;
+    } else {
+      process.env.FAVRO_API_TOKEN = originalEnv;
+    }
     consoleSpy.mockRestore();
     consoleErrorSpy.mockRestore();
     tableSpy.mockRestore();

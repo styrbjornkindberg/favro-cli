@@ -34,15 +34,22 @@ describe('Cards Create Command', () => {
   let consoleSpy: jest.SpyInstance;
   let consoleErrorSpy: jest.SpyInstance;
   let exitSpy: jest.SpyInstance;
+  const originalEnv = process.env.FAVRO_API_TOKEN;
 
   beforeEach(() => {
     jest.clearAllMocks();
+    process.env.FAVRO_API_TOKEN = 'test-token';
     consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
     consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => { throw new Error('process.exit'); });
   });
 
   afterEach(() => {
+    if (originalEnv === undefined) {
+      delete process.env.FAVRO_API_TOKEN;
+    } else {
+      process.env.FAVRO_API_TOKEN = originalEnv;
+    }
     consoleSpy.mockRestore();
     consoleErrorSpy.mockRestore();
     exitSpy.mockRestore();
