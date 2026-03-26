@@ -38,16 +38,15 @@ export declare function escapeCsvField(value: string): string;
  */
 export declare function cardsToCSV(cards: ExportCard[]): string;
 /**
- * Write cards as CSV to a file using streaming writes.
- * Handles large exports (10k+ cards) without loading everything into memory.
+ * Write cards as CSV to a file using streaming writes with backpressure handling.
+ * Handles large exports (10k+ cards) without exhausting the I/O buffer.
  *
  * @param cards     Array of Card objects to export
  * @param filePath  Output file path
  */
 export declare function writeCardsCSV(cards: Card[], filePath: string): Promise<void>;
 /**
- * Write cards as pretty-printed JSON to a file.
- * For very large exports, uses streaming to avoid OOM.
+ * Write cards as pretty-printed JSON to a file with backpressure handling.
  *
  * @param cards     Array of Card objects to export
  * @param filePath  Output file path

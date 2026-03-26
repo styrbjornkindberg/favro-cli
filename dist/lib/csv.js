@@ -69,45 +69,58 @@ function cardsToCSV(cards) {
     return [header, ...rows].join('\n') + '\n';
 }
 /**
- * Write cards as CSV to a file using streaming writes.
- * Handles large exports (10k+ cards) without loading everything into memory.
+ * Write a chunk to a WriteStream, awaiting the 'drain' event if the internal
+ * buffer is full (backpressure-aware).
+ */
+async function writeChunk(stream, chunk) {
+    const ok = stream.write(chunk, 'utf8');
+    if (!ok) {
+        // Buffer full — wait for drain before continuing
+        await new Promise((resolve) => stream.once('drain', resolve));
+    }
+}
+/**
+ * Write cards as CSV to a file using streaming writes with backpressure handling.
+ * Handles large exports (10k+ cards) without exhausting the I/O buffer.
  *
  * @param cards     Array of Card objects to export
  * @param filePath  Output file path
  */
 async function writeCardsCSV(cards, filePath) {
-    return new Promise((resolve, reject) => {
-        const dir = path_1.default.dirname(filePath);
-        // Ensure the output directory exists
-        try {
-            if (dir && dir !== '.')
-                fs_1.default.mkdirSync(dir, { recursive: true });
-        }
-        catch (e) {
-            return reject(new Error(`Cannot create directory '${dir}': ${e.message}`));
-        }
-        let stream;
-        try {
-            stream = fs_1.default.createWriteStream(filePath, { encoding: 'utf8', flags: 'w' });
-        }
-        catch (e) {
-            return reject(new Error(`Cannot open file '${filePath}' for writing: ${e.message}`));
-        }
-        stream.on('error', (err) => {
-            reject(new Error(`Write error to '${filePath}': ${err.message}`));
-        });
-        stream.on('finish', resolve);
+    const dir = path_1.default.dirname(filePath);
+    // Ensure the output directory exists
+    try {
+        if (dir && dir !== '.')
+            fs_1.default.mkdirSync(dir, { recursive: true });
+    }
+    catch (e) {
+        throw new Error(`Cannot create directory '${dir}': ${e.message}`);
+    }
+    let stream;
+    try {
+        stream = fs_1.default.createWriteStream(filePath, { encoding: 'utf8', flags: 'w' });
+    }
+    catch (e) {
+        throw new Error(`Cannot open file '${filePath}' for writing: ${e.message}`);
+    }
+    try {
         // Write header row
         const header = exports.EXPORT_FIELDS.map(escapeCsvField).join(',') + '\n';
-        stream.write(header, 'utf8');
-        // Stream card rows
-        // Note: All rows are buffered in memory before writing. For >100k cards,
-        // consider pagination to avoid large memory spikes (10k cards × 10KB = ~100MB).
+        await writeChunk(stream, header);
+        // Stream card rows with backpressure handling
         for (const card of cards) {
             const normalized = normalizeCard(card);
             const row = exports.EXPORT_FIELDS.map(field => escapeCsvField(normalized[field])).join(',') + '\n';
-            stream.write(row, 'utf8');
+            await writeChunk(stream, row);
         }
+    }
+    catch (writeErr) {
+        stream.destroy();
+        throw writeErr;
+    }
+    await new Promise((resolve, reject) => {
+        stream.on('error', (err) => reject(new Error(`Write error to '${filePath}': ${err.message}`)));
+        stream.on('finish', resolve);
         stream.end();
     });
 }
@@ -115,35 +128,30 @@ async function writeCardsCSV(cards, filePath) {
 // JSON helpers
 // ---------------------------------------------------------------------------
 /**
- * Write cards as pretty-printed JSON to a file.
- * For very large exports, uses streaming to avoid OOM.
+ * Write cards as pretty-printed JSON to a file with backpressure handling.
  *
  * @param cards     Array of Card objects to export
  * @param filePath  Output file path
  */
 async function writeCardsJSON(cards, filePath) {
-    return new Promise((resolve, reject) => {
-        const dir = path_1.default.dirname(filePath);
-        try {
-            if (dir && dir !== '.')
-                fs_1.default.mkdirSync(dir, { recursive: true });
-        }
-        catch (e) {
-            return reject(new Error(`Cannot create directory '${dir}': ${e.message}`));
-        }
-        let stream;
-        try {
-            stream = fs_1.default.createWriteStream(filePath, { encoding: 'utf8', flags: 'w' });
-        }
-        catch (e) {
-            return reject(new Error(`Cannot open file '${filePath}' for writing: ${e.message}`));
-        }
-        stream.on('error', (err) => {
-            reject(new Error(`Write error to '${filePath}': ${err.message}`));
-        });
-        stream.on('finish', resolve);
-        // Stream JSON array to file
-        stream.write('[\n', 'utf8');
+    const dir = path_1.default.dirname(filePath);
+    try {
+        if (dir && dir !== '.')
+            fs_1.default.mkdirSync(dir, { recursive: true });
+    }
+    catch (e) {
+        throw new Error(`Cannot create directory '${dir}': ${e.message}`);
+    }
+    let stream;
+    try {
+        stream = fs_1.default.createWriteStream(filePath, { encoding: 'utf8', flags: 'w' });
+    }
+    catch (e) {
+        throw new Error(`Cannot open file '${filePath}' for writing: ${e.message}`);
+    }
+    try {
+        // Stream JSON array to file with backpressure handling
+        await writeChunk(stream, '[\n');
         for (let i = 0; i < cards.length; i++) {
             const normalized = normalizeCard(cards[i]);
             const json = JSON.stringify(normalized, null, 2)
@@ -151,9 +159,17 @@ async function writeCardsJSON(cards, filePath) {
                 .map(line => '  ' + line)
                 .join('\n');
             const comma = i < cards.length - 1 ? ',' : '';
-            stream.write(json + comma + '\n', 'utf8');
+            await writeChunk(stream, json + comma + '\n');
         }
-        stream.write(']\n', 'utf8');
+        await writeChunk(stream, ']\n');
+    }
+    catch (writeErr) {
+        stream.destroy();
+        throw writeErr;
+    }
+    await new Promise((resolve, reject) => {
+        stream.on('error', (err) => reject(new Error(`Write error to '${filePath}': ${err.message}`)));
+        stream.on('finish', resolve);
         stream.end();
     });
 }
