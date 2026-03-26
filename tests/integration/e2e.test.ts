@@ -360,24 +360,37 @@ describeOrSkip('Dry-run — no mutations', () => {
 // =============================================================================
 
 describeOrSkip('CSV import — bulk create from fixture file', () => {
+  // Timestamp-based isolation: each test run uses unique card names derived from
+  // csvTimestamp. No beforeAll cleanup needed — uniqueness guarantees no stale state.
+  // This matches the single-card dry-run pattern and is immune to network failures.
+  const csvTimestamp = Date.now();
+  const CSV_TAG = `[csv-${csvTimestamp}]`;
+  let tmpCsvFile: string;
+
   beforeAll(async () => {
     if (!INTEGRATION_GUARD) return;
-    // Clear any stale CSV fixture cards left by prior failed runs.
-    // Without this, a failed teardown poisons the board and causes false positives
-    // in the dry-run assertion (which checks that no CSV cards exist after dry-run).
-    const api = makeAPI();
-    const cards = await api.listCards(TEST_BOARD_ID, 200);
-    const stale = cards.filter(c => c.name.startsWith('[integration-test] CSV Card'));
-    for (const c of stale) {
-      try { await api.deleteCard(c.cardId); } catch { /* best effort */ }
-    }
+    // Write a timestamped CSV fixture so card names are unique per run.
+    tmpCsvFile = path.join(process.cwd(), 'tmp', `sample-cards-${csvTimestamp}.csv`);
+    await fs.mkdir(path.join(process.cwd(), 'tmp'), { recursive: true });
+    const csvContent = [
+      'name,description,status',
+      ...Array.from({ length: 10 }, (_, i) =>
+        `${CSV_TAG} CSV Card ${i + 1},Imported via CSV fixture ${csvTimestamp},To Do`
+      ),
+    ].join('\n');
+    await fs.writeFile(tmpCsvFile, csvContent, 'utf-8');
+  });
+
+  afterAll(async () => {
+    try { if (tmpCsvFile) await fs.unlink(tmpCsvFile); } catch { /* ignore */ }
   });
 
   it('CSV dry-run shows preview without creating cards', async () => {
-    // Run dry-run BEFORE the real import so no CSV cards exist yet
+    // Run dry-run BEFORE the real import. Since card names include csvTimestamp,
+    // no stale state from prior runs can interfere — uniqueness is guaranteed.
     const result = await runCLI([
       'cards', 'create', 'ignored-title',
-      '--csv', CSV_FIXTURE,
+      '--csv', tmpCsvFile,
       '--board', TEST_BOARD_ID,
       '--dry-run',
     ]);
@@ -385,42 +398,29 @@ describeOrSkip('CSV import — bulk create from fixture file', () => {
     expect(result.stdout).toContain('[dry-run]');
     expect(result.stdout).toContain('10 cards from CSV');
 
-    // Verify via API that no cards were actually created
+    // Verify via API that no cards with this run's timestamp were created
     await sleep(3000);
     const api = makeAPI();
     const cards = await api.listCards(TEST_BOARD_ID, 100);
-    const csvCardNames = [
-      '[integration-test] CSV Card 1',
-      '[integration-test] CSV Card 2',
-      '[integration-test] CSV Card 3',
-      '[integration-test] CSV Card 4',
-      '[integration-test] CSV Card 5',
-      '[integration-test] CSV Card 6',
-      '[integration-test] CSV Card 7',
-      '[integration-test] CSV Card 8',
-      '[integration-test] CSV Card 9',
-      '[integration-test] CSV Card 10',
-    ];
-    // None of the CSV card names should be present on the board (dry-run must not create any)
-    const found = cards.filter(c => csvCardNames.includes(c.name));
+    const found = cards.filter(c => c.name.includes(CSV_TAG));
     expect(found).toHaveLength(0);
   }, 60000);
 
-  it('imports 10 cards from sample-cards.csv fixture', async () => {
+  it('imports 10 cards from timestamped CSV fixture', async () => {
     const result = await runCLI([
       'cards', 'create', 'ignored-title',
-      '--csv', CSV_FIXTURE,
+      '--csv', tmpCsvFile,
       '--board', TEST_BOARD_ID,
       '--json',
     ]);
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain('✓ Created 10 cards from CSV');
 
-    // Verify via API
+    // Verify via API using timestamp tag — immune to stale state
     await sleep(3000);
     const api = makeAPI();
-    const cards = await api.listCards(TEST_BOARD_ID, 100);
-    const csvCards = cards.filter(c => c.name.startsWith('[integration-test] CSV Card'));
+    const cards = await api.listCards(TEST_BOARD_ID, 200);
+    const csvCards = cards.filter(c => c.name.includes(CSV_TAG));
     expect(csvCards.length).toBeGreaterThanOrEqual(10);
     csvCards.forEach(c => allCreatedCardIds.push(c.cardId));
   }, 120000);
@@ -428,7 +428,7 @@ describeOrSkip('CSV import — bulk create from fixture file', () => {
   it('CSV import fails gracefully when file does not exist', async () => {
     const result = await runCLI([
       'cards', 'create', 'ignored-title',
-      '--csv', '/tmp/nonexistent-file-99999.csv',
+      '--csv', path.join(process.cwd(), 'tmp', 'nonexistent-file-99999.csv'),
       '--board', TEST_BOARD_ID,
     ]);
     expect(result.exitCode).not.toBe(0);
@@ -442,13 +442,15 @@ describeOrSkip('CSV import — bulk create from fixture file', () => {
 
 describeOrSkip('Bulk create — 10 cards from JSON file', () => {
   let tmpFile: string;
+  const bulkTimestamp = Date.now();
+  const BULK_TAG = `[bulk-${bulkTimestamp}]`;
 
   beforeAll(async () => {
-    tmpFile = path.join(os.tmpdir(), `favro-bulk-${Date.now()}.json`);
+    tmpFile = path.join(os.tmpdir(), `favro-bulk-${bulkTimestamp}.json`);
     const bulk = Array.from({ length: 10 }, (_, i) => ({
-      name: `${PREFIX} Bulk JSON card ${i + 1} ${Date.now()}`,
+      name: `${PREFIX} ${BULK_TAG} Bulk JSON card ${i + 1}`,
       boardId: TEST_BOARD_ID,
-      description: `Bulk integration test card #${i + 1}`,
+      description: `Bulk integration test card #${i + 1} (run ${bulkTimestamp})`,
     }));
     await fs.writeFile(tmpFile, JSON.stringify(bulk), 'utf-8');
   });
@@ -457,7 +459,7 @@ describeOrSkip('Bulk create — 10 cards from JSON file', () => {
     try { await fs.unlink(tmpFile); } catch { /* ignore */ }
   });
 
-  it('bulk creates 10 cards from a JSON file', async () => {
+  it('bulk creates 10 cards from a JSON file and verifies via API', async () => {
     const result = await runCLI([
       'cards', 'create', 'bulk-ignored',
       '--bulk', tmpFile,
@@ -465,6 +467,14 @@ describeOrSkip('Bulk create — 10 cards from JSON file', () => {
     ]);
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toMatch(/✓ Created 10 cards/);
+
+    // Verify via API using timestamp tag — immune to stale state from prior runs
+    await sleep(3000);
+    const api = makeAPI();
+    const allCards = await api.listCards(TEST_BOARD_ID, 200);
+    const bulkCards = allCards.filter(c => c.name.includes(BULK_TAG));
+    expect(bulkCards.length).toBeGreaterThanOrEqual(10);
+    bulkCards.forEach(c => allCreatedCardIds.push(c.cardId));
   }, 60000);
 });
 
@@ -735,6 +745,18 @@ describeOrSkip('Error cases — graceful failure', () => {
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr).toMatch(/✗ Error:/);
   }, 15000);
+
+  it('cards create: graceful error for invalid assignee (T013)', async () => {
+    // Spec T013: Create card with invalid assignee → helpful error message
+    const result = await runCLI([
+      'cards', 'create', `${PREFIX} Invalid assignee test ${Date.now()}`,
+      '--board', TEST_BOARD_ID,
+      '--assignee', 'nonexistent-user-xyz-99999',
+    ]);
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toMatch(/✗ Error:/);
+    expect(result.stderr).not.toMatch(/UnhandledPromiseRejection/);
+  }, 30000);
 });
 
 // =============================================================================

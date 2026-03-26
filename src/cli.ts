@@ -149,6 +149,7 @@ cards
   .option('--board <id>', 'Target board ID')
   .option('--description <text>', 'Card description')
   .option('--status <status>', 'Card status')
+  .option('--assignee <user>', 'Assignee username or user ID')
   .option('--bulk <file>', 'Bulk create from JSON file')
   .option('--csv <file>', 'Bulk import from CSV file (columns: name, description, status)')
   .option('--dry-run', 'Print what would be created without making API calls')
@@ -220,6 +221,7 @@ cards
         description: options.description,
         status: options.status,
         boardId: options.board,
+        assignees: options.assignee ? [options.assignee] : undefined,
       });
       console.log(`✓ Card created: ${card.cardId}`);
       if (options.json) console.log(JSON.stringify(card));

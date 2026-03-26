@@ -17,6 +17,7 @@ export interface CreateCardRequest {
   description?: string;
   status?: string;
   boardId?: string;
+  assignees?: string[];
 }
 
 export interface UpdateCardRequest {
