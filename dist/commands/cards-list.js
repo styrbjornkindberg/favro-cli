@@ -59,7 +59,8 @@ function registerCardsListCommand(program) {
                 auth: { token }
             });
             const api = new cards_api_1.default(client);
-            const limit = parseInt(options.limit, 10) || 50;
+            const parsedLimit = parseInt(options.limit, 10);
+            const limit = isNaN(parsedLimit) || parsedLimit < 1 ? 50 : parsedLimit;
             let cards = await api.listCards(options.board, limit);
             // Apply client-side filters
             if (options.status) {

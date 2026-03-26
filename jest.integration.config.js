@@ -8,8 +8,8 @@
 module.exports = {
   preset: 'ts-jest',
   testEnvironment: 'node',
-  roots: ['<rootDir>/src'],
-  testMatch: ['**/__integration__/**/*.test.ts'],
+  roots: ['<rootDir>/tests/integration'],
+  testMatch: ['**/tests/integration/**/*.test.ts'],
   moduleFileExtensions: ['ts', 'js', 'json'],
   // Integration tests are slower — allow 5 minutes per test file
   testTimeout: 300000,

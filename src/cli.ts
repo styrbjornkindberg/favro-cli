@@ -4,8 +4,9 @@
  *
  * Usage:
  *   favro cards list [--board <id>] [--status <s>] [--assignee <a>] [--limit <n>]
- *   favro cards create <title> [--description <d>] [--status <s>] [--board <id>]
- *   favro cards update <cardId> [--name <n>] [--status <s>] [--assignees <a>]
+ *   favro cards create <title> [--description <d>] [--status <s>] [--board <id>] [--dry-run]
+ *   favro cards create --csv <file> --board <id> [--dry-run]
+ *   favro cards update <cardId> [--name <n>] [--status <s>] [--assignees <a>] [--dry-run]
  *   favro cards export <board> --format json|csv [--out <file>] [--filter <expr>]
  *
  * Environment:
@@ -26,6 +27,42 @@ program
   .name('favro')
   .description('Favro command-line interface')
   .version('0.1.0');
+
+// ─── boards parent ────────────────────────────────────────────────────────────
+const boardsCmd = program.command('boards').description('Board operations');
+
+// ─── boards list ─────────────────────────────────────────────────────────────
+boardsCmd
+  .command('list')
+  .description('List all boards')
+  .option('--json', 'Output as JSON')
+  .action(async (options) => {
+    const token = process.env.FAVRO_API_TOKEN;
+    if (!token) {
+      console.error('✗ Missing required environment variable: FAVRO_API_TOKEN');
+      process.exit(1);
+    }
+    try {
+      const client = new FavroHttpClient({ auth: { token } });
+      const data = await client.get('/boards', { params: { limit: 100 } });
+      const boards: any[] = Array.isArray(data) ? data : (data?.entities ?? data?.boards ?? []);
+      if (options.json) {
+        console.log(JSON.stringify(boards, null, 2));
+      } else {
+        console.log(`Found ${boards.length} board(s):`);
+        if (boards.length > 0) {
+          const rows = boards.map((b: any) => ({
+            ID: b.boardId ?? b.id,
+            Name: b.name,
+          }));
+          console.table(rows);
+        }
+      }
+    } catch (error) {
+      console.error(`✗ Error: ${error instanceof Error ? error.message : error}`);
+      process.exit(1);
+    }
+  });
 
 // ─── cards parent ────────────────────────────────────────────────────────────
 const cards = program.command('cards').description('Card operations');
@@ -89,14 +126,32 @@ cards
     }
   });
 
+/**
+ * Parse a CSV string into an array of objects using the header row.
+ * Handles simple RFC 4180 CSV (no quoted newlines).
+ */
+function parseCSV(content: string): Record<string, string>[] {
+  const lines = content.trim().split('\n').filter(l => l.trim().length > 0);
+  if (lines.length < 2) return [];
+  const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
+  return lines.slice(1).map(line => {
+    const values = line.split(',').map(v => v.trim().replace(/^"|"$/g, ''));
+    const obj: Record<string, string> = {};
+    headers.forEach((h, i) => { obj[h] = values[i] ?? ''; });
+    return obj;
+  });
+}
+
 // ─── cards create ─────────────────────────────────────────────────────────────
 cards
   .command('create <title>')
-  .description('Create a new card (or bulk from JSON file)')
+  .description('Create a new card, bulk from JSON file, or import from CSV')
   .option('--board <id>', 'Target board ID')
   .option('--description <text>', 'Card description')
   .option('--status <status>', 'Card status')
   .option('--bulk <file>', 'Bulk create from JSON file')
+  .option('--csv <file>', 'Bulk import from CSV file (columns: name, description, status)')
+  .option('--dry-run', 'Print what would be created without making API calls')
   .option('--json', 'Output as JSON')
   .action(async (title: string, options) => {
     const token = process.env.FAVRO_API_TOKEN;
@@ -105,25 +160,69 @@ cards
       process.exit(1);
     }
     try {
-      const client = new FavroHttpClient({ auth: { token } });
-      const api = new CardsAPI(client);
+      const fs = await import('fs/promises');
 
+      // ── CSV import ──────────────────────────────────────────────────────────
+      if (options.csv) {
+        const content = await fs.readFile(options.csv, 'utf-8');
+        const rows = parseCSV(content);
+        if (rows.length === 0) {
+          console.error('✗ Error: CSV file is empty or has no data rows');
+          process.exit(1);
+        }
+        const cards = rows.map(row => ({
+          name: row.name || row.title || row.Name || row.Title || '',
+          description: row.description || row.Description || undefined,
+          status: row.status || row.Status || undefined,
+          boardId: options.board,
+        })).filter(c => c.name);
+
+        if (options.dryRun) {
+          console.log(`[dry-run] Would create ${cards.length} cards from CSV:`);
+          cards.forEach(c => console.log(`  - ${c.name}`));
+          return;
+        }
+
+        const client = new FavroHttpClient({ auth: { token } });
+        const api = new CardsAPI(client);
+        const createdCards = await api.createCards(cards);
+        console.log(`✓ Created ${createdCards.length} cards from CSV`);
+        if (options.json) console.log(JSON.stringify(createdCards, null, 2));
+        return;
+      }
+
+      // ── Bulk JSON import ────────────────────────────────────────────────────
       if (options.bulk) {
-        const fs = await import('fs/promises');
         const data = JSON.parse(await fs.readFile(options.bulk, 'utf-8'));
+        if (options.dryRun) {
+          const count = Array.isArray(data) ? data.length : 1;
+          console.log(`[dry-run] Would create ${count} cards from bulk JSON`);
+          return;
+        }
+        const client = new FavroHttpClient({ auth: { token } });
+        const api = new CardsAPI(client);
         const createdCards = await api.createCards(data);
         console.log(`✓ Created ${createdCards.length} cards`);
         if (options.json) console.log(JSON.stringify(createdCards));
-      } else {
-        const card = await api.createCard({
-          name: title,
-          description: options.description,
-          status: options.status,
-          boardId: options.board,
-        });
-        console.log(`✓ Card created: ${card.cardId}`);
-        if (options.json) console.log(JSON.stringify(card));
+        return;
       }
+
+      // ── Single card ─────────────────────────────────────────────────────────
+      if (options.dryRun) {
+        console.log(`[dry-run] Would create card: "${title}" on board ${options.board}`);
+        return;
+      }
+
+      const client = new FavroHttpClient({ auth: { token } });
+      const api = new CardsAPI(client);
+      const card = await api.createCard({
+        name: title,
+        description: options.description,
+        status: options.status,
+        boardId: options.board,
+      });
+      console.log(`✓ Card created: ${card.cardId}`);
+      if (options.json) console.log(JSON.stringify(card));
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       console.error(`✗ Error: ${msg}`);
@@ -140,6 +239,7 @@ cards
   .option('--status <status>', 'Card status')
   .option('--assignees <list>', 'Assignees (comma-separated)')
   .option('--tags <list>', 'Tags (comma-separated)')
+  .option('--dry-run', 'Print what would be updated without making API calls')
   .option('--json', 'Output as JSON')
   .action(async (cardId: string, options) => {
     const token = process.env.FAVRO_API_TOKEN;
@@ -148,9 +248,6 @@ cards
       process.exit(1);
     }
     try {
-      const client = new FavroHttpClient({ auth: { token } });
-      const api = new CardsAPI(client);
-
       const updateData: UpdateCardRequest = {};
       if (options.name) updateData.name = options.name;
       if (options.description) updateData.description = options.description;
@@ -158,6 +255,13 @@ cards
       if (options.assignees) updateData.assignees = options.assignees.split(',');
       if (options.tags) updateData.tags = options.tags.split(',');
 
+      if (options.dryRun) {
+        console.log(`[dry-run] Would update card ${cardId} with:`, JSON.stringify(updateData));
+        return;
+      }
+
+      const client = new FavroHttpClient({ auth: { token } });
+      const api = new CardsAPI(client);
       const card = await api.updateCard(cardId, updateData);
       console.log(`✓ Card updated: ${card.cardId}`);
       if (options.json) console.log(JSON.stringify(card));
