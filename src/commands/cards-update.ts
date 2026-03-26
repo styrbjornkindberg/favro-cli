@@ -12,7 +12,7 @@ export function registerCardsUpdateCommand(program: Command): void {
     .option('--assignees <list>', 'Assignees (comma-separated)')
     .option('--tags <list>', 'Tags (comma-separated)')
     .option('--json', 'Output as JSON')
-    .action(async (cardId, options) => {
+    .action(async (_updateArg, cardId, options) => {
       try {
         const client = new FavroHttpClient({ 
           auth: { token: process.env.FAVRO_API_TOKEN || 'demo-token' }

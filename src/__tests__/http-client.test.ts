@@ -1,0 +1,259 @@
+/**
+ * Comprehensive tests for FavroHttpClient
+ * CLA-1774: Unit Tests — All Commands
+ */
+import axios from 'axios';
+import FavroHttpClient from '../lib/http-client';
+
+jest.mock('axios');
+const mockedAxios = axios as jest.Mocked<typeof axios>;
+
+describe('FavroHttpClient', () => {
+  let mockAxiosInstance: any;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    // Create a mock axios instance
+    mockAxiosInstance = {
+      get: jest.fn(),
+      post: jest.fn(),
+      patch: jest.fn(),
+      delete: jest.fn(),
+      request: jest.fn(),
+      interceptors: {
+        request: { use: jest.fn() },
+        response: { use: jest.fn() },
+      },
+    };
+    mockedAxios.create = jest.fn().mockReturnValue(mockAxiosInstance);
+  });
+
+  test('creates axios instance with default base URL', () => {
+    new FavroHttpClient();
+    expect(mockedAxios.create).toHaveBeenCalledWith(
+      expect.objectContaining({ baseURL: 'https://api.favro.com/v1' })
+    );
+  });
+
+  test('creates axios instance with custom base URL', () => {
+    new FavroHttpClient({ baseURL: 'https://custom.api.com' });
+    expect(mockedAxios.create).toHaveBeenCalledWith(
+      expect.objectContaining({ baseURL: 'https://custom.api.com' })
+    );
+  });
+
+  test('creates axios instance with 30s timeout', () => {
+    new FavroHttpClient();
+    expect(mockedAxios.create).toHaveBeenCalledWith(
+      expect.objectContaining({ timeout: 30000 })
+    );
+  });
+
+  test('registers request and response interceptors', () => {
+    new FavroHttpClient({ auth: { token: 'test-token' } });
+    expect(mockAxiosInstance.interceptors.request.use).toHaveBeenCalled();
+    expect(mockAxiosInstance.interceptors.response.use).toHaveBeenCalled();
+  });
+
+  test('get() calls axios instance get and returns data', async () => {
+    const client = new FavroHttpClient();
+    mockAxiosInstance.get.mockResolvedValue({ data: { entities: [] } });
+    const result = await client.get('/boards');
+    expect(mockAxiosInstance.get).toHaveBeenCalledWith('/boards', undefined);
+    expect(result).toEqual({ entities: [] });
+  });
+
+  test('get() with params passes config', async () => {
+    const client = new FavroHttpClient();
+    mockAxiosInstance.get.mockResolvedValue({ data: [1, 2, 3] });
+    await client.get('/cards', { params: { limit: 10 } });
+    expect(mockAxiosInstance.get).toHaveBeenCalledWith('/cards', { params: { limit: 10 } });
+  });
+
+  test('post() calls axios instance post and returns data', async () => {
+    const client = new FavroHttpClient();
+    mockAxiosInstance.post.mockResolvedValue({ data: { cardId: 'new', name: 'Card' } });
+    const result = await client.post('/cards', { name: 'Card' });
+    expect(mockAxiosInstance.post).toHaveBeenCalledWith('/cards', { name: 'Card' }, undefined);
+    expect(result).toEqual({ cardId: 'new', name: 'Card' });
+  });
+
+  test('patch() calls axios instance patch and returns data', async () => {
+    const client = new FavroHttpClient();
+    mockAxiosInstance.patch.mockResolvedValue({ data: { cardId: '1', name: 'Updated' } });
+    const result = await client.patch('/cards/1', { name: 'Updated' });
+    expect(mockAxiosInstance.patch).toHaveBeenCalledWith('/cards/1', { name: 'Updated' }, undefined);
+    expect(result).toEqual({ cardId: '1', name: 'Updated' });
+  });
+
+  test('delete() calls axios instance delete and returns data', async () => {
+    const client = new FavroHttpClient();
+    mockAxiosInstance.delete.mockResolvedValue({ data: undefined });
+    const result = await client.delete('/cards/1');
+    expect(mockAxiosInstance.delete).toHaveBeenCalledWith('/cards/1', undefined);
+  });
+
+  test('setAuth() sets auth configuration', () => {
+    const client = new FavroHttpClient();
+    client.setAuth({ token: 'new-token' });
+    // Access private property via type assertion
+    expect((client as any).auth).toEqual({ token: 'new-token' });
+  });
+
+  test('getClient() returns the axios instance', () => {
+    const client = new FavroHttpClient();
+    const instance = client.getClient();
+    expect(instance).toBe(mockAxiosInstance);
+  });
+
+  test('get() propagates errors from axios', async () => {
+    const client = new FavroHttpClient();
+    mockAxiosInstance.get.mockRejectedValue(new Error('Network error'));
+    await expect(client.get('/boards')).rejects.toThrow('Network error');
+  });
+
+  test('post() propagates errors from axios', async () => {
+    const client = new FavroHttpClient();
+    mockAxiosInstance.post.mockRejectedValue(new Error('Validation failed'));
+    await expect(client.post('/cards', {})).rejects.toThrow('Validation failed');
+  });
+
+  // --- shouldRetry logic (via interceptor) ---
+
+  test('response interceptor is registered', () => {
+    new FavroHttpClient();
+    expect(mockAxiosInstance.interceptors.response.use).toHaveBeenCalledWith(
+      expect.any(Function),
+      expect.any(Function)
+    );
+  });
+
+  test('request interceptor adds Authorization header with token', () => {
+    const client = new FavroHttpClient({ auth: { token: 'my-token' } });
+    // Get the interceptor handler
+    const requestHandler = mockAxiosInstance.interceptors.request.use.mock.calls[0][0];
+    const config = { headers: {} };
+    const result = requestHandler(config);
+    expect(result.headers['Authorization']).toBe('Bearer my-token');
+  });
+
+  test('request interceptor does NOT add Authorization when no token', () => {
+    const client = new FavroHttpClient();
+    const requestHandler = mockAxiosInstance.interceptors.request.use.mock.calls[0][0];
+    const config = { headers: {} };
+    const result = requestHandler(config);
+    expect(result.headers['Authorization']).toBeUndefined();
+  });
+
+  test('response interceptor retries on 429 status', async () => {
+    const client = new FavroHttpClient();
+    const [successHandler, errorHandler] = mockAxiosInstance.interceptors.response.use.mock.calls[0];
+
+    // Simulate a 429 error
+    const error429 = {
+      response: { status: 429 },
+      config: {},
+    };
+
+    // Mock the retry request to succeed
+    mockAxiosInstance.request.mockResolvedValue({ data: { success: true } });
+
+    const result = await errorHandler(error429);
+    expect(mockAxiosInstance.request).toHaveBeenCalledWith(error429.config);
+    expect(error429.config).toHaveProperty('_retried', true);
+  }, 10000);
+
+  test('response interceptor does NOT retry on second attempt (hasRetried)', async () => {
+    const client = new FavroHttpClient();
+    const [, errorHandler] = mockAxiosInstance.interceptors.response.use.mock.calls[0];
+
+    // Simulate 429 on already-retried request
+    const error429 = {
+      response: { status: 429 },
+      config: { _retried: true },
+    };
+
+    await expect(errorHandler(error429)).rejects.toEqual(error429);
+    expect(mockAxiosInstance.request).not.toHaveBeenCalled();
+  });
+
+  test('response interceptor retries on 500 server error', async () => {
+    const client = new FavroHttpClient();
+    const [, errorHandler] = mockAxiosInstance.interceptors.response.use.mock.calls[0];
+
+    const error500 = {
+      response: { status: 500 },
+      config: {},
+    };
+
+    mockAxiosInstance.request.mockResolvedValue({ data: { ok: true } });
+
+    await errorHandler(error500);
+    expect(mockAxiosInstance.request).toHaveBeenCalled();
+  }, 5000);
+
+  test('response interceptor retries on 408 timeout', async () => {
+    const client = new FavroHttpClient();
+    const [, errorHandler] = mockAxiosInstance.interceptors.response.use.mock.calls[0];
+
+    const error408 = {
+      response: { status: 408 },
+      config: {},
+    };
+
+    mockAxiosInstance.request.mockResolvedValue({ data: { ok: true } });
+
+    await errorHandler(error408);
+    expect(mockAxiosInstance.request).toHaveBeenCalled();
+  }, 5000);
+
+  test('response interceptor does NOT retry on 400 bad request', async () => {
+    const client = new FavroHttpClient();
+    const [, errorHandler] = mockAxiosInstance.interceptors.response.use.mock.calls[0];
+
+    const error400 = {
+      response: { status: 400 },
+      config: {},
+    };
+
+    await expect(errorHandler(error400)).rejects.toEqual(error400);
+    expect(mockAxiosInstance.request).not.toHaveBeenCalled();
+  });
+
+  test('response interceptor does NOT retry on 401 unauthorized', async () => {
+    const client = new FavroHttpClient();
+    const [, errorHandler] = mockAxiosInstance.interceptors.response.use.mock.calls[0];
+
+    const error401 = {
+      response: { status: 401 },
+      config: {},
+    };
+
+    await expect(errorHandler(error401)).rejects.toEqual(error401);
+    expect(mockAxiosInstance.request).not.toHaveBeenCalled();
+  });
+
+  test('response interceptor retries when no response (network error)', async () => {
+    const client = new FavroHttpClient();
+    const [, errorHandler] = mockAxiosInstance.interceptors.response.use.mock.calls[0];
+
+    const networkError = {
+      response: undefined,
+      config: {},
+    };
+
+    mockAxiosInstance.request.mockResolvedValue({ data: { ok: true } });
+
+    await errorHandler(networkError);
+    expect(mockAxiosInstance.request).toHaveBeenCalled();
+  }, 5000);
+
+  test('response success interceptor passes through response unchanged', () => {
+    const client = new FavroHttpClient();
+    const [successHandler] = mockAxiosInstance.interceptors.response.use.mock.calls[0];
+
+    const response = { data: { entities: [] }, status: 200 };
+    const result = successHandler(response);
+    expect(result).toBe(response);
+  });
+});

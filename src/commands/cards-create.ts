@@ -15,7 +15,7 @@ export function registerCardsCreateCommand(program: Command): void {
     .option('--status <status>', 'Card status')
     .option('--bulk <file>', 'Bulk create from JSON file')
     .option('--json', 'Output as JSON')
-    .action(async (title, options) => {
+    .action(async (_createArg, title, options) => {
       try {
         const client = new FavroHttpClient({ 
           auth: { token: process.env.FAVRO_API_TOKEN || 'demo-token' }
