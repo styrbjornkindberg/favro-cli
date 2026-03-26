@@ -360,6 +360,19 @@ describeOrSkip('Dry-run — no mutations', () => {
 // =============================================================================
 
 describeOrSkip('CSV import — bulk create from fixture file', () => {
+  beforeAll(async () => {
+    if (!INTEGRATION_GUARD) return;
+    // Clear any stale CSV fixture cards left by prior failed runs.
+    // Without this, a failed teardown poisons the board and causes false positives
+    // in the dry-run assertion (which checks that no CSV cards exist after dry-run).
+    const api = makeAPI();
+    const cards = await api.listCards(TEST_BOARD_ID, 200);
+    const stale = cards.filter(c => c.name.startsWith('[integration-test] CSV Card'));
+    for (const c of stale) {
+      try { await api.deleteCard(c.cardId); } catch { /* best effort */ }
+    }
+  });
+
   it('CSV dry-run shows preview without creating cards', async () => {
     // Run dry-run BEFORE the real import so no CSV cards exist yet
     const result = await runCLI([
