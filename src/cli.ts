@@ -30,7 +30,18 @@ const program = new Command();
 
 program
   .name('favro')
-  .description('Favro command-line interface')
+  .description(
+    'Favro command-line interface — manage boards and cards from your terminal.\n\n' +
+    'Quick start:\n' +
+    '  favro auth login                  Set up your API key\n' +
+    '  favro boards list                 List your boards\n' +
+    '  favro cards list --board <id>     List cards on a board\n' +
+    '  favro cards create "My card"      Create a card\n' +
+    '  favro cards export <id> --format csv --out cards.csv\n\n' +
+    'Authentication:\n' +
+    '  Set FAVRO_API_KEY env var, or run `favro auth login` to save to ~/.favro/config.json\n\n' +
+    'Full docs: https://github.com/square-moon/favro-cli#readme'
+  )
   .version('0.1.0');
 
 // ─── auth commands ────────────────────────────────────────────────────────────
@@ -43,12 +54,33 @@ const boardsCmd = program.command('boards').description('Board operations');
 registerBoardsListCommand(boardsCmd);
 
 // ─── cards parent ────────────────────────────────────────────────────────────
-const cards = program.command('cards').description('Card operations');
+const cards = program.command('cards').description(
+  'Card operations — list, create, update, and export cards.\n\n' +
+  'Subcommands:\n' +
+  '  list    List cards from a board\n' +
+  '  create  Create a card (single, bulk JSON, or CSV import)\n' +
+  '  update  Update an existing card by ID\n' +
+  '  export  Export all cards from a board to JSON or CSV\n\n' +
+  'Examples:\n' +
+  '  favro cards list --board <id>\n' +
+  '  favro cards create "My card" --board <id>\n' +
+  '  favro cards create --csv tasks.csv --board <id>\n' +
+  '  favro cards update <cardId> --status "Done"\n' +
+  '  favro cards export <id> --format csv --out cards.csv'
+);
 
 // ─── cards list ──────────────────────────────────────────────────────────────
 cards
   .command('list')
-  .description('List cards from a board')
+  .description(
+    'List cards from a board with optional filters.\n\n' +
+    'Examples:\n' +
+    '  favro cards list --board <id>\n' +
+    '  favro cards list --board <id> --status "In Progress" --limit 100\n' +
+    '  favro cards list --board <id> --assignee alice --json\n' +
+    '  favro cards list --board <id> --tag bug\n\n' +
+    'Tip: Use `favro boards list` to find board IDs.'
+  )
   .option('--board <id>', 'Board ID to list cards from')
   .option('--status <status>', 'Filter by status')
   .option('--assignee <user>', 'Filter by assignee')
@@ -123,7 +155,20 @@ function parseCSV(content: string): Record<string, string>[] {
 // ─── cards create ─────────────────────────────────────────────────────────────
 cards
   .command('create <title>')
-  .description('Create a new card, bulk from JSON file, or import from CSV')
+  .description(
+    'Create a new card, or bulk-import cards from CSV or JSON.\n\n' +
+    'Examples:\n' +
+    '  favro cards create "Fix login bug" --board <id>\n' +
+    '  favro cards create "My card" --board <id> --status "Todo" --description "Details"\n' +
+    '  favro cards create --csv tasks.csv --board <id>\n' +
+    '  favro cards create --bulk tasks.json --board <id>\n' +
+    '  favro cards create --csv tasks.csv --board <id> --dry-run\n\n' +
+    'CSV format (columns: name, description, status):\n' +
+    '  name,description,status\n' +
+    '  "Fix bug","Safari issue","In Progress"\n' +
+    '  "Add feature","User request","Backlog"\n\n' +
+    'Tip: Always test with --dry-run before bulk importing.'
+  )
   .option('--board <id>', 'Target board ID')
   .option('--description <text>', 'Card description')
   .option('--status <status>', 'Card status')
@@ -213,7 +258,16 @@ cards
 // ─── cards update ─────────────────────────────────────────────────────────────
 cards
   .command('update <cardId>')
-  .description('Update a card')
+  .description(
+    'Update an existing card by its card ID.\n\n' +
+    'Examples:\n' +
+    '  favro cards update <cardId> --status "Done"\n' +
+    '  favro cards update <cardId> --name "New title" --status "In Progress"\n' +
+    '  favro cards update <cardId> --assignees "alice,bob"\n' +
+    '  favro cards update <cardId> --tags "bug,sprint-42"\n' +
+    '  favro cards update <cardId> --status "Done" --dry-run\n\n' +
+    'Tip: Use `favro cards list --json` to find card IDs.'
+  )
   .option('--name <name>', 'New card name')
   .option('--description <desc>', 'Card description')
   .option('--status <status>', 'Card status')
@@ -255,7 +309,20 @@ cards
 // ─── cards export ─────────────────────────────────────────────────────────────
 cards
   .command('export <board>')
-  .description('Export cards from a board to JSON or CSV')
+  .description(
+    'Export all cards from a board to JSON or CSV.\n\n' +
+    'Examples:\n' +
+    '  favro cards export <boardId> --format csv --out sprint.csv\n' +
+    '  favro cards export <boardId> --format json --out sprint.json\n' +
+    '  favro cards export <boardId> --format json | jq \'.[].name\'\n' +
+    '  favro cards export <boardId> --format csv --filter "assignee:alice"\n' +
+    '  favro cards export <boardId> --format json --filter "status:Done" --filter "tag:sprint-42"\n\n' +
+    'Filter expressions (all conditions must match — AND logic):\n' +
+    '  assignee:alice    cards where alice is an assignee\n' +
+    '  status:Done       cards with status "Done"\n' +
+    '  tag:bug           cards tagged "bug"\n\n' +
+    'Handles 10,000+ cards with automatic pagination.'
+  )
   .option('--format <format>', 'Export format: json or csv', 'json')
   .option('--out <file>', 'Output file path (defaults to stdout)')
   .option(
