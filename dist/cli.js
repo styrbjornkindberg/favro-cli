@@ -4,14 +4,17 @@
  * Favro CLI — Entry Point
  *
  * Usage:
+ *   favro auth login                  # set up API key interactively
+ *   favro auth check                  # verify API key is valid
  *   favro cards list [--board <id>] [--status <s>] [--assignee <a>] [--limit <n>]
  *   favro cards create <title> [--description <d>] [--status <s>] [--board <id>] [--dry-run]
  *   favro cards create --csv <file> --board <id> [--dry-run]
  *   favro cards update <cardId> [--name <n>] [--status <s>] [--assignees <a>] [--dry-run]
  *   favro cards export <board> --format json|csv [--out <file>] [--filter <expr>]
  *
- * Environment:
- *   FAVRO_API_TOKEN  Required. Favro API bearer token.
+ * Config (priority: --api-key flag > FAVRO_API_KEY env > ~/.favro/config.json):
+ *   FAVRO_API_KEY    API key (new preferred env var)
+ *   FAVRO_API_TOKEN  API key (legacy env var, still supported)
  */
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -56,47 +59,19 @@ const cards_api_1 = __importDefault(require("./lib/cards-api"));
 const http_client_1 = __importDefault(require("./lib/http-client"));
 const csv_1 = require("./lib/csv");
 const cards_export_1 = require("./commands/cards-export");
+const auth_1 = require("./commands/auth");
+const boards_list_1 = require("./commands/boards-list");
 const program = new commander_1.Command();
 program
     .name('favro')
     .description('Favro command-line interface')
     .version('0.1.0');
+// ─── auth commands ────────────────────────────────────────────────────────────
+(0, auth_1.registerAuthCommand)(program);
 // ─── boards parent ────────────────────────────────────────────────────────────
 const boardsCmd = program.command('boards').description('Board operations');
 // ─── boards list ─────────────────────────────────────────────────────────────
-boardsCmd
-    .command('list')
-    .description('List all boards')
-    .option('--json', 'Output as JSON')
-    .action(async (options) => {
-    const token = process.env.FAVRO_API_TOKEN;
-    if (!token) {
-        console.error('✗ Missing required environment variable: FAVRO_API_TOKEN');
-        process.exit(1);
-    }
-    try {
-        const client = new http_client_1.default({ auth: { token } });
-        const data = await client.get('/boards', { params: { limit: 100 } });
-        const boards = Array.isArray(data) ? data : (data?.entities ?? data?.boards ?? []);
-        if (options.json) {
-            console.log(JSON.stringify(boards, null, 2));
-        }
-        else {
-            console.log(`Found ${boards.length} board(s):`);
-            if (boards.length > 0) {
-                const rows = boards.map((b) => ({
-                    ID: b.boardId ?? b.id,
-                    Name: b.name,
-                }));
-                console.table(rows);
-            }
-        }
-    }
-    catch (error) {
-        console.error(`✗ Error: ${error instanceof Error ? error.message : error}`);
-        process.exit(1);
-    }
-});
+(0, boards_list_1.registerBoardsListCommand)(boardsCmd);
 // ─── cards parent ────────────────────────────────────────────────────────────
 const cards = program.command('cards').description('Card operations');
 // ─── cards list ──────────────────────────────────────────────────────────────
@@ -175,6 +150,7 @@ cards
     .option('--board <id>', 'Target board ID')
     .option('--description <text>', 'Card description')
     .option('--status <status>', 'Card status')
+    .option('--assignee <user>', 'Assignee username or user ID')
     .option('--bulk <file>', 'Bulk create from JSON file')
     .option('--csv <file>', 'Bulk import from CSV file (columns: name, description, status)')
     .option('--dry-run', 'Print what would be created without making API calls')
@@ -242,6 +218,7 @@ cards
             description: options.description,
             status: options.status,
             boardId: options.board,
+            assignees: options.assignee ? [options.assignee] : undefined,
         });
         console.log(`✓ Card created: ${card.cardId}`);
         if (options.json)

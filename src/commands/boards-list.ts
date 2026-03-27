@@ -9,7 +9,7 @@ import { resolveApiKey } from '../lib/config';
 
 export function formatBoardsTable(boards: Board[]): void {
   if (boards.length === 0) {
-    console.log('No boards found.');
+    console.log('No boards found. Check your API key or collection permissions.');
     return;
   }
 

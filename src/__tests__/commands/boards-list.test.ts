@@ -144,7 +144,7 @@ describe('boards list command', () => {
     await program.parseAsync(['node', 'cli', 'boards', 'list']);
 
     expect(consoleLogSpy).toHaveBeenCalledWith('Found 0 board(s):');
-    expect(consoleLogSpy).toHaveBeenCalledWith('No boards found.');
+    expect(consoleLogSpy).toHaveBeenCalledWith('No boards found. Check your API key or collection permissions.');
   });
 
   // --- json output ---
@@ -273,7 +273,7 @@ describe('formatBoardsTable', () => {
 
   test('prints "No boards found." for empty list', () => {
     formatBoardsTable([]);
-    expect(consoleLogSpy).toHaveBeenCalledWith('No boards found.');
+    expect(consoleLogSpy).toHaveBeenCalledWith('No boards found. Check your API key or collection permissions.');
   });
 
   test('calls console.table with board rows', () => {

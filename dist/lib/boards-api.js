@@ -5,9 +5,25 @@ class BoardsAPI {
     constructor(client) {
         this.client = client;
     }
-    async listBoards(limit = 50) {
-        const response = await this.client.get('/boards', { params: { limit } });
-        return response.entities || [];
+    async listBoards(pageSize = 50) {
+        const allBoards = [];
+        let requestId;
+        let page = 1;
+        while (true) {
+            const params = { limit: pageSize };
+            if (requestId) {
+                params.requestId = requestId;
+                params.page = page;
+            }
+            const response = await this.client.get('/boards', { params });
+            const boards = response.entities || [];
+            allBoards.push(...boards);
+            requestId = response.requestId;
+            if (!requestId || !response.pages || page >= response.pages || boards.length === 0)
+                break;
+            page++;
+        }
+        return allBoards;
     }
     async getBoard(boardId) {
         return this.client.get(`/boards/${boardId}`);
@@ -21,9 +37,25 @@ class BoardsAPI {
     async deleteBoard(boardId) {
         await this.client.delete(`/boards/${boardId}`);
     }
-    async listCollections(limit = 50) {
-        const response = await this.client.get('/collections', { params: { limit } });
-        return response.entities || [];
+    async listCollections(pageSize = 50) {
+        const allCollections = [];
+        let requestId;
+        let page = 1;
+        while (true) {
+            const params = { limit: pageSize };
+            if (requestId) {
+                params.requestId = requestId;
+                params.page = page;
+            }
+            const response = await this.client.get('/collections', { params });
+            const collections = response.entities || [];
+            allCollections.push(...collections);
+            requestId = response.requestId;
+            if (!requestId || !response.pages || page >= response.pages || collections.length === 0)
+                break;
+            page++;
+        }
+        return allCollections;
     }
     async getCollection(collectionId) {
         return this.client.get(`/collections/${collectionId}`);

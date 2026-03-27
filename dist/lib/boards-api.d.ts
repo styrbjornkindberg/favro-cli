@@ -4,6 +4,8 @@ export interface Board {
     name: string;
     description?: string;
     collectionId?: string;
+    cardCount?: number;
+    columns?: number;
     createdAt: string;
     updatedAt: string;
 }
@@ -18,7 +20,7 @@ export interface Collection {
 export declare class BoardsAPI {
     private client;
     constructor(client: FavroHttpClient);
-    listBoards(limit?: number): Promise<Board[]>;
+    listBoards(pageSize?: number): Promise<Board[]>;
     getBoard(boardId: string): Promise<Board>;
     createBoard(data: {
         name: string;
@@ -30,7 +32,7 @@ export declare class BoardsAPI {
         description?: string;
     }): Promise<Board>;
     deleteBoard(boardId: string): Promise<void>;
-    listCollections(limit?: number): Promise<Collection[]>;
+    listCollections(pageSize?: number): Promise<Collection[]>;
     getCollection(collectionId: string): Promise<Collection>;
     createCollection(data: {
         name: string;
