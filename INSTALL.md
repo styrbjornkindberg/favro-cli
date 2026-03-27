@@ -1,235 +1,219 @@
 # Installation Guide
 
-Get Favro CLI running on your system in under 5 minutes.
+Complete setup for `favro-cli` in 5 minutes.
 
 ---
 
-## System Requirements
+## Prerequisites
 
-- **Node.js 18.0.0 or later** ([Download](https://nodejs.org/))
-- **npm 9.0.0 or later** (included with Node.js)
-- **macOS, Linux, or Windows** (any OS that runs Node.js)
-- **Favro API key** (see [Getting Your API Key](#getting-your-api-key))
+Before you begin, ensure you have:
 
-### Check Your Prerequisites
+- **Node.js 18 or higher** ([Download Node.js](https://nodejs.org/))
+  - Check your version: `node --version`
+  - If you need to upgrade, follow the [Node.js download page](https://nodejs.org/) for your OS
+- **npm** (included with Node.js)
+  - Check your version: `npm --version`
+- **A Favro account** with API access
+  - You'll need your organization's API token (see [Getting Your API Key](#getting-your-api-key))
+
+---
+
+## Installation Steps
+
+### 1. Install the CLI
 
 ```bash
-# Verify Node.js version (should be 18+)
-node --version
-
-# Verify npm version
-npm --version
+npm install -g @square-moon/favro-cli
 ```
 
-If you get "command not found", [download Node.js](https://nodejs.org/) and install it.
+This makes the `favro` command available globally on your system.
+
+### 2. Verify Installation
+
+```bash
+favro --version
+```
+
+You should see the CLI version number. Example:
+
+```
+@square-moon/favro-cli/0.1.0
+```
 
 ---
 
 ## Getting Your API Key
 
-Before installing, you need a Favro API key:
+### Step 1: Log In to Favro
 
-1. Log in to [favro.com](https://favro.com)
-2. Click your **Profile** (top-right)
-3. Go to **Organization Settings** → **API tokens**
-4. Click **Generate** to create a new token
-5. **Copy the token** (you'll need it in 2 minutes)
+Go to [favro.com](https://favro.com) and log in with your account.
 
-**Note:** Keep this key private — never commit it to version control or share it.
+### Step 2: Navigate to API Settings
+
+1. Click your **profile icon** (top-right)
+2. Select **Organization Settings**
+3. Navigate to **Integrations** → **API tokens**
+
+### Step 3: Generate a Token
+
+1. Click **Create new token**
+2. Give it a name (e.g., `favro-cli`)
+3. Click **Create**
+4. **Copy the token immediately** — you won't be able to view it again
 
 ---
 
-## Installation (3 Steps)
+## Setting Up Authentication
 
-### Step 1: Install the CLI
-
-```bash
-npm install -g @square-moon/favro-cli
-```
-
-This adds the `favro` command to your system path.
-
-**Verify installation:**
-
-```bash
-favro --version
-```
-
-You should see a version number. If you get "command not found", see [Troubleshooting](#troubleshooting-npm-path).
-
-### Step 2: Authenticate
-
-Save your Favro API key. Choose one:
-
-**Interactive (recommended — prompts for key):**
+### Interactive Setup (Recommended)
 
 ```bash
 favro auth login
 ```
 
-**Non-interactive (paste key directly):**
+This will:
+1. Prompt you for your API key
+2. Save it securely to `~/.favro/config.json`
+3. Confirm the key works by testing the API
+
+### Non-Interactive Setup (for Scripts/CI)
 
 ```bash
 favro auth login --api-key YOUR_API_KEY_HERE
 ```
 
-**Environment variable (for scripts/CI):**
+Or set an environment variable (not persisted):
 
 ```bash
-export FAVRO_API_KEY=your_api_key_here
+export FAVRO_API_KEY=YOUR_API_KEY_HERE
 ```
 
-Your key is saved to `~/.favro/config.json` (mode `0600` — only you can read it).
-
-### Step 3: Verify Setup
+### Verify Your Setup
 
 ```bash
 favro auth check
 ```
 
-If successful, you'll see: `✓ API key is valid`
-
----
-
-## First Run: List Your Boards
-
-```bash
-favro boards list
-```
-
-This fetches all boards from your Favro workspace. You should see output like:
+Expected output:
 
 ```
-ID                      Name          Status
-abc123def456           Q1 Planning   active
-xyz789abc012           Engineering   active
+✓ API key is valid
 ```
-
-If you see boards, **you're ready to go!** Proceed to [Common Workflows](./EXAMPLES.md).
 
 ---
 
 ## Troubleshooting
 
-### I see "command not found: favro"
+### `command not found: favro`
 
-**Cause:** npm didn't add the CLI to your PATH.
+The CLI is installed but not in your PATH. Try:
 
-**Fix:**
 ```bash
-# Find where npm installed it
-npm list -g @square-moon/favro-cli
+# Verify the global npm bin directory
+npm config get prefix
 
-# Verify npm's bin directory is in your PATH
-echo $PATH | grep -i npm
-
-# If missing, add npm's global bin to ~/.zshrc (or ~/.bashrc for bash):
-export PATH="/usr/local/bin:$PATH"
-
-# Then reload shell
-source ~/.zshrc
-```
-
-Or reinstall:
-```bash
-npm uninstall -g @square-moon/favro-cli
+# If not in PATH, reinstall with explicit location
 npm install -g @square-moon/favro-cli
-favro --version
 ```
 
-### I see "Error: Request failed with status code 404"
+---
 
-**Cause:** Usually means your API key is missing or invalid.
+### `Error: No API key configured`
 
-**Fix:**
-1. Verify your key was saved:
-   ```bash
-   cat ~/.favro/config.json
-   ```
-   You should see `{"token": "..."}`.
+You haven't set up authentication yet. Run:
 
-2. If missing, run:
-   ```bash
-   favro auth login --api-key YOUR_KEY_HERE
-   ```
-
-3. Verify the key:
-   ```bash
-   favro auth check
-   ```
-
-### I see "Error: Cannot find module"
-
-**Cause:** Incomplete or corrupted installation.
-
-**Fix:**
 ```bash
-# Uninstall and reinstall
-npm uninstall -g @square-moon/favro-cli
-npm install -g @square-moon/favro-cli
-
-# Verify
-favro --version
+favro auth login
 ```
 
-### I get "Checking API key... Error: Request failed"
+And follow the prompts.
 
-**Cause:** Network issue or invalid API key.
+---
 
-**Fix:**
-1. Check your internet connection:
-   ```bash
-   ping favro.com
-   ```
+### `Error: API key is invalid`
 
-2. Verify your API key in Favro:
-   - Log in to [favro.com](https://favro.com)
-   - Go to **Organization Settings** → **API tokens**
-   - Ensure your token hasn't expired or been revoked
+Your key may have:
+- Been revoked or expired
+- Been typed incorrectly
+- Expired (check Favro API token settings)
 
-3. Re-authenticate:
-   ```bash
-   favro auth login --api-key YOUR_NEW_KEY_HERE
-   ```
+To fix:
+1. Go to Favro → **API tokens**
+2. Generate a new token
+3. Run `favro auth login` and paste the new key
 
-### My key works in Favro's web UI but not the CLI
+---
 
-**Cause:** Possible token expiration or permission issue.
+### `EACCES: permission denied` during install
 
-**Fix:**
-1. Generate a **new token** in Favro settings
-2. Save it:
-   ```bash
-   favro auth login --api-key YOUR_NEW_KEY_HERE
-   ```
-3. Verify:
-   ```bash
-   favro auth check
-   ```
+You're trying to install globally without permissions. Fix with:
 
-### I see "EACCES: permission denied"
-
-**Cause:** npm doesn't have permission to write to global directories.
-
-**Fix:**
 ```bash
-# Option 1: Run with sudo (not recommended)
+# Option 1: Use sudo (not recommended)
 sudo npm install -g @square-moon/favro-cli
 
 # Option 2: Fix npm permissions (recommended)
-# See: https://docs.npmjs.com/resolving-eacces-permissions-errors-when-installing-packages-globally
-mkdir ~/.npm-global
-npm config set prefix '~/.npm-global'
-export PATH=~/.npm-global/bin:$PATH
-echo 'export PATH=~/.npm-global/bin:$PATH' >> ~/.zshrc
+# See: https://docs.npmjs.com/resolving-eacces-permissions-errors-when-installing-npm-packages-globally
+```
+
+---
+
+### Network timeout or `ECONNREFUSED`
+
+The CLI couldn't reach Favro's API. Check:
+
+1. **Internet connection:** Run `ping favro.com`
+2. **Firewall:** Ensure port 443 (HTTPS) is not blocked
+3. **Proxy:** If behind a corporate proxy, set environment variables:
+   ```bash
+   export HTTPS_PROXY=https://proxy.example.com:8080
+   export HTTP_PROXY=http://proxy.example.com:8080
+   ```
+
+---
+
+### `Error: ENOTFOUND config.json`
+
+Your config directory doesn't exist. Create it:
+
+```bash
+mkdir -p ~/.favro
+```
+
+Then run `favro auth login` again.
+
+---
+
+## Uninstall
+
+To remove the CLI:
+
+```bash
+npm uninstall -g @square-moon/favro-cli
+```
+
+To remove your saved config:
+
+```bash
+rm ~/.favro/config.json
 ```
 
 ---
 
 ## Next Steps
 
-- **[Common Workflows](./EXAMPLES.md)** — Real-world usage examples
-- **[README](./README.md)** — Full feature reference and command documentation
-- **[Support](#troubleshooting)** — Additional help
+Once installed and authenticated:
 
-Happy tasking! 🎯
+1. **List your boards:** `favro boards list`
+2. **Learn the commands:** `favro --help`
+3. **See examples:** Check the [Examples](./EXAMPLES.md) guide
+4. **Read the full docs:** See [README.md](./README.md)
+
+---
+
+## Getting Help
+
+- **Command help:** `favro <command> --help`
+- **Full documentation:** [README.md](./README.md)
+- **Examples:** [EXAMPLES.md](./EXAMPLES.md)
+- **Issues:** [GitHub issues](https://github.com/square-moon/favro-cli/issues)

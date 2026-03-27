@@ -1,378 +1,564 @@
-# Favro CLI Examples
+# Examples & Workflows
 
-Real-world workflows and command examples for common tasks.
+Real-world patterns for using `favro-cli` in daily work.
 
 ---
 
 ## Table of Contents
 
-1. [Quick Start (5 Minutes)](#quick-start-5-minutes)
-2. [Fetch Tasks for Today](#fetch-tasks-for-today)
-3. [Update Task Status](#update-task-status)
-4. [Create New Tasks](#create-new-tasks)
-5. [Export for Reporting](#export-for-reporting)
-6. [Bulk Operations](#bulk-operations)
-7. [Scripting & Automation](#scripting--automation)
+- [Getting Started](#getting-started)
+- [Daily Tasks](#daily-tasks)
+- [Bulk Operations](#bulk-operations)
+- [Data Export & Analysis](#data-export--analysis)
+- [Sprint Planning](#sprint-planning)
+- [CI/CD Integration](#cicd-integration)
+- [Advanced Patterns](#advanced-patterns)
 
 ---
 
-## Quick Start (5 Minutes)
+## Getting Started
 
-Get up and running with your first Favro CLI commands:
+Before running any command, ensure:
 
-```bash
-# 1. Authenticate (takes 30 seconds)
-favro auth login
-
-# 2. List your boards to find the board ID
-favro boards list
-
-# 3. Copy a board ID from the output
-# Example: "abc123def456" for "Q1 Planning"
-
-# 4. List tasks on that board
-favro cards list --board abc123def456
-
-# 5. Create your first task
-favro cards create "My first task" --board abc123def456
-
-# 6. Done! Explore more commands below
-favro --help
-```
-
-**Time investment:** ~2–3 minutes once you have your API key.
-**Success:** You can list and create tasks without errors.
+1. You're authenticated: `favro auth check`
+2. You know your board ID: `favro boards list`
 
 ---
 
-## Fetch Tasks for Today
+## Daily Tasks
 
-Get an overview of your current workload.
-
-### List all tasks on a board
+### List Cards on a Board
 
 ```bash
-favro cards list --board <boardId>
+favro cards list --board abc123
 ```
 
 Output:
+
 ```
-ID        Name                    Status        Assignee
-abc123    Fix login bug           In Progress   alice
-def456    Add dark mode           Backlog       bob
-ghi789    Update docs             Done          alice
+Found 15 card(s):
+┌─────────┬──────────────┬───────────────────────────┬──────────┬────────────┐
+│ (index) │ ID           │ Name                      │ Status   │ Assignee   │
+├─────────┼──────────────┼───────────────────────────┼──────────┼────────────┤
+│ 0       │ 'xyz789'     │ 'Fix login bug'           │ 'In Prog'│ 'alice'    │
+│ 1       │ 'xyz790'     │ 'Add dark mode'           │ 'Todo'   │ (unassign.)│
+└─────────┴──────────────┴───────────────────────────┴──────────┴────────────┘
 ```
 
-### Filter by status
+### Filter by Status
+
+Show only "In Progress" cards:
 
 ```bash
-# Show only "In Progress" tasks
-favro cards list --board <boardId> --status "In Progress"
-
-# Show only "Done" tasks
-favro cards list --board <boardId> --status "Done"
+favro cards list --board abc123 --status "In Progress"
 ```
 
-### Filter by assignee (if supported)
+### Filter by Assignee
+
+Show cards assigned to Alice:
 
 ```bash
-# Show tasks assigned to you
-favro cards list --board <boardId> --assignee "your-name"
+favro cards list --board abc123 --assignee alice
 ```
 
-### Export to file for review
+### Filter by Tag
+
+Show all "bug" cards:
 
 ```bash
-# Save today's tasks to a text file
-favro cards export <boardId> --format json > today-tasks.json
-
-# Then view with jq (if installed)
-cat today-tasks.json | jq '.[].name'
+favro cards list --board abc123 --tag bug
 ```
 
----
-
-## Update Task Status
-
-Move tasks through your workflow.
-
-### Update a single task
+### Create a Single Card
 
 ```bash
-# Mark a task as "In Progress"
-favro cards update <cardId> --status "In Progress"
-
-# Mark it "Done"
-favro cards update <cardId> --status "Done"
-
-# Change status AND assignee
-favro cards update <cardId> --status "In Review" --assignees "alice"
+favro cards create "Update API documentation" \
+  --board abc123 \
+  --status "Todo" \
+  --description "Swagger spec is out of date"
 ```
 
-### Preview before updating (dry run)
+Output:
 
-```bash
-# See what would change without saving
-favro cards update <cardId> --status "Done" --dry-run
+```
+✓ Created card: Update API documentation (ID: new-card-id)
 ```
 
-### Verify the change
+### Update a Card
+
+Change a card's status:
 
 ```bash
-# List the task again to confirm
-favro cards list --board <boardId> --status "Done"
+favro cards update xyz789 --status "Done"
 ```
 
----
-
-## Create New Tasks
-
-Add work to your board.
-
-### Create a single task
+Update multiple fields:
 
 ```bash
-# Simple task creation
-favro cards create "Write deployment guide" --board <boardId>
-
-# With status and description
-favro cards create "Write deployment guide" \
-  --board <boardId> \
-  --status "Backlog" \
-  --description "Document the new deployment process"
-
-# With tags
-favro cards create "Refactor auth module" \
-  --board <boardId> \
-  --tags "refactor,tech-debt"
-```
-
-### Create from a CSV file
-
-Useful for bulk task import from a spreadsheet.
-
-```bash
-# CSV format: name, description, status
-# Example: examples/sprint-tasks.csv
-cat examples/sprint-tasks.csv
-# name,description,status
-# "Fix login bug","Affects Safari users","In Progress"
-# "Add dark mode","User request","Backlog"
-
-# Preview what will be created
-favro cards create --csv examples/sprint-tasks.csv --board <boardId> --dry-run
-
-# Create all tasks
-favro cards create --csv examples/sprint-tasks.csv --board <boardId>
-
-# Verify
-favro cards list --board <boardId> | grep "Fix login bug"
-```
-
-### Create from JSON (for scripting)
-
-```bash
-# JSON format: array of card objects
-cat tasks.json
-# [
-#   { "name": "Task 1", "status": "Todo", "description": "Do this" },
-#   { "name": "Task 2", "status": "Backlog", "description": "Do that" }
-# ]
-
-favro cards create --bulk tasks.json --board <boardId> --dry-run
-favro cards create --bulk tasks.json --board <boardId>
-```
-
----
-
-## Export for Reporting
-
-Generate reports and backups of your boards.
-
-### Export a board to CSV
-
-Useful for spreadsheets, sharing with non-CLI users, or backup.
-
-```bash
-# Export all tasks from a board
-favro cards export <boardId> --format csv --out board-backup.csv
-
-# View the exported file
-cat board-backup.csv
-# id,name,description,status,assignees,tags,...
-# abc123,"Fix login bug","Affects Safari","In Progress","alice","bug",...
-```
-
-### Export to JSON for scripting
-
-```bash
-# Export as JSON for machine processing
-favro cards export <boardId> --format json --out board.json
-
-# Use jq to filter and transform
-cat board.json | jq '.[] | select(.status == "Done") | .name'
-```
-
-### Filter before exporting
-
-```bash
-# Export only "In Progress" tasks
-favro cards export <boardId> --format csv \
-  --filter "status:In Progress" \
-  --out in-progress.csv
-
-# Export tasks assigned to a specific person
-favro cards export <boardId> --format csv \
-  --filter "assignee:alice" \
-  --out alice-tasks.csv
-
-# Multiple filters (AND logic)
-favro cards export <boardId> --format csv \
-  --filter "assignee:alice" \
-  --filter "status:Done" \
-  --out alice-done-tasks.csv
+favro cards update xyz789 \
+  --name "Fixed: login bug on Safari" \
+  --status "Done" \
+  --assignees "alice,bob"
 ```
 
 ---
 
 ## Bulk Operations
 
-Manage multiple tasks efficiently.
+### Create Multiple Cards from CSV
 
-### Update multiple tasks by status
+Use `favro cards create --csv` to bulk-import cards from a spreadsheet.
 
-```bash
-# List all "In Progress" tasks
-favro cards list --board <boardId> --status "In Progress"
+**1. Create a CSV file** (`sprint-tasks.csv`):
 
-# Manually update each via cardId
-for cardId in abc123 def456 ghi789; do
-  favro cards update "$cardId" --status "Done"
-done
+```csv
+name,description,status
+"Implement user sign-up","OAuth2 integration","Todo"
+"Add password reset flow","Email verification required","Todo"
+"Write unit tests","Target: 80% coverage","Backlog"
+"Deploy to staging","Heroku","Backlog"
+"Code review","Peer review for auth module","Todo"
 ```
 
-### Bulk import from spreadsheet
+**2. Preview the import (dry-run):**
 
 ```bash
-# 1. Prepare a CSV file
-cat my-tasks.csv
-# name,description,status
-# "Design new UI","Figma specs ready","In Progress"
-# "Code review","PR #42","In Review"
-
-# 2. Preview
-favro cards create --csv my-tasks.csv --board <boardId> --dry-run
-
-# 3. Create all at once
-favro cards create --csv my-tasks.csv --board <boardId>
+favro cards create --csv sprint-tasks.csv --board abc123 --dry-run
 ```
 
-### Count tasks by status
+Output:
+
+```
+[dry-run] Would create 5 cards:
+1. Implement user sign-up
+2. Add password reset flow
+3. Write unit tests
+4. Deploy to staging
+5. Code review
+```
+
+**3. Create for real:**
 
 ```bash
-# Export and count with jq
-favro cards export <boardId> --format json | \
-  jq 'group_by(.status) | map({status: .[0].status, count: length})'
+favro cards create --csv sprint-tasks.csv --board abc123
+```
 
-# Output:
-# [
-#   { "status": "Done", "count": 12 },
-#   { "status": "In Progress", "count": 5 },
-#   { "status": "Backlog", "count": 8 }
-# ]
+Output:
+
+```
+✓ Created 5 cards from CSV
+```
+
+### Create Multiple Cards from JSON
+
+Use `favro cards create --bulk` for JSON format.
+
+**Create `tasks.json`:**
+
+```json
+[
+  {
+    "name": "Implement user sign-up",
+    "description": "OAuth2 integration with Google and GitHub",
+    "status": "Todo",
+    "assignees": ["alice"]
+  },
+  {
+    "name": "Add password reset flow",
+    "description": "Email verification required",
+    "status": "Todo",
+    "assignees": ["bob"]
+  },
+  {
+    "name": "Write unit tests",
+    "description": "Target: 80% coverage for auth module",
+    "status": "Backlog"
+  }
+]
+```
+
+**Import:**
+
+```bash
+favro cards create --bulk tasks.json --board abc123
+```
+
+### Update Many Cards at Once
+
+Use dry-run to check, then apply:
+
+```bash
+# Update a specific card
+favro cards update card-001 --status "Done" --dry-run
+# [dry-run] Would update card-001 with: {"status":"Done"}
+
+favro cards update card-001 --status "Done"
+# ✓ Updated card-001
+```
+
+For bulk updates, export the board, modify locally, then create/update:
+
+```bash
+# 1. Export current state
+favro cards export abc123 --format json > current-state.json
+
+# 2. Modify in your editor (e.g., change all "Todo" to "In Progress")
+
+# 3. Reimport via dry-run first
+favro cards create --bulk current-state.json --board abc123 --dry-run
+
+# 4. Actually reimport
+favro cards create --bulk current-state.json --board abc123
 ```
 
 ---
 
-## Scripting & Automation
+## Data Export & Analysis
 
-Use Favro CLI in shell scripts and automation.
+### Export Board to CSV
 
-### Get JSON output for programmatic use
+Export all cards as CSV for spreadsheet analysis:
 
 ```bash
-# List tasks as JSON
-favro cards list --board <boardId> --json > tasks.json
-
-# Create a card and capture its ID
-CARD_ID=$(favro cards create "New task" --board <boardId> --json | jq -r '.cardId')
-echo "Created card: $CARD_ID"
-
-# Update the newly created card
-favro cards update "$CARD_ID" --status "In Progress" --assignees "alice"
+favro cards export abc123 --format csv --out sprint.csv
 ```
 
-### Fetch data for external systems
+Then open in Excel or Google Sheets:
 
 ```bash
-# Export all cards and pipe to another tool
-favro cards export <boardId> --format json | \
-  jq '.[] | {title: .name, owner: .assignees[0], status: .status}' | \
-  curl -X POST -d @- https://your-webhook-receiver.com/cards
+open sprint.csv  # macOS
+xdg-open sprint.csv  # Linux
+start sprint.csv  # Windows
 ```
 
-### Automation in CI/CD
+### Export to JSON
+
+Export as JSON for programmatic processing:
 
 ```bash
-# In a GitHub Actions workflow:
-env:
-  FAVRO_API_KEY: ${{ secrets.FAVRO_API_KEY }}
-
-run: |
-  # Create a deployment task
-  favro cards create "Deploy v1.2.3" \
-    --board abc123def456 \
-    --status "In Progress" \
-    --tags "deployment,v1.2.3"
+favro cards export abc123 --format json --out sprint.json
 ```
 
-### Scheduled updates (with cron)
+### Export to Stdout (Pipe to Tools)
+
+Pipe directly to other CLI tools:
 
 ```bash
-# In crontab: Update status of stale tasks daily at 9am
-# 0 9 * * * /usr/local/bin/favro cards update <cardId> --status "Done"
+# Count total cards
+favro cards export abc123 --format json | jq length
+
+# Extract just card names
+favro cards export abc123 --format json | jq -r '.[].name'
+
+# Group by status
+favro cards export abc123 --format json | jq 'group_by(.status) | map({status: .[0].status, count: length})'
+```
+
+### Export with Filters
+
+Export only "Done" cards:
+
+```bash
+favro cards export abc123 --format csv --filter "status:Done" --out done.csv
+```
+
+Export cards with a specific tag:
+
+```bash
+favro cards export abc123 --format json --filter "tag:urgent" --out urgent.json
+```
+
+Multiple filters (AND logic):
+
+```bash
+favro cards export abc123 --format json \
+  --filter "status:Done" \
+  --filter "assignee:alice" \
+  --out alice-done.json
+```
+
+### Count Cards by Status
+
+```bash
+favro cards export abc123 --format json | jq 'group_by(.status) | map({status: .[0].status, count: length})'
+```
+
+Output:
+
+```json
+[
+  { "status": "Backlog", "count": 5 },
+  { "status": "Todo", "count": 8 },
+  { "status": "In Progress", "count": 3 },
+  { "status": "Done", "count": 12 }
+]
+```
+
+---
+
+## Sprint Planning
+
+### End-to-End Sprint Workflow
+
+**Week 1: Create sprint board**
+
+```bash
+# Create sprint-42 board in Favro (manual, not supported by CLI yet)
+SPRINT_BOARD_ID="sprint-42-board-id"
+
+# Create task list from planning doc
+favro cards create --csv sprint-42-planning.csv --board $SPRINT_BOARD_ID --dry-run
+
+# Review, then commit
+favro cards create --csv sprint-42-planning.csv --board $SPRINT_BOARD_ID
+```
+
+**Mid-sprint: Check progress**
+
+```bash
+# How many cards are in progress?
+favro cards list --board $SPRINT_BOARD_ID --status "In Progress"
+
+# Which cards are not assigned?
+favro cards list --board $SPRINT_BOARD_ID --status "Todo"
+```
+
+**Sprint review: Export results**
+
+```bash
+# Export cards marked "Done"
+favro cards export $SPRINT_BOARD_ID \
+  --format json \
+  --filter "status:Done" \
+  --out sprint-42-done.json
+
+# How many cards shipped?
+cat sprint-42-done.json | jq length
+
+# Export for retrospective analysis
+favro cards export $SPRINT_BOARD_ID \
+  --format csv \
+  --out sprint-42-final.csv
+```
+
+### Assign Tasks to Team Members
+
+```bash
+# Assign to one person
+favro cards update card-001 --assignees "alice"
+
+# Assign to multiple people
+favro cards update card-002 --assignees "bob,charlie"
+
+# Reassign
+favro cards update card-003 --assignees "diana"
+```
+
+---
+
+## CI/CD Integration
+
+### Export Board in GitHub Actions
+
+```yaml
+name: Export Sprint Cards
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'  # Every Monday at 9 AM
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Export sprint cards
+        env:
+          FAVRO_API_KEY: ${{ secrets.FAVRO_API_KEY }}
+        run: |
+          npm install -g @square-moon/favro-cli
+          favro cards export ${{ vars.SPRINT_BOARD_ID }} \
+            --format csv \
+            --out sprint-cards-$(date +%Y-%m-%d).csv
+
+      - name: Upload to artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: sprint-cards
+          path: sprint-cards-*.csv
+```
+
+### Verify API Key in CI
+
+```bash
+# Before running commands, check the key is valid
+export FAVRO_API_KEY=${{ secrets.FAVRO_API_KEY }}
+favro auth check
+
+if [ $? -ne 0 ]; then
+  echo "Error: FAVRO_API_KEY is invalid"
+  exit 1
+fi
+
+# Now safe to run other commands
+favro cards list --board abc123
+```
+
+---
+
+## Advanced Patterns
+
+### Use Environment Variables for Configuration
+
+Set defaults in your shell:
+
+```bash
+export FAVRO_API_KEY=your-key-here
+
+# Now commands work without --api-key flag
+favro boards list
+favro cards list --board abc123
+```
+
+### Scripting with CSV/JSON
+
+**Bash script to archive "Done" cards:**
+
+```bash
+#!/bin/bash
+
+BOARD_ID="abc123"
+ARCHIVE_DIR="./archived-sprints"
+
+# Create archive directory
+mkdir -p "$ARCHIVE_DIR"
+
+# Export done cards
+favro cards export "$BOARD_ID" \
+  --format json \
+  --filter "status:Done" \
+  --out "$ARCHIVE_DIR/done-$(date +%Y%m%d-%H%M%S).json"
+
+echo "✓ Archived done cards to $ARCHIVE_DIR"
+```
+
+**Python script to analyze board health:**
+
+```python
+#!/usr/bin/env python3
+
+import json
+import subprocess
+import sys
+
+BOARD_ID = "abc123"
+
+# Export board
+result = subprocess.run(
+    ["favro", "cards", "export", BOARD_ID, "--format", "json"],
+    capture_output=True,
+    text=True
+)
+
+if result.returncode != 0:
+    print("Error exporting board")
+    sys.exit(1)
+
+cards = json.loads(result.stdout)
+
+# Analyze
+status_counts = {}
+for card in cards:
+    status = card.get("status", "Unknown")
+    status_counts[status] = status_counts.get(status, 0) + 1
+
+print("Board Health Report:")
+print("-" * 40)
+for status, count in sorted(status_counts.items()):
+    percentage = (count / len(cards)) * 100
+    print(f"{status:15} {count:3} ({percentage:5.1f}%)")
+```
+
+### Filter and Process Cards Locally
+
+**Get unassigned cards:**
+
+```bash
+favro cards export abc123 --format json | jq '.[] | select(.assignee == null)'
+```
+
+**Get cards overdue:**
+
+```bash
+favro cards export abc123 --format json | jq '.[] | select(.dueDate < now)'
+```
+
+**Find high-priority items:**
+
+```bash
+favro cards export abc123 --format json | jq '.[] | select(.tag | contains("priority"))'
+```
+
+### Dry-Run Before Making Changes
+
+Always use `--dry-run` to preview:
+
+```bash
+# Preview bulk create
+favro cards create --csv new-tasks.csv --board abc123 --dry-run
+
+# Preview update
+favro cards update card-001 --status "Done" --assignees "alice" --dry-run
+
+# Preview export filter
+favro cards export abc123 --filter "status:Todo" --dry-run
 ```
 
 ---
 
 ## Tips & Tricks
 
-- **Use `--help` on any command** to see all available options:
-  ```bash
-  favro cards create --help
-  favro boards list --help
-  ```
-
-- **Use `--dry-run` to preview** before creating or updating:
-  ```bash
-  favro cards create --csv tasks.csv --board <id> --dry-run
-  ```
-
-- **Use `--json` for scripting output:**
-  ```bash
-  favro cards list --board <id> --json | jq '.[].cardId'
-  ```
-
-- **Set `FAVRO_API_KEY` for CI/CD** (no config file needed):
-  ```bash
-  export FAVRO_API_KEY=your_key_here
-  favro boards list
-  ```
-
-- **Verbose mode for debugging:**
-  ```bash
-  favro boards list --verbose
-  ```
+- **Use `--json` for scripting:** Append `--json` to any command to get JSON output
+- **Get help on any command:** `favro <command> --help`
+- **Export for offline work:** Use `--format json` and process locally
+- **Dry-run is free:** Always preview destructive changes with `--dry-run`
+- **Combine with shell tools:** Pipe to `jq`, `grep`, `awk`, `csvkit` for powerful workflows
 
 ---
 
-## Need Help?
+## Troubleshooting Examples
 
-- **Installation issues?** See [INSTALL.md](./INSTALL.md)
-- **Full feature reference?** See [README.md](./README.md)
-- **Commands not working?** Run with `--verbose` for stack traces:
-  ```bash
-  favro boards list --verbose
-  ```
+### Error: "Board not found"
 
-Happy tasking! 🎯
+```bash
+# Verify the board exists and you have access
+favro boards list
+# Find the correct ID in the output, then:
+favro cards list --board <correct-id>
+```
+
+### Error: "API key is invalid"
+
+```bash
+# Verify and fix authentication
+favro auth check
+
+# If invalid, re-authenticate
+favro auth login
+```
+
+### Error: "Output path must be within current directory"
+
+```bash
+# Use relative paths, not absolute
+favro cards export abc123 --format csv --out ./exports/cards.csv
+
+# Don't use absolute paths like /tmp/cards.csv
+```
+
+---
+
+## More Help
+
+- **Command reference:** [README.md](./README.md)
+- **Installation & troubleshooting:** [INSTALL.md](./INSTALL.md)
+- **Full documentation:** `favro --help`
