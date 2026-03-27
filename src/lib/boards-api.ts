@@ -5,6 +5,8 @@ export interface Board {
   name: string;
   description?: string;
   collectionId?: string;
+  cardCount?: number;
+  columns?: number;
   createdAt: string;
   updatedAt: string;
 }

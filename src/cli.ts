@@ -24,6 +24,7 @@ import { writeCardsCSV, writeCardsJSON, normalizeCard, cardsToCSV } from './lib/
 import { parseFilter, applyFilters, ExportFormat } from './commands/cards-export';
 import { Card } from './lib/cards-api';
 import { registerAuthCommand } from './commands/auth';
+import { registerBoardsListCommand } from './commands/boards-list';
 
 const program = new Command();
 
@@ -39,37 +40,7 @@ registerAuthCommand(program);
 const boardsCmd = program.command('boards').description('Board operations');
 
 // ─── boards list ─────────────────────────────────────────────────────────────
-boardsCmd
-  .command('list')
-  .description('List all boards')
-  .option('--json', 'Output as JSON')
-  .action(async (options) => {
-    const token = process.env.FAVRO_API_TOKEN;
-    if (!token) {
-      console.error('✗ Missing required environment variable: FAVRO_API_TOKEN');
-      process.exit(1);
-    }
-    try {
-      const client = new FavroHttpClient({ auth: { token } });
-      const data = await client.get('/boards', { params: { limit: 100 } });
-      const boards: any[] = Array.isArray(data) ? data : (data?.entities ?? data?.boards ?? []);
-      if (options.json) {
-        console.log(JSON.stringify(boards, null, 2));
-      } else {
-        console.log(`Found ${boards.length} board(s):`);
-        if (boards.length > 0) {
-          const rows = boards.map((b: any) => ({
-            ID: b.boardId ?? b.id,
-            Name: b.name,
-          }));
-          console.table(rows);
-        }
-      }
-    } catch (error) {
-      console.error(`✗ Error: ${error instanceof Error ? error.message : error}`);
-      process.exit(1);
-    }
-  });
+registerBoardsListCommand(boardsCmd);
 
 // ─── cards parent ────────────────────────────────────────────────────────────
 const cards = program.command('cards').description('Card operations');
