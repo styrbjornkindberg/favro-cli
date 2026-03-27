@@ -210,8 +210,14 @@ function splitCSVLines(content: string): string[] {
 
 /**
  * Convert a CSVRow to a BulkOperation for card update.
+ *
+ * @param row           Parsed CSV row with card_id and optional fields
+ * @param previousState Optional snapshot of the card's current state (for rollback)
  */
-export function csvRowToBulkOperation(row: CSVRow): BulkOperation {
+export function csvRowToBulkOperation(
+  row: CSVRow,
+  previousState?: Partial<BulkCardChanges>
+): BulkOperation {
   const changes: Partial<BulkCardChanges> = {};
 
   if (row.status) changes.status = row.status;
@@ -231,6 +237,7 @@ export function csvRowToBulkOperation(row: CSVRow): BulkOperation {
     type: 'update',
     cardId: row.card_id,
     changes,
+    previousState: previousState ?? {},
     status: 'pending',
   };
 }
@@ -247,7 +254,8 @@ export function buildBulkUpdateRequest(op: BulkOperation): UpdateCardRequest {
   if (changes.status !== undefined) req.status = changes.status;
   if (changes.assignees !== undefined) req.assignees = changes.assignees;
   if (changes.tags !== undefined) req.tags = changes.tags;
-  // dueDate and boardId not in base UpdateCardRequest — would require API extension
+  if (changes.dueDate !== undefined) req.dueDate = changes.dueDate;
+  if (changes.boardId !== undefined) req.boardId = changes.boardId;
 
   return req;
 }
@@ -260,6 +268,8 @@ export function buildBulkRollbackRequest(op: BulkOperation): UpdateCardRequest {
   if (prev.status !== undefined) req.status = prev.status;
   if (prev.assignees !== undefined) req.assignees = prev.assignees;
   if (prev.tags !== undefined) req.tags = prev.tags;
+  if (prev.dueDate !== undefined) req.dueDate = prev.dueDate;
+  if (prev.boardId !== undefined) req.boardId = prev.boardId;
 
   return req;
 }

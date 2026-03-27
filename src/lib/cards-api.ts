@@ -61,6 +61,10 @@ export interface UpdateCardRequest {
   status?: string;
   assignees?: string[];
   tags?: string[];
+  /** Due date in YYYY-MM-DD format. Supported by Favro API updateCard endpoint. */
+  dueDate?: string;
+  /** Target board ID when moving a card between boards. Supported by Favro API updateCard endpoint. */
+  boardId?: string;
 }
 
 /**

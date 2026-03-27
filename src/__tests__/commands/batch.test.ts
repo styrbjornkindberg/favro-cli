@@ -205,6 +205,45 @@ describe('batch update command', () => {
 
     expect(processExitSpy).toHaveBeenCalledWith(1);
   });
+
+  it('--json: first stdout call is parseable JSON (no progress messages)', async () => {
+    const csv = 'card_id,status\ncard-1,Done';
+    mockFsReadFile.mockResolvedValue(csv as any);
+    mockApi.updateCard.mockResolvedValue(makeCard({ cardId: 'card-1', status: 'Done' }));
+
+    await program.parseAsync(['node', 'favro', 'batch', 'update', '--from-csv', 'cards.csv', '--json']);
+
+    // First console.log call must be parseable JSON
+    expect(consoleLogSpy.mock.calls.length).toBeGreaterThan(0);
+    const firstCall = consoleLogSpy.mock.calls[0][0];
+    expect(() => JSON.parse(firstCall)).not.toThrow();
+    const parsed = JSON.parse(firstCall);
+    expect(parsed).toHaveProperty('total');
+    expect(parsed).toHaveProperty('success');
+  });
+
+  it('sends dueDate field when CSV has due_date column (BLOCKER 2)', async () => {
+    const csv = 'card_id,due_date\ncard-1,2026-12-31';
+    mockFsReadFile.mockResolvedValue(csv as any);
+    mockApi.updateCard.mockResolvedValue(makeCard({ cardId: 'card-1' }));
+
+    await program.parseAsync(['node', 'favro', 'batch', 'update', '--from-csv', 'cards.csv']);
+
+    expect(mockApi.updateCard).toHaveBeenCalledWith('card-1', expect.objectContaining({ dueDate: '2026-12-31' }));
+  });
+
+  it('fetches card previousState before updating (for atomic rollback, BLOCKER 4)', async () => {
+    const csv = 'card_id,status\ncard-1,Done';
+    mockFsReadFile.mockResolvedValue(csv as any);
+    mockApi.getCard.mockResolvedValue(makeCard({ cardId: 'card-1', status: 'Backlog', dueDate: '2026-01-01', boardId: 'board-x' }));
+    mockApi.updateCard.mockResolvedValue(makeCard({ cardId: 'card-1', status: 'Done' }));
+
+    await program.parseAsync(['node', 'favro', 'batch', 'update', '--from-csv', 'cards.csv']);
+
+    // getCard must be called to fetch previousState
+    expect(mockApi.getCard).toHaveBeenCalledWith('card-1');
+    expect(mockApi.updateCard).toHaveBeenCalledTimes(1);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -346,6 +385,69 @@ describe('batch move command', () => {
     const output = JSON.parse(jsonCall![0]);
     expect(output).toHaveProperty('total');
     expect(output).toHaveProperty('success');
+  });
+
+  it('--json: first stdout call is parseable JSON with no progress messages (BLOCKER 3)', async () => {
+    mockApi.listCards.mockResolvedValue([
+      makeCard({ cardId: 'card-1', status: 'Completed' }),
+    ]);
+    mockApi.updateCard.mockResolvedValue(makeCard({ cardId: 'card-1', status: 'Archive' }));
+
+    await program.parseAsync([
+      'node', 'favro', 'batch', 'move',
+      '--board', 'board-1',
+      '--status', 'Archive',
+      '--filter', 'status:Completed',
+      '--json',
+    ]);
+
+    // First stdout call MUST be parseable JSON (no "⚙ Moving..." prefix)
+    expect(consoleLogSpy.mock.calls.length).toBeGreaterThan(0);
+    const firstCall = consoleLogSpy.mock.calls[0][0];
+    expect(() => JSON.parse(firstCall)).not.toThrow();
+  });
+
+  it('sends boardId field when --to-board is specified (BLOCKER 1)', async () => {
+    mockApi.listCards.mockResolvedValue([
+      makeCard({ cardId: 'card-1', status: 'Completed', boardId: 'board-src' }),
+    ]);
+    mockApi.updateCard.mockResolvedValue(makeCard({ cardId: 'card-1', boardId: 'board-dst' }));
+
+    await program.parseAsync([
+      'node', 'favro', 'batch', 'move',
+      '--board', 'board-src',
+      '--to-board', 'board-dst',
+      '--filter', 'status:Completed',
+    ]);
+
+    expect(mockApi.updateCard).toHaveBeenCalledWith(
+      'card-1',
+      expect.objectContaining({ boardId: 'board-dst' })
+    );
+  });
+
+  it('captures boardId in previousState for move rollback (BLOCKER 5)', async () => {
+    // card-1 succeeds, card-2 fails → rollback card-1 with boardId restored
+    mockApi.listCards.mockResolvedValue([
+      makeCard({ cardId: 'card-1', status: 'Completed', boardId: 'board-src' }),
+      makeCard({ cardId: 'card-2', status: 'Completed', boardId: 'board-src' }),
+    ]);
+    mockApi.updateCard
+      .mockResolvedValueOnce(makeCard({ cardId: 'card-1', boardId: 'board-dst' })) // card-1 succeeds
+      .mockRejectedValueOnce(new Error('API error'))                                 // card-2 fails
+      .mockResolvedValueOnce(makeCard({ cardId: 'card-1', boardId: 'board-src' })); // rollback
+
+    await program.parseAsync([
+      'node', 'favro', 'batch', 'move',
+      '--board', 'board-src',
+      '--to-board', 'board-dst',
+      '--filter', 'status:Completed',
+    ]);
+
+    // Rollback should restore boardId: board-src
+    const rollbackCall = mockApi.updateCard.mock.calls[2]; // 3rd call is rollback
+    expect(rollbackCall[1]).toMatchObject({ boardId: 'board-src' });
+    expect(processExitSpy).toHaveBeenCalledWith(1);
   });
 });
 
@@ -514,6 +616,29 @@ describe('batch assign command', () => {
     ]);
 
     expect(processExitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it('--json: first stdout call is parseable JSON with no progress messages (BLOCKER 3)', async () => {
+    mockApi.listCards.mockResolvedValue([
+      makeCard({ cardId: 'card-1', status: 'Backlog', assignees: [] }),
+    ]);
+    mockApi.updateCard.mockResolvedValue(makeCard());
+
+    await program.parseAsync([
+      'node', 'favro', 'batch', 'assign',
+      '--board', 'board-1',
+      '--filter', 'status:Backlog',
+      '--to', 'alice',
+      '--json',
+    ]);
+
+    // First stdout call MUST be parseable JSON (no "⚙ Assigning..." prefix)
+    expect(consoleLogSpy.mock.calls.length).toBeGreaterThan(0);
+    const firstCall = consoleLogSpy.mock.calls[0][0];
+    expect(() => JSON.parse(firstCall)).not.toThrow();
+    const parsed = JSON.parse(firstCall);
+    expect(parsed).toHaveProperty('total');
+    expect(parsed).toHaveProperty('success');
   });
 });
 

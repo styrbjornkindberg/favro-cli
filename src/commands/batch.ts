@@ -17,6 +17,7 @@ import { logError, missingApiKeyError } from '../lib/error-handler';
 import {
   BulkTransaction,
   BulkOperation,
+  BulkCardChanges,
   parseCSVContent,
   csvRowToBulkOperation,
   formatBulkSummary,
@@ -156,18 +157,42 @@ export function registerBatchUpdateCommand(batch: Command): void {
           process.exit(1);
         }
 
-        const ops: BulkOperation[] = rows.map(csvRowToBulkOperation);
+        // Execute or prepare operations (fetch previousState for rollback)
+        const client = new FavroHttpClient({ auth: { token } });
+        const api = new CardsAPI(client);
+
+        const ops: BulkOperation[] = [];
+        for (const row of rows) {
+          let previousState: Partial<BulkCardChanges> | undefined;
+          if (!options.dryRun) {
+            // Fetch current card state for atomic rollback
+            try {
+              const card = await api.getCard(row.card_id);
+              previousState = {
+                name: card.name,
+                status: card.status,
+                assignees: card.assignees,
+                tags: card.tags,
+                dueDate: card.dueDate,
+                boardId: card.boardId,
+              };
+            } catch {
+              // Card not found or unreachable — previousState stays empty;
+              // rollback will send a no-op, which is safe
+              previousState = {};
+            }
+          }
+          ops.push(csvRowToBulkOperation(row, previousState));
+        }
 
         // Dry-run: show preview without executing
         if (options.dryRun) {
-          const preview = formatBulkPreview(ops, `Dry-run preview — ${rows.length} update(s)`);
-          console.log(preview);
-          console.log(`ℹ  Dry-run mode. No changes were made.`);
-          console.log(`   Run without --dry-run to apply these changes.`);
-
-          if (options.json) {
-            const client = new FavroHttpClient({ auth: { token } });
-            const api = new CardsAPI(client);
+          if (!options.json) {
+            const preview = formatBulkPreview(ops, `Dry-run preview — ${rows.length} update(s)`);
+            console.log(preview);
+            console.log(`ℹ  Dry-run mode. No changes were made.`);
+            console.log(`   Run without --dry-run to apply these changes.`);
+          } else {
             const tx = new BulkTransaction(api);
             tx.addAll(ops);
             console.log(tx.formatDryRunJSON());
@@ -176,12 +201,12 @@ export function registerBatchUpdateCommand(batch: Command): void {
         }
 
         // Execute
-        const client = new FavroHttpClient({ auth: { token } });
-        const api = new CardsAPI(client);
         const tx = new BulkTransaction(api);
         tx.addAll(ops);
 
-        console.log(`⚙  Applying ${ops.length} update(s)...`);
+        if (!options.json) {
+          console.log(`⚙  Applying ${ops.length} update(s)...`);
+        }
         const result = await tx.execute({ verbose: options.verbose });
 
         if (options.json) {
@@ -269,13 +294,16 @@ export function registerBatchMoveCommand(batch: Command): void {
         const matchingCards = allCards.filter(filterFn);
 
         if (matchingCards.length === 0) {
-          console.log(`\n⚠  No cards match the filter(s).`);
-          console.log(`   Board has ${allCards.length} total card(s).`);
-          if (options.json) console.log(JSON.stringify({ total: 0, success: 0, failure: 0, skipped: 0, errors: [] }));
+          if (!options.json) {
+            console.log(`\n⚠  No cards match the filter(s).`);
+            console.log(`   Board has ${allCards.length} total card(s).`);
+          } else {
+            console.log(JSON.stringify({ total: 0, success: 0, failure: 0, skipped: 0, errors: [] }));
+          }
           return;
         }
 
-        // Build operations
+        // Build operations (BLOCKER 5: capture boardId in previousState for rollback)
         const ops: BulkOperation[] = matchingCards.map((card) => ({
           type: 'move' as const,
           cardId: card.cardId,
@@ -286,6 +314,7 @@ export function registerBatchMoveCommand(batch: Command): void {
           },
           previousState: {
             status: card.status,
+            boardId: card.boardId,
           },
           status: 'pending' as const,
         }));
@@ -295,10 +324,10 @@ export function registerBatchMoveCommand(batch: Command): void {
           const title = `Dry-run preview — move ${ops.length} card(s)` +
             (options.status ? ` → status: ${options.status}` : '') +
             (options.toBoard ? ` → board: ${options.toBoard}` : '');
-          console.log(formatBulkPreview(ops, title));
-          console.log(`ℹ  Dry-run mode. No changes were made.`);
-
-          if (options.json) {
+          if (!options.json) {
+            console.log(formatBulkPreview(ops, title));
+            console.log(`ℹ  Dry-run mode. No changes were made.`);
+          } else {
             const tx = new BulkTransaction(api);
             tx.addAll(ops);
             console.log(tx.formatDryRunJSON());
@@ -310,7 +339,9 @@ export function registerBatchMoveCommand(batch: Command): void {
         const tx = new BulkTransaction(api);
         tx.addAll(ops);
 
-        console.log(`⚙  Moving ${ops.length} card(s)...`);
+        if (!options.json) {
+          console.log(`⚙  Moving ${ops.length} card(s)...`);
+        }
         const result = await tx.execute({ verbose: options.verbose });
 
         if (options.json) {
@@ -399,11 +430,14 @@ export function registerBatchAssignCommand(batch: Command): void {
         const alreadyAssigned = baseMatchingCards.length - matchingCards.length;
 
         if (matchingCards.length === 0) {
-          console.log(`\n⚠  No cards match the filter(s) (${allCards.length} total on board).`);
-          if (alreadyAssigned > 0) {
-            console.log(`   ${alreadyAssigned} card(s) already assigned to "${assignee}" — skipped.`);
+          if (!options.json) {
+            console.log(`\n⚠  No cards match the filter(s) (${allCards.length} total on board).`);
+            if (alreadyAssigned > 0) {
+              console.log(`   ${alreadyAssigned} card(s) already assigned to "${assignee}" — skipped.`);
+            }
+          } else {
+            console.log(JSON.stringify({ total: 0, success: 0, failure: 0, skipped: alreadyAssigned, errors: [] }));
           }
-          if (options.json) console.log(JSON.stringify({ total: 0, success: 0, failure: 0, skipped: alreadyAssigned, errors: [] }));
           return;
         }
 
@@ -424,13 +458,13 @@ export function registerBatchAssignCommand(batch: Command): void {
         // Dry-run
         if (options.dryRun) {
           const title = `Dry-run preview — assign ${ops.length} card(s) to "${assignee}"`;
-          console.log(formatBulkPreview(ops, title));
-          if (alreadyAssigned > 0) {
-            console.log(`   ℹ  ${alreadyAssigned} card(s) already assigned — would be skipped.`);
-          }
-          console.log(`ℹ  Dry-run mode. No changes were made.`);
-
-          if (options.json) {
+          if (!options.json) {
+            console.log(formatBulkPreview(ops, title));
+            if (alreadyAssigned > 0) {
+              console.log(`   ℹ  ${alreadyAssigned} card(s) already assigned — would be skipped.`);
+            }
+            console.log(`ℹ  Dry-run mode. No changes were made.`);
+          } else {
             const tx = new BulkTransaction(api);
             tx.addAll(ops);
             console.log(tx.formatDryRunJSON());
@@ -442,7 +476,9 @@ export function registerBatchAssignCommand(batch: Command): void {
         const tx = new BulkTransaction(api);
         tx.addAll(ops);
 
-        console.log(`⚙  Assigning ${ops.length} card(s) to "${assignee}"...`);
+        if (!options.json) {
+          console.log(`⚙  Assigning ${ops.length} card(s) to "${assignee}"...`);
+        }
         const result = await tx.execute({ verbose: options.verbose });
         result.skipped = alreadyAssigned;
 
