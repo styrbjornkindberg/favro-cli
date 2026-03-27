@@ -263,7 +263,7 @@ cards
       const client = new FavroHttpClient({ auth: { token } });
       const api = new CardsAPI(client);
       const card = await api.createCard({
-        name: title,
+        name: title ?? '',
         description: options.description,
         status: options.status,
         boardId: options.board,
