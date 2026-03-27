@@ -21,20 +21,23 @@ class FavroHttpClient {
         });
         this.client.interceptors.response.use((response) => response, async (error) => {
             const retryCount = error.config?._retryCount ?? 0;
-            if (this.shouldRetry(error) && retryCount < 3) {
+            if (this.shouldRetry(error) && retryCount < 4) {
                 error.config._retryCount = retryCount + 1;
                 // For 429, read Retry-After header and show user-visible message
                 let delay;
                 if (error.response?.status === 429) {
                     const retryAfterHeader = error.response.headers?.['retry-after'];
                     const retryAfterSecs = retryAfterHeader ? parseInt(String(retryAfterHeader), 10) : undefined;
-                    const delaySecs = (!isNaN(retryAfterSecs) && retryAfterSecs > 0) ? retryAfterSecs : Math.pow(2, retryCount);
+                    // Exponential backoff: 1s, 2s, 4s, 8s — capped at 30s
+                    const expBackoffSecs = Math.min(Math.pow(2, retryCount), 30);
+                    const delaySecs = (!isNaN(retryAfterSecs) && retryAfterSecs > 0) ? retryAfterSecs : expBackoffSecs;
                     delay = delaySecs * 1000;
-                    // User-visible message: "Rate limited. Retrying in 30 seconds..."
+                    // User-visible log: "⚠️ Rate limit detected, retrying after Ns..."
                     process.stderr.write((0, error_handler_1.rateLimitMessage)(delaySecs) + '\n');
                 }
                 else {
-                    delay = Math.pow(2, retryCount) * 1000; // 1s, 2s, 4s
+                    // Exponential backoff for 5xx/408: 1s, 2s, 4s, 8s — capped at 30s
+                    delay = Math.min(Math.pow(2, retryCount) * 1000, 30000); // cap 30s
                 }
                 await new Promise(resolve => setTimeout(resolve, delay));
                 return this.client.request(error.config);

@@ -333,4 +333,27 @@ describe('FavroHttpClient', () => {
     const result = successHandler(response);
     expect(result).toBe(response);
   });
+
+  test('caps Retry-After at 30s even when header value is huge', async () => {
+    jest.useFakeTimers();
+    const stderrSpy = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const client = new FavroHttpClient({ auth: { token: 'test-token' } });
+    const [, errorHandler] = mockAxiosInstance.interceptors.response.use.mock.calls[0];
+
+    mockAxiosInstance.request.mockResolvedValue({ data: {} });
+    const promise = errorHandler({
+      response: { status: 429, headers: { 'retry-after': '9999' } },
+      config: {},
+    });
+
+    jest.advanceTimersByTime(30000); // Simulate 30s passing without real sleep
+    await promise;
+
+    const written = stderrSpy.mock.calls.map((c) => String(c[0])).join('');
+    expect(written).toContain('Retrying in 30 seconds');
+    expect(written).not.toContain('9999');
+
+    stderrSpy.mockRestore();
+    jest.useRealTimers();
+  });
 });

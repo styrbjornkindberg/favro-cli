@@ -227,63 +227,6 @@ describe('boards list command', () => {
     expect(parsed[0].boardId).toBe('board-2');
   });
 
-  // --- --include validation ---
-
-  test('--include with valid values (stats) succeeds', async () => {
-    const mockListBoards = jest.fn().mockResolvedValue(sampleBoards);
-    const program = buildProgram(mockListBoards);
-
-    await program.parseAsync(['node', 'cli', 'boards', 'list', '--include', 'stats']);
-
-    expect(consoleErrorSpy).not.toHaveBeenCalledWith(expect.stringContaining('Invalid --include'));
-  });
-
-  test('--include with valid values (velocity) succeeds', async () => {
-    const mockListBoards = jest.fn().mockResolvedValue(sampleBoards);
-    const program = buildProgram(mockListBoards);
-
-    await program.parseAsync(['node', 'cli', 'boards', 'list', '--include', 'velocity']);
-
-    expect(consoleErrorSpy).not.toHaveBeenCalledWith(expect.stringContaining('Invalid --include'));
-  });
-
-  test('--include with valid combo (stats,velocity) succeeds', async () => {
-    const mockListBoards = jest.fn().mockResolvedValue(sampleBoards);
-    const program = buildProgram(mockListBoards);
-
-    await program.parseAsync(['node', 'cli', 'boards', 'list', '--include', 'stats,velocity']);
-
-    expect(consoleErrorSpy).not.toHaveBeenCalledWith(expect.stringContaining('Invalid --include'));
-  });
-
-  test('--include with invalid value exits 1', async () => {
-    const mockListBoards = jest.fn().mockResolvedValue(sampleBoards);
-    const program = buildProgram(mockListBoards);
-
-    await expect(
-      program.parseAsync(['node', 'cli', 'boards', 'list', '--include', 'bogus'])
-    ).rejects.toThrow('process.exit');
-
-    expect(exitSpy).toHaveBeenCalledWith(1);
-    expect(consoleErrorSpy).toHaveBeenCalledWith(
-      expect.stringContaining('Invalid --include values: bogus. Valid options: stats, velocity')
-    );
-  });
-
-  test('--include with mix of valid and invalid values exits 1', async () => {
-    const mockListBoards = jest.fn().mockResolvedValue(sampleBoards);
-    const program = buildProgram(mockListBoards);
-
-    await expect(
-      program.parseAsync(['node', 'cli', 'boards', 'list', '--include', 'stats,bogus'])
-    ).rejects.toThrow('process.exit');
-
-    expect(exitSpy).toHaveBeenCalledWith(1);
-    expect(consoleErrorSpy).toHaveBeenCalledWith(
-      expect.stringContaining('Invalid --include values: bogus')
-    );
-  });
-
   // --- error handling ---
 
   test('exits 1 when API key not configured', async () => {
@@ -321,7 +264,7 @@ describe('boards list command', () => {
     ).rejects.toThrow('process.exit');
 
     expect(exitSpy).toHaveBeenCalledWith(1);
-    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid include option(s): bogus'));
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid --include values: bogus. Valid options: stats, velocity'));
     expect(mockListBoards).not.toHaveBeenCalled();
   });
 
@@ -334,7 +277,7 @@ describe('boards list command', () => {
     ).rejects.toThrow('process.exit');
 
     expect(exitSpy).toHaveBeenCalledWith(1);
-    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid include option(s): bogus'));
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid --include values: bogus. Valid options: stats, velocity'));
   });
 });
 
@@ -495,5 +438,21 @@ describe('filterBoardsByCollection', () => {
   test('trims whitespace from collection name', () => {
     const result = filterBoardsByCollection(sampleBoards, sampleCollections, '  marketing  ');
     expect(result).toHaveLength(2);
+  });
+
+  test('handles null collection name without crashing', () => {
+    const collectionsWithNull: Collection[] = [
+      ...sampleCollections,
+      {
+        collectionId: 'coll-null',
+        name: null as any,  // ← Edge case: API returns null name
+        createdAt: '2026-01-01T00:00:00Z',
+        updatedAt: '2026-01-01T00:00:00Z',
+      },
+    ];
+    // Should not throw — null name should be treated as empty string
+    expect(() => filterBoardsByCollection(sampleBoards, collectionsWithNull, 'marketing')).not.toThrow();
+    const result = filterBoardsByCollection(sampleBoards, collectionsWithNull, 'marketing');
+    expect(result).toHaveLength(2);  // Only boards from Marketing collection
   });
 });

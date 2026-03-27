@@ -62,8 +62,21 @@ const csv_1 = require("./lib/csv");
 const cards_export_1 = require("./commands/cards-export");
 const auth_1 = require("./commands/auth");
 const boards_list_1 = require("./commands/boards-list");
+const boards_get_1 = require("./commands/boards-get");
+const boards_create_1 = require("./commands/boards-create");
+const boards_update_1 = require("./commands/boards-update");
 const release_check_1 = require("./commands/release-check");
 const risks_1 = require("./commands/risks");
+const batch_smart_1 = require("./commands/batch-smart");
+const batch_1 = require("./commands/batch");
+const favro_audit_1 = require("./commands/favro-audit");
+const favro_who_changed_1 = require("./commands/favro-who-changed");
+const collections_list_1 = require("./commands/collections-list");
+const collections_get_1 = require("./commands/collections-get");
+const collections_create_1 = require("./commands/collections-create");
+const collections_update_1 = require("./commands/collections-update");
+const cards_get_1 = require("./commands/cards-get");
+const cards_link_1 = require("./commands/cards-link");
 const error_handler_1 = require("./lib/error-handler");
 const progress_1 = require("./lib/progress");
 const config_1 = require("./lib/config");
@@ -94,40 +107,70 @@ function buildProgram() {
     const boardsCmd = program.command('boards').description('Board operations');
     // ─── boards list ─────────────────────────────────────────────────────────────
     (0, boards_list_1.registerBoardsListCommand)(boardsCmd);
+    // ─── boards get ──────────────────────────────────────────────────────────────
+    (0, boards_get_1.registerBoardsGetCommand)(boardsCmd);
+    // ─── boards create ───────────────────────────────────────────────────────────
+    (0, boards_create_1.registerBoardsCreateCommand)(boardsCmd);
+    // ─── boards update ───────────────────────────────────────────────────────────
+    (0, boards_update_1.registerBoardsUpdateCommand)(boardsCmd);
     // ─── release-check command ──────────────────────────────────────────────────────
     (0, release_check_1.registerReleaseCheckCommand)(program);
     // ─── risks command ───────────────────────────────────────────────────────────────
     (0, risks_1.registerRisksCommand)(program);
+    (0, batch_smart_1.registerBatchSmartCommand)(program);
+    (0, batch_1.registerBatchCommand)(program);
+    // ─── audit command ───────────────────────────────────────────────────────────
+    (0, favro_audit_1.registerAuditCommand)(program);
+    // ─── who-changed command ─────────────────────────────────────────────────────
+    (0, favro_who_changed_1.registerWhoChangedCommand)(program);
+    // ─── collections parent ──────────────────────────────────────────────────────
+    const collectionsCmd = program.command('collections').description('Collection operations');
+    (0, collections_list_1.registerCollectionsListCommand)(collectionsCmd);
+    (0, collections_get_1.registerCollectionsGetCommand)(collectionsCmd);
+    (0, collections_create_1.registerCollectionsCreateCommand)(collectionsCmd);
+    (0, collections_update_1.registerCollectionsUpdateCommand)(collectionsCmd);
     // ─── cards parent ────────────────────────────────────────────────────────────
-    const cards = program.command('cards').description('Card operations — list, create, update, and export cards.\n\n' +
+    const cards = program.command('cards').description('Card operations — get, list, create, update, export, link, unlink, and move cards.\n\n' +
         'Subcommands:\n' +
-        '  list    List cards from a board\n' +
+        '  get     Retrieve a card by ID with optional metadata\n' +
+        '  list    List cards from a board with filtering\n' +
         '  create  Create a card (single, bulk JSON, or CSV import)\n' +
         '  update  Update an existing card by ID\n' +
-        '  export  Export all cards from a board to JSON or CSV\n\n' +
+        '  export  Export all cards from a board to JSON or CSV\n' +
+        '  link    Link a card to another card\n' +
+        '  unlink  Remove a link between two cards\n' +
+        '  move    Move a card to a different board\n\n' +
         'Examples:\n' +
-        '  favro cards list --board <id>\n' +
+        '  favro cards get <cardId> --include board,collection\n' +
+        '  favro cards list <board-id> --filter "customField:value" --include relations\n' +
+        '  favro cards link <cardId> --to <targetId> --type depends\n' +
+        '  favro cards unlink <cardId> --from <linkedCardId>\n' +
+        '  favro cards move <cardId> --to-board <boardId> --position top\n' +
         '  favro cards create "My card" --board <id>\n' +
-        '  favro cards create --csv tasks.csv --board <id>\n' +
-        '  favro cards update <cardId> --status "Done"\n' +
         '  favro cards export <id> --format csv --out cards.csv');
+    // ─── cards get ───────────────────────────────────────────────────────────────
+    (0, cards_get_1.registerCardsGetCommand)(cards);
     // ─── cards list ──────────────────────────────────────────────────────────────
     cards
-        .command('list')
+        .command('list [boardId]')
         .description('List cards from a board with optional filters.\n\n' +
+        'Pagination: default 25 cards, max 100 per request.\n\n' +
         'Examples:\n' +
-        '  favro cards list --board <id>\n' +
-        '  favro cards list --board <id> --status "In Progress" --limit 100\n' +
-        '  favro cards list --board <id> --assignee alice --json\n' +
-        '  favro cards list --board <id> --tag bug\n\n' +
+        '  favro cards list <board-id>\n' +
+        '  favro cards list <board-id> --status "In Progress" --limit 100\n' +
+        '  favro cards list <board-id> --assignee alice --json\n' +
+        '  favro cards list <board-id> --tag bug\n' +
+        '  favro cards list <board-id> --filter "customField:value" --include relations\n\n' +
         'Tip: Use `favro boards list` to find board IDs.')
-        .option('--board <id>', 'Board ID to list cards from')
+        .option('--board <id>', 'Board ID to list cards from (alternative to positional arg)')
         .option('--status <status>', 'Filter by status')
         .option('--assignee <user>', 'Filter by assignee')
         .option('--tag <tag>', 'Filter by tag')
-        .option('--limit <number>', 'Maximum number of cards to return', '50')
+        .option('--filter <expression>', 'Filter cards using query syntax (e.g. "customField:value")')
+        .option('--include <items>', 'Comma-separated metadata to include: board,collection,custom-fields,relations')
+        .option('--limit <number>', 'Maximum number of cards (default 25, max 100)', '25')
         .option('--json', 'Output as JSON')
-        .action(async (options) => {
+        .action(async (boardId, options) => {
         const token = await (0, config_1.resolveApiKey)();
         if (!token) {
             console.error(`Error: ${(0, error_handler_1.missingApiKeyError)()}`);
@@ -136,17 +179,23 @@ function buildProgram() {
         try {
             const client = new http_client_1.default({ auth: { token } });
             const api = new cards_api_1.default(client);
+            // Support positional boardId or --board option
+            const effectiveBoardId = boardId ?? options.board;
+            if (!effectiveBoardId) {
+                console.error('Error: Board ID is required. Pass as positional argument or use --board <id>');
+                process.exit(1);
+            }
             const parsedLimit = parseInt(options.limit, 10);
-            const limit = !isNaN(parsedLimit) && parsedLimit >= 1 ? parsedLimit : 50;
-            let cardList = await api.listCards(options.board, limit);
+            const limit = (!isNaN(parsedLimit) && parsedLimit >= 1) ? parsedLimit : 25;
+            let cardList = await api.listCards(effectiveBoardId, limit, options.filter);
             if (options.status) {
                 cardList = cardList.filter(c => c.status?.toLowerCase() === options.status.toLowerCase());
             }
             if (options.assignee) {
-                cardList = cardList.filter(c => (c.assignees || []).some(a => a.toLowerCase().includes(options.assignee.toLowerCase())));
+                cardList = cardList.filter(c => (c.assignees ?? []).some(a => a.toLowerCase().includes(options.assignee.toLowerCase())));
             }
             if (options.tag) {
-                cardList = cardList.filter(c => (c.tags || []).some(t => t.toLowerCase().includes(options.tag.toLowerCase())));
+                cardList = cardList.filter(c => (c.tags ?? []).some(t => t.toLowerCase().includes(options.tag.toLowerCase())));
             }
             if (options.json) {
                 console.log(JSON.stringify(cardList, null, 2));
@@ -156,10 +205,10 @@ function buildProgram() {
                 if (cardList.length > 0) {
                     const rows = cardList.map(card => ({
                         ID: card.cardId,
-                        Title: card.name.length > 40 ? card.name.slice(0, 37) + '...' : card.name,
-                        Status: card.status || '—',
-                        Assignees: (card.assignees || []).join(', ') || '—',
-                        Tags: (card.tags || []).join(', ') || '—',
+                        Title: (card.name ?? '').length > 40 ? (card.name ?? '').slice(0, 37) + '...' : (card.name ?? ''),
+                        Status: card.status ?? '—',
+                        Assignees: (card.assignees ?? []).join(', ') || '—',
+                        Tags: (card.tags ?? []).join(', ') || '—',
                         Created: card.createdAt ? card.createdAt.slice(0, 10) : '—',
                     }));
                     console.table(rows);
@@ -171,6 +220,8 @@ function buildProgram() {
             process.exit(1);
         }
     });
+    // ─── cards link / unlink / move ──────────────────────────────────────────────
+    (0, cards_link_1.registerCardsLinkCommands)(cards);
     /**
      * Parse a CSV string into an array of objects using the header row.
      * Handles simple RFC 4180 CSV (no quoted newlines).

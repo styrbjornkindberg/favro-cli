@@ -60,7 +60,7 @@ export function formatBoardsExtendedTable(boards: ExtendedBoard[]): void {
  */
 export function filterBoardsByCollection(boards: Board[], collections: Collection[], collectionName: string): Board[] {
   const lc = collectionName.trim().toLowerCase();
-  const matches = collections.filter(c => c.name.toLowerCase().includes(lc));
+  const matches = collections.filter(c => (c.name ?? '').toLowerCase().includes(lc));
 
   if (matches.length === 0) {
     return [];
@@ -104,7 +104,7 @@ export function registerBoardsListCommand(boardsParent: Command): void {
         if (include) {
           const invalid = include.filter((i: string) => !VALID_LIST_INCLUDES.includes(i));
           if (invalid.length > 0) {
-            console.error(`✗ Invalid include option(s): ${invalid.join(', ')}`);
+            console.error(`✗ Invalid --include values: ${invalid.join(', ')}. Valid options: stats, velocity`);
             process.exit(1);
           }
         }

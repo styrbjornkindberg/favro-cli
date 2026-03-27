@@ -1,0 +1,4 @@
+- [CLA-1785] LESSON: Always apply Math.min(parsedLimit, maxLimit) when enforcing upper bounds on user inputs — never trust parseInt alone to be safe.
+- [CLA-1785] LESSON: When adding `?? '—'` null guards to one output path (cards list), audit ALL other output paths (cards get) for the same pattern — inconsistency creates future bugs.
+- [CLA-1785] LESSON: Unimplemented CLI flags (--include on cards list) are worse than no flag — they mislead users and fail Critic review. Remove or implement; no middle ground.
+- [CLA-1785] LESSON: When new describe blocks in cli.test.ts mock resolveApiKey to return a value, always reset it in afterEach to avoid breaking adjacent "missing token" tests.
