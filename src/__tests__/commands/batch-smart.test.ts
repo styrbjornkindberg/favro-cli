@@ -182,6 +182,100 @@ describe('parseGoal', () => {
     });
   });
 
+  describe('BLOCKER #1 — "with no owner" constraint', () => {
+    it('does NOT match a Backlog card that already has an owner', () => {
+      // Regression: before fix, requireNoOwner was always false due to non-capturing regex
+      const goal = parseGoal('assign all Backlog cards with no owner to alice');
+      const ownedBacklogCard = makeCard({ status: 'Backlog', assignees: ['bob'] });
+      expect(goal.cardFilter(ownedBacklogCard)).toBe(false);
+    });
+
+    it('does match a Backlog card with no owner', () => {
+      const goal = parseGoal('assign all Backlog cards with no owner to alice');
+      const unownedBacklogCard = makeCard({ status: 'Backlog', assignees: [] });
+      expect(goal.cardFilter(unownedBacklogCard)).toBe(true);
+    });
+  });
+
+  describe('BLOCKER #2 — bare command forms (no filter)', () => {
+    it('parses "move all cards to Done" (no filter)', () => {
+      const goal = parseGoal('move all cards to Done');
+      expect(goal.description).toContain('Done');
+      const card = makeCard({ status: 'Backlog' });
+      expect(goal.cardFilter(card)).toBe(true);
+    });
+
+    it('parses "close all cards" (no filter)', () => {
+      const goal = parseGoal('close all cards');
+      expect(goal.description.toLowerCase()).toContain('close');
+      const card = makeCard({ status: 'In Progress' });
+      expect(goal.cardFilter(card)).toBe(true);
+    });
+
+    it('parses "unassign all cards" (no filter)', () => {
+      const goal = parseGoal('unassign all cards');
+      const cardWithAssignee = makeCard({ assignees: ['alice'] });
+      expect(goal.cardFilter(cardWithAssignee)).toBe(true);
+    });
+
+    it('parses "assign all cards to alice" (no filter)', () => {
+      const goal = parseGoal('assign all cards to alice');
+      const unassignedCard = makeCard({ assignees: [] });
+      expect(goal.cardFilter(unassignedCard)).toBe(true);
+    });
+  });
+
+  describe('edge case — multi-word usernames', () => {
+    it('captures multi-word username in assign goal', () => {
+      const goal = parseGoal('assign all Backlog cards to alice smith');
+      const card = makeCard({ status: 'Backlog', assignees: [] });
+      const op = goal.buildOperation(card);
+      expect(op.targetAssignee).toBe('alice smith');
+    });
+  });
+
+  describe('BLOCKER #3 — baseCardFilter is exposed', () => {
+    it('parseGoal exposes baseCardFilter separate from cardFilter', () => {
+      const goal = parseGoal('move all Backlog cards to Done');
+      // baseCardFilter matches ALL Backlog cards regardless of current status
+      const backlogCard = makeCard({ status: 'Backlog' });
+      const doneCard = makeCard({ status: 'Done' });
+      const reviewCard = makeCard({ status: 'Review' });
+      expect(goal.baseCardFilter(backlogCard)).toBe(true);
+      expect(goal.baseCardFilter(doneCard)).toBe(false);
+      expect(goal.baseCardFilter(reviewCard)).toBe(false);
+      // cardFilter (with target-state guard) skips Backlog→Done cards already Done
+      const alreadyDoneBacklog = makeCard({ status: 'Done' });
+      expect(goal.cardFilter(alreadyDoneBacklog)).toBe(false);
+    });
+
+    it('skipped count reflects only base-matching cards in target state, not all non-matching', () => {
+      // Mixed board: BacklogCard1, BacklogCard2, ReviewCard1, DoneCard1, DoneCard2
+      // Goal: "move all Backlog cards to Done"
+      // Base-matching = Backlog cards = 2
+      // Already in target state (Done AND Backlog) = 0 (Done cards don't match base filter)
+      // But old code would compute: 5 - 2 = 3 (WRONG — includes ReviewCard1)
+      const goal = parseGoal('move all Backlog cards to Done');
+      const board = [
+        makeCard({ cardId: 'b1', status: 'Backlog' }),
+        makeCard({ cardId: 'b2', status: 'Backlog' }),
+        makeCard({ cardId: 'r1', status: 'Review' }),
+        makeCard({ cardId: 'd1', status: 'Done' }),
+        makeCard({ cardId: 'd2', status: 'Done' }),
+      ];
+      const matchingCards = board.filter(goal.cardFilter); // Backlog cards not already Done = 2
+      const baseMatchingCards = board.filter(goal.baseCardFilter); // Backlog cards = 2
+      const trueSkipped = baseMatchingCards.length - matchingCards.length; // 2 - 2 = 0
+      expect(matchingCards).toHaveLength(2);
+      expect(baseMatchingCards).toHaveLength(2);
+      expect(trueSkipped).toBe(0); // No Backlog cards are already Done
+
+      // Verify the OLD wrong calculation would have been different:
+      const wrongSkipped = board.length - matchingCards.length; // 5 - 2 = 3
+      expect(wrongSkipped).toBe(3); // demonstrates the old bug
+    });
+  });
+
   describe('error handling', () => {
     it('throws a helpful error for unknown patterns', () => {
       expect(() => parseGoal('do something weird')).toThrow('Cannot parse goal');

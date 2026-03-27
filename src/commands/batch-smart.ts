@@ -45,6 +45,8 @@ export interface ParsedGoal {
   description: string;
   /** Card filter: function that returns true if a card matches */
   cardFilter: (card: Card) => boolean;
+  /** Base card filter (without target-state guard) — used to compute true skipped count */
+  baseCardFilter: (card: Card) => boolean;
   /** Build an operation for each matching card */
   buildOperation: (card: Card) => CardOperation;
   /** Action summary text for preview (e.g. "→ status: Review") */
@@ -86,13 +88,15 @@ export function parseGoal(goal: string): ParsedGoal {
   const normalized = goal.trim().toLowerCase();
 
   // ── move all [filter] cards to <status> ──
-  const moveMatch = normalized.match(/^move\s+all\s+(.+?)\s+cards?\s+to\s+(.+)$/);
+  // FIX BLOCKER #2: filter is optional — (.+?\s+)? allows "move all cards to Done"
+  const moveMatch = normalized.match(/^move\s+all\s+(.+?\s+)?cards?\s+to\s+(.+)$/);
   if (moveMatch) {
-    const filterStr = moveMatch[1].trim();
+    const filterStr = (moveMatch[1] ?? '').trim() || 'all';
     const targetStatus = toTitleCase(moveMatch[2].trim());
     const filter = buildCardFilter(filterStr);
     return {
       description: `Move ${filterStr} cards to "${targetStatus}"`,
+      baseCardFilter: filter,
       cardFilter: (card) => {
         // Skip cards already in the target state
         if (card.status?.toLowerCase() === targetStatus.toLowerCase()) return false;
@@ -110,21 +114,26 @@ export function parseGoal(goal: string): ParsedGoal {
   }
 
   // ── assign all [filter] cards [with no owner] to <user> ──
-  const assignMatch = normalized.match(/^assign\s+all\s+(.+?)\s+cards?\s+(?:with\s+no\s+owner\s+)?to\s+(\S+)$/);
+  // FIX BLOCKER #1: capture "with no owner" in its own group (group 2) instead of consuming
+  // FIX BLOCKER #2: filter is optional — (.+?\s+)?
+  // FIX edge case: multi-word usernames — capture rest of string after "to "
+  const assignMatch = normalized.match(/^assign\s+all\s+(.+?\s+)?cards?\s+(with\s+no\s+owner\s+)?to\s+([\w\s.'"-]+?)$/);
   if (assignMatch) {
-    const filterStr = assignMatch[1].trim();
-    const targetUser = assignMatch[2].trim();
-    // "with no owner" is embedded in filterStr or explicit
-    const requireNoOwner = filterStr.includes('with no owner') || filterStr.includes('no owner') || filterStr.includes('unassigned');
+    const filterStr = (assignMatch[1] ?? '').trim() || 'all';
+    // FIX BLOCKER #1: requireNoOwner checks captured group 2, not filterStr
+    const requireNoOwner = !!assignMatch[2] || filterStr.includes('with no owner') || filterStr.includes('no owner') || filterStr.includes('unassigned');
     const cleanFilterStr = filterStr
-      .replace(/\s+with\s+no\s+owner/, '')
-      .replace(/\s+no\s+owner/, '')
-      .replace(/\s+unassigned/, '')
-      .trim();
-    const filter = buildCardFilter(cleanFilterStr || 'all');
+      .replace(/\s*with\s+no\s+owner/, '')
+      .replace(/\s*no\s+owner/, '')
+      .replace(/\s*unassigned/, '')
+      .trim() || 'all';
+    const targetUser = assignMatch[3].trim();
+    const filter = buildCardFilter(cleanFilterStr);
     return {
       description: `Assign ${filterStr} cards to "${targetUser}"`,
+      baseCardFilter: filter,
       cardFilter: (card) => {
+        // FIX BLOCKER #1: correctly check requireNoOwner — cards with owners must be skipped
         if (requireNoOwner && (card.assignees ?? []).length > 0) return false;
         // Skip already assigned to this user
         if ((card.assignees ?? []).includes(targetUser)) return false;
@@ -142,12 +151,14 @@ export function parseGoal(goal: string): ParsedGoal {
   }
 
   // ── close all [filter] cards ──
-  const closeMatch = normalized.match(/^close\s+all\s+(.+?)\s+cards?$/);
+  // FIX BLOCKER #2: filter is optional — (.+?\s+)?
+  const closeMatch = normalized.match(/^close\s+all\s+(.+?\s+)?cards?$/);
   if (closeMatch) {
-    const filterStr = closeMatch[1].trim();
+    const filterStr = (closeMatch[1] ?? '').trim() || 'all';
     const filter = buildCardFilter(filterStr);
     return {
       description: `Close (mark done) ${filterStr} cards`,
+      baseCardFilter: filter,
       cardFilter: (card) => {
         if (card.status?.toLowerCase() === 'done') return false;
         return filter(card);
@@ -164,12 +175,14 @@ export function parseGoal(goal: string): ParsedGoal {
   }
 
   // ── unassign all [filter] cards ──
-  const unassignMatch = normalized.match(/^unassign\s+all\s+(.+?)\s+cards?$/);
+  // FIX BLOCKER #2: filter is optional — (.+?\s+)?
+  const unassignMatch = normalized.match(/^unassign\s+all\s+(.+?\s+)?cards?$/);
   if (unassignMatch) {
-    const filterStr = unassignMatch[1].trim();
+    const filterStr = (unassignMatch[1] ?? '').trim() || 'all';
     const filter = buildCardFilter(filterStr);
     return {
       description: `Unassign all assignees from ${filterStr} cards`,
+      baseCardFilter: filter,
       cardFilter: (card) => {
         if ((card.assignees ?? []).length === 0) return false;
         return filter(card);
@@ -457,12 +470,10 @@ export function registerBatchSmartCommand(program: Command): void {
 
         // 4. Apply card filter to build operations
         const matchingCards = allCards.filter(parsedGoal.cardFilter);
-        const skippedCards = allCards.filter(c => {
-          // Cards that match base criteria but are already in target state
-          // These were excluded by the goal parser's "already in target state" guard
-          const baseFilter = buildCardFilter('all');
-          return baseFilter(c) && !parsedGoal.cardFilter(c);
-        });
+        // FIX BLOCKER #3: use baseCardFilter to count only cards that matched the base
+        // criteria (ignoring the target-state guard), then subtract matchingCards to get
+        // the true "already in target state" skipped count.
+        const baseMatchingCards = allCards.filter(parsedGoal.baseCardFilter);
 
         // Handle edge case: no matching cards
         if (matchingCards.length === 0) {
@@ -524,9 +535,9 @@ export function registerBatchSmartCommand(program: Command): void {
         console.log(`\n⚙  Applying ${ops.length} change${ops.length === 1 ? '' : 's'}...`);
         const summary = await executeOperationsAtomic(ops, api, verbose);
 
-        // Add skipped count for "already in target state" cards
-        // (Cards that were filtered out because they're already correct)
-        const alreadyInTargetState = allCards.length - matchingCards.length;
+        // FIX BLOCKER #3: skipped = cards matching base filter that weren't in matchingCards
+        // (i.e. already in target state). Cards that never matched base filter are NOT skipped.
+        const alreadyInTargetState = baseMatchingCards.length - matchingCards.length;
         summary.skipped = Math.max(0, alreadyInTargetState);
 
         // 9. Output summary
