@@ -112,6 +112,7 @@ export function registerAuthCommand(program: Command): void {
     .description('Set up your Favro API key')
     .option('--api-key <key>', 'API key to save (skip interactive prompt)')
     .action(async (options) => {
+      const verbose = program.parent?.opts()?.verbose ?? program.opts()?.verbose ?? false;
       let apiKey = options.apiKey as string | undefined;
 
       if (!apiKey) {
@@ -132,7 +133,7 @@ export function registerAuthCommand(program: Command): void {
         await writeConfig(updated);
         console.log(`✓ API key saved to ${CONFIG_FILE}`);
       } catch (err: any) {
-        logError(err);
+        logError(err, verbose);
         process.exit(1);
       }
     });
@@ -143,6 +144,7 @@ export function registerAuthCommand(program: Command): void {
     .command('logout')
     .description('Remove saved API key from config')
     .action(async () => {
+      const verbose = program.parent?.opts()?.verbose ?? program.opts()?.verbose ?? false;
       try {
         const existing = await readConfig();
         if (!existing.apiKey) {
@@ -153,7 +155,7 @@ export function registerAuthCommand(program: Command): void {
         await writeConfig(rest);
         console.log(`✓ API key removed from ${CONFIG_FILE}`);
       } catch (err: any) {
-        logError(err);
+        logError(err, verbose);
         process.exit(1);
       }
     });

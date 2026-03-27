@@ -13,7 +13,8 @@ import * as path from 'path';
 import CardsAPI, { Card } from '../lib/cards-api';
 import FavroHttpClient from '../lib/http-client';
 import { writeCardsCSV, writeCardsJSON } from '../lib/csv';
-import { logError, missingApiKeyError } from '../lib/error-handler';
+import { logError, missingApiKeyError, suggestBoard } from '../lib/error-handler';
+import BoardsAPI from '../lib/boards-api';
 import { ProgressBar, Spinner } from '../lib/progress';
 
 export type ExportFormat = 'json' | 'csv';
@@ -168,8 +169,21 @@ export function registerCardsExportCommand(program: Command): void {
           }
           console.error(`ℹ Exported ${cards.length} card(s) to stdout (${format.toUpperCase()})`);
         }
-      } catch (error) {
-        logError(error, verbose);
+      } catch (error: any) {
+        if (board && error?.response?.status === 404) {
+          // Board not found — fetch available boards and suggest
+          try {
+            const boardsApi = new BoardsAPI(new (await import('../lib/http-client')).default({ auth: { token: token! } }));
+            const boards = await boardsApi.listBoards();
+            const boardNames = boards.map(b => b.name);
+            const helpfulMsg = suggestBoard(board, boardNames);
+            console.error(`Error: ${helpfulMsg}`);
+          } catch {
+            logError(error, verbose);
+          }
+        } else {
+          logError(error, verbose);
+        }
         process.exit(1);
       }
     });

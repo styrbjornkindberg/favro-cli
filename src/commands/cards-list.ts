@@ -5,7 +5,8 @@
 import { Command } from 'commander';
 import CardsAPI, { Card } from '../lib/cards-api';
 import FavroHttpClient from '../lib/http-client';
-import { logError, missingApiKeyError } from '../lib/error-handler';
+import { logError, missingApiKeyError, suggestBoard } from '../lib/error-handler';
+import BoardsAPI from '../lib/boards-api';
 
 function formatCardsTable(cards: Card[]): void {
   if (cards.length === 0) {
@@ -94,8 +95,21 @@ export function registerCardsListCommand(program: Command): void {
           console.log(`Found ${cards.length} card(s):`);
           formatCardsTable(cards);
         }
-      } catch (error) {
-        logError(error, verbose);
+      } catch (error: any) {
+        if (options.board && error?.response?.status === 404) {
+          // Board not found — fetch available boards and suggest
+          try {
+            const boardsApi = new BoardsAPI(new (await import('../lib/http-client')).default({ auth: { token: process.env.FAVRO_API_TOKEN! } }));
+            const boards = await boardsApi.listBoards();
+            const boardNames = boards.map(b => b.name);
+            const helpfulMsg = suggestBoard(options.board, boardNames);
+            console.error(`Error: ${helpfulMsg}`);
+          } catch {
+            logError(error, verbose);
+          }
+        } else {
+          logError(error, verbose);
+        }
         process.exit(1);
       }
     });
