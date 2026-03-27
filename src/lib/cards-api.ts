@@ -1,5 +1,31 @@
 import FavroHttpClient from './http-client';
 
+export interface CustomField {
+  fieldId: string;
+  name: string;
+  value: unknown;
+  type?: string;
+}
+
+export interface CardLink {
+  linkId: string;
+  type: 'depends' | 'blocks' | 'duplicates' | 'relates';
+  cardId: string;
+  cardName?: string;
+}
+
+export interface CardComment {
+  commentId: string;
+  text: string;
+  createdAt: string;
+  author?: string;
+}
+
+export interface CardRelation {
+  type: 'depends' | 'blocks' | 'duplicates' | 'relates';
+  cardId: string;
+}
+
 export interface Card {
   cardId: string;
   name: string;
@@ -10,6 +36,15 @@ export interface Card {
   dueDate?: string;
   createdAt: string;
   updatedAt?: string;
+  boardId?: string;
+  collectionId?: string;
+  // Populated via --include flags
+  board?: { boardId: string; name: string; [key: string]: unknown };
+  collection?: { collectionId: string; name: string; [key: string]: unknown };
+  customFields?: CustomField[];
+  links?: CardLink[];
+  comments?: CardComment[];
+  relations?: CardRelation[];
 }
 
 export interface CreateCardRequest {
@@ -40,6 +75,21 @@ export interface PaginatedResponse<T> {
   limit?: number;
 }
 
+export interface GetCardOptions {
+  /** List of include keys: board, collection, custom-fields, links, comments, relations */
+  include?: string[];
+}
+
+export interface LinkCardRequest {
+  toCardId: string;
+  type: 'depends' | 'blocks' | 'duplicates' | 'relates';
+}
+
+export interface MoveCardRequest {
+  toBoardId: string;
+  position?: 'top' | 'bottom';
+}
+
 export class CardsAPI {
   constructor(private client: FavroHttpClient) {}
 
@@ -48,19 +98,26 @@ export class CardsAPI {
    * Fetches all pages until the limit is reached or no more pages exist.
    *
    * @param boardId  Optional board ID to filter cards
-   * @param limit    Maximum total cards to return (default 50)
+   * @param limit    Maximum total cards to return (default 25)
+   * @param filter   Optional filter expression passed to API
    */
-  async listCards(boardId?: string, limit: number = 50): Promise<Card[]> {
+  async listCards(boardId?: string, limit: number = 25, filter?: string): Promise<Card[]> {
+    // Default 25; use explicit NaN/range check (not ||) to avoid limit=0 falsy bug
+    const effectiveLimit = (isNaN(limit) || limit < 1) ? 25 : limit;
     const path = boardId ? `/boards/${boardId}/cards` : '/cards';
     const allCards: Card[] = [];
     let page = 0;
     let totalPages = 1;
     let requestId: string | undefined;
 
-    while (allCards.length < limit && page < totalPages) {
+    while (allCards.length < effectiveLimit && page < totalPages) {
       const params: Record<string, unknown> = {
-        limit: Math.min(limit - allCards.length, 100), // request at most 100 per page
+        limit: Math.min(effectiveLimit - allCards.length, 100), // request at most 100 per page
       };
+
+      if (filter) {
+        params.filter = filter;
+      }
 
       // On subsequent pages, use requestId to continue pagination
       if (requestId) {
@@ -87,11 +144,82 @@ export class CardsAPI {
       if (entities.length === 0) break;
     }
 
-    return allCards.slice(0, limit);
+    return allCards.slice(0, effectiveLimit);
   }
 
-  async getCard(cardId: string): Promise<Card> {
-    return this.client.get<Card>(`/cards/${cardId}`);
+  /**
+   * Get a single card with optional includes (board, collection, custom-fields, links, comments).
+   */
+  async getCard(cardId: string, options?: GetCardOptions): Promise<Card> {
+    const params: Record<string, unknown> = {};
+    const includes = options?.include ?? [];
+    if (includes.length > 0) {
+      params.include = includes.join(',');
+    }
+    const getConfig = Object.keys(params).length > 0 ? { params } : undefined;
+    const card = await this.client.get<Card>(`/cards/${cardId}`, getConfig);
+
+    // Hydrate board/collection if requested and not already present
+    if (includes.includes('board') && card.boardId && !card.board) {
+      try {
+        const { BoardsAPI } = await import('./boards-api');
+        const boardsApi = new BoardsAPI(this.client);
+        card.board = await boardsApi.getBoard(card.boardId) as unknown as typeof card.board;
+      } catch { /* best effort */ }
+    }
+    if (includes.includes('collection') && card.collectionId && !card.collection) {
+      try {
+        const { BoardsAPI } = await import('./boards-api');
+        const boardsApi = new BoardsAPI(this.client);
+        card.collection = await boardsApi.getCollection(card.collectionId) as unknown as typeof card.collection;
+      } catch { /* best effort */ }
+    }
+    if (includes.includes('custom-fields') && !card.customFields) {
+      try {
+        const cf = await this.client.get<{ entities: CustomField[] }>(`/cards/${cardId}/custom-fields`);
+        card.customFields = cf.entities ?? [];
+      } catch { /* best effort */ }
+    }
+    if (includes.includes('links') && !card.links) {
+      try {
+        const lnk = await this.client.get<{ entities: CardLink[] }>(`/cards/${cardId}/links`);
+        card.links = lnk.entities ?? [];
+      } catch { /* best effort */ }
+    }
+    if ((includes.includes('comments') || includes.includes('relations')) && !card.comments) {
+      try {
+        const cmt = await this.client.get<{ entities: CardComment[] }>(`/cards/${cardId}/comments`);
+        card.comments = cmt.entities ?? [];
+      } catch { /* best effort */ }
+    }
+    return card;
+  }
+
+  /**
+   * Link two cards together.
+   */
+  async linkCard(cardId: string, req: LinkCardRequest): Promise<CardLink> {
+    return this.client.post<CardLink>(`/cards/${cardId}/links`, {
+      toCardId: req.toCardId,
+      type: req.type,
+    });
+  }
+
+  /**
+   * Remove a link between two cards.
+   */
+  async unlinkCard(cardId: string, fromCardId: string): Promise<void> {
+    await this.client.delete(`/cards/${cardId}/links/${fromCardId}`);
+  }
+
+  /**
+   * Move a card to a different board.
+   */
+  async moveCard(cardId: string, req: MoveCardRequest): Promise<Card> {
+    return this.client.patch<Card>(`/cards/${cardId}/move`, {
+      boardId: req.toBoardId,
+      position: req.position,
+    });
   }
 
   async createCard(data: CreateCardRequest): Promise<Card> {

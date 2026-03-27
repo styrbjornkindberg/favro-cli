@@ -168,12 +168,80 @@ describe('Cards API', () => {
     mockClient.get.mockResolvedValue(card);
     const result = await api.getCard('card-1');
     expect(result.cardId).toBe('card-1');
-    expect(mockClient.get).toHaveBeenCalledWith('/cards/card-1');
+    expect(mockClient.get).toHaveBeenCalledWith('/cards/card-1', undefined);
   });
 
   test('getCard propagates 404 errors', async () => {
     mockClient.get.mockRejectedValue(new Error('Not found'));
     await expect(api.getCard('bad-id')).rejects.toThrow('Not found');
+  });
+
+  test('getCard with include options passes include param', async () => {
+    const card = { cardId: 'card-1', name: 'Task', createdAt: '2026-01-01', updatedAt: '2026-01-01' };
+    mockClient.get.mockResolvedValue(card);
+    await api.getCard('card-1', { include: ['links', 'comments'] });
+    expect(mockClient.get).toHaveBeenCalledWith('/cards/card-1', {
+      params: { include: 'links,comments' },
+    });
+  });
+
+  // --- linkCard ---
+
+  test('linkCard posts to /cards/:id/links', async () => {
+    const link = { linkId: 'lnk-1', type: 'depends', cardId: 'card-2' };
+    mockClient.post.mockResolvedValue(link);
+    const result = await api.linkCard('card-1', { toCardId: 'card-2', type: 'depends' });
+    expect(result.linkId).toBe('lnk-1');
+    expect(mockClient.post).toHaveBeenCalledWith('/cards/card-1/links', {
+      toCardId: 'card-2',
+      type: 'depends',
+    });
+  });
+
+  test('linkCard propagates errors', async () => {
+    mockClient.post.mockRejectedValue(new Error('Card not found'));
+    await expect(api.linkCard('bad-id', { toCardId: 'other', type: 'relates' })).rejects.toThrow('Card not found');
+  });
+
+  // --- unlinkCard ---
+
+  test('unlinkCard calls DELETE on /cards/:id/links/:fromId', async () => {
+    mockClient.delete.mockResolvedValue(undefined);
+    await api.unlinkCard('card-1', 'card-2');
+    expect(mockClient.delete).toHaveBeenCalledWith('/cards/card-1/links/card-2');
+  });
+
+  test('unlinkCard propagates errors', async () => {
+    mockClient.delete.mockRejectedValue(new Error('Link not found'));
+    await expect(api.unlinkCard('card-1', 'bad-link')).rejects.toThrow('Link not found');
+  });
+
+  // --- moveCard ---
+
+  test('moveCard patches /cards/:id/move', async () => {
+    const card = { cardId: 'card-1', name: 'Task', createdAt: '2026-01-01', boardId: 'board-2' };
+    mockClient.patch.mockResolvedValue(card);
+    const result = await api.moveCard('card-1', { toBoardId: 'board-2', position: 'top' });
+    expect(result.boardId).toBe('board-2');
+    expect(mockClient.patch).toHaveBeenCalledWith('/cards/card-1/move', {
+      boardId: 'board-2',
+      position: 'top',
+    });
+  });
+
+  test('moveCard without position sends undefined position', async () => {
+    const card = { cardId: 'card-1', name: 'Task', createdAt: '2026-01-01' };
+    mockClient.patch.mockResolvedValue(card);
+    await api.moveCard('card-1', { toBoardId: 'board-2' });
+    expect(mockClient.patch).toHaveBeenCalledWith('/cards/card-1/move', {
+      boardId: 'board-2',
+      position: undefined,
+    });
+  });
+
+  test('moveCard propagates errors', async () => {
+    mockClient.patch.mockRejectedValue(new Error('Board not found'));
+    await expect(api.moveCard('card-1', { toBoardId: 'bad-board' })).rejects.toThrow('Board not found');
   });
 
   // --- createCard ---

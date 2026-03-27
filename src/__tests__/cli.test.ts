@@ -54,7 +54,7 @@ describe('cli.ts — command structure (parent/child hierarchy)', () => {
     expect(exportCmd).toBeDefined();
   });
 
-  test('all 4 subcommands are registered under "cards" (no conflicts)', () => {
+  test('all subcommands are registered under "cards" (no conflicts)', () => {
     const program = buildProgram();
     const cardsCmd = program.commands.find(c => c.name() === 'cards')!;
     const subNames = cardsCmd.commands.map(c => c.name());
@@ -62,8 +62,11 @@ describe('cli.ts — command structure (parent/child hierarchy)', () => {
     expect(subNames).toContain('create');
     expect(subNames).toContain('update');
     expect(subNames).toContain('export');
-    // 4 commands total
-    expect(subNames.length).toBe(4);
+    // CLA-1785: advanced cards endpoints add get, link, unlink, move
+    expect(subNames).toContain('get');
+    expect(subNames).toContain('link');
+    expect(subNames).toContain('unlink');
+    expect(subNames).toContain('move');
   });
 
   test('program name is "favro"', () => {
