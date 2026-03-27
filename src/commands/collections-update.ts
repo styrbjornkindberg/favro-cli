@@ -1,0 +1,69 @@
+/**
+ * Collections Update Command
+ * CLA-1783 FAVRO-021: Implement Collections Endpoints
+ *
+ * favro collections update <id> [--name "NEW_NAME"] [--description "DESC"]
+ */
+import { Command } from 'commander';
+import CollectionsAPI from '../lib/collections-api';
+import FavroHttpClient from '../lib/http-client';
+import { resolveApiKey } from '../lib/config';
+import { logError, missingApiKeyError } from '../lib/error-handler';
+
+export function registerCollectionsUpdateCommand(collectionsParent: Command): void {
+  collectionsParent
+    .command('update <id>')
+    .description('Update an existing collection')
+    .option('--name <name>', 'New collection name')
+    .option('--description <text>', 'New collection description')
+    .option('--json', 'Output updated collection as JSON')
+    .option('--dry-run', 'Print what would be updated without making API calls')
+    .action(async (id: string, options) => {
+      const verbose = collectionsParent.parent?.opts()?.verbose ?? false;
+      try {
+        const token = await resolveApiKey();
+        if (!token) {
+          console.error(`Error: ${missingApiKeyError()}`);
+          process.exit(1);
+        }
+
+        if (!options.name && !options.description) {
+          console.error('Error: Provide at least one field to update: --name or --description');
+          process.exit(1);
+        }
+
+        const updateData: { name?: string; description?: string } = {};
+        if (options.name) updateData.name = options.name;
+        if (options.description) updateData.description = options.description;
+
+        if (options.dryRun) {
+          console.log(`[dry-run] Would update collection ${id} with:`, JSON.stringify(updateData));
+          return;
+        }
+
+        const client = new FavroHttpClient({ auth: { token } });
+        const api = new CollectionsAPI(client);
+
+        const collection = await api.updateCollection(id, updateData);
+
+        console.log(`✓ Collection updated: ${collection.collectionId}`);
+        console.log(`  Name: ${collection.name}`);
+        if (collection.description) {
+          console.log(`  Description: ${collection.description}`);
+        }
+
+        if (options.json) {
+          console.log(JSON.stringify(collection, null, 2));
+        }
+      } catch (error: any) {
+        if (error?.response?.status === 404) {
+          console.error(`✗ Collection not found: ${id}`);
+          process.exit(1);
+        }
+        logError(error, verbose);
+        process.exit(1);
+      }
+    });
+}
+
+export default registerCollectionsUpdateCommand;

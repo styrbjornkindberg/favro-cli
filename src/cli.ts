@@ -25,9 +25,19 @@ import { applyFilters, ExportFormat } from './commands/cards-export';
 import { Card } from './lib/cards-api';
 import { registerAuthCommand } from './commands/auth';
 import { registerBoardsListCommand } from './commands/boards-list';
+import { registerBoardsGetCommand } from './commands/boards-get';
+import { registerBoardsCreateCommand } from './commands/boards-create';
+import { registerBoardsUpdateCommand } from './commands/boards-update';
 import { registerReleaseCheckCommand } from './commands/release-check';
 import { registerRisksCommand } from './commands/risks';
 import { registerBatchSmartCommand } from './commands/batch-smart';
+import { registerBatchCommand } from './commands/batch';
+import { registerAuditCommand } from './commands/favro-audit';
+import { registerWhoChangedCommand } from './commands/favro-who-changed';
+import { registerCollectionsListCommand } from './commands/collections-list';
+import { registerCollectionsGetCommand } from './commands/collections-get';
+import { registerCollectionsCreateCommand } from './commands/collections-create';
+import { registerCollectionsUpdateCommand } from './commands/collections-update';
 import { logError, missingApiKeyError } from './lib/error-handler';
 import { ProgressBar } from './lib/progress';
 import { resolveApiKey } from './lib/config';
@@ -67,12 +77,35 @@ const boardsCmd = program.command('boards').description('Board operations');
 // ─── boards list ─────────────────────────────────────────────────────────────
 registerBoardsListCommand(boardsCmd);
 
+// ─── boards get ──────────────────────────────────────────────────────────────
+registerBoardsGetCommand(boardsCmd);
+
+// ─── boards create ───────────────────────────────────────────────────────────
+registerBoardsCreateCommand(boardsCmd);
+
+// ─── boards update ───────────────────────────────────────────────────────────
+registerBoardsUpdateCommand(boardsCmd);
+
 // ─── release-check command ──────────────────────────────────────────────────────
 registerReleaseCheckCommand(program);
 
 // ─── risks command ───────────────────────────────────────────────────────────────
 registerRisksCommand(program);
 registerBatchSmartCommand(program);
+registerBatchCommand(program);
+
+// ─── audit command ───────────────────────────────────────────────────────────
+registerAuditCommand(program);
+
+// ─── who-changed command ─────────────────────────────────────────────────────
+registerWhoChangedCommand(program);
+
+// ─── collections parent ──────────────────────────────────────────────────────
+const collectionsCmd = program.command('collections').description('Collection operations');
+registerCollectionsListCommand(collectionsCmd);
+registerCollectionsGetCommand(collectionsCmd);
+registerCollectionsCreateCommand(collectionsCmd);
+registerCollectionsUpdateCommand(collectionsCmd);
 
 // ─── cards parent ────────────────────────────────────────────────────────────
 const cards = program.command('cards').description(
