@@ -27,6 +27,7 @@ import { registerAuthCommand } from './commands/auth';
 import { registerBoardsListCommand } from './commands/boards-list';
 import { registerReleaseCheckCommand } from './commands/release-check';
 import { registerRisksCommand } from './commands/risks';
+import { registerBatchSmartCommand } from './commands/batch-smart';
 import { logError, missingApiKeyError } from './lib/error-handler';
 import { ProgressBar } from './lib/progress';
 import { resolveApiKey } from './lib/config';
@@ -71,6 +72,7 @@ registerReleaseCheckCommand(program);
 
 // ─── risks command ───────────────────────────────────────────────────────────────
 registerRisksCommand(program);
+registerBatchSmartCommand(program);
 
 // ─── cards parent ────────────────────────────────────────────────────────────
 const cards = program.command('cards').description(
