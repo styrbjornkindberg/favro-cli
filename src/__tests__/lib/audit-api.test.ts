@@ -76,6 +76,14 @@ describe('parseSince', () => {
   it('throws for empty string', () => {
     expect(() => parseSince('')).toThrow('Invalid --since value');
   });
+
+  it('throws for "0d" (zero amount)', () => {
+    expect(() => parseSince('0d')).toThrow('Amount must be greater than 0');
+  });
+
+  it('throws for "0h" (zero hours)', () => {
+    expect(() => parseSince('0h')).toThrow('Amount must be greater than 0');
+  });
 });
 
 // ─── formatRelative ──────────────────────────────────────────────────────────
@@ -144,6 +152,18 @@ describe('formatTimestamp', () => {
 
   it('returns original string for invalid date', () => {
     expect(formatTimestamp('not-a-date')).toBe('not-a-date');
+  });
+
+  it('returns "(unknown time)" for null input', () => {
+    expect(formatTimestamp(null as any)).toBe('(unknown time)');
+  });
+
+  it('returns "(unknown time)" for undefined input', () => {
+    expect(formatTimestamp(undefined as any)).toBe('(unknown time)');
+  });
+
+  it('returns "(unknown time)" for empty string', () => {
+    expect(formatTimestamp('')).toBe('(unknown time)');
   });
 });
 
@@ -317,5 +337,84 @@ describe('AuditAPI.getCardHistory', () => {
     const results = await api.getCardHistory('login');
     expect(results[0].entries.length).toBeGreaterThanOrEqual(1);
     expect(results[0].entries.some(e => e.changeType === 'created' || e.changeType === 'updated')).toBe(true);
+  });
+
+  it('does not crash when card.name is null (regression: null name)', async () => {
+    const cardsWithNullName: Card[] = [
+      {
+        cardId: 'card-null-name',
+        name: null as any, // simulate null name from API
+        status: 'In Progress',
+        createdAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+      sampleCards[0],
+    ];
+    MockCardsAPI.prototype.listCards = jest.fn().mockResolvedValue(cardsWithNullName);
+    const mockClient = new FavroHttpClient({});
+    (mockClient as any).get = jest.fn().mockRejectedValue(new Error('404'));
+
+    const api = new AuditAPI(mockClient);
+    // Should not throw TypeError even though one card has null name
+    const results = await api.getCardHistory('login');
+    expect(results).toHaveLength(1);
+    expect(results[0].card.cardId).toBe('card-login');
+  });
+});
+
+// ─── AuditAPI.getCardActivity pagination ─────────────────────────────────────
+describe('AuditAPI.getCardActivity pagination', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('fetches multiple pages and combines results', async () => {
+    const mockClient = new FavroHttpClient({});
+    const page1Entries = [
+      { activityId: 'act-1', cardId: 'card-x', type: 'comment', description: 'Page 1 entry', author: 'alice', createdAt: new Date().toISOString() },
+    ];
+    const page2Entries = [
+      { activityId: 'act-2', cardId: 'card-x', type: 'update', description: 'Page 2 entry', author: 'bob', createdAt: new Date().toISOString() },
+    ];
+
+    let callCount = 0;
+    (mockClient as any).get = jest.fn().mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) {
+        return Promise.resolve({
+          entities: page1Entries,
+          requestId: 'req-abc',
+          page: 0,
+          pages: 2,
+        });
+      }
+      // Second call: page 2 (last page)
+      return Promise.resolve({
+        entities: page2Entries,
+        requestId: 'req-abc',
+        page: 1,
+        pages: 2,
+      });
+    });
+
+    const api = new AuditAPI(mockClient);
+    const entries = await api.getCardActivity('card-x', 200);
+    expect(entries).toHaveLength(2);
+    expect(entries[0].activityId).toBe('act-1');
+    expect(entries[1].activityId).toBe('act-2');
+  });
+
+  it('stops pagination when page response has no more pages', async () => {
+    const mockClient = new FavroHttpClient({});
+    (mockClient as any).get = jest.fn().mockResolvedValue({
+      entities: [
+        { activityId: 'act-1', cardId: 'card-y', type: 'comment', description: 'Only entry', author: 'alice', createdAt: new Date().toISOString() },
+      ],
+      // No requestId — should break after first page
+    });
+
+    const api = new AuditAPI(mockClient);
+    const entries = await api.getCardActivity('card-y', 200);
+    expect(entries).toHaveLength(1);
   });
 });

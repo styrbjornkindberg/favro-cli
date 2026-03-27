@@ -47,6 +47,11 @@ export function parseSince(since: string | undefined): Date | undefined {
     );
   }
   const amount = parseInt(match[1], 10);
+  if (amount === 0) {
+    throw new Error(
+      `Invalid --since value "${trimmed}". Amount must be greater than 0.`
+    );
+  }
   const unit = match[2].toLowerCase();
   const multipliers: Record<string, number> = {
     h: 60 * 60 * 1000,
@@ -60,7 +65,10 @@ export function parseSince(since: string | undefined): Date | undefined {
  * Format a timestamp in both relative and absolute (ISO 8601) form.
  * E.g.: "2 hours ago (2026-03-25T14:30:00.000Z)"
  */
-export function formatTimestamp(isoString: string): string {
+export function formatTimestamp(isoString: string | null | undefined): string {
+  // Explicit guard: null/undefined/empty must not be passed to new Date()
+  // (new Date(null) returns epoch 1970-01-01, not an invalid date)
+  if (!isoString) return '(unknown time)';
   const date = new Date(isoString);
   if (isNaN(date.getTime())) return isoString;
 
@@ -142,7 +150,9 @@ export class AuditAPI {
         if (response.requestId) {
           requestId = response.requestId;
           totalPages = response.pages ?? 1;
-          page = (response.page ?? 0) + 1;
+          // Increment page locally — never trust response.page to avoid infinite loop
+          // if API always returns page: 0
+          page += 1;
         } else {
           break;
         }
@@ -241,7 +251,7 @@ export class AuditAPI {
   ): Promise<{ card: Card; entries: AuditEntry[] }[]> {
     const cards = await this.cardsApi.listCards(boardId, 1000);
     const titleLc = cardTitle.toLowerCase();
-    const matched = cards.filter(c => c.name.toLowerCase().includes(titleLc));
+    const matched = cards.filter(c => c.name?.toLowerCase().includes(titleLc));
 
     const results: { card: Card; entries: AuditEntry[] }[] = [];
 

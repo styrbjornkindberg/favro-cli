@@ -48,8 +48,10 @@ export function registerAuditCommand(program: Command): void {
           process.exit(1);
         }
 
-        const limit = parseInt(options.limit, 10) || 500;
-        const pageSize = parseInt(options.pageSize, 10) || PAGE_SIZE;
+        const limitRaw = parseInt(options.limit, 10);
+        const limit = isNaN(limitRaw) || limitRaw < 1 ? 500 : limitRaw;
+        const pageSizeRaw = parseInt(options.pageSize, 10);
+        const pageSize = isNaN(pageSizeRaw) || pageSizeRaw < 1 ? PAGE_SIZE : pageSizeRaw;
 
         const client = new FavroHttpClient({ auth: { token } });
         const api = new AuditAPI(client);
@@ -83,7 +85,7 @@ export function registerAuditCommand(program: Command): void {
           for (const entry of page) {
             const ts = formatTimestamp(entry.timestamp);
             const author = entry.author ? ` by ${entry.author}` : '';
-            console.log(`  [${entry.changeType.toUpperCase()}]${author} — ${ts}`);
+            console.log(`  [${(entry.changeType ?? 'unknown').toUpperCase()}]${author} — ${ts}`);
             console.log(`    Card: ${entry.cardName} (${entry.cardId})`);
             console.log(`    ${entry.description}`);
             console.log();

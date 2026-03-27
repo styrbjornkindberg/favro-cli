@@ -35,7 +35,8 @@ export function registerWhoChangedCommand(program: Command): void {
           process.exit(1);
         }
 
-        const limit = parseInt(options.limit, 10) || 200;
+        const limitRaw = parseInt(options.limit, 10);
+        const limit = isNaN(limitRaw) || limitRaw < 1 ? 200 : limitRaw;
 
         const client = new FavroHttpClient({ auth: { token } });
         const api = new AuditAPI(client);
@@ -71,7 +72,7 @@ export function registerWhoChangedCommand(program: Command): void {
           for (const entry of entries) {
             const ts = formatTimestamp(entry.timestamp);
             const author = entry.author ? ` by ${entry.author}` : '';
-            console.log(`  [${entry.changeType.toUpperCase()}]${author}`);
+            console.log(`  [${(entry.changeType ?? 'unknown').toUpperCase()}]${author}`);
             console.log(`    When:    ${ts}`);
             console.log(`    What:    ${entry.description}`);
             console.log();
