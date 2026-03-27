@@ -62,6 +62,8 @@ const csv_1 = require("./lib/csv");
 const cards_export_1 = require("./commands/cards-export");
 const auth_1 = require("./commands/auth");
 const boards_list_1 = require("./commands/boards-list");
+const release_check_1 = require("./commands/release-check");
+const risks_1 = require("./commands/risks");
 const error_handler_1 = require("./lib/error-handler");
 const progress_1 = require("./lib/progress");
 const config_1 = require("./lib/config");
@@ -92,6 +94,10 @@ function buildProgram() {
     const boardsCmd = program.command('boards').description('Board operations');
     // ─── boards list ─────────────────────────────────────────────────────────────
     (0, boards_list_1.registerBoardsListCommand)(boardsCmd);
+    // ─── release-check command ──────────────────────────────────────────────────────
+    (0, release_check_1.registerReleaseCheckCommand)(program);
+    // ─── risks command ───────────────────────────────────────────────────────────────
+    (0, risks_1.registerRisksCommand)(program);
     // ─── cards parent ────────────────────────────────────────────────────────────
     const cards = program.command('cards').description('Card operations — list, create, update, and export cards.\n\n' +
         'Subcommands:\n' +

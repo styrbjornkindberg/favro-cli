@@ -8,7 +8,7 @@ export interface Card {
     tags?: string[];
     dueDate?: string;
     createdAt: string;
-    updatedAt: string;
+    updatedAt?: string;
 }
 export interface CreateCardRequest {
     name: string;

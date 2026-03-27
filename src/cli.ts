@@ -25,6 +25,8 @@ import { applyFilters, ExportFormat } from './commands/cards-export';
 import { Card } from './lib/cards-api';
 import { registerAuthCommand } from './commands/auth';
 import { registerBoardsListCommand } from './commands/boards-list';
+import { registerReleaseCheckCommand } from './commands/release-check';
+import { registerRisksCommand } from './commands/risks';
 import { logError, missingApiKeyError } from './lib/error-handler';
 import { ProgressBar } from './lib/progress';
 import { resolveApiKey } from './lib/config';
@@ -63,6 +65,12 @@ const boardsCmd = program.command('boards').description('Board operations');
 
 // ─── boards list ─────────────────────────────────────────────────────────────
 registerBoardsListCommand(boardsCmd);
+
+// ─── release-check command ──────────────────────────────────────────────────────
+registerReleaseCheckCommand(program);
+
+// ─── risks command ───────────────────────────────────────────────────────────────
+registerRisksCommand(program);
 
 // ─── cards parent ────────────────────────────────────────────────────────────
 const cards = program.command('cards').description(

@@ -43,6 +43,7 @@ const readline = __importStar(require("readline"));
 const cards_api_1 = __importDefault(require("../lib/cards-api"));
 const http_client_1 = __importDefault(require("../lib/http-client"));
 const error_handler_1 = require("../lib/error-handler");
+const query_parser_1 = require("../lib/query-parser");
 /**
  * Max cards that can be updated in a single batch.
  * Spec: "Max 100 cards per command (warn if > 100 match)"
@@ -71,12 +72,23 @@ function registerCardsUpdateCommand(program) {
         .option('--status <status>', 'Card status')
         .option('--assignees <list>', 'Assignees (comma-separated)')
         .option('--tags <list>', 'Tags (comma-separated)')
+        .option('--filter <filter>', 'Filter expression for card selection')
         .option('--json', 'Output as JSON')
         .option('--dry-run', 'Show what would be updated without making changes')
         .option('--yes', 'Skip confirmation prompt')
         .action(async (_updateArg, cardId, options) => {
         const verbose = program.parent?.opts()?.verbose ?? program.opts()?.verbose ?? false;
         try {
+            // Parse filter if provided
+            if (options.filter) {
+                try {
+                    (0, query_parser_1.parseQuery)(options.filter);
+                }
+                catch (err) {
+                    console.error(`✗ Invalid filter expression: ${err.message}`);
+                    process.exit(1);
+                }
+            }
             const token = process.env.FAVRO_API_TOKEN;
             if (!token) {
                 console.error(`Error: ${(0, error_handler_1.missingApiKeyError)()}`);

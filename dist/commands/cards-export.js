@@ -36,7 +36,6 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.parseFilter = parseFilter;
 exports.applyFilter = applyFilter;
 exports.applyFilters = applyFilters;
 exports.registerCardsExportCommand = registerCardsExportCommand;
@@ -45,56 +44,36 @@ const cards_api_1 = __importDefault(require("../lib/cards-api"));
 const http_client_1 = __importDefault(require("../lib/http-client"));
 const csv_1 = require("../lib/csv");
 const error_handler_1 = require("../lib/error-handler");
+const boards_api_1 = __importDefault(require("../lib/boards-api"));
 const progress_1 = require("../lib/progress");
+const query_parser_1 = require("../lib/query-parser");
 /**
- * Parse a simple filter expression like "assignee:alice" or "status:done".
- * Returns {field, value} or null if the expression is not recognised.
+ * Apply a filter expression to cards using the enhanced query parser.
+ * Supports: field:value, AND/OR operators, parentheses, date predicates, relationships, etc.
+ * @throws Error if the filter syntax is invalid
  */
-function parseFilter(filter) {
-    const idx = filter.indexOf(':');
-    if (idx === -1)
-        return null;
-    const field = filter.slice(0, idx).trim().toLowerCase();
-    const value = filter.slice(idx + 1).trim().toLowerCase();
-    return { field, value };
-}
-/**
- * Apply a parsed filter to a list of cards.
- * Supported fields: assignee, status, label, tag
- */
-function applyFilter(cards, filter) {
-    const parsed = parseFilter(filter);
-    if (!parsed) {
-        console.warn(`⚠ Unrecognised filter format: "${filter}" — expected field:value`);
-        return cards;
+function applyFilter(cards, filterExpression) {
+    try {
+        const query = (0, query_parser_1.parseQuery)(filterExpression);
+        return (0, query_parser_1.filterCards)(query, cards);
     }
-    const { field, value } = parsed;
-    if (!value) {
-        console.error(`✗ Filter value cannot be empty: "${filter}"`);
+    catch (err) {
+        console.error(`✗ Invalid filter expression: "${filterExpression}"`);
+        console.error(`  Error: ${err.message}`);
         process.exit(1);
     }
-    switch (field) {
-        case 'assignee':
-            return cards.filter(c => (c.assignees ?? []).some(a => a.toLowerCase().includes(value)));
-        case 'status':
-            return cards.filter(c => (c.status ?? '').toLowerCase() === value);
-        case 'label':
-        case 'tag':
-            return cards.filter(c => (c.tags ?? []).some(t => t.toLowerCase().includes(value)));
-        default:
-            console.warn(`⚠ Unknown filter field: "${field}". Supported: assignee, status, label`);
-            return cards;
-    }
 }
 /**
- * Apply multiple filters to cards (AND logic — all filters must match).
+ * Apply multiple filters to cards using the enhanced query parser.
+ * Combines all filters with AND logic (all filters must match).
+ * @throws Error if any filter syntax is invalid
  */
-function applyFilters(cards, filters) {
-    let result = cards;
-    for (const filter of filters) {
-        result = applyFilter(result, filter);
-    }
-    return result;
+function applyFilters(cards, filterExpressions) {
+    if (filterExpressions.length === 0)
+        return cards;
+    // Combine multiple filter expressions with AND operator
+    const combinedFilter = filterExpressions.join(' AND ');
+    return applyFilter(cards, combinedFilter);
 }
 function registerCardsExportCommand(program) {
     program
@@ -179,7 +158,22 @@ function registerCardsExportCommand(program) {
             }
         }
         catch (error) {
-            (0, error_handler_1.logError)(error, verbose);
+            if (board && error?.response?.status === 404) {
+                // Board not found — fetch available boards and suggest
+                try {
+                    const boardsApi = new boards_api_1.default(new (await Promise.resolve().then(() => __importStar(require('../lib/http-client')))).default({ auth: { token: token } }));
+                    const boards = await boardsApi.listBoards();
+                    const boardNames = boards.map(b => b.name);
+                    const helpfulMsg = (0, error_handler_1.suggestBoard)(board, boardNames);
+                    console.error(`Error: ${helpfulMsg}`);
+                }
+                catch {
+                    (0, error_handler_1.logError)(error, verbose);
+                }
+            }
+            else {
+                (0, error_handler_1.logError)(error, verbose);
+            }
             process.exit(1);
         }
     });
