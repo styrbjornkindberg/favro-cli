@@ -5,6 +5,7 @@
 import { Command } from 'commander';
 import BoardsAPI, { Board, Collection } from '../lib/boards-api';
 import FavroHttpClient from '../lib/http-client';
+import { resolveApiKey } from '../lib/config';
 
 export function formatBoardsTable(boards: Board[]): void {
   if (boards.length === 0) {
@@ -24,14 +25,24 @@ export function formatBoardsTable(boards: Board[]): void {
 }
 
 /**
- * Filter boards by collection name (case-insensitive substring match)
+ * Filter boards by collection name (case-insensitive substring match).
+ * Warns if multiple collections match.
+ * Returns empty array if no match found.
  */
 export function filterBoardsByCollection(boards: Board[], collections: Collection[], collectionName: string): Board[] {
-  const lc = collectionName.toLowerCase();
-  const matched = collections.find(c => c.name.toLowerCase().includes(lc));
-  if (!matched) {
+  const lc = collectionName.trim().toLowerCase();
+  const matches = collections.filter(c => c.name.toLowerCase().includes(lc));
+
+  if (matches.length === 0) {
     return [];
   }
+
+  if (matches.length > 1) {
+    console.warn(`⚠️ Multiple collections match "${collectionName}": ${matches.map(c => c.name).join(', ')}`);
+    console.log(`Using first match: "${matches[0].name}"\n`);
+  }
+
+  const matched = matches[0];
   return boards.filter(b => b.collectionId === matched.collectionId);
 }
 
@@ -43,9 +54,9 @@ export function registerBoardsListCommand(boardsParent: Command): void {
     .option('--json', 'Output as JSON')
     .action(async (options) => {
       try {
-        const token = process.env.FAVRO_API_TOKEN;
+        const token = await resolveApiKey();
         if (!token) {
-          console.error('✗ Missing required environment variable: FAVRO_API_TOKEN');
+          console.error('✗ API key not configured. Run `favro auth login` or set FAVRO_API_KEY.');
           process.exit(1);
         }
 

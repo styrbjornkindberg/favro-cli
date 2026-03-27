@@ -20,12 +20,37 @@ export interface Collection {
   updatedAt: string;
 }
 
+interface PaginatedResponse<T> {
+  entities: T[];
+  requestId?: string;
+  pages?: number;
+}
+
 export class BoardsAPI {
   constructor(private client: FavroHttpClient) {}
 
-  async listBoards(limit: number = 50): Promise<Board[]> {
-    const response = await this.client.get<{ entities: Board[] }>('/boards', { params: { limit } });
-    return response.entities || [];
+  async listBoards(pageSize: number = 50): Promise<Board[]> {
+    const allBoards: Board[] = [];
+    let requestId: string | undefined;
+    let page = 1;
+
+    while (true) {
+      const params: Record<string, any> = { limit: pageSize };
+      if (requestId) {
+        params.requestId = requestId;
+        params.page = page;
+      }
+
+      const response = await this.client.get<PaginatedResponse<Board>>('/boards', { params });
+      const boards = response.entities || [];
+      allBoards.push(...boards);
+
+      requestId = response.requestId;
+      if (!requestId || !response.pages || page >= response.pages || boards.length === 0) break;
+      page++;
+    }
+
+    return allBoards;
   }
 
   async getBoard(boardId: string): Promise<Board> {
@@ -44,9 +69,28 @@ export class BoardsAPI {
     await this.client.delete(`/boards/${boardId}`);
   }
 
-  async listCollections(limit: number = 50): Promise<Collection[]> {
-    const response = await this.client.get<{ entities: Collection[] }>('/collections', { params: { limit } });
-    return response.entities || [];
+  async listCollections(pageSize: number = 50): Promise<Collection[]> {
+    const allCollections: Collection[] = [];
+    let requestId: string | undefined;
+    let page = 1;
+
+    while (true) {
+      const params: Record<string, any> = { limit: pageSize };
+      if (requestId) {
+        params.requestId = requestId;
+        params.page = page;
+      }
+
+      const response = await this.client.get<PaginatedResponse<Collection>>('/collections', { params });
+      const collections = response.entities || [];
+      allCollections.push(...collections);
+
+      requestId = response.requestId;
+      if (!requestId || !response.pages || page >= response.pages || collections.length === 0) break;
+      page++;
+    }
+
+    return allCollections;
   }
 
   async getCollection(collectionId: string): Promise<Collection> {

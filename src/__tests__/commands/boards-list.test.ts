@@ -10,9 +10,11 @@ import {
 } from '../../commands/boards-list';
 import BoardsAPI, { Board, Collection } from '../../lib/boards-api';
 import FavroHttpClient from '../../lib/http-client';
+import * as config from '../../lib/config';
 
 jest.mock('../../lib/boards-api');
 jest.mock('../../lib/http-client');
+jest.mock('../../lib/config');
 
 const sampleBoards: Board[] = [
   {
@@ -87,27 +89,30 @@ describe('boards list command', () => {
   let consoleLogSpy: jest.SpyInstance;
   let consoleErrorSpy: jest.SpyInstance;
   let exitSpy: jest.SpyInstance;
-  const originalToken = process.env.FAVRO_API_TOKEN;
+  let resolveApiKeySpy: jest.SpyInstance;
 
   beforeEach(() => {
-    process.env.FAVRO_API_TOKEN = 'test-token';
+    resolveApiKeySpy = jest.spyOn(config, 'resolveApiKey').mockResolvedValue('test-token');
     consoleLogSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
     consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {
       throw new Error('process.exit');
     }) as any);
     jest.clearAllMocks();
+    // Re-mock after clearAllMocks
+    resolveApiKeySpy = jest.spyOn(config, 'resolveApiKey').mockResolvedValue('test-token');
+    consoleLogSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {
+      throw new Error('process.exit');
+    }) as any);
   });
 
   afterEach(() => {
-    if (originalToken !== undefined) {
-      process.env.FAVRO_API_TOKEN = originalToken;
-    } else {
-      delete process.env.FAVRO_API_TOKEN;
-    }
     consoleLogSpy.mockRestore();
     consoleErrorSpy.mockRestore();
     exitSpy.mockRestore();
+    resolveApiKeySpy.mockRestore();
   });
 
   // --- list all boards ---
@@ -200,13 +205,6 @@ describe('boards list command', () => {
     const mockListCollections = jest.fn().mockResolvedValue(sampleCollections);
     const program = buildProgram(mockListBoards, mockListCollections);
 
-    // Re-mock process.env.FAVRO_API_TOKEN since afterEach may not have run
-    process.env.FAVRO_API_TOKEN = 'test-token';
-    consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {
-      throw new Error('process.exit');
-    }) as any);
-
     await expect(
       program.parseAsync(['node', 'cli', 'boards', 'list', '--collection', 'NonExistent'])
     ).rejects.toThrow('process.exit');
@@ -230,8 +228,8 @@ describe('boards list command', () => {
 
   // --- error handling ---
 
-  test('exits 1 when FAVRO_API_TOKEN is missing', async () => {
-    delete process.env.FAVRO_API_TOKEN;
+  test('exits 1 when API key not configured', async () => {
+    jest.spyOn(config, 'resolveApiKey').mockResolvedValue(undefined);
     const mockListBoards = jest.fn();
     const program = buildProgram(mockListBoards);
 
@@ -240,12 +238,11 @@ describe('boards list command', () => {
     ).rejects.toThrow('process.exit');
 
     expect(exitSpy).toHaveBeenCalledWith(1);
-    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('FAVRO_API_TOKEN'));
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('API key not configured'));
     expect(mockListBoards).not.toHaveBeenCalled();
   });
 
   test('exits 1 on API error', async () => {
-    process.env.FAVRO_API_TOKEN = 'test-token';
     const mockListBoards = jest.fn().mockRejectedValue(new Error('Network error'));
     const program = buildProgram(mockListBoards);
 
@@ -332,6 +329,19 @@ describe('formatBoardsTable', () => {
 // --- filterBoardsByCollection unit tests ---
 
 describe('filterBoardsByCollection', () => {
+  let consoleWarnSpy: jest.SpyInstance;
+  let consoleLogSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    consoleLogSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    consoleWarnSpy.mockRestore();
+    consoleLogSpy.mockRestore();
+  });
+
   test('filters boards by matching collection name', () => {
     const result = filterBoardsByCollection(sampleBoards, sampleCollections, 'Marketing');
     expect(result).toHaveLength(2);
@@ -357,5 +367,37 @@ describe('filterBoardsByCollection', () => {
   test('returns empty array when no collections', () => {
     const result = filterBoardsByCollection(sampleBoards, [], 'Marketing');
     expect(result).toHaveLength(0);
+  });
+
+  test('warns when multiple collections match', () => {
+    const collectionsWithOverlap: Collection[] = [
+      {
+        collectionId: 'coll-1',
+        name: 'Marketing',
+        createdAt: '2026-01-01T00:00:00Z',
+        updatedAt: '2026-01-01T00:00:00Z',
+      },
+      {
+        collectionId: 'coll-3',
+        name: 'Marketing EMEA',
+        createdAt: '2026-01-01T00:00:00Z',
+        updatedAt: '2026-01-01T00:00:00Z',
+      },
+    ];
+
+    const result = filterBoardsByCollection(sampleBoards, collectionsWithOverlap, 'marketing');
+    expect(consoleWarnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Multiple collections match')
+    );
+    expect(consoleLogSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Using first match')
+    );
+    // Uses first match (coll-1)
+    expect(result.map(b => b.boardId)).toEqual(['board-1', 'board-3']);
+  });
+
+  test('trims whitespace from collection name', () => {
+    const result = filterBoardsByCollection(sampleBoards, sampleCollections, '  marketing  ');
+    expect(result).toHaveLength(2);
   });
 });
