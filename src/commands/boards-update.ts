@@ -27,14 +27,21 @@ export function registerBoardsUpdateCommand(boardsParent: Command): void {
           process.exit(1);
         }
 
-        if (!options.name && !options.description) {
-          console.error('✗ No update fields provided. Use --name and/or --description.');
+        const name = options.name?.trim();
+        if (options.name && !name) {
+          console.error('Error: Board name cannot be empty or whitespace-only');
+          process.exit(1);
+        }
+        const description = options.description?.trim();
+
+        if (!name && !description) {
+          console.error('✗ No update fields provided. Use --name or --description.');
           process.exit(1);
         }
 
         const updateData: { name?: string; description?: string } = {};
-        if (options.name) updateData.name = options.name;
-        if (options.description) updateData.description = options.description;
+        if (name) updateData.name = name;
+        if (description) updateData.description = description;
 
         if (options.dryRun) {
           console.log(`[dry-run] Would update board ${id} with:`, JSON.stringify(updateData));
@@ -46,15 +53,15 @@ export function registerBoardsUpdateCommand(boardsParent: Command): void {
 
         const board = await api.updateBoard(id, updateData);
 
-        console.log(`✓ Board updated: ${board.boardId}`);
-        console.log(`  Name: ${board.name}`);
-        if (board.description) {
-          console.log(`  Description: ${board.description}`);
-        }
-        console.log(`  Updated: ${board.updatedAt?.slice(0, 10) ?? '—'}`);
-
         if (options.json) {
           console.log(JSON.stringify(board, null, 2));
+        } else {
+          console.log(`✓ Board updated: ${board.boardId}`);
+          console.log(`  Name: ${board.name}`);
+          if (board.description) {
+            console.log(`  Description: ${board.description}`);
+          }
+          console.log(`  Updated: ${board.updatedAt?.slice(0, 10) ?? '—'}`);
         }
       } catch (error: any) {
         if (error?.response?.status === 404) {

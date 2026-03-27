@@ -61,11 +61,12 @@ const sampleCollections: Collection[] = [
   },
 ];
 
-function buildProgram(mockListBoards: jest.Mock, mockListCollections?: jest.Mock) {
+function buildProgram(mockListBoards: jest.Mock, mockListCollections?: jest.Mock, mockListBoardsByCollection?: jest.Mock) {
   (FavroHttpClient as jest.MockedClass<typeof FavroHttpClient>).mockImplementation(() => ({} as any));
   (BoardsAPI as jest.MockedClass<typeof BoardsAPI>).mockImplementation(() => ({
     listBoards: mockListBoards,
     listCollections: mockListCollections ?? jest.fn().mockResolvedValue(sampleCollections),
+    listBoardsByCollection: mockListBoardsByCollection ?? jest.fn().mockResolvedValue([]),
     getBoard: jest.fn(),
     createBoard: jest.fn(),
     updateBoard: jest.fn(),
@@ -226,6 +227,63 @@ describe('boards list command', () => {
     expect(parsed[0].boardId).toBe('board-2');
   });
 
+  // --- --include validation ---
+
+  test('--include with valid values (stats) succeeds', async () => {
+    const mockListBoards = jest.fn().mockResolvedValue(sampleBoards);
+    const program = buildProgram(mockListBoards);
+
+    await program.parseAsync(['node', 'cli', 'boards', 'list', '--include', 'stats']);
+
+    expect(consoleErrorSpy).not.toHaveBeenCalledWith(expect.stringContaining('Invalid --include'));
+  });
+
+  test('--include with valid values (velocity) succeeds', async () => {
+    const mockListBoards = jest.fn().mockResolvedValue(sampleBoards);
+    const program = buildProgram(mockListBoards);
+
+    await program.parseAsync(['node', 'cli', 'boards', 'list', '--include', 'velocity']);
+
+    expect(consoleErrorSpy).not.toHaveBeenCalledWith(expect.stringContaining('Invalid --include'));
+  });
+
+  test('--include with valid combo (stats,velocity) succeeds', async () => {
+    const mockListBoards = jest.fn().mockResolvedValue(sampleBoards);
+    const program = buildProgram(mockListBoards);
+
+    await program.parseAsync(['node', 'cli', 'boards', 'list', '--include', 'stats,velocity']);
+
+    expect(consoleErrorSpy).not.toHaveBeenCalledWith(expect.stringContaining('Invalid --include'));
+  });
+
+  test('--include with invalid value exits 1', async () => {
+    const mockListBoards = jest.fn().mockResolvedValue(sampleBoards);
+    const program = buildProgram(mockListBoards);
+
+    await expect(
+      program.parseAsync(['node', 'cli', 'boards', 'list', '--include', 'bogus'])
+    ).rejects.toThrow('process.exit');
+
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Invalid --include values: bogus. Valid options: stats, velocity')
+    );
+  });
+
+  test('--include with mix of valid and invalid values exits 1', async () => {
+    const mockListBoards = jest.fn().mockResolvedValue(sampleBoards);
+    const program = buildProgram(mockListBoards);
+
+    await expect(
+      program.parseAsync(['node', 'cli', 'boards', 'list', '--include', 'stats,bogus'])
+    ).rejects.toThrow('process.exit');
+
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Invalid --include values: bogus')
+    );
+  });
+
   // --- error handling ---
 
   test('exits 1 when API key not configured', async () => {
@@ -252,6 +310,31 @@ describe('boards list command', () => {
 
     expect(exitSpy).toHaveBeenCalledWith(1);
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Network error'));
+  });
+
+  test('--include bogus exits with error', async () => {
+    const mockListBoards = jest.fn().mockResolvedValue(sampleBoards);
+    const program = buildProgram(mockListBoards);
+
+    await expect(
+      program.parseAsync(['node', 'cli', 'boards', 'list', '--include', 'bogus'])
+    ).rejects.toThrow('process.exit');
+
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid include option(s): bogus'));
+    expect(mockListBoards).not.toHaveBeenCalled();
+  });
+
+  test('--include with mixed valid and invalid values exits with error', async () => {
+    const mockListBoards = jest.fn().mockResolvedValue(sampleBoards);
+    const program = buildProgram(mockListBoards);
+
+    await expect(
+      program.parseAsync(['node', 'cli', 'boards', 'list', '--include', 'stats,bogus'])
+    ).rejects.toThrow('process.exit');
+
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid include option(s): bogus'));
   });
 });
 

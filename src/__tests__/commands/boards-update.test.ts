@@ -114,6 +114,28 @@ describe('boards update command', () => {
     expect(mockUpdate).not.toHaveBeenCalled();
   });
 
+  test('--json outputs JSON only (no text before JSON for piping)', async () => {
+    const mockUpdate = jest.fn().mockResolvedValue(sampleBoard);
+    const program = buildProgram(mockUpdate);
+    await program.parseAsync([
+      'node', 'test', 'boards', 'update', 'board-1', '--name', 'Sprint', '--json',
+    ]);
+    // Only one console.log call: the JSON output
+    const logCalls = consoleSpy.mock.calls;
+    expect(logCalls).toHaveLength(1);
+    expect(logCalls[0][0]).toBe(JSON.stringify(sampleBoard, null, 2));
+  });
+
+  test('exits with error when name is whitespace only', async () => {
+    const mockUpdate = jest.fn();
+    const program = buildProgram(mockUpdate);
+    await expect(
+      program.parseAsync(['node', 'test', 'boards', 'update', 'board-1', '--name', '   '])
+    ).rejects.toThrow('process.exit');
+    expect(consoleErrorSpy).toHaveBeenCalledWith('Error: Board name cannot be empty or whitespace-only');
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
   test('exits with error when api key missing', async () => {
     jest.spyOn(config, 'resolveApiKey').mockResolvedValue(null as any);
     const mockUpdate = jest.fn();

@@ -150,4 +150,24 @@ describe('boards create command', () => {
     await program.parseAsync(['node', 'test', 'boards', 'create', 'coll-1', '--name', 'Sprint']);
     expect(mockCreate).toHaveBeenCalledWith('coll-1', expect.objectContaining({ type: 'board' }));
   });
+
+  test('--json outputs JSON only (no text before JSON for piping)', async () => {
+    const mockCreate = jest.fn().mockResolvedValue(sampleBoard);
+    const program = buildProgram(mockCreate);
+    await program.parseAsync(['node', 'test', 'boards', 'create', 'coll-1', '--name', 'Sprint', '--json']);
+    // Only one console.log call: the JSON output
+    const logCalls = consoleSpy.mock.calls;
+    expect(logCalls).toHaveLength(1);
+    expect(logCalls[0][0]).toBe(JSON.stringify(sampleBoard, null, 2));
+  });
+
+  test('exits with error when name is whitespace only', async () => {
+    const mockCreate = jest.fn();
+    const program = buildProgram(mockCreate);
+    await expect(
+      program.parseAsync(['node', 'test', 'boards', 'create', 'coll-1', '--name', '   '])
+    ).rejects.toThrow('process.exit');
+    expect(consoleErrorSpy).toHaveBeenCalledWith('✗ Board name cannot be empty or whitespace only.');
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
 });

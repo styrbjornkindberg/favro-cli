@@ -36,8 +36,14 @@ export function registerBoardsCreateCommand(boardsParent: Command): void {
           process.exit(1);
         }
 
+        const name = (options.name || '').trim();
+        if (!name) {
+          console.error('✗ Board name cannot be empty or whitespace only.');
+          process.exit(1);
+        }
+
         if (options.dryRun) {
-          console.log(`[dry-run] Would create board: "${options.name}"`);
+          console.log(`[dry-run] Would create board: "${name}"`);
           console.log(`[dry-run] Collection: ${collectionId}`);
           console.log(`[dry-run] Type: ${boardType}`);
           if (options.description) {
@@ -50,21 +56,21 @@ export function registerBoardsCreateCommand(boardsParent: Command): void {
         const api = new BoardsAPI(client);
 
         const board = await api.createBoardInCollection(collectionId, {
-          name: options.name,
+          name,
           type: boardType,
           description: options.description,
         });
 
-        console.log(`✓ Board created: ${board.boardId}`);
-        console.log(`  Name: ${board.name}`);
-        console.log(`  Type: ${board.type ?? boardType}`);
-        console.log(`  Collection: ${board.collectionId ?? collectionId}`);
-        if (board.description) {
-          console.log(`  Description: ${board.description}`);
-        }
-
         if (options.json) {
           console.log(JSON.stringify(board, null, 2));
+        } else {
+          console.log(`✓ Board created: ${board.boardId}`);
+          console.log(`  Name: ${board.name}`);
+          console.log(`  Type: ${board.type ?? boardType}`);
+          console.log(`  Collection: ${board.collectionId ?? collectionId}`);
+          if (board.description) {
+            console.log(`  Description: ${board.description}`);
+          }
         }
       } catch (error: any) {
         if (error?.response?.status === 404) {

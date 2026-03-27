@@ -75,6 +75,8 @@ export function filterBoardsByCollection(boards: Board[], collections: Collectio
   return boards.filter(b => b.collectionId === matched.collectionId);
 }
 
+const VALID_LIST_INCLUDES = ['stats', 'velocity'];
+
 export function registerBoardsListCommand(boardsParent: Command): void {
   boardsParent
     .command('list [collection-id]')
@@ -98,6 +100,14 @@ export function registerBoardsListCommand(boardsParent: Command): void {
         const include = options.include
           ? options.include.split(',').map((s: string) => s.trim()).filter(Boolean)
           : undefined;
+
+        if (include) {
+          const invalid = include.filter((i: string) => !VALID_LIST_INCLUDES.includes(i));
+          if (invalid.length > 0) {
+            console.error(`✗ Invalid include option(s): ${invalid.join(', ')}`);
+            process.exit(1);
+          }
+        }
 
         const client = new FavroHttpClient({ auth: { token } });
         const api = new BoardsAPI(client);
