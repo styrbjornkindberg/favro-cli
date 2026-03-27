@@ -1,0 +1,11 @@
+name,description,status
+"Set up CI pipeline","Configure GitHub Actions for lint, test, and build","Todo"
+"Write unit tests for auth module","Cover login, logout, and token refresh","Todo"
+"Fix pagination bug in cards list","Cards after page 2 are duplicated","In Progress"
+"Update API documentation","Add OpenAPI spec for new endpoints","Todo"
+"Implement rate limiting","Add token bucket rate limiter to HTTP client","Backlog"
+"Migrate to TypeScript strict mode","Enable strict null checks project-wide","Backlog"
+"Add CSV export feature","Export cards to CSV with custom column mapping","In Progress"
+"Performance audit","Profile and optimize slow API calls","Todo"
+"Fix login redirect loop","Auth flow loops on expired tokens","In Progress"
+"Write integration tests","End-to-end tests for cards create and export","Todo"

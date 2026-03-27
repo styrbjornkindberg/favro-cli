@@ -27,6 +27,14 @@ import { registerAuthCommand } from './commands/auth';
 import { registerBoardsListCommand } from './commands/boards-list';
 import { logError, missingApiKeyError } from './lib/error-handler';
 import { ProgressBar } from './lib/progress';
+import { resolveApiKey } from './lib/config';
+
+/**
+ * Build the CLI program (exported for testing).
+ * Guards parseAsync behind require.main === module so that
+ * importing this module in tests does NOT trigger argument parsing.
+ */
+export function buildProgram(): Command {
 
 const program = new Command();
 
@@ -91,7 +99,7 @@ cards
   .option('--limit <number>', 'Maximum number of cards to return', '50')
   .option('--json', 'Output as JSON')
   .action(async (options) => {
-    const token = process.env.FAVRO_API_TOKEN;
+    const token = await resolveApiKey();
     if (!token) {
       console.error(`Error: ${missingApiKeyError()}`);
       process.exit(1);
@@ -100,7 +108,8 @@ cards
       const client = new FavroHttpClient({ auth: { token } });
       const api = new CardsAPI(client);
 
-      const limit = parseInt(options.limit, 10) || 50;
+      const parsedLimit = parseInt(options.limit, 10);
+      const limit = !isNaN(parsedLimit) && parsedLimit >= 1 ? parsedLimit : 50;
       let cardList = await api.listCards(options.board, limit);
 
       if (options.status) {
@@ -157,7 +166,7 @@ function parseCSV(content: string): Record<string, string>[] {
 
 // ─── cards create ─────────────────────────────────────────────────────────────
 cards
-  .command('create <title>')
+  .command('create [title]')
   .description(
     'Create a new card, or bulk-import cards from CSV or JSON.\n\n' +
     'Examples:\n' +
@@ -180,10 +189,14 @@ cards
   .option('--csv <file>', 'Bulk import from CSV file (columns: name, description, status)')
   .option('--dry-run', 'Print what would be created without making API calls')
   .option('--json', 'Output as JSON')
-  .action(async (title: string, options) => {
-    const token = process.env.FAVRO_API_TOKEN;
+  .action(async (title: string | undefined, options) => {
+    const token = await resolveApiKey();
     if (!token) {
       console.error(`Error: ${missingApiKeyError()}`);
+      process.exit(1);
+    }
+    if (!title && !options.csv && !options.bulk) {
+      console.error('Error: provide a title or use --csv/--bulk for bulk import');
       process.exit(1);
     }
     try {
@@ -285,7 +298,7 @@ cards
   .option('--dry-run', 'Print what would be updated without making API calls')
   .option('--json', 'Output as JSON')
   .action(async (cardId: string, options) => {
-    const token = process.env.FAVRO_API_TOKEN;
+    const token = await resolveApiKey();
     if (!token) {
       console.error(`Error: ${missingApiKeyError()}`);
       process.exit(1);
@@ -341,7 +354,7 @@ cards
   )
   .option('--limit <number>', 'Maximum cards to fetch', '10000')
   .action(async (board: string, options) => {
-    const token = process.env.FAVRO_API_TOKEN;
+    const token = await resolveApiKey();
     if (!token) {
       console.error(`Error: ${missingApiKeyError()}`);
       process.exit(1);
@@ -411,7 +424,14 @@ cards
     }
   });
 
-program.parseAsync(process.argv).catch((err) => {
-  logError(err, program.opts().verbose);
-  process.exit(1);
-});
+  return program;
+} // end buildProgram()
+
+// Only run when executed directly (not when imported in tests)
+if (require.main === module) {
+  const prog = buildProgram();
+  prog.parseAsync(process.argv).catch((err) => {
+    logError(err, prog.opts().verbose);
+    process.exit(1);
+  });
+}
