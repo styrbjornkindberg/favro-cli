@@ -38,6 +38,8 @@ import { registerCollectionsListCommand } from './commands/collections-list';
 import { registerCollectionsGetCommand } from './commands/collections-get';
 import { registerCollectionsCreateCommand } from './commands/collections-create';
 import { registerCollectionsUpdateCommand } from './commands/collections-update';
+import { registerCardsGetCommand } from './commands/cards-get';
+import { registerCardsLinkCommands } from './commands/cards-link';
 import { logError, missingApiKeyError } from './lib/error-handler';
 import { ProgressBar } from './lib/progress';
 import { resolveApiKey } from './lib/config';
@@ -109,39 +111,52 @@ registerCollectionsUpdateCommand(collectionsCmd);
 
 // ─── cards parent ────────────────────────────────────────────────────────────
 const cards = program.command('cards').description(
-  'Card operations — list, create, update, and export cards.\n\n' +
+  'Card operations — get, list, create, update, export, link, unlink, and move cards.\n\n' +
   'Subcommands:\n' +
-  '  list    List cards from a board\n' +
+  '  get     Retrieve a card by ID with optional metadata\n' +
+  '  list    List cards from a board with filtering\n' +
   '  create  Create a card (single, bulk JSON, or CSV import)\n' +
   '  update  Update an existing card by ID\n' +
-  '  export  Export all cards from a board to JSON or CSV\n\n' +
+  '  export  Export all cards from a board to JSON or CSV\n' +
+  '  link    Link a card to another card\n' +
+  '  unlink  Remove a link between two cards\n' +
+  '  move    Move a card to a different board\n\n' +
   'Examples:\n' +
-  '  favro cards list --board <id>\n' +
+  '  favro cards get <cardId> --include board,collection\n' +
+  '  favro cards list <board-id> --filter "customField:value" --include relations\n' +
+  '  favro cards link <cardId> --to <targetId> --type depends\n' +
+  '  favro cards unlink <cardId> --from <linkedCardId>\n' +
+  '  favro cards move <cardId> --to-board <boardId> --position top\n' +
   '  favro cards create "My card" --board <id>\n' +
-  '  favro cards create --csv tasks.csv --board <id>\n' +
-  '  favro cards update <cardId> --status "Done"\n' +
   '  favro cards export <id> --format csv --out cards.csv'
 );
 
+// ─── cards get ───────────────────────────────────────────────────────────────
+registerCardsGetCommand(cards);
+
 // ─── cards list ──────────────────────────────────────────────────────────────
 cards
-  .command('list')
+  .command('list [boardId]')
   .description(
     'List cards from a board with optional filters.\n\n' +
+    'Pagination: default 25 cards, max 100 per request.\n\n' +
     'Examples:\n' +
-    '  favro cards list --board <id>\n' +
-    '  favro cards list --board <id> --status "In Progress" --limit 100\n' +
-    '  favro cards list --board <id> --assignee alice --json\n' +
-    '  favro cards list --board <id> --tag bug\n\n' +
+    '  favro cards list <board-id>\n' +
+    '  favro cards list <board-id> --status "In Progress" --limit 100\n' +
+    '  favro cards list <board-id> --assignee alice --json\n' +
+    '  favro cards list <board-id> --tag bug\n' +
+    '  favro cards list <board-id> --filter "customField:value" --include relations\n\n' +
     'Tip: Use `favro boards list` to find board IDs.'
   )
-  .option('--board <id>', 'Board ID to list cards from')
+  .option('--board <id>', 'Board ID to list cards from (alternative to positional arg)')
   .option('--status <status>', 'Filter by status')
   .option('--assignee <user>', 'Filter by assignee')
   .option('--tag <tag>', 'Filter by tag')
-  .option('--limit <number>', 'Maximum number of cards to return', '50')
+  .option('--filter <expression>', 'Filter cards using query syntax (e.g. "customField:value")')
+  .option('--include <items>', 'Comma-separated metadata to include: board,collection,custom-fields,relations')
+  .option('--limit <number>', 'Maximum number of cards (default 25, max 100)', '25')
   .option('--json', 'Output as JSON')
-  .action(async (options) => {
+  .action(async (boardId: string | undefined, options) => {
     const token = await resolveApiKey();
     if (!token) {
       console.error(`Error: ${missingApiKeyError()}`);
@@ -151,20 +166,28 @@ cards
       const client = new FavroHttpClient({ auth: { token } });
       const api = new CardsAPI(client);
 
+      // Support positional boardId or --board option
+      const effectiveBoardId = boardId ?? options.board;
+
+      if (!effectiveBoardId) {
+        console.error('Error: Board ID is required. Pass as positional argument or use --board <id>');
+        process.exit(1);
+      }
+
       const parsedLimit = parseInt(options.limit, 10);
-      const limit = !isNaN(parsedLimit) && parsedLimit >= 1 ? parsedLimit : 50;
-      let cardList = await api.listCards(options.board, limit);
+      const limit = (!isNaN(parsedLimit) && parsedLimit >= 1) ? parsedLimit : 25;
+      let cardList = await api.listCards(effectiveBoardId, limit, options.filter);
 
       if (options.status) {
         cardList = cardList.filter(c => c.status?.toLowerCase() === options.status.toLowerCase());
       }
       if (options.assignee) {
-        cardList = cardList.filter(c => (c.assignees || []).some(
+        cardList = cardList.filter(c => (c.assignees ?? []).some(
           a => a.toLowerCase().includes(options.assignee.toLowerCase())
         ));
       }
       if (options.tag) {
-        cardList = cardList.filter(c => (c.tags || []).some(
+        cardList = cardList.filter(c => (c.tags ?? []).some(
           t => t.toLowerCase().includes(options.tag.toLowerCase())
         ));
       }
@@ -176,10 +199,10 @@ cards
         if (cardList.length > 0) {
           const rows = cardList.map(card => ({
             ID: card.cardId,
-            Title: card.name.length > 40 ? card.name.slice(0, 37) + '...' : card.name,
-            Status: card.status || '—',
-            Assignees: (card.assignees || []).join(', ') || '—',
-            Tags: (card.tags || []).join(', ') || '—',
+            Title: (card.name ?? '').length > 40 ? (card.name ?? '').slice(0, 37) + '...' : (card.name ?? ''),
+            Status: card.status ?? '—',
+            Assignees: (card.assignees ?? []).join(', ') || '—',
+            Tags: (card.tags ?? []).join(', ') || '—',
             Created: card.createdAt ? card.createdAt.slice(0, 10) : '—',
           }));
           console.table(rows);
@@ -190,6 +213,9 @@ cards
       process.exit(1);
     }
   });
+
+// ─── cards link / unlink / move ──────────────────────────────────────────────
+registerCardsLinkCommands(cards);
 
 /**
  * Parse a CSV string into an array of objects using the header row.
