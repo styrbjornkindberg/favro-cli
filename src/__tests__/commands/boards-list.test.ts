@@ -312,6 +312,19 @@ describe('formatBoardsTable', () => {
     expect(rows[0].Name).toMatch(/\.\.\.$/);
   });
 
+  test('handles null board name without crashing', () => {
+    const board: Board = {
+      boardId: 'b1',
+      name: null as any,  // ← Edge case: API returns null name
+      createdAt: '2026-03-27',
+      updatedAt: '2026-03-27',
+    };
+    // Should not throw when formatting
+    formatBoardsTable([board]);
+    const rows = consoleTableSpy.mock.calls[0][0];
+    expect(rows[0].Name).toBe('—');  // Should show em-dash, not crash
+  });
+
   test('shows dash for missing cardCount', () => {
     const board: Board = {
       boardId: 'b-no-count',

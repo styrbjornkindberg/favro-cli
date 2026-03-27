@@ -15,7 +15,7 @@ export function formatBoardsTable(boards: Board[]): void {
 
   const rows = boards.map(board => ({
     ID: board.boardId,
-    Name: board.name.length > 35 ? board.name.slice(0, 32) + '...' : board.name,
+    Name: (board.name ?? '—').length > 35 ? (board.name ?? '—').slice(0, 32) + '...' : (board.name ?? '—'),
     Cards: board.cardCount ?? '—',
     Columns: board.columns ?? '—',
     Updated: board.updatedAt ? board.updatedAt.slice(0, 10) : '—',
