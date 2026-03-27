@@ -22,7 +22,7 @@ export const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 /**
  * Read config from ~/.favro/config.json.
  * Returns empty config if file doesn't exist.
- * Throws on permission errors.
+ * Throws on permission errors or corrupted JSON.
  */
 export async function readConfig(): Promise<FavroConfig> {
   try {
@@ -31,6 +31,10 @@ export async function readConfig(): Promise<FavroConfig> {
   } catch (err: any) {
     if (err.code === 'ENOENT') {
       return {};
+    }
+    // Fix: explicit SyntaxError check (SyntaxError has no .code property)
+    if (err instanceof SyntaxError) {
+      throw new Error(`Config file is corrupted (invalid JSON): ${CONFIG_FILE}\nFix or delete it: rm ${CONFIG_FILE}`);
     }
     if (err.code === 'EACCES' || err.code === 'EPERM') {
       throw new Error(`Config file permission error: ${CONFIG_FILE} is not readable. Check file permissions.`);
@@ -64,7 +68,12 @@ export async function writeConfig(config: FavroConfig): Promise<void> {
  */
 export async function resolveApiKey(flagApiKey?: string): Promise<string | undefined> {
   if (flagApiKey) return flagApiKey;
-  if (process.env.FAVRO_API_KEY) return process.env.FAVRO_API_KEY;
+  // Fix: Detect empty string FAVRO_API_KEY and warn instead of silently falling through
+  const envKey = process.env.FAVRO_API_KEY;
+  if (envKey !== undefined && envKey.length === 0) {
+    throw new Error('FAVRO_API_KEY is set but empty. Unset it or provide a valid key.\n  Run `favro auth login` to configure a key.');
+  }
+  if (envKey) return envKey;
   const config = await readConfig();
   if (config.apiKey) return config.apiKey;
   if (process.env.FAVRO_API_TOKEN) return process.env.FAVRO_API_TOKEN;

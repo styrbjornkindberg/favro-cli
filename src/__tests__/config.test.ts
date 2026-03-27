@@ -54,6 +54,12 @@ describe('readConfig', () => {
     mockFs.readFile.mockRejectedValueOnce(err);
     await expect(readConfig()).rejects.toThrow('Failed to read config');
   });
+
+  test('throws helpful error when config file contains corrupted JSON (SyntaxError)', async () => {
+    // SyntaxError has no .code property — explicit instanceof check required (Issue 2 fix)
+    mockFs.readFile.mockResolvedValueOnce('{ invalid json :::' as any);
+    await expect(readConfig()).rejects.toThrow('corrupted');
+  });
 });
 
 describe('writeConfig', () => {
@@ -164,6 +170,11 @@ describe('resolveApiKey', () => {
 
     const key = await resolveApiKey();
     expect(key).toBeUndefined();
+  });
+
+  test('throws error when FAVRO_API_KEY is set to empty string (non-blocking Issue 5 fix)', async () => {
+    process.env.FAVRO_API_KEY = '';
+    await expect(resolveApiKey()).rejects.toThrow('FAVRO_API_KEY is set but empty');
   });
 });
 

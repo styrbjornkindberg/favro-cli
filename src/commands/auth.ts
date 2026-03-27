@@ -4,11 +4,13 @@
  *
  * Commands:
  *   favro auth login   — prompts for API key, saves to config
- *   favro auth check   — validates API key against Favro API
+ *   favro auth logout  — removes API key from config
+ *   favro auth check   — validates API key against Favro API (alias for verify)
+ *   favro auth verify  — validates API key against Favro API (spec-compliant name)
  */
 import { Command } from 'commander';
 import * as readline from 'readline';
-import { readConfig, writeConfig, CONFIG_FILE } from '../lib/config';
+import { readConfig, writeConfig, CONFIG_FILE, resolveApiKey } from '../lib/config';
 import FavroHttpClient from '../lib/http-client';
 
 /**
@@ -65,6 +67,43 @@ export async function validateApiKey(apiKey: string): Promise<boolean> {
   }
 }
 
+/**
+ * Shared verify logic used by both `auth verify` and `auth check`.
+ * Uses resolveApiKey() for consistent priority across all commands.
+ */
+async function runVerify(options: { apiKey?: string }): Promise<void> {
+  let apiKey: string | undefined;
+  try {
+    // Fix (Issue 3): use resolveApiKey() for consistent priority, including FAVRO_API_TOKEN legacy fallback
+    apiKey = await resolveApiKey(options.apiKey);
+  } catch (err: any) {
+    console.error(`✗ ${err.message}`);
+    process.exit(1);
+  }
+
+  if (!apiKey) {
+    console.error('✗ No API key configured. Run `favro auth login` to set one.');
+    console.error('  Or set FAVRO_API_KEY environment variable.');
+    process.exit(1);
+  }
+
+  console.log('Checking API key...');
+  try {
+    const valid = await validateApiKey(apiKey);
+    if (valid) {
+      console.log('✓ API key is valid');
+    } else {
+      console.error('✗ API key is invalid or unauthorized.');
+      console.error('  Get a new key at: https://favro.com/ → Organization Settings → API tokens');
+      process.exit(1);
+    }
+  } catch (err: any) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`✗ Could not verify API key: ${msg}`);
+    process.exit(1);
+  }
+}
+
 export function registerAuthCommand(program: Command): void {
   const auth = program.command('auth').description('Authentication commands');
 
@@ -78,7 +117,8 @@ export function registerAuthCommand(program: Command): void {
 
       if (!apiKey) {
         console.log('Enter your Favro API key.');
-        console.log('You can generate one at: https://favro.com/organization settings → API tokens\n');
+        // Fix (Issue 7): corrected URL
+        console.log('You can generate one at: https://favro.com/ → Organization Settings → API tokens\n');
         apiKey = await promptInput('API key: ', true);
       }
 
@@ -98,50 +138,45 @@ export function registerAuthCommand(program: Command): void {
       }
     });
 
+  // ─── auth logout ────────────────────────────────────────────────────────────
+  // Fix (Issue 4): implement logout command as required by spec
+  auth
+    .command('logout')
+    .description('Remove saved API key from config')
+    .action(async () => {
+      try {
+        const existing = await readConfig();
+        if (!existing.apiKey) {
+          console.log('ℹ No API key stored in config.');
+          return;
+        }
+        const { apiKey: _removed, ...rest } = existing;
+        await writeConfig(rest);
+        console.log(`✓ API key removed from ${CONFIG_FILE}`);
+      } catch (err: any) {
+        console.error(`✗ ${err.message}`);
+        process.exit(1);
+      }
+    });
+
+  // ─── auth verify ─────────────────────────────────────────────────────────────
+  // Fix (Issue 4): add `auth verify` as spec-compliant command name
+  auth
+    .command('verify')
+    .description('Verify your API key is valid (spec-compliant name)')
+    .option('--api-key <key>', 'API key to check (overrides config/env)')
+    .action(async (options) => {
+      await runVerify(options);
+    });
+
   // ─── auth check ─────────────────────────────────────────────────────────────
+  // Fix (Issue 3): use resolveApiKey() via shared runVerify() for consistent priority
   auth
     .command('check')
     .description('Verify your API key is valid')
     .option('--api-key <key>', 'API key to check (overrides config/env)')
     .action(async (options) => {
-      // Resolve key: flag > env > config
-      let apiKey = options.apiKey as string | undefined;
-
-      if (!apiKey) {
-        apiKey = process.env.FAVRO_API_KEY;
-      }
-
-      if (!apiKey) {
-        try {
-          const config = await readConfig();
-          apiKey = config.apiKey;
-        } catch (err: any) {
-          console.error(`✗ ${err.message}`);
-          process.exit(1);
-        }
-      }
-
-      if (!apiKey) {
-        console.error('✗ No API key configured. Run `favro auth login` to set one.');
-        console.error('  Or set FAVRO_API_KEY environment variable.');
-        process.exit(1);
-      }
-
-      console.log('Checking API key...');
-      try {
-        const valid = await validateApiKey(apiKey);
-        if (valid) {
-          console.log('✓ API key is valid');
-        } else {
-          console.error('✗ API key is invalid or unauthorized.');
-          console.error('  Get a new key at: https://favro.com/ → Organization Settings → API tokens');
-          process.exit(1);
-        }
-      } catch (err: any) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error(`✗ Could not verify API key: ${msg}`);
-        process.exit(1);
-      }
+      await runVerify(options);
     });
 }
 
