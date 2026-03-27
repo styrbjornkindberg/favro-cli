@@ -148,7 +148,7 @@ describe('Cards Create Command', () => {
     await program.parseAsync(['node', 'test', 'cards', 'create', 'ignored', '--bulk', 'cards.json']);
 
     expect(api.createCards).toHaveBeenCalledWith(inputData);
-    expect(consoleSpy).toHaveBeenCalledWith('✓ Created 2 cards');
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Created 2 cards'));
   });
 
   test('bulk create outputs JSON when --json flag is used', async () => {
@@ -182,7 +182,7 @@ describe('Cards Create Command', () => {
     await program.parseAsync(['node', 'test', 'cards', 'create', 'ignored', '--bulk', 'large.json']);
 
     expect(api.createCards).toHaveBeenCalledWith(inputData);
-    expect(consoleSpy).toHaveBeenCalledWith('✓ Created 150 cards');
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Created 150 cards'));
   });
 
   // --- Error cases ---

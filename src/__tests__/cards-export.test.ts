@@ -620,7 +620,7 @@ describe('registerCardsExportCommand', () => {
       ])
     ).rejects.toThrow('process.exit');
 
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('FAVRO_API_TOKEN'));
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('API key'));
 
     consoleSpy.mockRestore();
     exitSpy.mockRestore();

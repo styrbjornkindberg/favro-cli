@@ -42,6 +42,7 @@ exports.registerCardsUpdateCommand = registerCardsUpdateCommand;
 const readline = __importStar(require("readline"));
 const cards_api_1 = __importDefault(require("../lib/cards-api"));
 const http_client_1 = __importDefault(require("../lib/http-client"));
+const error_handler_1 = require("../lib/error-handler");
 /**
  * Max cards that can be updated in a single batch.
  * Spec: "Max 100 cards per command (warn if > 100 match)"
@@ -77,7 +78,7 @@ function registerCardsUpdateCommand(program) {
         try {
             const token = process.env.FAVRO_API_TOKEN;
             if (!token) {
-                console.error('✗ Missing required environment variable: FAVRO_API_TOKEN');
+                console.error(`Error: ${(0, error_handler_1.missingApiKeyError)()}`);
                 process.exit(1);
             }
             const client = new http_client_1.default({
@@ -115,8 +116,7 @@ function registerCardsUpdateCommand(program) {
                 console.log(JSON.stringify(card));
         }
         catch (error) {
-            const msg = error instanceof Error ? error.message : String(error);
-            console.error(`✗ Error: ${msg}`);
+            (0, error_handler_1.logError)(error);
             process.exit(1);
         }
     });

@@ -5,6 +5,8 @@
 import { Command } from 'commander';
 import CardsAPI from '../lib/cards-api';
 import FavroHttpClient from '../lib/http-client';
+import { logError, missingApiKeyError } from '../lib/error-handler';
+import { ProgressBar } from '../lib/progress';
 
 export function registerCardsCreateCommand(program: Command): void {
   program
@@ -25,7 +27,7 @@ export function registerCardsCreateCommand(program: Command): void {
       try {
         const token = process.env.FAVRO_API_TOKEN;
         if (!token) {
-          console.error('✗ Missing required environment variable: FAVRO_API_TOKEN');
+          console.error(`Error: ${missingApiKeyError()}`);
           process.exit(1);
         }
 
@@ -38,8 +40,12 @@ export function registerCardsCreateCommand(program: Command): void {
           // Bulk create from file
           const fs = await import('fs/promises');
           const data = JSON.parse(await fs.readFile(options.bulk, 'utf-8'));
+          const total = Array.isArray(data) ? data.length : 1;
+          const progress = new ProgressBar('Creating cards', total);
+          progress.update(0);
           const cards = await api.createCards(data);
-          console.log(`✓ Created ${cards.length} cards`);
+          progress.update(cards.length);
+          progress.done(`Created ${cards.length} cards`);
           if (options.json) console.log(JSON.stringify(cards));
         } else {
           // Single card create
@@ -53,8 +59,7 @@ export function registerCardsCreateCommand(program: Command): void {
           if (options.json) console.log(JSON.stringify(card));
         }
       } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        console.error(`✗ Error: ${msg}`);
+        logError(error);
         process.exit(1);
       }
     });

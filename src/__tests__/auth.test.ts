@@ -158,7 +158,7 @@ describe('Missing FAVRO_API_TOKEN — command fast-fail', () => {
     ).rejects.toThrow('process.exit');
 
     expect(consoleErrorSpy).toHaveBeenCalledWith(
-      expect.stringContaining('FAVRO_API_TOKEN')
+      expect.stringContaining('API key')
     );
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
@@ -172,7 +172,7 @@ describe('Missing FAVRO_API_TOKEN — command fast-fail', () => {
     ).rejects.toThrow('process.exit');
 
     expect(consoleErrorSpy).toHaveBeenCalledWith(
-      expect.stringContaining('FAVRO_API_TOKEN')
+      expect.stringContaining('API key')
     );
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
@@ -186,12 +186,12 @@ describe('Missing FAVRO_API_TOKEN — command fast-fail', () => {
     ).rejects.toThrow('process.exit');
 
     expect(consoleErrorSpy).toHaveBeenCalledWith(
-      expect.stringContaining('FAVRO_API_TOKEN')
+      expect.stringContaining('API key')
     );
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
-  test('error message includes helpful hint about env var', async () => {
+  test('error message includes helpful hint to run auth login', async () => {
     const program = new Command();
     registerCardsCreateCommand(program);
 
@@ -199,9 +199,9 @@ describe('Missing FAVRO_API_TOKEN — command fast-fail', () => {
       program.parseAsync(['node', 'test', 'cards', 'create', 'Test'])
     ).rejects.toThrow('process.exit');
 
-    // The error message should contain the env var name so user knows what to set
+    // The error message should tell the user to run `favro auth login`
     const errorMsg = consoleErrorSpy.mock.calls[0][0];
-    expect(errorMsg).toContain('FAVRO_API_TOKEN');
+    expect(errorMsg).toContain('favro auth login');
     expect(typeof errorMsg).toBe('string');
   });
 });

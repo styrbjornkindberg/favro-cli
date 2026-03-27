@@ -44,6 +44,8 @@ const path = __importStar(require("path"));
 const cards_api_1 = __importDefault(require("../lib/cards-api"));
 const http_client_1 = __importDefault(require("../lib/http-client"));
 const csv_1 = require("../lib/csv");
+const error_handler_1 = require("../lib/error-handler");
+const progress_1 = require("../lib/progress");
 /**
  * Parse a simple filter expression like "assignee:alice" or "status:done".
  * Returns {field, value} or null if the expression is not recognised.
@@ -106,13 +108,13 @@ function registerCardsExportCommand(program) {
         // Check FAVRO_API_TOKEN early
         const token = process.env.FAVRO_API_TOKEN;
         if (!token) {
-            console.error('✗ Missing required environment variable: FAVRO_API_TOKEN');
+            console.error(`Error: ${(0, error_handler_1.missingApiKeyError)()}`);
             process.exit(1);
         }
         // Validate format
         const format = (options.format ?? 'json').toLowerCase();
         if (format !== 'json' && format !== 'csv') {
-            console.error(`✗ Invalid format "${options.format}". Use --format json or --format csv`);
+            console.error(`Error: Invalid format "${options.format}". Use --format json or --format csv`);
             process.exit(1);
         }
         // Validate --out path (must be within cwd if specified)
@@ -120,7 +122,7 @@ function registerCardsExportCommand(program) {
             const resolved = path.resolve(options.out);
             const cwd = process.cwd();
             if (!resolved.startsWith(cwd + path.sep) && resolved !== cwd) {
-                console.error(`✗ Output path must be within current directory: ${options.out}`);
+                console.error(`Error: Output path must be within current directory: ${options.out}`);
                 process.exit(1);
             }
         }
@@ -133,27 +135,33 @@ function registerCardsExportCommand(program) {
             });
             const api = new cards_api_1.default(client);
             // Fetch cards (pagination handled in CardsAPI)
+            const spinner = new progress_1.Spinner('Fetching cards');
+            spinner.start();
             let cards = await api.listCards(board, limit);
+            spinner.stop();
             // Apply optional filters (AND logic — all must match)
             const filters = options.filter ?? [];
             if (filters.length > 0) {
                 const before = cards.length;
                 cards = applyFilters(cards, filters);
-                console.log(`ℹ Filters applied: ${before} → ${cards.length} card(s)`);
+                console.error(`ℹ Filters applied: ${before} → ${cards.length} card(s)`);
             }
             if (cards.length === 0) {
-                console.log('⚠ No cards to export (0 results after filtering).');
+                console.error('⚠ No cards to export (0 results after filtering).');
                 process.exit(0);
             }
             // Write output to file or stdout
             if (options.out) {
+                const progress = new progress_1.ProgressBar('Exporting cards', cards.length);
+                progress.update(0);
                 if (format === 'csv') {
                     await (0, csv_1.writeCardsCSV)(cards, options.out);
                 }
                 else {
                     await (0, csv_1.writeCardsJSON)(cards, options.out);
                 }
-                console.log(`✓ Exported ${cards.length} card(s) to "${options.out}" (${format.toUpperCase()})`);
+                progress.update(cards.length);
+                progress.done(`Exported ${cards.length} card(s) to "${options.out}" (${format.toUpperCase()})`);
             }
             else {
                 // Output to stdout
@@ -170,8 +178,7 @@ function registerCardsExportCommand(program) {
             }
         }
         catch (error) {
-            const msg = error instanceof Error ? error.message : String(error);
-            console.error(`✗ Export failed: ${msg}`);
+            (0, error_handler_1.logError)(error);
             process.exit(1);
         }
     });

@@ -25,6 +25,8 @@ import { parseFilter, applyFilters, ExportFormat } from './commands/cards-export
 import { Card } from './lib/cards-api';
 import { registerAuthCommand } from './commands/auth';
 import { registerBoardsListCommand } from './commands/boards-list';
+import { logError, missingApiKeyError } from './lib/error-handler';
+import { ProgressBar } from './lib/progress';
 
 const program = new Command();
 
@@ -42,7 +44,8 @@ program
     '  Set FAVRO_API_KEY env var, or run `favro auth login` to save to ~/.favro/config.json\n\n' +
     'Full docs: https://github.com/square-moon/favro-cli#readme'
   )
-  .version('0.1.0');
+  .version('0.1.0')
+  .option('--verbose', 'Show stack traces for errors');
 
 // ─── auth commands ────────────────────────────────────────────────────────────
 registerAuthCommand(program);
@@ -90,7 +93,7 @@ cards
   .action(async (options) => {
     const token = process.env.FAVRO_API_TOKEN;
     if (!token) {
-      console.error('✗ Missing required environment variable: FAVRO_API_TOKEN');
+      console.error(`Error: ${missingApiKeyError()}`);
       process.exit(1);
     }
     try {
@@ -131,7 +134,7 @@ cards
         }
       }
     } catch (error) {
-      console.error(`✗ Error: ${error instanceof Error ? error.message : error}`);
+      logError(error, program.opts().verbose);
       process.exit(1);
     }
   });
@@ -180,7 +183,7 @@ cards
   .action(async (title: string, options) => {
     const token = process.env.FAVRO_API_TOKEN;
     if (!token) {
-      console.error('✗ Missing required environment variable: FAVRO_API_TOKEN');
+      console.error(`Error: ${missingApiKeyError()}`);
       process.exit(1);
     }
     try {
@@ -191,7 +194,7 @@ cards
         const content = await fs.readFile(options.csv, 'utf-8');
         const rows = parseCSV(content);
         if (rows.length === 0) {
-          console.error('✗ Error: CSV file is empty or has no data rows');
+          console.error('Error: CSV file is empty or has no data rows');
           process.exit(1);
         }
         const cards = rows.map(row => ({
@@ -209,8 +212,11 @@ cards
 
         const client = new FavroHttpClient({ auth: { token } });
         const api = new CardsAPI(client);
+        const progress = new ProgressBar('Creating cards', cards.length);
+        progress.update(0);
         const createdCards = await api.createCards(cards);
-        console.log(`✓ Created ${createdCards.length} cards from CSV`);
+        progress.update(createdCards.length);
+        progress.done(`Created ${createdCards.length} cards from CSV`);
         if (options.json) console.log(JSON.stringify(createdCards, null, 2));
         return;
       }
@@ -225,8 +231,12 @@ cards
         }
         const client = new FavroHttpClient({ auth: { token } });
         const api = new CardsAPI(client);
+        const total = Array.isArray(data) ? data.length : 1;
+        const progress = new ProgressBar('Creating cards', total);
+        progress.update(0);
         const createdCards = await api.createCards(data);
-        console.log(`✓ Created ${createdCards.length} cards`);
+        progress.update(createdCards.length);
+        progress.done(`Created ${createdCards.length} cards`);
         if (options.json) console.log(JSON.stringify(createdCards));
         return;
       }
@@ -249,8 +259,7 @@ cards
       console.log(`✓ Card created: ${card.cardId}`);
       if (options.json) console.log(JSON.stringify(card));
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      console.error(`✗ Error: ${msg}`);
+      logError(error, program.opts().verbose);
       process.exit(1);
     }
   });
@@ -278,7 +287,7 @@ cards
   .action(async (cardId: string, options) => {
     const token = process.env.FAVRO_API_TOKEN;
     if (!token) {
-      console.error('✗ Missing required environment variable: FAVRO_API_TOKEN');
+      console.error(`Error: ${missingApiKeyError()}`);
       process.exit(1);
     }
     try {
@@ -300,8 +309,7 @@ cards
       console.log(`✓ Card updated: ${card.cardId}`);
       if (options.json) console.log(JSON.stringify(card));
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      console.error(`✗ Error: ${msg}`);
+      logError(error, program.opts().verbose);
       process.exit(1);
     }
   });
@@ -335,13 +343,13 @@ cards
   .action(async (board: string, options) => {
     const token = process.env.FAVRO_API_TOKEN;
     if (!token) {
-      console.error('✗ Missing required environment variable: FAVRO_API_TOKEN');
+      console.error(`Error: ${missingApiKeyError()}`);
       process.exit(1);
     }
 
     const format = (options.format ?? 'json').toLowerCase() as ExportFormat;
     if (format !== 'json' && format !== 'csv') {
-      console.error(`✗ Invalid format "${options.format}". Use --format json or --format csv`);
+      console.error(`Error: Invalid format "${options.format}". Use --format json or --format csv`);
       process.exit(1);
     }
 
@@ -349,7 +357,7 @@ cards
       const resolved = path.resolve(options.out);
       const cwd = process.cwd();
       if (!resolved.startsWith(cwd + path.sep) && resolved !== cwd) {
-        console.error(`✗ Output path must be within current directory: ${options.out}`);
+        console.error(`Error: Output path must be within current directory: ${options.out}`);
         process.exit(1);
       }
     }
@@ -361,27 +369,33 @@ cards
       const client = new FavroHttpClient({ auth: { token } });
       const api = new CardsAPI(client);
 
+      const spinner = new (await import('./lib/progress')).Spinner('Fetching cards');
+      spinner.start();
       let cardList = await api.listCards(board, limit);
+      spinner.stop();
 
       const filters: string[] = options.filter ?? [];
       if (filters.length > 0) {
         const before = cardList.length;
         cardList = applyFilters(cardList, filters);
-        console.log(`ℹ Filters applied: ${before} → ${cardList.length} card(s)`);
+        console.error(`ℹ Filters applied: ${before} → ${cardList.length} card(s)`);
       }
 
       if (cardList.length === 0) {
-        console.log('⚠ No cards to export (0 results after filtering).');
+        console.error('⚠ No cards to export (0 results after filtering).');
         process.exit(0);
       }
 
       if (options.out) {
+        const progress = new ProgressBar('Exporting cards', cardList.length);
+        progress.update(0);
         if (format === 'csv') {
           await writeCardsCSV(cardList, options.out);
         } else {
           await writeCardsJSON(cardList, options.out);
         }
-        console.log(`✓ Exported ${cardList.length} card(s) to "${options.out}" (${format.toUpperCase()})`);
+        progress.update(cardList.length);
+        progress.done(`Exported ${cardList.length} card(s) to "${options.out}" (${format.toUpperCase()})`);
       } else {
         const normalized = cardList.map(normalizeCard);
         if (format === 'csv') {
@@ -392,13 +406,12 @@ cards
         console.error(`ℹ Exported ${cardList.length} card(s) to stdout (${format.toUpperCase()})`);
       }
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      console.error(`✗ Export failed: ${msg}`);
+      logError(error, program.opts().verbose);
       process.exit(1);
     }
   });
 
 program.parseAsync(process.argv).catch((err) => {
-  console.error(`✗ Fatal: ${err instanceof Error ? err.message : err}`);
+  logError(err, program.opts().verbose);
   process.exit(1);
 });

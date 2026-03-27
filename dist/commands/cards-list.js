@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.registerCardsListCommand = registerCardsListCommand;
 const cards_api_1 = __importDefault(require("../lib/cards-api"));
 const http_client_1 = __importDefault(require("../lib/http-client"));
+const error_handler_1 = require("../lib/error-handler");
 function formatCardsTable(cards) {
     if (cards.length === 0) {
         console.log('No cards found.');
@@ -52,7 +53,7 @@ function registerCardsListCommand(program) {
         try {
             const token = process.env.FAVRO_API_TOKEN;
             if (!token) {
-                console.error('✗ Missing required environment variable: FAVRO_API_TOKEN');
+                console.error(`Error: ${(0, error_handler_1.missingApiKeyError)()}`);
                 process.exit(1);
             }
             const client = new http_client_1.default({
@@ -84,7 +85,7 @@ function registerCardsListCommand(program) {
             }
         }
         catch (error) {
-            console.error(`✗ Error: ${error}`);
+            (0, error_handler_1.logError)(error);
             process.exit(1);
         }
     });

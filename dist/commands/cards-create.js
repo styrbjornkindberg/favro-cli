@@ -39,6 +39,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.registerCardsCreateCommand = registerCardsCreateCommand;
 const cards_api_1 = __importDefault(require("../lib/cards-api"));
 const http_client_1 = __importDefault(require("../lib/http-client"));
+const error_handler_1 = require("../lib/error-handler");
+const progress_1 = require("../lib/progress");
 function registerCardsCreateCommand(program) {
     program
         .command('cards create <title>')
@@ -52,7 +54,7 @@ function registerCardsCreateCommand(program) {
         try {
             const token = process.env.FAVRO_API_TOKEN;
             if (!token) {
-                console.error('✗ Missing required environment variable: FAVRO_API_TOKEN');
+                console.error(`Error: ${(0, error_handler_1.missingApiKeyError)()}`);
                 process.exit(1);
             }
             const client = new http_client_1.default({
@@ -63,8 +65,12 @@ function registerCardsCreateCommand(program) {
                 // Bulk create from file
                 const fs = await Promise.resolve().then(() => __importStar(require('fs/promises')));
                 const data = JSON.parse(await fs.readFile(options.bulk, 'utf-8'));
+                const total = Array.isArray(data) ? data.length : 1;
+                const progress = new progress_1.ProgressBar('Creating cards', total);
+                progress.update(0);
                 const cards = await api.createCards(data);
-                console.log(`✓ Created ${cards.length} cards`);
+                progress.update(cards.length);
+                progress.done(`Created ${cards.length} cards`);
                 if (options.json)
                     console.log(JSON.stringify(cards));
             }
@@ -82,8 +88,7 @@ function registerCardsCreateCommand(program) {
             }
         }
         catch (error) {
-            const msg = error instanceof Error ? error.message : String(error);
-            console.error(`✗ Error: ${msg}`);
+            (0, error_handler_1.logError)(error);
             process.exit(1);
         }
     });

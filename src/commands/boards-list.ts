@@ -6,6 +6,7 @@ import { Command } from 'commander';
 import BoardsAPI, { Board, Collection } from '../lib/boards-api';
 import FavroHttpClient from '../lib/http-client';
 import { resolveApiKey } from '../lib/config';
+import { logError, missingApiKeyError } from '../lib/error-handler';
 
 export function formatBoardsTable(boards: Board[]): void {
   if (boards.length === 0) {
@@ -56,7 +57,7 @@ export function registerBoardsListCommand(boardsParent: Command): void {
       try {
         const token = await resolveApiKey();
         if (!token) {
-          console.error('✗ API key not configured. Run `favro auth login` or set FAVRO_API_KEY.');
+          console.error(`Error: ${missingApiKeyError()}`);
           process.exit(1);
         }
 
@@ -84,7 +85,7 @@ export function registerBoardsListCommand(boardsParent: Command): void {
           formatBoardsTable(boards);
         }
       } catch (error) {
-        console.error(`✗ Error: ${error instanceof Error ? error.message : error}`);
+        logError(error);
         process.exit(1);
       }
     });

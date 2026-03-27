@@ -6,6 +6,7 @@ import { Command } from 'commander';
 import * as readline from 'readline';
 import CardsAPI, { UpdateCardRequest } from '../lib/cards-api';
 import FavroHttpClient from '../lib/http-client';
+import { logError, missingApiKeyError } from '../lib/error-handler';
 
 /**
  * Max cards that can be updated in a single batch.
@@ -53,7 +54,7 @@ export function registerCardsUpdateCommand(program: Command): void {
       try {
         const token = process.env.FAVRO_API_TOKEN;
         if (!token) {
-          console.error('✗ Missing required environment variable: FAVRO_API_TOKEN');
+          console.error(`Error: ${missingApiKeyError()}`);
           process.exit(1);
         }
 
@@ -89,8 +90,7 @@ export function registerCardsUpdateCommand(program: Command): void {
         console.log(`✓ Card updated: ${card.cardId}`);
         if (options.json) console.log(JSON.stringify(card));
       } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        console.error(`✗ Error: ${msg}`);
+        logError(error);
         process.exit(1);
       }
     });

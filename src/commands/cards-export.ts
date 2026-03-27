@@ -13,6 +13,8 @@ import * as path from 'path';
 import CardsAPI, { Card } from '../lib/cards-api';
 import FavroHttpClient from '../lib/http-client';
 import { writeCardsCSV, writeCardsJSON } from '../lib/csv';
+import { logError, missingApiKeyError } from '../lib/error-handler';
+import { ProgressBar, Spinner } from '../lib/progress';
 
 export type ExportFormat = 'json' | 'csv';
 
@@ -92,14 +94,14 @@ export function registerCardsExportCommand(program: Command): void {
       // Check FAVRO_API_TOKEN early
       const token = process.env.FAVRO_API_TOKEN;
       if (!token) {
-        console.error('✗ Missing required environment variable: FAVRO_API_TOKEN');
+        console.error(`Error: ${missingApiKeyError()}`);
         process.exit(1);
       }
 
       // Validate format
       const format = (options.format ?? 'json').toLowerCase() as ExportFormat;
       if (format !== 'json' && format !== 'csv') {
-        console.error(`✗ Invalid format "${options.format}". Use --format json or --format csv`);
+        console.error(`Error: Invalid format "${options.format}". Use --format json or --format csv`);
         process.exit(1);
       }
 
@@ -108,7 +110,7 @@ export function registerCardsExportCommand(program: Command): void {
         const resolved = path.resolve(options.out);
         const cwd = process.cwd();
         if (!resolved.startsWith(cwd + path.sep) && resolved !== cwd) {
-          console.error(`✗ Output path must be within current directory: ${options.out}`);
+          console.error(`Error: Output path must be within current directory: ${options.out}`);
           process.exit(1);
         }
       }
@@ -124,29 +126,35 @@ export function registerCardsExportCommand(program: Command): void {
         const api = new CardsAPI(client);
 
         // Fetch cards (pagination handled in CardsAPI)
+        const spinner = new Spinner('Fetching cards');
+        spinner.start();
         let cards = await api.listCards(board, limit);
+        spinner.stop();
 
         // Apply optional filters (AND logic — all must match)
         const filters = options.filter ?? [];
         if (filters.length > 0) {
           const before = cards.length;
           cards = applyFilters(cards, filters);
-          console.log(`ℹ Filters applied: ${before} → ${cards.length} card(s)`);
+          console.error(`ℹ Filters applied: ${before} → ${cards.length} card(s)`);
         }
 
         if (cards.length === 0) {
-          console.log('⚠ No cards to export (0 results after filtering).');
+          console.error('⚠ No cards to export (0 results after filtering).');
           process.exit(0);
         }
 
         // Write output to file or stdout
         if (options.out) {
+          const progress = new ProgressBar('Exporting cards', cards.length);
+          progress.update(0);
           if (format === 'csv') {
             await writeCardsCSV(cards, options.out);
           } else {
             await writeCardsJSON(cards, options.out);
           }
-          console.log(`✓ Exported ${cards.length} card(s) to "${options.out}" (${format.toUpperCase()})`);
+          progress.update(cards.length);
+          progress.done(`Exported ${cards.length} card(s) to "${options.out}" (${format.toUpperCase()})`);
         } else {
           // Output to stdout
           const { normalizeCard } = await import('../lib/csv');
@@ -160,8 +168,7 @@ export function registerCardsExportCommand(program: Command): void {
           console.error(`ℹ Exported ${cards.length} card(s) to stdout (${format.toUpperCase()})`);
         }
       } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        console.error(`✗ Export failed: ${msg}`);
+        logError(error);
         process.exit(1);
       }
     });

@@ -238,7 +238,7 @@ describe('boards list command', () => {
     ).rejects.toThrow('process.exit');
 
     expect(exitSpy).toHaveBeenCalledWith(1);
-    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('API key not configured'));
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('API key'));
     expect(mockListBoards).not.toHaveBeenCalled();
   });
 

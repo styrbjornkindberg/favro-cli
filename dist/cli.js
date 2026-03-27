@@ -61,11 +61,23 @@ const csv_1 = require("./lib/csv");
 const cards_export_1 = require("./commands/cards-export");
 const auth_1 = require("./commands/auth");
 const boards_list_1 = require("./commands/boards-list");
+const error_handler_1 = require("./lib/error-handler");
+const progress_1 = require("./lib/progress");
 const program = new commander_1.Command();
 program
     .name('favro')
-    .description('Favro command-line interface')
-    .version('0.1.0');
+    .description('Favro command-line interface — manage boards and cards from your terminal.\n\n' +
+    'Quick start:\n' +
+    '  favro auth login                  Set up your API key\n' +
+    '  favro boards list                 List your boards\n' +
+    '  favro cards list --board <id>     List cards on a board\n' +
+    '  favro cards create "My card"      Create a card\n' +
+    '  favro cards export <id> --format csv --out cards.csv\n\n' +
+    'Authentication:\n' +
+    '  Set FAVRO_API_KEY env var, or run `favro auth login` to save to ~/.favro/config.json\n\n' +
+    'Full docs: https://github.com/square-moon/favro-cli#readme')
+    .version('0.1.0')
+    .option('--verbose', 'Show stack traces for errors');
 // ─── auth commands ────────────────────────────────────────────────────────────
 (0, auth_1.registerAuthCommand)(program);
 // ─── boards parent ────────────────────────────────────────────────────────────
@@ -73,11 +85,28 @@ const boardsCmd = program.command('boards').description('Board operations');
 // ─── boards list ─────────────────────────────────────────────────────────────
 (0, boards_list_1.registerBoardsListCommand)(boardsCmd);
 // ─── cards parent ────────────────────────────────────────────────────────────
-const cards = program.command('cards').description('Card operations');
+const cards = program.command('cards').description('Card operations — list, create, update, and export cards.\n\n' +
+    'Subcommands:\n' +
+    '  list    List cards from a board\n' +
+    '  create  Create a card (single, bulk JSON, or CSV import)\n' +
+    '  update  Update an existing card by ID\n' +
+    '  export  Export all cards from a board to JSON or CSV\n\n' +
+    'Examples:\n' +
+    '  favro cards list --board <id>\n' +
+    '  favro cards create "My card" --board <id>\n' +
+    '  favro cards create --csv tasks.csv --board <id>\n' +
+    '  favro cards update <cardId> --status "Done"\n' +
+    '  favro cards export <id> --format csv --out cards.csv');
 // ─── cards list ──────────────────────────────────────────────────────────────
 cards
     .command('list')
-    .description('List cards from a board')
+    .description('List cards from a board with optional filters.\n\n' +
+    'Examples:\n' +
+    '  favro cards list --board <id>\n' +
+    '  favro cards list --board <id> --status "In Progress" --limit 100\n' +
+    '  favro cards list --board <id> --assignee alice --json\n' +
+    '  favro cards list --board <id> --tag bug\n\n' +
+    'Tip: Use `favro boards list` to find board IDs.')
     .option('--board <id>', 'Board ID to list cards from')
     .option('--status <status>', 'Filter by status')
     .option('--assignee <user>', 'Filter by assignee')
@@ -87,7 +116,7 @@ cards
     .action(async (options) => {
     const token = process.env.FAVRO_API_TOKEN;
     if (!token) {
-        console.error('✗ Missing required environment variable: FAVRO_API_TOKEN');
+        console.error(`Error: ${(0, error_handler_1.missingApiKeyError)()}`);
         process.exit(1);
     }
     try {
@@ -123,7 +152,7 @@ cards
         }
     }
     catch (error) {
-        console.error(`✗ Error: ${error instanceof Error ? error.message : error}`);
+        (0, error_handler_1.logError)(error, program.opts().verbose);
         process.exit(1);
     }
 });
@@ -146,7 +175,18 @@ function parseCSV(content) {
 // ─── cards create ─────────────────────────────────────────────────────────────
 cards
     .command('create <title>')
-    .description('Create a new card, bulk from JSON file, or import from CSV')
+    .description('Create a new card, or bulk-import cards from CSV or JSON.\n\n' +
+    'Examples:\n' +
+    '  favro cards create "Fix login bug" --board <id>\n' +
+    '  favro cards create "My card" --board <id> --status "Todo" --description "Details"\n' +
+    '  favro cards create --csv tasks.csv --board <id>\n' +
+    '  favro cards create --bulk tasks.json --board <id>\n' +
+    '  favro cards create --csv tasks.csv --board <id> --dry-run\n\n' +
+    'CSV format (columns: name, description, status):\n' +
+    '  name,description,status\n' +
+    '  "Fix bug","Safari issue","In Progress"\n' +
+    '  "Add feature","User request","Backlog"\n\n' +
+    'Tip: Always test with --dry-run before bulk importing.')
     .option('--board <id>', 'Target board ID')
     .option('--description <text>', 'Card description')
     .option('--status <status>', 'Card status')
@@ -158,7 +198,7 @@ cards
     .action(async (title, options) => {
     const token = process.env.FAVRO_API_TOKEN;
     if (!token) {
-        console.error('✗ Missing required environment variable: FAVRO_API_TOKEN');
+        console.error(`Error: ${(0, error_handler_1.missingApiKeyError)()}`);
         process.exit(1);
     }
     try {
@@ -168,7 +208,7 @@ cards
             const content = await fs.readFile(options.csv, 'utf-8');
             const rows = parseCSV(content);
             if (rows.length === 0) {
-                console.error('✗ Error: CSV file is empty or has no data rows');
+                console.error('Error: CSV file is empty or has no data rows');
                 process.exit(1);
             }
             const cards = rows.map(row => ({
@@ -184,8 +224,11 @@ cards
             }
             const client = new http_client_1.default({ auth: { token } });
             const api = new cards_api_1.default(client);
+            const progress = new progress_1.ProgressBar('Creating cards', cards.length);
+            progress.update(0);
             const createdCards = await api.createCards(cards);
-            console.log(`✓ Created ${createdCards.length} cards from CSV`);
+            progress.update(createdCards.length);
+            progress.done(`Created ${createdCards.length} cards from CSV`);
             if (options.json)
                 console.log(JSON.stringify(createdCards, null, 2));
             return;
@@ -200,8 +243,12 @@ cards
             }
             const client = new http_client_1.default({ auth: { token } });
             const api = new cards_api_1.default(client);
+            const total = Array.isArray(data) ? data.length : 1;
+            const progress = new progress_1.ProgressBar('Creating cards', total);
+            progress.update(0);
             const createdCards = await api.createCards(data);
-            console.log(`✓ Created ${createdCards.length} cards`);
+            progress.update(createdCards.length);
+            progress.done(`Created ${createdCards.length} cards`);
             if (options.json)
                 console.log(JSON.stringify(createdCards));
             return;
@@ -225,15 +272,21 @@ cards
             console.log(JSON.stringify(card));
     }
     catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        console.error(`✗ Error: ${msg}`);
+        (0, error_handler_1.logError)(error, program.opts().verbose);
         process.exit(1);
     }
 });
 // ─── cards update ─────────────────────────────────────────────────────────────
 cards
     .command('update <cardId>')
-    .description('Update a card')
+    .description('Update an existing card by its card ID.\n\n' +
+    'Examples:\n' +
+    '  favro cards update <cardId> --status "Done"\n' +
+    '  favro cards update <cardId> --name "New title" --status "In Progress"\n' +
+    '  favro cards update <cardId> --assignees "alice,bob"\n' +
+    '  favro cards update <cardId> --tags "bug,sprint-42"\n' +
+    '  favro cards update <cardId> --status "Done" --dry-run\n\n' +
+    'Tip: Use `favro cards list --json` to find card IDs.')
     .option('--name <name>', 'New card name')
     .option('--description <desc>', 'Card description')
     .option('--status <status>', 'Card status')
@@ -244,7 +297,7 @@ cards
     .action(async (cardId, options) => {
     const token = process.env.FAVRO_API_TOKEN;
     if (!token) {
-        console.error('✗ Missing required environment variable: FAVRO_API_TOKEN');
+        console.error(`Error: ${(0, error_handler_1.missingApiKeyError)()}`);
         process.exit(1);
     }
     try {
@@ -271,15 +324,25 @@ cards
             console.log(JSON.stringify(card));
     }
     catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        console.error(`✗ Error: ${msg}`);
+        (0, error_handler_1.logError)(error, program.opts().verbose);
         process.exit(1);
     }
 });
 // ─── cards export ─────────────────────────────────────────────────────────────
 cards
     .command('export <board>')
-    .description('Export cards from a board to JSON or CSV')
+    .description('Export all cards from a board to JSON or CSV.\n\n' +
+    'Examples:\n' +
+    '  favro cards export <boardId> --format csv --out sprint.csv\n' +
+    '  favro cards export <boardId> --format json --out sprint.json\n' +
+    '  favro cards export <boardId> --format json | jq \'.[].name\'\n' +
+    '  favro cards export <boardId> --format csv --filter "assignee:alice"\n' +
+    '  favro cards export <boardId> --format json --filter "status:Done" --filter "tag:sprint-42"\n\n' +
+    'Filter expressions (all conditions must match — AND logic):\n' +
+    '  assignee:alice    cards where alice is an assignee\n' +
+    '  status:Done       cards with status "Done"\n' +
+    '  tag:bug           cards tagged "bug"\n\n' +
+    'Handles 10,000+ cards with automatic pagination.')
     .option('--format <format>', 'Export format: json or csv', 'json')
     .option('--out <file>', 'Output file path (defaults to stdout)')
     .option('--filter <expression>', 'Filter cards (repeatable, e.g. "assignee:alice"). All conditions must match (AND logic)', (val, prev) => prev.concat([val]), [])
@@ -287,19 +350,19 @@ cards
     .action(async (board, options) => {
     const token = process.env.FAVRO_API_TOKEN;
     if (!token) {
-        console.error('✗ Missing required environment variable: FAVRO_API_TOKEN');
+        console.error(`Error: ${(0, error_handler_1.missingApiKeyError)()}`);
         process.exit(1);
     }
     const format = (options.format ?? 'json').toLowerCase();
     if (format !== 'json' && format !== 'csv') {
-        console.error(`✗ Invalid format "${options.format}". Use --format json or --format csv`);
+        console.error(`Error: Invalid format "${options.format}". Use --format json or --format csv`);
         process.exit(1);
     }
     if (options.out) {
         const resolved = path.resolve(options.out);
         const cwd = process.cwd();
         if (!resolved.startsWith(cwd + path.sep) && resolved !== cwd) {
-            console.error(`✗ Output path must be within current directory: ${options.out}`);
+            console.error(`Error: Output path must be within current directory: ${options.out}`);
             process.exit(1);
         }
     }
@@ -308,25 +371,31 @@ cards
     try {
         const client = new http_client_1.default({ auth: { token } });
         const api = new cards_api_1.default(client);
+        const spinner = new (await Promise.resolve().then(() => __importStar(require('./lib/progress')))).Spinner('Fetching cards');
+        spinner.start();
         let cardList = await api.listCards(board, limit);
+        spinner.stop();
         const filters = options.filter ?? [];
         if (filters.length > 0) {
             const before = cardList.length;
             cardList = (0, cards_export_1.applyFilters)(cardList, filters);
-            console.log(`ℹ Filters applied: ${before} → ${cardList.length} card(s)`);
+            console.error(`ℹ Filters applied: ${before} → ${cardList.length} card(s)`);
         }
         if (cardList.length === 0) {
-            console.log('⚠ No cards to export (0 results after filtering).');
+            console.error('⚠ No cards to export (0 results after filtering).');
             process.exit(0);
         }
         if (options.out) {
+            const progress = new progress_1.ProgressBar('Exporting cards', cardList.length);
+            progress.update(0);
             if (format === 'csv') {
                 await (0, csv_1.writeCardsCSV)(cardList, options.out);
             }
             else {
                 await (0, csv_1.writeCardsJSON)(cardList, options.out);
             }
-            console.log(`✓ Exported ${cardList.length} card(s) to "${options.out}" (${format.toUpperCase()})`);
+            progress.update(cardList.length);
+            progress.done(`Exported ${cardList.length} card(s) to "${options.out}" (${format.toUpperCase()})`);
         }
         else {
             const normalized = cardList.map(csv_1.normalizeCard);
@@ -340,13 +409,12 @@ cards
         }
     }
     catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        console.error(`✗ Export failed: ${msg}`);
+        (0, error_handler_1.logError)(error, program.opts().verbose);
         process.exit(1);
     }
 });
 program.parseAsync(process.argv).catch((err) => {
-    console.error(`✗ Fatal: ${err instanceof Error ? err.message : err}`);
+    (0, error_handler_1.logError)(err, program.opts().verbose);
     process.exit(1);
 });
 //# sourceMappingURL=cli.js.map

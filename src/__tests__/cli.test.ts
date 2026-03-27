@@ -43,7 +43,7 @@ function buildCliProgram(): Command {
     .action(async (options) => {
       const token = process.env.FAVRO_API_TOKEN;
       if (!token) {
-        console.error('✗ Missing required environment variable: FAVRO_API_TOKEN');
+        console.error('Error: API key not found. Run `favro auth login` first');
         process.exit(1);
       }
     });
@@ -59,7 +59,7 @@ function buildCliProgram(): Command {
     .action(async (title: string, options) => {
       const token = process.env.FAVRO_API_TOKEN;
       if (!token) {
-        console.error('✗ Missing required environment variable: FAVRO_API_TOKEN');
+        console.error('Error: API key not found. Run `favro auth login` first');
         process.exit(1);
       }
     });
@@ -76,7 +76,7 @@ function buildCliProgram(): Command {
     .action(async (cardId: string, options) => {
       const token = process.env.FAVRO_API_TOKEN;
       if (!token) {
-        console.error('✗ Missing required environment variable: FAVRO_API_TOKEN');
+        console.error('Error: API key not found. Run `favro auth login` first');
         process.exit(1);
       }
     });
@@ -92,7 +92,7 @@ function buildCliProgram(): Command {
     .action(async (board: string, options) => {
       const token = process.env.FAVRO_API_TOKEN;
       if (!token) {
-        console.error('✗ Missing required environment variable: FAVRO_API_TOKEN');
+        console.error('Error: API key not found. Run `favro auth login` first');
         process.exit(1);
       }
     });
@@ -244,47 +244,47 @@ describe('cli.ts — FAVRO_API_TOKEN missing causes fast-fail', () => {
     exitSpy.mockRestore();
   });
 
-  test('cards list exits 1 with FAVRO_API_TOKEN error when token missing', async () => {
+  test('cards list exits 1 with API key error when token missing', async () => {
     const program = buildCliProgram();
 
     await expect(
       program.parseAsync(['node', 'cli', 'cards', 'list'])
     ).rejects.toThrow('process.exit');
 
-    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('FAVRO_API_TOKEN'));
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('API key'));
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
-  test('cards create exits 1 with FAVRO_API_TOKEN error when token missing', async () => {
+  test('cards create exits 1 with API key error when token missing', async () => {
     const program = buildCliProgram();
 
     await expect(
       program.parseAsync(['node', 'cli', 'cards', 'create', 'Test Card'])
     ).rejects.toThrow('process.exit');
 
-    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('FAVRO_API_TOKEN'));
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('API key'));
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
-  test('cards update exits 1 with FAVRO_API_TOKEN error when token missing', async () => {
+  test('cards update exits 1 with API key error when token missing', async () => {
     const program = buildCliProgram();
 
     await expect(
       program.parseAsync(['node', 'cli', 'cards', 'update', 'card-123'])
     ).rejects.toThrow('process.exit');
 
-    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('FAVRO_API_TOKEN'));
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('API key'));
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
-  test('cards export exits 1 with FAVRO_API_TOKEN error when token missing', async () => {
+  test('cards export exits 1 with API key error when token missing', async () => {
     const program = buildCliProgram();
 
     await expect(
       program.parseAsync(['node', 'cli', 'cards', 'export', 'board-123'])
     ).rejects.toThrow('process.exit');
 
-    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('FAVRO_API_TOKEN'));
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('API key'));
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 });
