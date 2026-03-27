@@ -156,18 +156,26 @@ describe('Rate Limiting — Behavioral Tests (no credentials required)', () => {
     stderrSpy.mockRestore();
   }, 20000);
 
-  it('caps delay at 30s (2^5=32 → 30s)', async () => {
-    // Verify the cap logic directly in http-client
-    // Math.min(Math.pow(2, retryCount), 30) — at retryCount=5, would be 32 → 30
-    const expBackoff = (n: number) => Math.min(Math.pow(2, n), 30);
-    expect(expBackoff(0)).toBe(1);
-    expect(expBackoff(1)).toBe(2);
-    expect(expBackoff(2)).toBe(4);
-    expect(expBackoff(3)).toBe(8);
-    expect(expBackoff(4)).toBe(16);
-    expect(expBackoff(5)).toBe(30); // 32 capped to 30
-    expect(expBackoff(10)).toBe(30); // 1024 capped to 30
-  });
+  it('caps Retry-After at 30s even when header value is huge (e.g. 9999)', async () => {
+    const stderrSpy = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const client = new FavroHttpClient({ auth: { token: 'test-token' } });
+    const [, errorHandler] = mockAxiosInstance.interceptors.response.use.mock.calls[0];
+
+    // Server sends Retry-After: 9999 — production code MUST cap this at 30s
+    const errorWithHugeRetryAfter = {
+      response: { status: 429, headers: { 'retry-after': '9999' } },
+      config: {},
+    };
+
+    mockAxiosInstance.request.mockResolvedValue({ data: {} });
+    await errorHandler(errorWithHugeRetryAfter);
+
+    const written = stderrSpy.mock.calls.map((c) => String(c[0])).join('');
+    // Must say "30 seconds", NOT "9999 seconds"
+    expect(written).toContain('Retrying in 30 seconds');
+    expect(written).not.toContain('9999');
+    stderrSpy.mockRestore();
+  }, 10000);
 
   it('logs rate limit event to stderr with emoji-style message', async () => {
     const stderrSpy = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
