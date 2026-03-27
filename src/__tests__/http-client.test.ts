@@ -346,7 +346,7 @@ describe('FavroHttpClient', () => {
       config: {},
     });
 
-    jest.advanceTimersByTime(30000); // Simulate 30s passing without real sleep
+    jest.runAllTimers(); // Advance all pending timers instantly (no real 30s wait)
     await promise;
 
     const written = stderrSpy.mock.calls.map((c) => String(c[0])).join('');
@@ -355,5 +355,5 @@ describe('FavroHttpClient', () => {
 
     stderrSpy.mockRestore();
     jest.useRealTimers();
-  });
+  }, 5000);
 });
