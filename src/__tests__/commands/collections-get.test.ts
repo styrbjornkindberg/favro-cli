@@ -81,6 +81,18 @@ describe('collections get command', () => {
     ).rejects.toThrow('process.exit');
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('not found'));
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('bad-id'));
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('favro collections list'));
+  });
+
+  test('exits with error for invalid --include values', async () => {
+    const mockGet = jest.fn().mockResolvedValue(sampleCollection);
+    const program = buildProgram(mockGet);
+    await expect(
+      program.parseAsync(['node', 'test', 'collections', 'get', 'coll-1', '--include', 'bogus,garbage'])
+    ).rejects.toThrow('process.exit');
+    expect(mockGet).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid --include values'));
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('bogus'));
   });
 
   test('shows boards table when boards included', async () => {

@@ -35,6 +35,7 @@ export function registerCollectionsListCommand(collectionsParent: Command): void
     .command('list')
     .description('List all collections')
     .option('--format <format>', 'Output format: table or json', 'table')
+    .option('--json', 'Output as JSON (alias for --format json)')
     .action(async (options) => {
       const verbose = collectionsParent.parent?.opts()?.verbose ?? false;
       try {
@@ -44,7 +45,8 @@ export function registerCollectionsListCommand(collectionsParent: Command): void
           process.exit(1);
         }
 
-        const format = (options.format ?? 'table').toLowerCase();
+        // --json flag is an alias for --format json
+        const format = options.json ? 'json' : (options.format ?? 'table').toLowerCase();
         if (format !== 'table' && format !== 'json') {
           console.error(`Error: Invalid format "${options.format}". Use --format table or --format json`);
           process.exit(1);

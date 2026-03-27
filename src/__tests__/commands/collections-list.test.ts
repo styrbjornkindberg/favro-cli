@@ -76,6 +76,13 @@ describe('collections list command', () => {
     expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify(sampleCollections, null, 2));
   });
 
+  test('lists collections in json format with --json flag', async () => {
+    const mockList = jest.fn().mockResolvedValue(sampleCollections);
+    const program = buildProgram(mockList);
+    await program.parseAsync(['node', 'test', 'collections', 'list', '--json']);
+    expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify(sampleCollections, null, 2));
+  });
+
   test('shows message for empty collections', async () => {
     const mockList = jest.fn().mockResolvedValue([]);
     const program = buildProgram(mockList);

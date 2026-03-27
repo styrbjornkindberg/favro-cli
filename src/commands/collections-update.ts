@@ -27,13 +27,19 @@ export function registerCollectionsUpdateCommand(collectionsParent: Command): vo
           process.exit(1);
         }
 
-        if (!options.name && !options.description) {
+        const name = options.name?.trim();
+        if (options.name !== undefined && !name) {
+          console.error('Error: Collection name cannot be empty or whitespace-only');
+          process.exit(1);
+        }
+
+        if (!name && !options.description) {
           console.error('Error: Provide at least one field to update: --name or --description');
           process.exit(1);
         }
 
         const updateData: { name?: string; description?: string } = {};
-        if (options.name) updateData.name = options.name;
+        if (name) updateData.name = name;
         if (options.description) updateData.description = options.description;
 
         if (options.dryRun) {
@@ -57,7 +63,7 @@ export function registerCollectionsUpdateCommand(collectionsParent: Command): vo
         }
       } catch (error: any) {
         if (error?.response?.status === 404) {
-          console.error(`✗ Collection not found: ${id}`);
+          console.error(`✗ Collection not found: ${id}. Use 'favro collections list' to see available collections.`);
           process.exit(1);
         }
         logError(error, verbose);

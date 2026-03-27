@@ -28,9 +28,18 @@ export function registerCollectionsGetCommand(collectionsParent: Command): void 
           process.exit(1);
         }
 
+        const VALID_INCLUDES = ['boards', 'stats'];
         const include = options.include
           ? options.include.split(',').map((s: string) => s.trim()).filter(Boolean)
           : undefined;
+
+        if (include && include.length > 0) {
+          const invalidValues = include.filter((v: string) => !VALID_INCLUDES.includes(v));
+          if (invalidValues.length > 0) {
+            console.error(`Error: Invalid --include values: ${invalidValues.join(', ')}. Valid options: ${VALID_INCLUDES.join(', ')}`);
+            process.exit(1);
+          }
+        }
 
         const client = new FavroHttpClient({ auth: { token } });
         const api = new CollectionsAPI(client);
@@ -66,7 +75,7 @@ export function registerCollectionsGetCommand(collectionsParent: Command): void 
       } catch (error: any) {
         // Surface 404 with clear message
         if (error?.response?.status === 404) {
-          console.error(`✗ Collection not found: ${id}`);
+          console.error(`✗ Collection not found: ${id}. Use 'favro collections list' to see available collections.`);
           process.exit(1);
         }
         logError(error, verbose);

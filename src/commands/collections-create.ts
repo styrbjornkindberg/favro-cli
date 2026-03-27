@@ -27,8 +27,14 @@ export function registerCollectionsCreateCommand(collectionsParent: Command): vo
           process.exit(1);
         }
 
+        const name = options.name?.trim();
+        if (!name) {
+          console.error('Error: Collection name cannot be empty or whitespace-only');
+          process.exit(1);
+        }
+
         if (options.dryRun) {
-          console.log(`[dry-run] Would create collection: "${options.name}"`);
+          console.log(`[dry-run] Would create collection: "${name}"`);
           if (options.description) {
             console.log(`[dry-run] Description: "${options.description}"`);
           }
@@ -39,7 +45,7 @@ export function registerCollectionsCreateCommand(collectionsParent: Command): vo
         const api = new CollectionsAPI(client);
 
         const collection = await api.createCollection({
-          name: options.name,
+          name,
           description: options.description,
         });
 

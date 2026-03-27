@@ -116,6 +116,17 @@ describe('collections update command', () => {
     ).rejects.toThrow('process.exit');
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('not found'));
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('bad-id'));
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('favro collections list'));
+  });
+
+  test('exits when name is whitespace-only', async () => {
+    const mockUpdate = jest.fn();
+    const program = buildProgram(mockUpdate);
+    await expect(
+      program.parseAsync(['node', 'test', 'collections', 'update', 'coll-1', '--name', '   '])
+    ).rejects.toThrow('process.exit');
+    expect(mockUpdate).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('whitespace-only'));
   });
 
   test('exits when API key missing', async () => {

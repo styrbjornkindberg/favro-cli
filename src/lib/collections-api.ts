@@ -43,11 +43,11 @@ export class CollectionsAPI {
       }
 
       const response = await this.client.get<PaginatedResponse<Collection>>('/collections', { params });
-      const collections = response.entities ?? [];
+      const collections = (response?.entities) ?? [];
       all.push(...collections);
 
-      requestId = response.requestId;
-      if (!requestId || !response.pages || page >= response.pages || collections.length === 0) break;
+      requestId = response?.requestId;
+      if (!requestId || !response?.pages || page >= response.pages || collections.length === 0) break;
       page++;
     }
 

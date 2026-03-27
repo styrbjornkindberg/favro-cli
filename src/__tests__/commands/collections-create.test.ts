@@ -99,6 +99,16 @@ describe('collections create command', () => {
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('My desc'));
   });
 
+  test('exits when name is whitespace-only', async () => {
+    const mockCreate = jest.fn();
+    const program = buildProgram(mockCreate);
+    await expect(
+      program.parseAsync(['node', 'test', 'collections', 'create', '--name', '   '])
+    ).rejects.toThrow('process.exit');
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('whitespace-only'));
+  });
+
   test('exits when API key missing', async () => {
     jest.spyOn(config, 'resolveApiKey').mockResolvedValue(null as any);
     const program = buildProgram(jest.fn());

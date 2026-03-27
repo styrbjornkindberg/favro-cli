@@ -49,6 +49,12 @@ describe('CollectionsAPI', () => {
     expect(result).toEqual([]);
   });
 
+  test('listCollections returns empty array when response is null', async () => {
+    mockClient.get.mockResolvedValue(null);
+    const result = await api.listCollections();
+    expect(result).toEqual([]);
+  });
+
   test('listCollections uses default page size 50', async () => {
     mockClient.get.mockResolvedValue({ entities: [] });
     await api.listCollections();
