@@ -1,8 +1,15 @@
 /**
  * Comprehensive tests for BoardsAPI and boards list command
  * CLA-1774: Unit Tests — All Commands
+ * CLA-1784: Advanced Boards Endpoints
  */
-import BoardsAPI, { Board, Collection } from '../lib/boards-api';
+import BoardsAPI, {
+  Board,
+  Collection,
+  ExtendedBoard,
+  aggregateBoardStats,
+  calculateVelocity,
+} from '../lib/boards-api';
 import FavroHttpClient from '../lib/http-client';
 
 describe('Boards API', () => {
@@ -105,6 +112,134 @@ describe('Boards API', () => {
     await expect(api.getBoard('bad-id')).rejects.toThrow('Not found');
   });
 
+  // --- getBoardWithIncludes ---
+
+  test('getBoardWithIncludes fetches board without includes', async () => {
+    mockClient.get.mockResolvedValue(sampleBoard);
+    const result = await api.getBoardWithIncludes('board-1');
+    expect(result.boardId).toBe('board-1');
+    expect(mockClient.get).toHaveBeenCalledWith('/boards/board-1', { params: {} });
+  });
+
+  test('getBoardWithIncludes passes include parameter', async () => {
+    const extendedBoard: ExtendedBoard = {
+      ...sampleBoard,
+      members: [{ userId: 'u1', name: 'Alice' }],
+      customFields: [{ fieldId: 'f1', name: 'Priority', type: 'select', options: ['High', 'Low'] }],
+    };
+    mockClient.get.mockResolvedValue(extendedBoard);
+    const result = await api.getBoardWithIncludes('board-1', ['members', 'custom-fields']);
+    expect(result.members).toHaveLength(1);
+    expect(result.customFields).toHaveLength(1);
+    expect(mockClient.get).toHaveBeenCalledWith('/boards/board-1', {
+      params: { include: 'members,custom-fields' },
+    });
+  });
+
+  test('getBoardWithIncludes computes stats when requested', async () => {
+    const boardWithCards: ExtendedBoard = {
+      ...sampleBoard,
+      cardCount: 3,
+      cards: [
+        { status: 'Done' },
+        { status: 'In Progress' },
+        { status: 'Todo' },
+      ] as any,
+    };
+    mockClient.get.mockResolvedValue(boardWithCards);
+    const result = await api.getBoardWithIncludes('board-1', ['stats']);
+    expect(result.stats).toBeDefined();
+    expect(result.stats!.totalCards).toBe(3);
+    expect(result.stats!.doneCards).toBe(1);
+    expect(result.stats!.openCards).toBe(2);
+  });
+
+  test('getBoardWithIncludes computes velocity when requested', async () => {
+    mockClient.get.mockResolvedValue(sampleBoard);
+    const result = await api.getBoardWithIncludes('board-1', ['velocity']);
+    expect(result.velocity).toBeDefined();
+    expect(result.velocity!.length).toBe(4); // 4 weeks
+  });
+
+  test('getBoardWithIncludes computes both stats and velocity', async () => {
+    mockClient.get.mockResolvedValue(sampleBoard);
+    const result = await api.getBoardWithIncludes('board-1', ['stats', 'velocity']);
+    expect(result.stats).toBeDefined();
+    expect(result.velocity).toBeDefined();
+  });
+
+  // --- listBoardsByCollection ---
+
+  test('listBoardsByCollection queries with collectionId', async () => {
+    mockClient.get.mockResolvedValue({ entities: [sampleBoard] });
+    const result = await api.listBoardsByCollection('coll-1');
+    expect(result).toHaveLength(1);
+    expect(mockClient.get).toHaveBeenCalledWith('/boards', expect.objectContaining({
+      params: expect.objectContaining({ collectionId: 'coll-1' }),
+    }));
+  });
+
+  test('listBoardsByCollection with include stats adds stats to each board', async () => {
+    mockClient.get.mockResolvedValue({ entities: [sampleBoard] });
+    const result = await api.listBoardsByCollection('coll-1', ['stats']);
+    expect(result[0].stats).toBeDefined();
+    expect(result[0].stats!.totalCards).toBeDefined();
+  });
+
+  test('listBoardsByCollection with include velocity adds velocity to each board', async () => {
+    mockClient.get.mockResolvedValue({ entities: [sampleBoard] });
+    const result = await api.listBoardsByCollection('coll-1', ['velocity']);
+    expect(result[0].velocity).toBeDefined();
+    expect(result[0].velocity!.length).toBe(4);
+  });
+
+  test('listBoardsByCollection with include stats,velocity adds both', async () => {
+    mockClient.get.mockResolvedValue({ entities: [sampleBoard] });
+    const result = await api.listBoardsByCollection('coll-1', ['stats', 'velocity']);
+    expect(result[0].stats).toBeDefined();
+    expect(result[0].velocity).toBeDefined();
+  });
+
+  test('listBoardsByCollection returns empty array for empty collection', async () => {
+    mockClient.get.mockResolvedValue({ entities: [] });
+    const result = await api.listBoardsByCollection('coll-1');
+    expect(result).toEqual([]);
+  });
+
+  // --- createBoardInCollection ---
+
+  test('createBoardInCollection posts with collectionId', async () => {
+    const newBoard: Board = { ...sampleBoard, boardId: 'new-board', type: 'board' as any };
+    mockClient.post.mockResolvedValue(newBoard);
+    const result = await api.createBoardInCollection('coll-1', { name: 'New Board', type: 'board' });
+    expect(result.boardId).toBe('new-board');
+    expect(mockClient.post).toHaveBeenCalledWith('/boards', {
+      name: 'New Board',
+      type: 'board',
+      collectionId: 'coll-1',
+    });
+  });
+
+  test('createBoardInCollection with kanban type', async () => {
+    mockClient.post.mockResolvedValue(sampleBoard);
+    await api.createBoardInCollection('coll-1', { name: 'Kanban', type: 'kanban' });
+    expect(mockClient.post).toHaveBeenCalledWith('/boards', expect.objectContaining({ type: 'kanban' }));
+  });
+
+  test('createBoardInCollection with list type', async () => {
+    mockClient.post.mockResolvedValue(sampleBoard);
+    await api.createBoardInCollection('coll-1', { name: 'List', type: 'list' });
+    expect(mockClient.post).toHaveBeenCalledWith('/boards', expect.objectContaining({ type: 'list' }));
+  });
+
+  test('createBoardInCollection with description', async () => {
+    mockClient.post.mockResolvedValue(sampleBoard);
+    await api.createBoardInCollection('coll-1', { name: 'Board', description: 'My desc' });
+    expect(mockClient.post).toHaveBeenCalledWith('/boards', expect.objectContaining({
+      description: 'My desc',
+    }));
+  });
+
   // --- createBoard ---
 
   test('createBoard posts data to /boards', async () => {
@@ -130,6 +265,18 @@ describe('Boards API', () => {
     const result = await api.updateBoard('board-1', { name: 'Updated Board' });
     expect(result.name).toBe('Updated Board');
     expect(mockClient.patch).toHaveBeenCalledWith('/boards/board-1', { name: 'Updated Board' });
+  });
+
+  test('updateBoard with description', async () => {
+    mockClient.patch.mockResolvedValue(sampleBoard);
+    await api.updateBoard('board-1', { description: 'New desc' });
+    expect(mockClient.patch).toHaveBeenCalledWith('/boards/board-1', { description: 'New desc' });
+  });
+
+  test('updateBoard with both name and description', async () => {
+    mockClient.patch.mockResolvedValue(sampleBoard);
+    await api.updateBoard('board-1', { name: 'New', description: 'Desc' });
+    expect(mockClient.patch).toHaveBeenCalledWith('/boards/board-1', { name: 'New', description: 'Desc' });
   });
 
   // --- deleteBoard ---
@@ -213,7 +360,7 @@ describe('Boards API', () => {
 
   test('addBoardToCollection posts link', async () => {
     mockClient.post.mockResolvedValue(sampleCollection);
-    const result = await api.addBoardToCollection('coll-1', 'board-1');
+    await api.addBoardToCollection('coll-1', 'board-1');
     expect(mockClient.post).toHaveBeenCalledWith('/collections/coll-1/boards/board-1', {});
   });
 
@@ -237,5 +384,110 @@ describe('Boards API', () => {
     const result = await api.listBoards();
     const filtered = result.filter(b => b.collectionId === 'coll-A');
     expect(filtered).toHaveLength(2);
+  });
+});
+
+describe('aggregateBoardStats', () => {
+  const baseBoard: ExtendedBoard = {
+    boardId: 'b1',
+    name: 'Test',
+    cardCount: 5,
+    createdAt: '2026-01-01',
+    updatedAt: '2026-01-01',
+  };
+
+  test('computes stats from cards array', () => {
+    const cards = [
+      { status: 'Done' },
+      { status: 'Done' },
+      { status: 'In Progress' },
+      { status: 'Todo' },
+    ];
+    const stats = aggregateBoardStats(baseBoard, cards as any);
+    expect(stats.totalCards).toBe(4);
+    expect(stats.doneCards).toBe(2);
+    expect(stats.openCards).toBe(2);
+  });
+
+  test('counts completed status as done', () => {
+    const cards = [{ status: 'completed' }, { status: 'In Progress' }];
+    const stats = aggregateBoardStats(baseBoard, cards as any);
+    expect(stats.doneCards).toBe(1);
+  });
+
+  test('falls back to board cardCount when no cards', () => {
+    const stats = aggregateBoardStats(baseBoard);
+    expect(stats.totalCards).toBe(5);
+    expect(stats.openCards).toBe(5);
+    expect(stats.doneCards).toBe(0);
+  });
+
+  test('returns zeros when board has no cardCount and no cards', () => {
+    const board: ExtendedBoard = { boardId: 'b', name: 'B', createdAt: '', updatedAt: '' };
+    const stats = aggregateBoardStats(board);
+    expect(stats.totalCards).toBe(0);
+    expect(stats.doneCards).toBe(0);
+    expect(stats.openCards).toBe(0);
+    expect(stats.overdueCards).toBe(0);
+  });
+
+  test('counts overdue cards (past due, not done)', () => {
+    const pastDate = new Date(Date.now() - 86400000).toISOString(); // yesterday
+    const cards = [
+      { status: 'In Progress', dueDate: pastDate },
+      { status: 'Done', dueDate: pastDate },
+      { status: 'Todo' },
+    ];
+    const stats = aggregateBoardStats(baseBoard, cards as any);
+    expect(stats.overdueCards).toBe(1);
+  });
+
+  test('does not count done cards as overdue', () => {
+    const pastDate = new Date(Date.now() - 86400000).toISOString();
+    const cards = [{ status: 'Done', dueDate: pastDate }];
+    const stats = aggregateBoardStats(baseBoard, cards as any);
+    expect(stats.overdueCards).toBe(0);
+  });
+});
+
+describe('calculateVelocity', () => {
+  test('returns 4 weekly periods', () => {
+    const velocity = calculateVelocity();
+    expect(velocity).toHaveLength(4);
+  });
+
+  test('returns zero velocity when no cards', () => {
+    const velocity = calculateVelocity([]);
+    expect(velocity.every(v => v.completed === 0)).toBe(true);
+  });
+
+  test('returns zero velocity when cards is undefined', () => {
+    const velocity = calculateVelocity(undefined);
+    expect(velocity.every(v => v.completed === 0)).toBe(true);
+  });
+
+  test('each period has correct structure', () => {
+    const velocity = calculateVelocity();
+    for (const v of velocity) {
+      expect(v).toHaveProperty('period');
+      expect(v).toHaveProperty('completed');
+      expect(v).toHaveProperty('added');
+      expect(v).toHaveProperty('netChange');
+      expect(typeof v.period).toBe('string');
+      expect(typeof v.completed).toBe('number');
+    }
+  });
+
+  test('counts recently completed cards in velocity', () => {
+    // Card completed yesterday (within last week)
+    const yesterday = new Date(Date.now() - 86400000).toISOString();
+    const cards = [
+      { status: 'Done', updatedAt: yesterday },
+      { status: 'In Progress', updatedAt: yesterday },
+    ];
+    const velocity = calculateVelocity(cards as any);
+    // Latest week should have at least 1 completed
+    const latestWeek = velocity[velocity.length - 1];
+    expect(latestWeek.completed).toBeGreaterThanOrEqual(1);
   });
 });
