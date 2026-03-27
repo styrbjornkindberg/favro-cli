@@ -8,6 +8,8 @@ Command-line interface for [Favro](https://favro.com) — manage boards and card
 
 - [Installation](#installation)
 - [Quick Start](#quick-start)
+  - **[Installation Guide](./INSTALL.md)** — System requirements, troubleshooting
+  - **[Examples & Workflows](./EXAMPLES.md)** — Real-world command patterns
 - [Authentication](#authentication)
 - [Command Reference](#command-reference)
   - [auth](#auth)
@@ -42,22 +44,35 @@ favro --help
 
 ## Quick Start
 
+Get started in 5 minutes:
+
 ```bash
-# 1. Authenticate
+# 1. Authenticate (saves your API key)
 favro auth login
 
 # 2. List your boards
 favro boards list
 
-# 3. List cards on a board
+# 3. List cards on a board (pick a board ID from step 2)
 favro cards list --board <boardId>
 
-# 4. Create a card
-favro cards create "Fix the login bug" --board <boardId> --status "In Progress"
+# 4. Create your first card
+favro cards create "Fix the login bug" --board <boardId>
 
-# 5. Export a board to CSV
-favro cards export <boardId> --format csv --out sprint.csv
+# 5. Update its status
+favro cards update <cardId> --status "In Progress"
+
+# 6. Done! Explore more
+favro --help
 ```
+
+**First time?**
+- **[Installation Guide](./INSTALL.md)** — System requirements and troubleshooting
+- **[Examples & Workflows](./EXAMPLES.md)** — Real-world command patterns
+
+**Already set up?**
+- See [Command Reference](#command-reference) below for full feature docs
+- Run `favro <command> --help` for command-specific flags
 
 ---
 
