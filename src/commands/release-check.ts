@@ -94,12 +94,10 @@ export function registerReleaseCheckCommand(program: Command): void {
         // Fetch all cards from board (with high limit)
         const allCards = await api.listCards(board, 10000);
 
-        // Filter to Review/Done statuses
+        // Filter to Review/Done statuses - use exact matching to avoid substring matches
         const reviewAndDoneCards = allCards.filter(card =>
-          card.status && 
-          (card.status.toLowerCase().includes('review') || 
-           card.status.toLowerCase().includes('done') ||
-           card.status.toLowerCase() === 'in review')
+          card.status &&
+          ['review', 'done', 'in review'].includes(card.status.toLowerCase())
         );
 
         // Check each card for issues

@@ -198,4 +198,60 @@ describe('release-check command', () => {
 
     expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('⚠️  REVIEW NEEDED'));
   });
+
+  it('should NOT include cards with substring-matching status names', async () => {
+    // Test that exact status matching is used, not substring matching
+    // Cards with similar but different status names should be excluded
+    const edgeCaseCards: Card[] = [
+      {
+        cardId: 'exact-review',
+        name: 'Real Review Card',
+        status: 'Review',
+        assignees: ['alice'],
+        tags: [],
+        dueDate: '2026-03-20',
+        createdAt: '2026-03-01T00:00:00Z',
+        updatedAt: '2026-03-15T00:00:00Z',
+      },
+      {
+        cardId: 'reviewed-by-qa',
+        name: 'Reviewed by QA',
+        status: 'Reviewed-by-QA',
+        assignees: ['alice'],
+        tags: [],
+        dueDate: '2026-03-20',
+        createdAt: '2026-03-01T00:00:00Z',
+        updatedAt: '2026-03-15T00:00:00Z',
+      },
+      {
+        cardId: 'exact-done',
+        name: 'Real Done Card',
+        status: 'Done',
+        assignees: ['alice'],
+        tags: [],
+        dueDate: '2026-03-20',
+        createdAt: '2026-03-01T00:00:00Z',
+        updatedAt: '2026-03-15T00:00:00Z',
+      },
+      {
+        cardId: 'undone',
+        name: 'Undone Item',
+        status: 'Undone',
+        assignees: ['alice'],
+        tags: [],
+        dueDate: '2026-03-20',
+        createdAt: '2026-03-01T00:00:00Z',
+        updatedAt: '2026-03-15T00:00:00Z',
+      },
+    ];
+    const mockListCards = jest.fn().mockResolvedValue(edgeCaseCards);
+    const program = buildProgram(mockListCards);
+
+    await program.parseAsync(['node', 'favro', 'release-check', 'board-1']);
+
+    // Only 2 cards should match (exact-review and exact-done)
+    // The status filter should use exact matching, not substring matching
+    expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('Review/Done cards:  2'));
+  });
 });
+
