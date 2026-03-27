@@ -1045,17 +1045,9 @@ describe('parseQuery — additional branch coverage', () => {
     expect(evaluateNode(unknownNode, {})).toBe(false);
   });
 
-  test('resolveDateValue default case via unrecognized relative type', () => {
-    // We can reach 'default' in resolveDateValue by injecting a DatePredicate with an unexpected type
-    const ast: DatePredicate = {
-      kind: 'date',
-      field: 'due_date',
-      operator: '=',
-      dateValue: { type: 'relative' as any, keyword: 'some-unknown-keyword' }
-    };
-    const card = { name: 'test', dueDate: new Date().toISOString().slice(0, 10) };
-    // evaluateNode should not throw — falls back to today in resolveRelativeKeyword default
-    expect(() => evaluateNode(ast, card)).not.toThrow();
+  test('resolveDateValue with unknown keyword should throw ParseError', () => {
+    // Unknown keywords now throw ParseError instead of silently defaulting to today (DoS fix)
+    expect(() => parseQuery('due_date:some-unknown-keyword')).toThrow();
   });
 
   test('resolveRelativeKeyword: tomorrow', () => {
@@ -1198,4 +1190,74 @@ describe('evaluateNode — date comparisons', () => {
     const q = parseQuery('due_in:1y');
     expect(q.ast).toMatchObject({ kind: 'date', dateValue: { unit: 'y' } });
   });
+
+  // FIX #4: Date math evaluation tests with real card objects
+  test('filterCards with due_in:7d returns cards due within next 7 days', () => {
+    const today = new Date();
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const inThreeDays = new Date(today);
+    inThreeDays.setDate(inThreeDays.getDate() + 3);
+    const inTenDays = new Date(today);
+    inTenDays.setDate(inTenDays.getDate() + 10);
+
+    const cards = [
+      { name: 'Soon', dueDate: tomorrow.toISOString().slice(0, 10) },
+      { name: 'Soonish', dueDate: inThreeDays.toISOString().slice(0, 10) },
+      { name: 'Far away', dueDate: inTenDays.toISOString().slice(0, 10) },
+    ];
+
+    const q = parseQuery('due_in:7d');
+    const result = filterCards(q, cards);
+    
+    // Should include cards due within 7 days (tomorrow, in 3 days)
+    expect(result.length).toBe(2);
+    expect(result.map(c => c.name).sort()).toEqual(['Soon', 'Soonish']);
+  });
+
+  test('filterCards with due_in:1m returns cards due within next month', () => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const nextWeek = new Date(today);
+    nextWeek.setDate(nextWeek.getDate() + 7);
+    const in25Days = new Date(today);
+    in25Days.setDate(in25Days.getDate() + 25); // Well within 1 month
+    const in60Days = new Date(today);
+    in60Days.setDate(in60Days.getDate() + 60); // Beyond 1 month
+
+    const cards = [
+      { name: 'Next week', dueDate: nextWeek.toISOString().slice(0, 10) },
+      { name: 'In 25 days', dueDate: in25Days.toISOString().slice(0, 10) },
+      { name: 'In 60 days', dueDate: in60Days.toISOString().slice(0, 10) },
+    ];
+
+    const q = parseQuery('due_in:1m');
+    const result = filterCards(q, cards);
+    
+    // Should include cards due within 1 month (30 days)
+    expect(result.length).toBe(2);
+    expect(result.map(c => c.name).sort()).toEqual(['In 25 days', 'Next week']);
+  });
+
+  test('filterCards with due_in:1y returns cards due within next year', () => {
+    const today = new Date();
+    const inSixMonths = new Date(today);
+    inSixMonths.setMonth(inSixMonths.getMonth() + 6);
+    const inThirteenMonths = new Date(today);
+    inThirteenMonths.setMonth(inThirteenMonths.getMonth() + 13);
+
+    const cards = [
+      { name: 'Six months', dueDate: inSixMonths.toISOString().slice(0, 10) },
+      { name: 'Thirteen months', dueDate: inThirteenMonths.toISOString().slice(0, 10) },
+    ];
+
+    const q = parseQuery('due_in:1y');
+    const result = filterCards(q, cards);
+    
+    // Should include only card due within 1 year
+    expect(result.length).toBe(1);
+    expect(result[0].name).toBe('Six months');
+  });
+
+
 });

@@ -7,6 +7,7 @@ import CardsAPI, { Card } from '../lib/cards-api';
 import FavroHttpClient from '../lib/http-client';
 import { logError, missingApiKeyError, suggestBoard } from '../lib/error-handler';
 import BoardsAPI from '../lib/boards-api';
+import { parseQuery, filterCards } from '../lib/query-parser';
 
 function formatCardsTable(cards: Card[]): void {
   if (cards.length === 0) {
@@ -49,9 +50,10 @@ export function registerCardsListCommand(program: Command): void {
     .command('cards list')
     .description('List cards from a board')
     .option('--board <id>', 'Board ID to list cards from')
-    .option('--status <status>', 'Filter by status')
-    .option('--assignee <user>', 'Filter by assignee')
-    .option('--tag <tag>', 'Filter by tag')
+    .option('--status <status>', 'Filter by status (legacy, use --filter instead)')
+    .option('--assignee <user>', 'Filter by assignee (legacy, use --filter instead)')
+    .option('--tag <tag>', 'Filter by tag (legacy, use --filter instead)')
+    .option('--filter <expression>', 'Filter cards using enhanced query syntax (e.g. "status:done OR status:in-progress")', (val, prev: string[]) => prev.concat([val]), [] as string[])
     .option('--limit <number>', 'Maximum number of cards to return', '50')
     .option('--json', 'Output as JSON')
     .option('--csv', 'Output as CSV')
@@ -72,19 +74,31 @@ export function registerCardsListCommand(program: Command): void {
         const limit = isNaN(parsedLimit) || parsedLimit < 1 ? 50 : parsedLimit;
         let cards = await api.listCards(options.board, limit);
 
-        // Apply client-side filters
-        if (options.status) {
-          cards = cards.filter(c => c.status?.toLowerCase() === options.status.toLowerCase());
-        }
-        if (options.assignee) {
-          cards = cards.filter(c => (c.assignees || []).some(
-            a => a.toLowerCase().includes(options.assignee.toLowerCase())
-          ));
-        }
-        if (options.tag) {
-          cards = cards.filter(c => (c.tags || []).some(
-            t => t.toLowerCase().includes(options.tag.toLowerCase())
-          ));
+        // Apply enhanced query filters (if provided)
+        if (options.filter && options.filter.length > 0) {
+          try {
+            const combinedFilter = options.filter.join(' AND ');
+            const query = parseQuery(combinedFilter);
+            cards = filterCards(query, cards);
+          } catch (err: any) {
+            console.error(`✗ Invalid filter expression: ${err.message}`);
+            process.exit(1);
+          }
+        } else {
+          // Fallback to legacy options for backward compatibility
+          if (options.status) {
+            cards = cards.filter(c => c.status?.toLowerCase() === options.status.toLowerCase());
+          }
+          if (options.assignee) {
+            cards = cards.filter(c => (c.assignees || []).some(
+              a => a.toLowerCase().includes(options.assignee.toLowerCase())
+            ));
+          }
+          if (options.tag) {
+            cards = cards.filter(c => (c.tags || []).some(
+              t => t.toLowerCase().includes(options.tag.toLowerCase())
+            ));
+          }
         }
 
         if (options.json) {

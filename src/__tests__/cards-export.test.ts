@@ -7,7 +7,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
-import { registerCardsExportCommand, parseFilter, applyFilter, applyFilters } from '../commands/cards-export';
+import { registerCardsExportCommand, applyFilter, applyFilters } from '../commands/cards-export';
 import { escapeCsvField, cardsToCSV, normalizeCard, writeCardsCSV, writeCardsJSON } from '../lib/csv';
 import CardsAPI, { Card } from '../lib/cards-api';
 import FavroHttpClient from '../lib/http-client';
@@ -245,40 +245,19 @@ describe('cardsToCSV', () => {
 });
 
 // ----------------------------
-// parseFilter tests
 // ----------------------------
-
-describe('parseFilter', () => {
-  test('parses valid assignee filter', () => {
-    expect(parseFilter('assignee:alice')).toEqual({ field: 'assignee', value: 'alice' });
-  });
-
-  test('parses valid status filter', () => {
-    expect(parseFilter('status:done')).toEqual({ field: 'status', value: 'done' });
-  });
-
-  test('parses filter with spaces around colon', () => {
-    expect(parseFilter('assignee : alice')).toEqual({ field: 'assignee', value: 'alice' });
-  });
-
-  test('returns null for filter without colon', () => {
-    expect(parseFilter('no-colon-here')).toBeNull();
-  });
-
-  test('lowercases field and value', () => {
-    const result = parseFilter('STATUS:DONE');
-    expect(result?.field).toBe('status');
-    expect(result?.value).toBe('done');
-  });
-});
-
-// ----------------------------
-// applyFilter tests
+// applyFilter tests (using enhanced query parser)
 // ----------------------------
 
 describe('applyFilter', () => {
-  test('filters by assignee (partial match)', () => {
-    const result = applyFilter(sampleCards, 'assignee:alice');
+  test('filters by assignee using ~ (contains operator)', () => {
+    const result = applyFilter(sampleCards, 'assignee~alice');
+    expect(result.length).toBe(2);
+    result.forEach(c => expect(c.assignees).toContain('alice@example.com'));
+  });
+
+  test('filters by assignee exact match', () => {
+    const result = applyFilter(sampleCards, 'assignee:alice@example.com');
     expect(result.length).toBe(2);
     result.forEach(c => expect(c.assignees).toContain('alice@example.com'));
   });
@@ -289,38 +268,40 @@ describe('applyFilter', () => {
     expect(result[0].cardId).toBe('card-002');
   });
 
-  test('filters by label/tag (partial match)', () => {
-    const result = applyFilter(sampleCards, 'label:bug');
+  test('filters by label/tag using ~ (contains)', () => {
+    const result = applyFilter(sampleCards, 'label~bug');
     expect(result.length).toBe(1);
     expect(result[0].cardId).toBe('card-001');
   });
 
-  test('returns all cards for unrecognised filter field (with warning)', () => {
-    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
-    const result = applyFilter(sampleCards, 'unknown:value');
-    expect(result.length).toBe(sampleCards.length);
-    warnSpy.mockRestore();
+  test('filters by tag exact match', () => {
+    const result = applyFilter(sampleCards, 'tag:bug');
+    expect(result.length).toBe(1);
+    expect(result[0].cardId).toBe('card-001');
   });
 
-  test('returns original array for malformed filter (with warning)', () => {
-    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
-    const result = applyFilter(sampleCards, 'badfilter');
-    expect(result.length).toBe(sampleCards.length);
-    warnSpy.mockRestore();
+  test('filters using AND operator', () => {
+    const result = applyFilter(sampleCards, 'assignee~alice AND status:done');
+    expect(result.length).toBe(1);
+    expect(result[0].cardId).toBe('card-003');
+  });
+
+  test('filters using OR operator', () => {
+    const result = applyFilter(sampleCards, 'status:done OR status:todo');
+    expect(result.length).toBe(2);
   });
 
   test('returns empty array when no cards match', () => {
-    const result = applyFilter(sampleCards, 'assignee:nobody');
+    const result = applyFilter(sampleCards, 'assignee~nobody');
     expect(result.length).toBe(0);
   });
 
-  // Fix #6: empty filter value should call process.exit
-  test('exits with error when filter value is empty', () => {
+  test('exits with error on invalid filter syntax', () => {
     const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     const exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => { throw new Error('process.exit'); });
 
-    expect(() => applyFilter(sampleCards, 'assignee:')).toThrow('process.exit');
-    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Filter value cannot be empty'));
+    expect(() => applyFilter(sampleCards, 'invalid:(((unmatched')).toThrow('process.exit');
+    expect(errorSpy).toHaveBeenCalled();
 
     errorSpy.mockRestore();
     exitSpy.mockRestore();
@@ -751,7 +732,7 @@ describe('applyFilters', () => {
 
   test('applies two filters with AND logic (assignee AND status)', () => {
     // alice@example.com has cards card-001 (in-progress) and card-003 (done)
-    const result = applyFilters(sampleCards, ['assignee:alice', 'status:done']);
+    const result = applyFilters(sampleCards, ['assignee~alice', 'status:done']);
     expect(result).toHaveLength(1);
     expect(result[0].cardId).toBe('card-003');
     expect(result[0].assignees).toContain('alice@example.com');
@@ -760,30 +741,23 @@ describe('applyFilters', () => {
 
   test('returns empty array when filters eliminate all cards (AND logic)', () => {
     // alice doesn't have any todo cards
-    const result = applyFilters(sampleCards, ['assignee:alice', 'status:todo']);
+    const result = applyFilters(sampleCards, ['assignee~alice', 'status:todo']);
     expect(result).toHaveLength(0);
   });
 
   test('applies three filters with AND logic', () => {
-    const result = applyFilters(sampleCards, ['assignee:alice', 'status:in-progress', 'label:bug']);
+    const result = applyFilters(sampleCards, ['assignee~alice', 'status:in-progress', 'tag:bug']);
     expect(result).toHaveLength(1);
     expect(result[0].cardId).toBe('card-001');
   });
 
   test('each filter is applied in sequence (reducer behavior)', () => {
     // Start with 3 cards
-    // assignee:alice → 2 cards (card-001, card-003)
-    // label:release → 1 card (card-003)
-    const result = applyFilters(sampleCards, ['assignee:alice', 'label:release']);
+    // assignee~alice → 2 cards (card-001, card-003)
+    // tag:release → 1 card (card-003)
+    const result = applyFilters(sampleCards, ['assignee~alice', 'tag:release']);
     expect(result).toHaveLength(1);
     expect(result[0].cardId).toBe('card-003');
-  });
-
-  test('unknown filter field returns original set (with warning)', () => {
-    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
-    const result = applyFilters(sampleCards, ['unknown:field']);
-    expect(result).toHaveLength(sampleCards.length);
-    warnSpy.mockRestore();
   });
 });
 

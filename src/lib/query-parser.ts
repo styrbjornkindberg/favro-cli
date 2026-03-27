@@ -150,6 +150,11 @@ interface Token {
  *   - Quoted strings: "hello world" (after an operator)
  */
 function tokenise(input: string): Token[] {
+  // DoS Protection: Input length limit
+  if (input.length > 10000) {
+    throw new ParseError(`Query string exceeds maximum length (10000 chars), got ${input.length} chars`);
+  }
+
   const tokens: Token[] = [];
   let i = 0;
   const n = input.length;
@@ -248,6 +253,7 @@ function tokenise(input: string): Token[] {
 class Parser {
   private tokens: Token[];
   private pos = 0;
+  private depth = 0;
   public warnings: string[] = [];
 
   constructor(private input: string) {
@@ -298,6 +304,11 @@ class Parser {
   private parsePrimary(): QueryNode {
     const t = this.peek();
     if (t.type === 'LPAREN') {
+      this.depth++;
+      // DoS Protection: Depth limit (max 50 nested parens)
+      if (this.depth > 50) {
+        throw new ParseError(`Query nesting exceeds maximum depth (50 levels), at position ${t.pos}`);
+      }
       this.consume(); // consume '('
       const inner = this.parseOr();
       // Validate matching closing paren
@@ -305,6 +316,7 @@ class Parser {
         throw new ParseError(`Unclosed parenthesis at position ${t.pos}`);
       }
       this.consume(); // consume ')'
+      this.depth--;
       return inner;
     }
     if (t.type === 'FIELD_OP') {
@@ -344,7 +356,10 @@ class Parser {
     const opRegex = /^([a-zA-Z_][a-zA-Z0-9_.]*)(>=|<=|>|<|~|=|:)(.+)$/;
     const m = raw.match(opRegex);
     if (!m) {
-      // Could be a bare keyword — treat as title~keyword
+      // Unknown token behavior (graceful degradation):
+      // If a token doesn't match any known field:operator:value pattern, treat it as a title search.
+      // This allows user-friendly behavior: "my task" → search title for "my task"
+      // A warning is recorded so CLI can inform the user of the interpretation.
       this.warnings.push(`Unknown token '${raw}' at position ${pos} — treating as title~'${raw}'`);
       return { kind: 'field', field: 'title', operator: '~', value: raw } as FieldPredicate;
     }
@@ -509,7 +524,8 @@ function parseDateValue(raw: string, pos: number): DateValue {
     return { type: 'absolute', iso: raw };
   }
 
-  throw new ParseError(`Invalid date format. Use YYYY-MM-DD`);
+  // If we get here, it's an unknown keyword (not a valid date format or known keyword)
+  throw new ParseError(`Unknown date keyword: "${raw}". Invalid date format. Use YYYY-MM-DD or valid keywords: today, yesterday, tomorrow, this-week, next-week, last-week, this-month, next-month, last-month, overdue`);
 }
 
 // ---------------------------------------------------------------------------
@@ -543,11 +559,55 @@ export function evaluateNode(node: QueryNode, card: Record<string, any>): boolea
     }
 
     case 'date': {
+      // Special handling for 'due_in' field — check if dueDate is within X days from today
+      if (node.field === 'due_in') {
+        const raw = resolveFieldValue('due_date', card) ?? resolveFieldValue('dueDate', card);
+        if (!raw) return false;
+
+        // Extract card's due date — for consistency with day-level comparison below, use YYYY-MM-DD string
+        let cardDateStr: string;
+        if (typeof raw === 'string') {
+          cardDateStr = raw.includes('T') ? raw.split('T')[0] : raw.slice(0, 10);
+        } else {
+          const d = new Date(raw);
+          if (isNaN(d.getTime())) return false;
+          cardDateStr = d.toISOString().split('T')[0];
+        }
+
+        // Create today's date in UTC for consistent comparison
+        const now = new Date();
+        const todayDateStr = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
+          .toISOString().split('T')[0];
+
+        // Resolve the target date (e.g., 7 days from today)
+        const target = resolveDateValue(node.dateValue);
+        const targetDateStr = target.toISOString().split('T')[0];
+
+        // For due_in, check if cardDate is between today and the target date (inclusive)
+        return cardDateStr >= todayDateStr && cardDateStr <= targetDateStr;
+      }
+
       const raw = resolveFieldValue(node.field, card);
-      const cardDate = new Date(String(raw ?? ''));
+      if (!raw) return false;
+
+      // Extract YYYY-MM-DD string from raw (could be ISO string with time, or plain date string)
+      let cardDateStr: string;
+      if (typeof raw === 'string') {
+        // Handle both "2026-03-27" and "2026-03-27T14:30:00" formats
+        cardDateStr = raw.includes('T') ? raw.split('T')[0] : raw.slice(0, 10);
+      } else {
+        // If it's a Date object, convert to YYYY-MM-DD
+        const d = new Date(raw);
+        if (isNaN(d.getTime())) return false;
+        cardDateStr = d.toISOString().split('T')[0];
+      }
+
+      // Convert target date to YYYY-MM-DD for day-level comparison
       const target = resolveDateValue(node.dateValue);
-      if (!raw || isNaN(cardDate.getTime())) return false;
-      return compareNumbers(cardDate.getTime(), node.operator, target.getTime());
+      const targetDateStr = target.toISOString().split('T')[0];
+
+      // Compare as date strings (YYYY-MM-DD), not timestamps
+      return compareValues(cardDateStr, node.operator, targetDateStr);
     }
 
     case 'customField': {
@@ -581,6 +641,7 @@ function resolveFieldValue(field: string, card: Record<string, any>): any {
     'label': ['tags', 'labels'],
     'tag': ['tags', 'labels'],
     'due_date': ['dueDate', 'due_date'],
+    'due_in': ['dueDate', 'due_date'],
     'due_before': ['dueDate', 'due_date'],
     'due_after': ['dueDate', 'due_date'],
     'created_at': ['createdAt', 'created_at'],
@@ -648,6 +709,7 @@ function compareNumbers(a: number, op: Operator, b: number): boolean {
 
 function resolveDateValue(dv: DateValue): Date {
   const now = new Date();
+  // Create date at local midnight (not UTC) to match test expectations and real-world usage
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
   switch (dv.type) {
@@ -708,7 +770,10 @@ function resolveRelativeKeyword(keyword: string, today: Date): Date {
     case 'next-month': return new Date(today.getFullYear(), today.getMonth() + 1, 1);
     case 'last-month': return new Date(today.getFullYear(), today.getMonth() - 1, 1);
     case 'overdue': return today; // date < today
-    default: return today;
+    default:
+      throw new ParseError(
+        `Unknown date keyword: "${keyword}". Valid keywords: today, yesterday, tomorrow, this-week, next-week, last-week, this-month, next-month, last-month, overdue`
+      );
   }
 }
 

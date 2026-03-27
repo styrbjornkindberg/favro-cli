@@ -7,6 +7,7 @@ import * as readline from 'readline';
 import CardsAPI, { UpdateCardRequest } from '../lib/cards-api';
 import FavroHttpClient from '../lib/http-client';
 import { logError, missingApiKeyError } from '../lib/error-handler';
+import { parseQuery } from '../lib/query-parser';
 
 /**
  * Max cards that can be updated in a single batch.
@@ -38,6 +39,7 @@ export function registerCardsUpdateCommand(program: Command): void {
     .option('--status <status>', 'Card status')
     .option('--assignees <list>', 'Assignees (comma-separated)')
     .option('--tags <list>', 'Tags (comma-separated)')
+    .option('--filter <filter>', 'Filter expression for card selection')
     .option('--json', 'Output as JSON')
     .option('--dry-run', 'Show what would be updated without making changes')
     .option('--yes', 'Skip confirmation prompt')
@@ -47,12 +49,23 @@ export function registerCardsUpdateCommand(program: Command): void {
       status?: string;
       assignees?: string;
       tags?: string;
+      filter?: string;
       json?: boolean;
       dryRun?: boolean;
       yes?: boolean;
     }) => {
       const verbose = program.parent?.opts()?.verbose ?? program.opts()?.verbose ?? false;
       try {
+        // Parse filter if provided
+        if (options.filter) {
+          try {
+            parseQuery(options.filter);
+          } catch (err: any) {
+            console.error(`✗ Invalid filter expression: ${err.message}`);
+            process.exit(1);
+          }
+        }
+
         const token = process.env.FAVRO_API_TOKEN;
         if (!token) {
           console.error(`Error: ${missingApiKeyError()}`);

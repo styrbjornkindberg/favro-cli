@@ -6,7 +6,7 @@
  *   favro cards export <board> --format json --out report.json
  *   favro cards export <board> --format csv --out report.csv
  *   favro cards export <board> --format csv --filter "assignee:alice" --out alice.csv
- *   favro cards export <board> --format csv --filter "assignee:alice" --filter "status:done" --out done.csv
+ *   favro cards export <board> --format csv --filter "status:done OR status:in-progress" --out done.csv
  */
 import { Command } from 'commander';
 import * as path from 'path';
@@ -16,66 +16,37 @@ import { writeCardsCSV, writeCardsJSON } from '../lib/csv';
 import { logError, missingApiKeyError, suggestBoard } from '../lib/error-handler';
 import BoardsAPI from '../lib/boards-api';
 import { ProgressBar, Spinner } from '../lib/progress';
+import { parseQuery, filterCards } from '../lib/query-parser';
 
 export type ExportFormat = 'json' | 'csv';
 
 /**
- * Parse a simple filter expression like "assignee:alice" or "status:done".
- * Returns {field, value} or null if the expression is not recognised.
+ * Apply a filter expression to cards using the enhanced query parser.
+ * Supports: field:value, AND/OR operators, parentheses, date predicates, relationships, etc.
+ * @throws Error if the filter syntax is invalid
  */
-export function parseFilter(filter: string): { field: string; value: string } | null {
-  const idx = filter.indexOf(':');
-  if (idx === -1) return null;
-  const field = filter.slice(0, idx).trim().toLowerCase();
-  const value = filter.slice(idx + 1).trim().toLowerCase();
-  return { field, value };
-}
-
-/**
- * Apply a parsed filter to a list of cards.
- * Supported fields: assignee, status, label, tag
- */
-export function applyFilter(cards: Card[], filter: string): Card[] {
-  const parsed = parseFilter(filter);
-  if (!parsed) {
-    console.warn(`⚠ Unrecognised filter format: "${filter}" — expected field:value`);
-    return cards;
-  }
-
-  const { field, value } = parsed;
-
-  if (!value) {
-    console.error(`✗ Filter value cannot be empty: "${filter}"`);
+export function applyFilter(cards: Card[], filterExpression: string): Card[] {
+  try {
+    const query = parseQuery(filterExpression);
+    return filterCards(query, cards);
+  } catch (err: any) {
+    console.error(`✗ Invalid filter expression: "${filterExpression}"`);
+    console.error(`  Error: ${err.message}`);
     process.exit(1);
   }
-
-  switch (field) {
-    case 'assignee':
-      return cards.filter(c =>
-        (c.assignees ?? []).some(a => a.toLowerCase().includes(value))
-      );
-    case 'status':
-      return cards.filter(c => (c.status ?? '').toLowerCase() === value);
-    case 'label':
-    case 'tag':
-      return cards.filter(c =>
-        (c.tags ?? []).some(t => t.toLowerCase().includes(value))
-      );
-    default:
-      console.warn(`⚠ Unknown filter field: "${field}". Supported: assignee, status, label`);
-      return cards;
-  }
 }
 
 /**
- * Apply multiple filters to cards (AND logic — all filters must match).
+ * Apply multiple filters to cards using the enhanced query parser.
+ * Combines all filters with AND logic (all filters must match).
+ * @throws Error if any filter syntax is invalid
  */
-export function applyFilters(cards: Card[], filters: string[]): Card[] {
-  let result = cards;
-  for (const filter of filters) {
-    result = applyFilter(result, filter);
-  }
-  return result;
+export function applyFilters(cards: Card[], filterExpressions: string[]): Card[] {
+  if (filterExpressions.length === 0) return cards;
+  
+  // Combine multiple filter expressions with AND operator
+  const combinedFilter = filterExpressions.join(' AND ');
+  return applyFilter(cards, combinedFilter);
 }
 
 export function registerCardsExportCommand(program: Command): void {

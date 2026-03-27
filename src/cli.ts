@@ -21,7 +21,7 @@ import * as path from 'path';
 import CardsAPI, { UpdateCardRequest } from './lib/cards-api';
 import FavroHttpClient from './lib/http-client';
 import { writeCardsCSV, writeCardsJSON, normalizeCard, cardsToCSV } from './lib/csv';
-import { parseFilter, applyFilters, ExportFormat } from './commands/cards-export';
+import { applyFilters, ExportFormat } from './commands/cards-export';
 import { Card } from './lib/cards-api';
 import { registerAuthCommand } from './commands/auth';
 import { registerBoardsListCommand } from './commands/boards-list';

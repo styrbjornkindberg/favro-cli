@@ -7,6 +7,7 @@ import CardsAPI from '../lib/cards-api';
 import FavroHttpClient from '../lib/http-client';
 import { logError, missingApiKeyError } from '../lib/error-handler';
 import { ProgressBar } from '../lib/progress';
+import { parseQuery } from '../lib/query-parser';
 
 export function registerCardsCreateCommand(program: Command): void {
   program
@@ -15,12 +16,14 @@ export function registerCardsCreateCommand(program: Command): void {
     .option('--board <id>', 'Target board ID')
     .option('--description <text>', 'Card description')
     .option('--status <status>', 'Card status')
+    .option('--filter <filter>', 'Filter expression for card selection')
     .option('--bulk <file>', 'Bulk create from JSON file')
     .option('--json', 'Output as JSON')
     .action(async (_createArg: string, title: string, options: {
       board?: string;
       description?: string;
       status?: string;
+      filter?: string;
       bulk?: string;
       json?: boolean;
     }) => {
@@ -30,6 +33,16 @@ export function registerCardsCreateCommand(program: Command): void {
         if (!token) {
           console.error(`Error: ${missingApiKeyError()}`);
           process.exit(1);
+        }
+
+        // Parse filter if provided
+        if (options.filter) {
+          try {
+            parseQuery(options.filter);
+          } catch (err: any) {
+            console.error(`✗ Invalid filter expression: ${err.message}`);
+            process.exit(1);
+          }
         }
 
         const client = new FavroHttpClient({

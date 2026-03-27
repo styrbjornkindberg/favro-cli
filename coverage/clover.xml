@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<coverage generated="1774597887892" clover="3.2.0">
-  <project timestamp="1774597887892" name="All files">
+<coverage generated="1774600959753" clover="3.2.0">
+  <project timestamp="1774600959754" name="All files">
     <metrics statements="281" coveredstatements="272" conditionals="161" coveredconditionals="139" methods="29" coveredmethods="28" elements="471" coveredelements="439" complexity="0" loc="281" ncloc="281" packages="1" files="1" classes="1"/>
     <file name="query-parser.ts" path="/Users/styrbjorn/Sites/favro-cli/src/lib/query-parser.ts">
       <metrics statements="281" coveredstatements="272" conditionals="161" coveredconditionals="139" methods="29" coveredmethods="28"/>
