@@ -10,6 +10,8 @@
  * and that commands fail fast (exit 1) when FAVRO_API_TOKEN is missing.
  */
 import { buildProgram } from '../cli';
+import CardsAPI from '../lib/cards-api';
+import { resolveApiKey } from '../lib/config';
 
 jest.mock('../lib/cards-api');
 jest.mock('../lib/http-client');
@@ -111,6 +113,94 @@ describe('cli.ts — cards list options', () => {
     const listCmd = cardsCmd.commands.find(c => c.name() === 'list')!;
     const optNames = listCmd.options.map(o => o.long);
     expect(optNames).toContain('--json');
+  });
+
+  // CLA-1785 critic fix: --include removed from cards list (was silently ignored)
+  test('cards list does NOT have --include option (removed per critic feedback CLA-1785)', () => {
+    const program = buildProgram();
+    const cardsCmd = program.commands.find(c => c.name() === 'cards')!;
+    const listCmd = cardsCmd.commands.find(c => c.name() === 'list')!;
+    const optNames = listCmd.options.map(o => o.long);
+    expect(optNames).not.toContain('--include');
+  });
+});
+
+describe('cli.ts — CLA-1785 critic fixes: limit cap and null guard', () => {
+  let consoleSpy: jest.SpyInstance;
+  let consoleErrorSpy: jest.SpyInstance;
+  let tableSpy: jest.SpyInstance;
+  let exitSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    process.env.FAVRO_API_TOKEN = 'test-token';
+    (resolveApiKey as jest.Mock).mockResolvedValue('test-token');
+    consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    tableSpy = jest.spyOn(console, 'table').mockImplementation(() => {});
+    exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => { throw new Error('process.exit'); });
+  });
+
+  afterEach(() => {
+    delete process.env.FAVRO_API_TOKEN;
+    consoleSpy.mockRestore();
+    consoleErrorSpy.mockRestore();
+    tableSpy.mockRestore();
+    exitSpy.mockRestore();
+    // Reset resolveApiKey back to undefined so FAVRO_API_TOKEN-missing tests still work
+    (resolveApiKey as jest.Mock).mockResolvedValue(undefined);
+  });
+
+  // Issue #1: --limit 101 must be capped at 100
+  test('--limit 101 is capped to 100 (DoS prevention)', async () => {
+    const mockListCards = jest.fn().mockResolvedValue([]);
+    (CardsAPI as jest.MockedClass<typeof CardsAPI>).mockImplementation(() => ({
+      listCards: mockListCards,
+    } as any));
+
+    const program = buildProgram();
+    await program.parseAsync(['node', 'cli', 'cards', 'list', 'board-123', '--limit', '101']);
+
+    // Should be capped to 100, not 101
+    expect(mockListCards).toHaveBeenCalledWith('board-123', 100, undefined);
+  });
+
+  test('--limit 9999 is capped to 100 (DoS prevention)', async () => {
+    const mockListCards = jest.fn().mockResolvedValue([]);
+    (CardsAPI as jest.MockedClass<typeof CardsAPI>).mockImplementation(() => ({
+      listCards: mockListCards,
+    } as any));
+
+    const program = buildProgram();
+    await program.parseAsync(['node', 'cli', 'cards', 'list', 'board-123', '--limit', '9999']);
+
+    // Should be capped to 100
+    expect(mockListCards).toHaveBeenCalledWith('board-123', 100, undefined);
+  });
+
+  test('--limit 50 passes through uncapped', async () => {
+    const mockListCards = jest.fn().mockResolvedValue([]);
+    (CardsAPI as jest.MockedClass<typeof CardsAPI>).mockImplementation(() => ({
+      listCards: mockListCards,
+    } as any));
+
+    const program = buildProgram();
+    await program.parseAsync(['node', 'cli', 'cards', 'list', 'board-123', '--limit', '50']);
+
+    expect(mockListCards).toHaveBeenCalledWith('board-123', 50, undefined);
+  });
+
+  test('--limit 0 falls back to default 25', async () => {
+    const mockListCards = jest.fn().mockResolvedValue([]);
+    (CardsAPI as jest.MockedClass<typeof CardsAPI>).mockImplementation(() => ({
+      listCards: mockListCards,
+    } as any));
+
+    const program = buildProgram();
+    await program.parseAsync(['node', 'cli', 'cards', 'list', 'board-123', '--limit', '0']);
+
+    // 0 is invalid (< 1), falls back to default 25
+    expect(mockListCards).toHaveBeenCalledWith('board-123', 25, undefined);
   });
 });
 

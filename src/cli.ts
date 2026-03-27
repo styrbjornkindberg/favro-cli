@@ -123,7 +123,7 @@ const cards = program.command('cards').description(
   '  move    Move a card to a different board\n\n' +
   'Examples:\n' +
   '  favro cards get <cardId> --include board,collection\n' +
-  '  favro cards list <board-id> --filter "customField:value" --include relations\n' +
+  '  favro cards list <board-id> --filter "customField:value"\n' +
   '  favro cards link <cardId> --to <targetId> --type depends\n' +
   '  favro cards unlink <cardId> --from <linkedCardId>\n' +
   '  favro cards move <cardId> --to-board <boardId> --position top\n' +
@@ -145,7 +145,7 @@ cards
     '  favro cards list <board-id> --status "In Progress" --limit 100\n' +
     '  favro cards list <board-id> --assignee alice --json\n' +
     '  favro cards list <board-id> --tag bug\n' +
-    '  favro cards list <board-id> --filter "customField:value" --include relations\n\n' +
+    '  favro cards list <board-id> --filter "customField:value"\n\n' +
     'Tip: Use `favro boards list` to find board IDs.'
   )
   .option('--board <id>', 'Board ID to list cards from (alternative to positional arg)')
@@ -153,7 +153,8 @@ cards
   .option('--assignee <user>', 'Filter by assignee')
   .option('--tag <tag>', 'Filter by tag')
   .option('--filter <expression>', 'Filter cards using query syntax (e.g. "customField:value")')
-  .option('--include <items>', 'Comma-separated metadata to include: board,collection,custom-fields,relations')
+  // NOTE: --include is intentionally omitted from cards list — metadata includes are a cards get feature.
+  // Removing unimplemented flag per CLA-1785 critic feedback (Issue #3).
   .option('--limit <number>', 'Maximum number of cards (default 25, max 100)', '25')
   .option('--json', 'Output as JSON')
   .action(async (boardId: string | undefined, options) => {
@@ -175,7 +176,8 @@ cards
       }
 
       const parsedLimit = parseInt(options.limit, 10);
-      const limit = (!isNaN(parsedLimit) && parsedLimit >= 1) ? parsedLimit : 25;
+      // CLA-1785 critic fix: enforce max 100 cap to prevent DoS via --limit 9999
+      const limit = (!isNaN(parsedLimit) && parsedLimit >= 1) ? Math.min(parsedLimit, 100) : 25;
       let cardList = await api.listCards(effectiveBoardId, limit, options.filter);
 
       if (options.status) {

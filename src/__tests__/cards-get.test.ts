@@ -200,4 +200,37 @@ describe('Cards Get Command', () => {
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Network timeout'));
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
+
+  // CLA-1785 critic fix: null guard for card.name
+  test('handles null card.name without crashing (null guard fix)', async () => {
+    const cardWithNullName = { ...sampleCard, name: null as any };
+    buildMockApi(cardWithNullName);
+
+    const cardsCmd = new Command('cards');
+    registerCardsGetCommand(cardsCmd);
+
+    // Should NOT throw — null name should be handled gracefully
+    await cardsCmd.parseAsync(['node', 'cards', 'get', 'card-abc']);
+
+    // Table should have been called with em-dash fallback
+    expect(tableSpy).toHaveBeenCalled();
+    const tableArg = tableSpy.mock.calls[0][0];
+    expect(tableArg[0].Title).toBe('—');
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  test('handles undefined card.name without crashing', async () => {
+    const cardWithUndefinedName = { ...sampleCard, name: undefined as any };
+    buildMockApi(cardWithUndefinedName);
+
+    const cardsCmd = new Command('cards');
+    registerCardsGetCommand(cardsCmd);
+
+    await cardsCmd.parseAsync(['node', 'cards', 'get', 'card-abc']);
+
+    expect(tableSpy).toHaveBeenCalled();
+    const tableArg = tableSpy.mock.calls[0][0];
+    expect(tableArg[0].Title).toBe('—');
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
 });

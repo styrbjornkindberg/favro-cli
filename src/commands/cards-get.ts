@@ -62,7 +62,7 @@ export function registerCardsGetCommand(cardsCmd: Command): void {
         // Default table-style output
         const row: Record<string, string> = {
           ID: card.cardId,
-          Title: card.name,
+          Title: card.name ?? '—',  // null guard: API may return null name (CLA-1785 critic fix)
           Status: card.status ?? '—',
           Assignees: (card.assignees ?? []).join(', ') || '—',
           Tags: (card.tags ?? []).join(', ') || '—',
