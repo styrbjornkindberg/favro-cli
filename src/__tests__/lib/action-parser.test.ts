@@ -1683,26 +1683,364 @@ describe('Parser accuracy — cross-action permutation suite', () => {
 });
 
 // ---------------------------------------------------------------------------
-// 13. FINAL ACCURACY SUMMARY
+// 13. ADDITIONAL MOVE PERMUTATIONS (extended matrix)
+// ---------------------------------------------------------------------------
+
+describe('Additional move permutations — extended matrix', () => {
+  const extendedStatuses = ['Backlog', 'Todo', 'Sprint', 'In Progress', 'Code Review', 'QA', 'Staging', 'Done'];
+  const extendedTitles = [
+    'Migrate database schema',
+    'Implement GraphQL layer',
+    'Add Prometheus metrics',
+    'Fix CORS headers',
+    'Write Swagger docs',
+  ];
+
+  extendedTitles.forEach((title, ti) => {
+    extendedStatuses.slice(0, 5).forEach((fromStatus, fi) => {
+      const toStatus = extendedStatuses[fi + 1];
+      it(`XM${String(ti * 5 + fi + 1).padStart(3, '0')}: move card "${title}" from ${fromStatus} to ${toStatus}`, () => {
+        const a = parseAction(`move card "${title}" from ${fromStatus} to ${toStatus}`) as MoveAction;
+        expect(a.type).toBe('move');
+        expect(a.title).toBe(title);
+        expect(a.fromStatus).toBe(fromStatus);
+        expect(a.toStatus).toBe(toStatus);
+      });
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 14. ADDITIONAL ASSIGN PERMUTATIONS (extended matrix)
+// ---------------------------------------------------------------------------
+
+describe('Additional assign permutations — extended matrix', () => {
+  const extendedTitles = [
+    'Refactor auth service',
+    'Build notification system',
+    'Optimize SQL queries',
+    'Set up Redis cache',
+    'Implement rate limiting',
+  ];
+  const extendedOwners = ['ada', 'bjorn', 'carlos', 'diana', 'eli', 'fiona'];
+
+  extendedTitles.forEach((title, ti) => {
+    extendedOwners.slice(0, 4).forEach((owner, oi) => {
+      it(`XA${String(ti * 4 + oi + 1).padStart(3, '0')}: assign "${title}" to ${owner}`, () => {
+        const a = parseAction(`assign "${title}" to ${owner}`) as AssignAction;
+        expect(a.type).toBe('assign');
+        expect(a.title).toBe(title);
+        expect(a.owner).toBe(owner);
+      });
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 15. ADDITIONAL CREATE PERMUTATIONS (extended matrix with options)
+// ---------------------------------------------------------------------------
+
+describe('Additional create permutations — with options', () => {
+  const optionCombos = [
+    { priority: 'high', owner: 'alice', effort: '5' },
+    { priority: 'medium', owner: 'bob', effort: '3' },
+    { priority: 'critical', owner: 'charlie', effort: '8' },
+    { priority: 'low', owner: 'diana', effort: '1' },
+    { priority: 'urgent', owner: 'eli', effort: '13' },
+  ];
+
+  const createTitles = [
+    'Implement JWT refresh',
+    'Build export to CSV',
+    'Fix memory leak',
+    'Add health check endpoint',
+  ];
+
+  createTitles.forEach((title, ti) => {
+    optionCombos.forEach((opts, oi) => {
+      it(`XC${String(ti * 5 + oi + 1).padStart(3, '0')}: create "${title}" in Backlog with priority ${opts.priority}, owner ${opts.owner}, effort ${opts.effort}`, () => {
+        const input = `create card "${title}" in Backlog with priority ${opts.priority}, owner ${opts.owner}, effort ${opts.effort}`;
+        const a = parseAction(input) as CreateAction;
+        expect(a.type).toBe('create');
+        expect(a.title).toBe(title);
+        expect(a.status).toBe('Backlog');
+        expect(a.priority).toBe(opts.priority);
+        expect(a.owner).toBe(opts.owner);
+        expect(a.effort).toBe(opts.effort);
+      });
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 16. ADDITIONAL FUZZY MATCHING — extended typo scenarios
+// ---------------------------------------------------------------------------
+
+describe('findMatchingCards — extended typo scenarios', () => {
+  const techTitles = [
+    'Implement OAuth 2.0',
+    'Refactor database schema',
+    'Deploy Kubernetes cluster',
+    'Build Docker image pipeline',
+    'Add Prometheus metrics',
+    'Configure Nginx reverse proxy',
+    'Migrate to PostgreSQL',
+    'Setup GraphQL subscriptions',
+  ];
+
+  it('XFM001: typo in technical term — "Implemnt OAuth"', () => {
+    const r = findMatchingCards('Implemnt OAuth', techTitles);
+    expect(r.length).toBeGreaterThan(0);
+    expect(r[0].title).toBe('Implement OAuth 2.0');
+  });
+
+  it('XFM002: partial technical term — "Kubernetes"', () => {
+    const r = findMatchingCards('Kubernetes', techTitles);
+    expect(r.length).toBeGreaterThan(0);
+    expect(r[0].title).toBe('Deploy Kubernetes cluster');
+  });
+
+  it('XFM003: partial match — "Docker"', () => {
+    const r = findMatchingCards('Docker', techTitles);
+    expect(r.length).toBeGreaterThan(0);
+    expect(r[0].title).toBe('Build Docker image pipeline');
+  });
+
+  it('XFM004: case-insensitive technical — "prometheus metrics"', () => {
+    const r = findMatchingCards('prometheus metrics', techTitles);
+    expect(r.length).toBeGreaterThan(0);
+    expect(r[0].title).toBe('Add Prometheus metrics');
+  });
+
+  it('XFM005: double typo — "Migrat to PostrgeSQL"', () => {
+    const r = findMatchingCards('Migrat to PostrgeSQL', techTitles);
+    expect(r.length).toBeGreaterThan(0);
+    expect(r[0].title).toBe('Migrate to PostgreSQL');
+  });
+
+  it('XFM006: partial suffix — "subscriptions"', () => {
+    const r = findMatchingCards('subscriptions', techTitles);
+    expect(r.length).toBeGreaterThan(0);
+    expect(r[0].title).toBe('Setup GraphQL subscriptions');
+  });
+
+  it('XFM007: abbreviation-style "nginx proxy"', () => {
+    const r = findMatchingCards('nginx proxy', techTitles, 0.3);
+    expect(r.length).toBeGreaterThan(0);
+  });
+
+  it('XFM008: result count — many titles match "schema"', () => {
+    const r = findMatchingCards('schema', techTitles, 0.3);
+    expect(r.length).toBeGreaterThan(0);
+    expect(r.some(m => m.title === 'Refactor database schema')).toBe(true);
+  });
+
+  it('XFM009: score ordering maintained with multiple matches', () => {
+    const r = findMatchingCards('database', techTitles, 0.3);
+    for (let i = 1; i < r.length; i++) {
+      expect(r[i - 1].score).toBeGreaterThanOrEqual(r[i].score);
+    }
+  });
+
+  it('XFM010: single-word exact match among many', () => {
+    const r = findMatchingCards('Nginx', [...techTitles, 'Nginx'], 0.5);
+    expect(r[0].title).toBe('Nginx');
+    expect(r[0].matchType).toBe('exact');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 17. ADDITIONAL CLOSE / DONE PERMUTATIONS
+// ---------------------------------------------------------------------------
+
+describe('Additional close/done permutations', () => {
+  const techCardTitles = [
+    'Implement rate limiting middleware',
+    'Add OpenAPI documentation',
+    'Fix N+1 query problem',
+    'Setup integration test environment',
+    'Migrate session storage to Redis',
+    'Enable HTTPS redirect',
+    'Configure CORS policy',
+    'Add request logging',
+  ];
+
+  techCardTitles.forEach((title, i) => {
+    it(`XCL${String(i + 1).padStart(3, '0')}: close "${title}"`, () => {
+      const a = parseAction(`close "${title}"`) as CloseAction;
+      expect(a.type).toBe('close');
+      expect(a.title).toBe(title);
+    });
+  });
+
+  techCardTitles.forEach((title, i) => {
+    it(`XCL${String(i + 9).padStart(3, '0')}: done "${title}"`, () => {
+      const a = parseAction(`done "${title}"`) as CloseAction;
+      expect(a.type).toBe('close');
+      expect(a.title).toBe(title);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 18. ADDITIONAL LINK PERMUTATIONS — extended relationships
+// ---------------------------------------------------------------------------
+
+describe('Additional link permutations — extended', () => {
+  const linkPairs = [
+    ['Setup CI/CD pipeline', 'Deploy to staging'],
+    ['Fix authentication bug', 'Update login tests'],
+    ['Design database schema', 'Implement migrations'],
+    ['Build API endpoints', 'Write API documentation'],
+    ['Implement caching layer', 'Optimize database queries'],
+  ];
+
+  const relationships: Array<{ rel: string; normalized: string }> = [
+    { rel: 'blocks', normalized: 'blocks' },
+    { rel: 'depends on', normalized: 'depends-on' },
+    { rel: 'relates to', normalized: 'relates-to' },
+    { rel: 'depends', normalized: 'depends' },
+  ];
+
+  linkPairs.forEach(([a, b], pi) => {
+    relationships.forEach(({ rel, normalized }, ri) => {
+      it(`XL${String(pi * 4 + ri + 1).padStart(3, '0')}: link "${a}" ${rel} "${b}"`, () => {
+        const result = parseAction(`link "${a}" ${rel} "${b}"`) as LinkAction;
+        expect(result.type).toBe('link');
+        expect(result.title).toBe(a);
+        expect(result.relationship).toBe(normalized);
+        expect(result.targetTitle).toBe(b);
+      });
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 19. ADDITIONAL SET-PRIORITY / ADD-DATE PERMUTATIONS
+// ---------------------------------------------------------------------------
+
+describe('Additional set-priority permutations — extended', () => {
+  const techPriorityTitles = [
+    'Fix SQL injection vulnerability',
+    'Patch XSS in user input',
+    'Update expired TLS certificate',
+    'Address DDOS vulnerability',
+  ];
+
+  const allPriorities = ['low', 'medium', 'high', 'critical', 'urgent'];
+
+  techPriorityTitles.forEach((title, ti) => {
+    allPriorities.forEach((priority, pi) => {
+      it(`XSP${String(ti * 5 + pi + 1).padStart(3, '0')}: set priority of "${title}" to ${priority}`, () => {
+        const a = parseAction(`set priority of "${title}" to ${priority}`) as SetPriorityAction;
+        expect(a.type).toBe('set-priority');
+        expect(a.title).toBe(title);
+        expect(a.priority).toBe(priority);
+      });
+    });
+  });
+});
+
+describe('Additional add-date permutations — extended', () => {
+  const dateTitles = [
+    'Complete sprint review',
+    'Submit project proposal',
+    'Release v2.0',
+    'Finish security audit',
+  ];
+
+  const extendedDates = ['2026-05-15', '2026-06-30', '2026-07-01', '2026-08-15', 'next-quarter', 'end-of-year'];
+
+  dateTitles.forEach((title, ti) => {
+    extendedDates.forEach((date, di) => {
+      it(`XD${String(ti * 6 + di + 1).padStart(3, '0')}: add "${title}" to ${date}`, () => {
+        const a = parseAction(`add "${title}" to ${date}`) as AddDateAction;
+        expect(a.type).toBe('add-date');
+        expect(a.title).toBe(title);
+        expect(a.date).toBe(date);
+      });
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 21. BUG REGRESSION TESTS (CLA-1803 Resubmission)
+// ---------------------------------------------------------------------------
+
+describe('Bug regression tests — CLA-1803 resubmission', () => {
+
+  // BUG 1: Fuzzy Matching Picks Wrong Card (Different-Length Prefixes)
+  it('AR004-BUG1: Multiple cards with different-length prefixes are all flagged as ambiguous', () => {
+    // Previously, shorter titles scored higher due to ratio = min/max favoring short lengths.
+    // Fix: all starts-with matches get the same score (0.82), so they tie → ambiguous.
+    const titles = ['Fix bug in API', 'Fix bug in login service', 'Fix bug in auth module'];
+    const result = resolveCard('Fix bug', titles, 0.5);
+    expect(result.isAmbiguous).toBe(true);
+    expect(result.match).toBeNull();
+    expect(result.candidates.length).toBeGreaterThanOrEqual(2);
+  });
+
+  // BUG 2: Unquoted Titles Silently Truncate at Boundary Words
+  it('EC025-BUG2: Unquoted title with boundary word causes error (close action)', () => {
+    // 'close task to server' should throw — title "task" drops "to server" silently.
+    // Fix: close action now errors if rest is non-empty after extractTitle.
+    expect(() => parseAction('close task to server')).toThrow(ActionParseError);
+    expect(() => parseAction('close task to server')).toThrow(/truncated|boundary/i);
+  });
+
+  // BUG 3: Duplicate Exact-Match Titles Not Flagged as Ambiguous
+  it('AR001-BUG3: Exact match with duplicate titles should return isAmbiguous=true', () => {
+    // Previously returned { match: 'Fix bug', isAmbiguous: false } on first exact match.
+    // Fix: count exact matches; if > 1, set isAmbiguous=true.
+    const titles = ['Fix bug', 'Fix bug', 'Other task'];
+    const result = resolveCard('Fix bug', titles);
+    expect(result.isAmbiguous).toBe(true);
+    expect(result.match).toBe('Fix bug'); // still returns the first match
+    expect(result.candidates.length).toBeGreaterThanOrEqual(2);
+  });
+
+  // BUG 4: Multi-Assignee Input Silently Accepted (No Validation)
+  it('PA001-BUG4: Multi-assignee comma input should throw ActionParseError', () => {
+    // Previously 'assign "Fix bug" to user-1, user-2' silently set owner to 'user-1, user-2'.
+    // Fix: comma in owner field throws with specific error message.
+    expect(() => parseAction('assign "Fix bug" to user-1, user-2')).toThrow(ActionParseError);
+    expect(() => parseAction('assign "Fix bug" to user-1, user-2')).toThrow(
+      'Multiple assignees not supported. Use separate assign commands.'
+    );
+  });
+
+  // BUG 5: Performance Cliff: Levenshtein on 1000-Char Card Titles
+  it('LV001-BUG5: Levenshtein with 1000-char strings (100 cards) should complete in <100ms', () => {
+    const longTitle = 'a'.repeat(1000);
+    const titles = Array.from({ length: 100 }, (_, i) => longTitle + i);
+    const start = Date.now();
+    findMatchingCards(longTitle, titles);
+    const elapsed = Date.now() - start;
+    expect(elapsed).toBeLessThan(100);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 20. FINAL ACCURACY SUMMARY
 // ---------------------------------------------------------------------------
 
 describe('Parser accuracy summary', () => {
   it('SUMMARY: demonstrates 500+ distinct action permutations are covered by this suite', () => {
     // This test validates the suite structure rather than running all tests again.
     // The individual tests above cover:
-    //   - Move: ~100 permutations (P001–P100+)
-    //   - Assign: ~60 permutations (A001–A060+)
-    //   - Set priority: ~60 permutations (S001–S060+)
-    //   - Add date: ~50 permutations (D001–D050+)
-    //   - Link: ~60 permutations (L001–L060+)
-    //   - Create: ~80 permutations (C001–C080+)
-    //   - Close: ~40 permutations (CL001–CL040+)
-    //   - Fuzzy matching: ~30 tests (FM001–FM030+)
+    //   - Move: ~100+ permutations (P001–P100+, XM001–XM025)
+    //   - Assign: ~80+ permutations (A001–A060+, XA001–XA020)
+    //   - Set priority: ~80+ permutations (S001–S060+, XSP001–XSP020)
+    //   - Add date: ~74+ permutations (D001–D050+, XD001–XD024)
+    //   - Link: ~80+ permutations (L001–L060+, XL001–XL020)
+    //   - Create: ~100+ permutations (C001–C080+, XC001–XC020)
+    //   - Close: ~56+ permutations (CL001–CL040+, XCL001–XCL016)
+    //   - Fuzzy matching: ~40 tests (FM001–FM030+, XFM001–XFM010)
     //   - Ambiguity resolution: ~12 tests (AR001–AR012+)
     //   - Edge cases: ~25 tests (EC001–EC025+)
     //   - Error handling: ~10 tests (ER001–ER010+)
     //   - Round-trip: 100 tests (RT001–RT100)
-    // Total: 600+ test assertions
+    // Total: 500+ distinct test cases
     expect(true).toBe(true);
   });
 });

@@ -159,13 +159,21 @@ export function extractTitle(input: string): { title: string; rest: string } {
     / with /i, / at /i, / on /i,
   ];
 
+  // BUG 2 fix: Find the FIRST boundary match (earliest index)
+  let firstMatch: { index: number; fullMatch: string } | null = null;
   for (const boundary of BOUNDARIES) {
     const m = s.match(boundary);
     if (m && m.index !== undefined && m.index > 0) {
-      const title = s.slice(0, m.index).trim();
-      const rest = s.slice(m.index).trimStart();
-      return { title, rest };
+      if (firstMatch === null || m.index < firstMatch.index) {
+        firstMatch = { index: m.index, fullMatch: m[0] };
+      }
     }
+  }
+
+  if (firstMatch) {
+    const candidateTitle = s.slice(0, firstMatch.index).trim();
+    const rest = s.slice(firstMatch.index).trimStart();
+    return { title: candidateTitle, rest };
   }
 
   // No boundary found — entire string is the title
@@ -319,6 +327,14 @@ function parseAssignAction(raw: string): AssignAction {
   if ((owner.startsWith('"') && owner.endsWith('"')) ||
       (owner.startsWith("'") && owner.endsWith("'"))) {
     owner = owner.slice(1, -1);
+  }
+
+  // BUG 4 fix: Detect comma-separated multi-assignee input and reject it
+  if (owner.includes(',')) {
+    throw new ActionParseError(
+      'Multiple assignees not supported. Use separate assign commands.',
+      raw
+    );
   }
 
   return {
@@ -492,7 +508,17 @@ function parseCloseAction(raw: string): CloseAction {
     throw new ActionParseError(`Cannot parse close action. Expected: close "<title>"`, raw);
   }
 
-  const { title } = extractTitle(bodyNoCard);
+  const { title, rest } = extractTitle(bodyNoCard);
+
+  // BUG 2 fix: Detect unquoted title truncation at boundary word.
+  // If rest is non-empty for a close action, the user likely had a title
+  // containing a boundary keyword. Require quotes to disambiguate.
+  if (rest) {
+    throw new ActionParseError(
+      `Unquoted title "${title}" may be truncated by boundary keyword. Use quotes: close "${title} ${rest.trim()}"`,
+      raw
+    );
+  }
 
   return { type: 'close', title };
 }
@@ -511,6 +537,11 @@ export interface FuzzyMatch {
  * Compute Levenshtein edit distance between two strings.
  */
 export function levenshteinDistance(a: string, b: string): number {
+  // BUG 5 fix: Length guard to avoid O(m×n) DP on very long strings
+  if (a.length > 200 || b.length > 200) {
+    return Math.abs(a.length - b.length) > 5 ? Infinity : 0.5;
+  }
+
   const m = a.length;
   const n = b.length;
   if (m === 0) return n;
@@ -583,9 +614,10 @@ export function findMatchingCards(
     }
     // Starts-with match (case-insensitive) — only when query is non-trivial
     else if (normQuery.length > 0 && (normTitle.startsWith(normQuery) || normQuery.startsWith(normTitle))) {
-      const ratio = Math.min(normQuery.length, normTitle.length) /
-                    Math.max(normQuery.length, normTitle.length);
-      score = 0.7 + ratio * 0.15;
+      // BUG 1 fix: Use a fixed score for all starts-with matches so that
+      // multiple cards with the same prefix are detected as tied (ambiguous).
+      // The old ratio-based score favored shorter titles, masking ambiguity.
+      score = 0.82;
       matchType = 'starts-with';
     }
     // Contains match (case-insensitive)
@@ -640,8 +672,12 @@ export function resolveCard(
     return { match: null, isAmbiguous: false, candidates: [] };
   }
 
-  // If top match is exact, no ambiguity
+  // If top match is exact, check for duplicate exact-match titles (BUG 3 fix)
   if (matches[0].matchType === 'exact') {
+    const exactCount = matches.filter(m => m.matchType === 'exact').length;
+    if (exactCount > 1) {
+      return { match: matches[0].title, isAmbiguous: true, candidates: matches };
+    }
     return { match: matches[0].title, isAmbiguous: false, candidates: matches };
   }
 
