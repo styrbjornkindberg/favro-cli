@@ -105,6 +105,7 @@ function registerCardsExportCommand(program) {
         .option('--filter <expression>', 'Filter cards (repeatable, e.g. "assignee:alice"). All conditions must match (AND logic)', (val, prev) => prev.concat([val]), [])
         .option('--limit <number>', 'Maximum cards to fetch', '10000')
         .action(async (_exportArg, board, options) => {
+        const verbose = program.parent?.opts()?.verbose ?? program.opts()?.verbose ?? false;
         // Check FAVRO_API_TOKEN early
         const token = process.env.FAVRO_API_TOKEN;
         if (!token) {
@@ -178,7 +179,7 @@ function registerCardsExportCommand(program) {
             }
         }
         catch (error) {
-            (0, error_handler_1.logError)(error);
+            (0, error_handler_1.logError)(error, verbose);
             process.exit(1);
         }
     });

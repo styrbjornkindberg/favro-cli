@@ -12,6 +12,7 @@ import { Command } from 'commander';
 import * as readline from 'readline';
 import { readConfig, writeConfig, CONFIG_FILE, resolveApiKey } from '../lib/config';
 import FavroHttpClient from '../lib/http-client';
+import { logError } from '../lib/error-handler';
 
 /**
  * Prompt user for input interactively.
@@ -71,19 +72,18 @@ export async function validateApiKey(apiKey: string): Promise<boolean> {
  * Shared verify logic used by both `auth verify` and `auth check`.
  * Uses resolveApiKey() for consistent priority across all commands.
  */
-async function runVerify(options: { apiKey?: string }): Promise<void> {
+async function runVerify(options: { apiKey?: string }, verbose = false): Promise<void> {
   let apiKey: string | undefined;
   try {
     // Fix (Issue 3): use resolveApiKey() for consistent priority, including FAVRO_API_TOKEN legacy fallback
     apiKey = await resolveApiKey(options.apiKey);
   } catch (err: any) {
-    console.error(`✗ ${err.message}`);
+    logError(err, verbose);
     process.exit(1);
   }
 
   if (!apiKey) {
-    console.error('✗ No API key configured. Run `favro auth login` to set one.');
-    console.error('  Or set FAVRO_API_KEY environment variable.');
+    console.error('Error: API key not found. Run `favro auth login` first');
     process.exit(1);
   }
 
@@ -98,8 +98,7 @@ async function runVerify(options: { apiKey?: string }): Promise<void> {
       process.exit(1);
     }
   } catch (err: any) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error(`✗ Could not verify API key: ${msg}`);
+    logError(err, verbose);
     process.exit(1);
   }
 }
@@ -133,7 +132,7 @@ export function registerAuthCommand(program: Command): void {
         await writeConfig(updated);
         console.log(`✓ API key saved to ${CONFIG_FILE}`);
       } catch (err: any) {
-        console.error(`✗ ${err.message}`);
+        logError(err);
         process.exit(1);
       }
     });
@@ -154,7 +153,7 @@ export function registerAuthCommand(program: Command): void {
         await writeConfig(rest);
         console.log(`✓ API key removed from ${CONFIG_FILE}`);
       } catch (err: any) {
-        console.error(`✗ ${err.message}`);
+        logError(err);
         process.exit(1);
       }
     });
@@ -166,7 +165,8 @@ export function registerAuthCommand(program: Command): void {
     .description('Verify your API key is valid (spec-compliant name)')
     .option('--api-key <key>', 'API key to check (overrides config/env)')
     .action(async (options) => {
-      await runVerify(options);
+      const verbose = program.parent?.opts()?.verbose ?? program.opts()?.verbose ?? false;
+      await runVerify(options, verbose);
     });
 
   // ─── auth check ─────────────────────────────────────────────────────────────
@@ -176,7 +176,8 @@ export function registerAuthCommand(program: Command): void {
     .description('Verify your API key is valid')
     .option('--api-key <key>', 'API key to check (overrides config/env)')
     .action(async (options) => {
-      await runVerify(options);
+      const verbose = program.parent?.opts()?.verbose ?? program.opts()?.verbose ?? false;
+      await runVerify(options, verbose);
     });
 }
 

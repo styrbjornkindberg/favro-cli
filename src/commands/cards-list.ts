@@ -55,6 +55,7 @@ export function registerCardsListCommand(program: Command): void {
     .option('--json', 'Output as JSON')
     .option('--csv', 'Output as CSV')
     .action(async (_listArg, options) => {
+      const verbose = program.parent?.opts()?.verbose ?? program.opts()?.verbose ?? false;
       try {
         const token = process.env.FAVRO_API_TOKEN;
         if (!token) {
@@ -94,7 +95,7 @@ export function registerCardsListCommand(program: Command): void {
           formatCardsTable(cards);
         }
       } catch (error) {
-        logError(error);
+        logError(error, verbose);
         process.exit(1);
       }
     });

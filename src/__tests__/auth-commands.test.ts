@@ -203,7 +203,7 @@ describe('auth check command', () => {
       program.parseAsync(['node', 'test', 'auth', 'check'])
     ).rejects.toThrow('process.exit');
 
-    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('No API key configured'));
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('API key not found'));
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 

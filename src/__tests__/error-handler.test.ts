@@ -83,9 +83,9 @@ describe('notFoundError', () => {
 });
 
 describe('invalidDateError', () => {
-  test('returns format hint', () => {
+  test('returns format hint matching spec exactly', () => {
     const msg = invalidDateError('25-12-2026');
-    expect(msg).toContain('25-12-2026');
+    expect(msg).toBe('Invalid date format. Use YYYY-MM-DD');
     expect(msg).toContain('YYYY-MM-DD');
   });
 });

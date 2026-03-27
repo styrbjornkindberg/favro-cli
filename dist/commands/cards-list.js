@@ -50,6 +50,7 @@ function registerCardsListCommand(program) {
         .option('--json', 'Output as JSON')
         .option('--csv', 'Output as CSV')
         .action(async (_listArg, options) => {
+        const verbose = program.parent?.opts()?.verbose ?? program.opts()?.verbose ?? false;
         try {
             const token = process.env.FAVRO_API_TOKEN;
             if (!token) {
@@ -85,7 +86,7 @@ function registerCardsListCommand(program) {
             }
         }
         catch (error) {
-            (0, error_handler_1.logError)(error);
+            (0, error_handler_1.logError)(error, verbose);
             process.exit(1);
         }
     });

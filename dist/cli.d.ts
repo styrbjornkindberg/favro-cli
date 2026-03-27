@@ -15,5 +15,11 @@
  *   FAVRO_API_KEY    API key (new preferred env var)
  *   FAVRO_API_TOKEN  API key (legacy env var, still supported)
  */
-export {};
+import { Command } from 'commander';
+/**
+ * Build the CLI program (exported for testing).
+ * Guards parseAsync behind require.main === module so that
+ * importing this module in tests does NOT trigger argument parsing.
+ */
+export declare function buildProgram(): Command;
 //# sourceMappingURL=cli.d.ts.map

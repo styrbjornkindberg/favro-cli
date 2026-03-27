@@ -5,6 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.FavroHttpClient = void 0;
 const axios_1 = __importDefault(require("axios"));
+const error_handler_1 = require("./error-handler");
 class FavroHttpClient {
     constructor(config = {}) {
         this.auth = config.auth;
@@ -22,7 +23,19 @@ class FavroHttpClient {
             const retryCount = error.config?._retryCount ?? 0;
             if (this.shouldRetry(error) && retryCount < 3) {
                 error.config._retryCount = retryCount + 1;
-                const delay = Math.pow(2, retryCount) * 1000; // 1s, 2s, 4s
+                // For 429, read Retry-After header and show user-visible message
+                let delay;
+                if (error.response?.status === 429) {
+                    const retryAfterHeader = error.response.headers?.['retry-after'];
+                    const retryAfterSecs = retryAfterHeader ? parseInt(String(retryAfterHeader), 10) : undefined;
+                    const delaySecs = (!isNaN(retryAfterSecs) && retryAfterSecs > 0) ? retryAfterSecs : Math.pow(2, retryCount);
+                    delay = delaySecs * 1000;
+                    // User-visible message: "Rate limited. Retrying in 30 seconds..."
+                    process.stderr.write((0, error_handler_1.rateLimitMessage)(delaySecs) + '\n');
+                }
+                else {
+                    delay = Math.pow(2, retryCount) * 1000; // 1s, 2s, 4s
+                }
                 await new Promise(resolve => setTimeout(resolve, delay));
                 return this.client.request(error.config);
             }

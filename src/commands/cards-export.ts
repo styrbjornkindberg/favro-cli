@@ -91,6 +91,7 @@ export function registerCardsExportCommand(program: Command): void {
       filter: string[];
       limit?: string;
     }) => {
+      const verbose = program.parent?.opts()?.verbose ?? program.opts()?.verbose ?? false;
       // Check FAVRO_API_TOKEN early
       const token = process.env.FAVRO_API_TOKEN;
       if (!token) {
@@ -168,7 +169,7 @@ export function registerCardsExportCommand(program: Command): void {
           console.error(`ℹ Exported ${cards.length} card(s) to stdout (${format.toUpperCase()})`);
         }
       } catch (error) {
-        logError(error);
+        logError(error, verbose);
         process.exit(1);
       }
     });

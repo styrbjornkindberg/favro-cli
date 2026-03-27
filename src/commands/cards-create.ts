@@ -24,6 +24,7 @@ export function registerCardsCreateCommand(program: Command): void {
       bulk?: string;
       json?: boolean;
     }) => {
+      const verbose = program.parent?.opts()?.verbose ?? program.opts()?.verbose ?? false;
       try {
         const token = process.env.FAVRO_API_TOKEN;
         if (!token) {
@@ -59,7 +60,7 @@ export function registerCardsCreateCommand(program: Command): void {
           if (options.json) console.log(JSON.stringify(card));
         }
       } catch (error) {
-        logError(error);
+        logError(error, verbose);
         process.exit(1);
       }
     });

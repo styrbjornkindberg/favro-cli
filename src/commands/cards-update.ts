@@ -51,6 +51,7 @@ export function registerCardsUpdateCommand(program: Command): void {
       dryRun?: boolean;
       yes?: boolean;
     }) => {
+      const verbose = program.parent?.opts()?.verbose ?? program.opts()?.verbose ?? false;
       try {
         const token = process.env.FAVRO_API_TOKEN;
         if (!token) {
@@ -90,7 +91,7 @@ export function registerCardsUpdateCommand(program: Command): void {
         console.log(`✓ Card updated: ${card.cardId}`);
         if (options.json) console.log(JSON.stringify(card));
       } catch (error) {
-        logError(error);
+        logError(error, verbose);
         process.exit(1);
       }
     });

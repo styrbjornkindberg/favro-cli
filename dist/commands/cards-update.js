@@ -75,6 +75,7 @@ function registerCardsUpdateCommand(program) {
         .option('--dry-run', 'Show what would be updated without making changes')
         .option('--yes', 'Skip confirmation prompt')
         .action(async (_updateArg, cardId, options) => {
+        const verbose = program.parent?.opts()?.verbose ?? program.opts()?.verbose ?? false;
         try {
             const token = process.env.FAVRO_API_TOKEN;
             if (!token) {
@@ -116,7 +117,7 @@ function registerCardsUpdateCommand(program) {
                 console.log(JSON.stringify(card));
         }
         catch (error) {
-            (0, error_handler_1.logError)(error);
+            (0, error_handler_1.logError)(error, verbose);
             process.exit(1);
         }
     });

@@ -46,8 +46,8 @@ export function notFoundError(resourceType: string, name: string, available: str
 /**
  * Format an invalid date error.
  */
-export function invalidDateError(value: string): string {
-  return `Invalid date format: '${value}'. Use YYYY-MM-DD`;
+export function invalidDateError(_value?: string): string {
+  return `Invalid date format. Use YYYY-MM-DD`;
 }
 
 /**
