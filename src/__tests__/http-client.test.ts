@@ -151,7 +151,7 @@ describe('FavroHttpClient', () => {
 
     // First attempt: _retryCount is 0 (not set)
     const error429 = {
-      response: { status: 429 },
+      response: { status: 429, headers: {} },
       config: {},
     };
 
@@ -163,13 +163,50 @@ describe('FavroHttpClient', () => {
     expect((error429.config as any)._retryCount).toBe(1);
   }, 10000);
 
+  test('response interceptor shows "Rate limited. Retrying in X seconds..." on 429', async () => {
+    const stderrSpy = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const client = new FavroHttpClient();
+    const [, errorHandler] = mockAxiosInstance.interceptors.response.use.mock.calls[0];
+
+    const error429 = {
+      response: { status: 429, headers: { 'retry-after': '30' } },
+      config: {},
+    };
+
+    mockAxiosInstance.request.mockResolvedValue({ data: { success: true } });
+
+    await errorHandler(error429);
+    const written = stderrSpy.mock.calls.map((c) => String(c[0])).join('');
+    expect(written).toContain('Rate limited. Retrying in 30 seconds...');
+    stderrSpy.mockRestore();
+  }, 35000);
+
+  test('response interceptor shows rate limit message without Retry-After header (uses exponential backoff)', async () => {
+    const stderrSpy = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const client = new FavroHttpClient();
+    const [, errorHandler] = mockAxiosInstance.interceptors.response.use.mock.calls[0];
+
+    // No Retry-After header — falls back to 2^0 = 1 second
+    const error429NoHeader = {
+      response: { status: 429, headers: {} },
+      config: {},
+    };
+
+    mockAxiosInstance.request.mockResolvedValue({ data: { success: true } });
+
+    await errorHandler(error429NoHeader);
+    const written = stderrSpy.mock.calls.map((c) => String(c[0])).join('');
+    expect(written).toContain('Rate limited. Retrying in 1 seconds...');
+    stderrSpy.mockRestore();
+  }, 5000);
+
   test('response interceptor retries up to 3 times (retryCount < 3)', async () => {
     const client = new FavroHttpClient();
     const [, errorHandler] = mockAxiosInstance.interceptors.response.use.mock.calls[0];
 
     // 3rd retry: retryCount = 2, should still retry (2 < 3)
     const error429AtRetry2 = {
-      response: { status: 429 },
+      response: { status: 429, headers: {} },
       config: { _retryCount: 2 },
     };
 
@@ -186,7 +223,7 @@ describe('FavroHttpClient', () => {
 
     // retryCount already at max — no more retries
     const error429Exhausted = {
-      response: { status: 429 },
+      response: { status: 429, headers: {} },
       config: { _retryCount: 3 },
     };
 

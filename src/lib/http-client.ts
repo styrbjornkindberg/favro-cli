@@ -1,4 +1,5 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
+import { rateLimitMessage } from './error-handler';
 
 export interface AuthConfig {
   token?: string;
@@ -27,7 +28,20 @@ export class FavroHttpClient {
         const retryCount = (error.config as any)?._retryCount ?? 0;
         if (this.shouldRetry(error) && retryCount < 3) {
           (error.config as any)._retryCount = retryCount + 1;
-          const delay = Math.pow(2, retryCount) * 1000; // 1s, 2s, 4s
+
+          // For 429, read Retry-After header and show user-visible message
+          let delay: number;
+          if (error.response?.status === 429) {
+            const retryAfterHeader = error.response.headers?.['retry-after'];
+            const retryAfterSecs = retryAfterHeader ? parseInt(String(retryAfterHeader), 10) : undefined;
+            const delaySecs = (!isNaN(retryAfterSecs!) && retryAfterSecs! > 0) ? retryAfterSecs! : Math.pow(2, retryCount);
+            delay = delaySecs * 1000;
+            // User-visible message: "Rate limited. Retrying in 30 seconds..."
+            process.stderr.write(rateLimitMessage(delaySecs) + '\n');
+          } else {
+            delay = Math.pow(2, retryCount) * 1000; // 1s, 2s, 4s
+          }
+
           await new Promise(resolve => setTimeout(resolve, delay));
           return this.client.request(error.config!);
         }

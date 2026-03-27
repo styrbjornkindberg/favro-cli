@@ -54,6 +54,8 @@ export function registerBoardsListCommand(boardsParent: Command): void {
     .option('--collection <name>', 'Filter boards by collection name')
     .option('--json', 'Output as JSON')
     .action(async (options) => {
+      // Resolve --verbose from the root program (parent of parent)
+      const verbose = boardsParent.parent?.opts()?.verbose ?? false;
       try {
         const token = await resolveApiKey();
         if (!token) {
@@ -85,7 +87,7 @@ export function registerBoardsListCommand(boardsParent: Command): void {
           formatBoardsTable(boards);
         }
       } catch (error) {
-        logError(error);
+        logError(error, verbose);
         process.exit(1);
       }
     });
