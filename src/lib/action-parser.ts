@@ -199,6 +199,33 @@ function stripArticle(s: string): string {
     .trimStart();
 }
 
+// Boundary keywords that can incorrectly truncate unquoted titles
+const BOUNDARY_KEYWORDS_RE = /^(from|to|in|blocks|depends|relates|with|at|on)\s/i;
+
+/**
+ * BUG 2 fix (structural): For unquoted titles, detect when the body starts with
+ * a boundary keyword. This means the user typed a title containing a boundary word
+ * but forgot quotes — causing the parser to extract only a fragment.
+ *
+ * For quoted input, this check is skipped (quotes protect boundary words).
+ *
+ * @param body  The input to extractTitle (after stripping action keyword + articles)
+ * @param action  The action name for the error message
+ * @param raw  The original raw input for error context
+ */
+function assertNoBoundaryStart(body: string, action: string, raw: string): void {
+  if (!body) return;
+  // Only applies to unquoted titles — quoted titles start with " or '
+  if (body[0] === '"' || body[0] === "'") return;
+  if (BOUNDARY_KEYWORDS_RE.test(body)) {
+    throw new ActionParseError(
+      `Unquoted title starts with boundary keyword "${body.split(/\s/)[0]}". ` +
+      `Use quotes to include boundary words in titles: ${action} "<title with keyword>" ...`,
+      raw
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Main parser
 // ---------------------------------------------------------------------------
@@ -274,6 +301,9 @@ function parseMoveAction(raw: string): MoveAction {
     throw new ActionParseError(`Cannot parse move action. Expected: move card "<title>" from <status> to <status>`, raw);
   }
 
+  // BUG 2 fix (structural): detect unquoted title starting with boundary keyword
+  assertNoBoundaryStart(body, 'move card', raw);
+
   const { title, rest } = extractTitle(body);
 
   // Expect: from <status> to <status>  OR  to <status> (from is optional)
@@ -328,6 +358,9 @@ function parseAssignAction(raw: string): AssignAction {
   if (!body) {
     throw new ActionParseError(`Cannot parse assign action. Expected: assign "<title>" to <owner>`, raw);
   }
+
+  // BUG 2 fix (structural): detect unquoted title starting with boundary keyword
+  assertNoBoundaryStart(body, 'assign', raw);
 
   const { title, rest } = extractTitle(body);
 
@@ -408,6 +441,9 @@ function parseAddAction(raw: string): AddDateAction {
     throw new ActionParseError(`Cannot parse add action. Expected: add "<title>" to <date>`, raw);
   }
 
+  // BUG 2 fix (structural): detect unquoted title starting with boundary keyword
+  assertNoBoundaryStart(body, 'add', raw);
+
   const { title, rest } = extractTitle(body);
 
   const toMatch = rest.match(/^to\s+(.+)$/i);
@@ -483,6 +519,9 @@ function parseCreateAction(raw: string): CreateAction {
       raw
     );
   }
+
+  // BUG 2 fix (structural): detect unquoted title starting with boundary keyword
+  assertNoBoundaryStart(bodyNoCard, 'create card', raw);
 
   const { title, rest } = extractTitle(bodyNoCard);
 

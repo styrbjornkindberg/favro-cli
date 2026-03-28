@@ -2009,6 +2009,35 @@ describe('Bug regression tests — CLA-1803 resubmission', () => {
     expect(() => parseAction('move task to done to Archive')).toThrow(/truncated|boundary/i);
   });
 
+  // BUG 2 (STRUCTURAL — ASSIGN): Unquoted title STARTS WITH boundary keyword
+  it('EC029-BUG2-STRUCTURAL ASSIGN: Unquoted title starting with boundary keyword throws (assign)', () => {
+    // 'assign in group task to alice' — title would be 'in group task' starting with 'in' (boundary)
+    // New structural fix: detect when body starts with a boundary keyword before extractTitle
+    expect(() => parseAction('assign in group task to alice')).toThrow(ActionParseError);
+    expect(() => parseAction('assign in group task to alice')).toThrow(/boundary/i);
+  });
+
+  // BUG 2 (STRUCTURAL — ADD): Unquoted title STARTS WITH boundary keyword
+  it('EC030-BUG2-STRUCTURAL ADD: Unquoted title starting with boundary keyword throws (add)', () => {
+    // 'add in progress task to 2026-01-01' — title would be 'in progress task' starting with 'in'
+    expect(() => parseAction('add in progress task to 2026-01-01')).toThrow(ActionParseError);
+    expect(() => parseAction('add in progress task to 2026-01-01')).toThrow(/boundary/i);
+  });
+
+  // BUG 2 (STRUCTURAL — MOVE): Unquoted title STARTS WITH boundary keyword
+  it('EC031-BUG2-STRUCTURAL MOVE: Unquoted title starting with boundary keyword throws (move)', () => {
+    // 'move card in wrong status to Done' — title would be 'in wrong status' starting with 'in'
+    expect(() => parseAction('move card in wrong status to Done')).toThrow(ActionParseError);
+    expect(() => parseAction('move card in wrong status to Done')).toThrow(/boundary/i);
+  });
+
+  // BUG 2 (STRUCTURAL — CREATE): Unquoted title STARTS WITH boundary keyword
+  it('EC032-BUG2-STRUCTURAL CREATE: Unquoted title starting with boundary keyword throws (create)', () => {
+    // 'create in progress item in Backlog' — title would be 'in progress item' starting with 'in'
+    expect(() => parseAction('create in progress item in Backlog')).toThrow(ActionParseError);
+    expect(() => parseAction('create in progress item in Backlog')).toThrow(/boundary/i);
+  });
+
   // BUG 3: Duplicate Exact-Match Titles Not Flagged as Ambiguous
   it('AR001-BUG3: Exact match with duplicate titles should return isAmbiguous=true', () => {
     // Previously returned { match: 'Fix bug', isAmbiguous: false } on first exact match.
