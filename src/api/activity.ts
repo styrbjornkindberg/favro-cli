@@ -151,7 +151,8 @@ export class ActivityApiClient {
 
       try {
         const response = await this.client.get<PaginatedResponse<RawActivity>>(
-          `/cards/${cardId}/activity`,
+          // Favro: /cards/:cardId/activities (plural)
+          `/cards/${cardId}/activities`,
           { params }
         );
         const batch = (response.entities ?? []).map(raw => normalizeActivity(raw));

@@ -95,6 +95,10 @@ export class FavroHttpClient {
     return (await this.client.patch<T>(url, data, config)).data;
   }
 
+  async put<T = any>(url: string, data?: any, config?: any): Promise<T> {
+    return (await this.client.put<T>(url, data, config)).data;
+  }
+
   async delete<T = any>(url: string, config?: any): Promise<T> {
     return (await this.client.delete<T>(url, config)).data;
   }

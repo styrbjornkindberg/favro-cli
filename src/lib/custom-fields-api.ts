@@ -117,7 +117,8 @@ export class CustomFieldsAPI {
       }
 
       const response = await this.client.get<PaginatedResponse<CustomFieldDefinition>>(
-        `/boards/${boardId}/custom-fields`,
+        // Favro endpoint: /customfields (no hyphen, org-scoped)
+        '/customfields',
         { params }
       );
 
@@ -146,8 +147,8 @@ export class CustomFieldsAPI {
     if (cached) return cached;
 
     const field = boardId
-      ? await this.client.get<CustomFieldDefinition>(`/custom-fields/${fieldId}`, { params: { boardId } })
-      : await this.client.get<CustomFieldDefinition>(`/custom-fields/${fieldId}`);
+      ? await this.client.get<CustomFieldDefinition>(`/customfields/${fieldId}`, { params: { boardId } })
+      : await this.client.get<CustomFieldDefinition>(`/customfields/${fieldId}`);
 
     this.cache.set(cacheKey, field);
     return field;
@@ -195,6 +196,8 @@ export class CustomFieldsAPI {
       }
 
       const response = await this.client.get<PaginatedResponse<CustomFieldValue>>(
+        // Note: custom field values are returned inline on card responses;
+        // this endpoint may not exist in Favro API
         `/cards/${cardId}/custom-fields`,
         { params }
       );
@@ -232,6 +235,7 @@ export class CustomFieldsAPI {
       const option = validateSelectValue(field, value);
       // Use optionId as the value to send to the API
       return this.client.patch<CustomFieldValue>(
+        // Favro: update card with customFields array via PUT /cards/:cardId
         `/cards/${cardId}/custom-fields/${fieldId}`,
         { value: option.optionId }
       );

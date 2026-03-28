@@ -51,7 +51,11 @@ export interface CreateCardRequest {
   name: string;
   description?: string;
   status?: string;
+  /** widgetCommonId — the board (widget) to create the card on */
+  widgetCommonId?: string;
+  /** @deprecated Use widgetCommonId instead */
   boardId?: string;
+  columnId?: string;
   assignees?: string[];
 }
 
@@ -108,7 +112,8 @@ export class CardsAPI {
   async listCards(boardId?: string, limit: number = 25, filter?: string): Promise<Card[]> {
     // Default 25; use explicit NaN/range check (not ||) to avoid limit=0 falsy bug
     const effectiveLimit = (isNaN(limit) || limit < 1) ? 25 : limit;
-    const path = boardId ? `/boards/${boardId}/cards` : '/cards';
+    // Favro API: GET /cards with widgetCommonId query param (not /boards/:id/cards)
+    const path = '/cards';
     const allCards: Card[] = [];
     let page = 0;
     let totalPages = 1;
@@ -118,6 +123,11 @@ export class CardsAPI {
       const params: Record<string, unknown> = {
         limit: Math.min(effectiveLimit - allCards.length, 100), // request at most 100 per page
       };
+
+      // Favro uses widgetCommonId to scope cards to a board
+      if (boardId) {
+        params.widgetCommonId = boardId;
+      }
 
       if (filter) {
         params.filter = filter;
@@ -178,21 +188,21 @@ export class CardsAPI {
         card.collection = await boardsApi.getCollection(card.collectionId) as unknown as typeof card.collection;
       } catch { /* best effort */ }
     }
-    if (includes.includes('custom-fields') && !card.customFields) {
-      try {
-        const cf = await this.client.get<{ entities: CustomField[] }>(`/cards/${cardId}/custom-fields`);
-        card.customFields = cf.entities ?? [];
-      } catch { /* best effort */ }
-    }
+    // Custom fields are returned inline on card responses from Favro API,
+    // not via a separate endpoint.
     if (includes.includes('links') && !card.links) {
       try {
-        const lnk = await this.client.get<{ entities: CardLink[] }>(`/cards/${cardId}/links`);
+        // Favro: GET /cards/:cardId/dependencies
+        const lnk = await this.client.get<{ entities: CardLink[] }>(`/cards/${cardId}/dependencies`);
         card.links = lnk.entities ?? [];
       } catch { /* best effort */ }
     }
     if ((includes.includes('comments') || includes.includes('relations')) && !card.comments) {
       try {
-        const cmt = await this.client.get<{ entities: CardComment[] }>(`/cards/${cardId}/comments`);
+        // Favro: GET /comments?cardCommonId=<cardId>
+        const cmt = await this.client.get<{ entities: CardComment[] }>('/comments', {
+          params: { cardCommonId: cardId }
+        });
         card.comments = cmt.entities ?? [];
       } catch { /* best effort */ }
     }
@@ -203,7 +213,8 @@ export class CardsAPI {
    * Get all links for a card.
    */
   async getCardLinks(cardId: string): Promise<CardLink[]> {
-    const res = await this.client.get<{ entities: CardLink[] }>(`/cards/${cardId}/links`);
+    // Favro: GET /cards/:cardId/dependencies
+    const res = await this.client.get<{ entities: CardLink[] }>(`/cards/${cardId}/dependencies`);
     return res.entities ?? [];
   }
 
@@ -211,7 +222,8 @@ export class CardsAPI {
    * Link two cards together.
    */
   async linkCard(cardId: string, req: LinkCardRequest): Promise<CardLink> {
-    return this.client.post<CardLink>(`/cards/${cardId}/links`, {
+    // Favro: POST /cards/:cardId/dependencies
+    return this.client.post<CardLink>(`/cards/${cardId}/dependencies`, {
       toCardId: req.toCardId,
       type: req.type,
     });
@@ -221,21 +233,28 @@ export class CardsAPI {
    * Remove a link between two cards.
    */
   async unlinkCard(cardId: string, fromCardId: string): Promise<void> {
-    await this.client.delete(`/cards/${cardId}/links/${fromCardId}`);
+    await this.client.delete(`/cards/${cardId}/dependencies/${fromCardId}`);
   }
 
   /**
    * Move a card to a different board.
    */
   async moveCard(cardId: string, req: MoveCardRequest): Promise<Card> {
-    return this.client.patch<Card>(`/cards/${cardId}/move`, {
-      boardId: req.toBoardId,
+    // Favro uses PUT /cards/:cardId with widgetCommonId to move cards
+    return this.client.put<Card>(`/cards/${cardId}`, {
+      widgetCommonId: req.toBoardId,
       position: req.position,
     });
   }
 
   async createCard(data: CreateCardRequest): Promise<Card> {
-    return this.client.post<Card>('/cards', data);
+    // Map boardId → widgetCommonId for callers using the old field name
+    const payload: Record<string, unknown> = { ...data };
+    if (payload.boardId && !payload.widgetCommonId) {
+      payload.widgetCommonId = payload.boardId;
+      delete payload.boardId;
+    }
+    return this.client.post<Card>('/cards', payload);
   }
 
   async createCards(cards: CreateCardRequest[]): Promise<Card[]> {
@@ -244,7 +263,8 @@ export class CardsAPI {
   }
 
   async updateCard(cardId: string, data: UpdateCardRequest): Promise<Card> {
-    return this.client.patch<Card>(`/cards/${cardId}`, data);
+    // Favro uses PUT for card updates, not PATCH
+    return this.client.put<Card>(`/cards/${cardId}`, data);
   }
 
   async deleteCard(cardId: string): Promise<void> {
@@ -252,10 +272,14 @@ export class CardsAPI {
   }
 
   async searchCards(query: string, limit: number = 50): Promise<Card[]> {
-    const response = await this.client.get<PaginatedResponse<Card>>('/cards/search', {
-      params: { q: query, limit }
+    // Favro has no /cards/search endpoint; use /cards with unique param for lookup
+    // or use todoList param for filtering. For general search, list all and filter client-side.
+    const response = await this.client.get<PaginatedResponse<Card>>('/cards', {
+      params: { unique: true, limit }
     });
-    return response.entities ?? [];
+    const all = response.entities ?? [];
+    const lc = query.toLowerCase();
+    return all.filter(c => (c.name ?? '').toLowerCase().includes(lc)).slice(0, limit);
   }
 }
 

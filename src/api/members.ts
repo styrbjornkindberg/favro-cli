@@ -29,15 +29,16 @@ interface RawMember {
   email: string;
   name?: string;
   role?: string;
+  organizationRole?: string;
   permissionLevel?: PermissionLevel;
 }
 
 function normalizeMember(raw: RawMember): Member {
   return {
-    id: raw.memberId ?? raw.id ?? raw.userId ?? '',
+    id: raw.userId ?? raw.memberId ?? raw.id ?? '',
     name: raw.name ?? '',
     email: raw.email,
-    role: raw.role ?? raw.permissionLevel ?? 'member',
+    role: raw.organizationRole ?? raw.role ?? raw.permissionLevel ?? 'member',
   };
 }
 
@@ -61,7 +62,8 @@ export class FavroApiClient {
         params.page = page;
       }
 
-      const response = await this.client.get<PaginatedResponse<RawMember>>('/members', { params });
+      // Favro API uses /users not /members
+      const response = await this.client.get<PaginatedResponse<RawMember>>('/users', { params });
       const members = (response.entities ?? []).map(normalizeMember);
       allMembers.push(...members);
 
