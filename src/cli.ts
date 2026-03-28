@@ -42,6 +42,8 @@ import { registerCardsGetCommand } from './commands/cards-get';
 import { registerCardsLinkCommands } from './commands/cards-link';
 import { registerCustomFieldsCommands } from './commands/custom-fields';
 import { registerMembersCommand } from './commands/members';
+import { registerCommentsCommand } from './commands/comments';
+import { registerActivityCommand } from './commands/activity';
 import { logError, missingApiKeyError } from './lib/error-handler';
 import { ProgressBar } from './lib/progress';
 import { resolveApiKey } from './lib/config';
@@ -499,6 +501,12 @@ cards
 
   // ─── members commands ────────────────────────────────────────────────────────
   registerMembersCommand(program);
+
+  // ─── comments commands ───────────────────────────────────────────────────────
+  registerCommentsCommand(program);
+
+  // ─── activity commands ───────────────────────────────────────────────────────
+  registerActivityCommand(program);
 
   // ─── custom-fields commands ─────────────────────────────────────────────────
   registerCustomFieldsCommands(program);
