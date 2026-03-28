@@ -398,6 +398,15 @@ describe('CustomFieldsAPI', () => {
       const opts = await api.listFieldValues('field-text-1');
       expect(opts).toEqual([]);
     });
+
+    test('passes boardId as query param when provided', async () => {
+      mockClient.get.mockResolvedValue(sampleSelectField);
+      await api.listFieldValues('field-select-1', 'board-xyz');
+      expect(mockClient.get).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ params: { boardId: 'board-xyz' } })
+      );
+    });
   });
 });
 

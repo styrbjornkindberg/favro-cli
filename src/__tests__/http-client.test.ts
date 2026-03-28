@@ -145,6 +145,14 @@ describe('FavroHttpClient', () => {
     expect(result.headers['Authorization']).toBeUndefined();
   });
 
+  test('request interceptor sets organizationId header when provided in auth config', () => {
+    const client = new FavroHttpClient({ auth: { organizationId: 'org-123' } });
+    const requestHandler = mockAxiosInstance.interceptors.request.use.mock.calls[0][0];
+    const config = { headers: {} };
+    const result = requestHandler(config);
+    expect(result.headers['organizationId']).toBe('org-123');
+  });
+
   test('response interceptor retries on 429 status (first attempt)', async () => {
     const client = new FavroHttpClient();
     const [, errorHandler] = mockAxiosInstance.interceptors.response.use.mock.calls[0];
