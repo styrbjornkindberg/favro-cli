@@ -1,6 +1,7 @@
 import { AxiosInstance } from 'axios';
 export interface AuthConfig {
     token?: string;
+    organizationId?: string;
 }
 export declare class FavroHttpClient {
     private client;

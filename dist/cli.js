@@ -77,6 +77,11 @@ const collections_create_1 = require("./commands/collections-create");
 const collections_update_1 = require("./commands/collections-update");
 const cards_get_1 = require("./commands/cards-get");
 const cards_link_1 = require("./commands/cards-link");
+const custom_fields_1 = require("./commands/custom-fields");
+const members_1 = require("./commands/members");
+const comments_1 = require("./commands/comments");
+const activity_1 = require("./commands/activity");
+const webhooks_1 = require("./commands/webhooks");
 const error_handler_1 = require("./lib/error-handler");
 const progress_1 = require("./lib/progress");
 const config_1 = require("./lib/config");
@@ -142,7 +147,7 @@ function buildProgram() {
         '  move    Move a card to a different board\n\n' +
         'Examples:\n' +
         '  favro cards get <cardId> --include board,collection\n' +
-        '  favro cards list <board-id> --filter "customField:value" --include relations\n' +
+        '  favro cards list <board-id> --filter "customField:value"\n' +
         '  favro cards link <cardId> --to <targetId> --type depends\n' +
         '  favro cards unlink <cardId> --from <linkedCardId>\n' +
         '  favro cards move <cardId> --to-board <boardId> --position top\n' +
@@ -160,14 +165,15 @@ function buildProgram() {
         '  favro cards list <board-id> --status "In Progress" --limit 100\n' +
         '  favro cards list <board-id> --assignee alice --json\n' +
         '  favro cards list <board-id> --tag bug\n' +
-        '  favro cards list <board-id> --filter "customField:value" --include relations\n\n' +
+        '  favro cards list <board-id> --filter "customField:value"\n\n' +
         'Tip: Use `favro boards list` to find board IDs.')
         .option('--board <id>', 'Board ID to list cards from (alternative to positional arg)')
         .option('--status <status>', 'Filter by status')
         .option('--assignee <user>', 'Filter by assignee')
         .option('--tag <tag>', 'Filter by tag')
         .option('--filter <expression>', 'Filter cards using query syntax (e.g. "customField:value")')
-        .option('--include <items>', 'Comma-separated metadata to include: board,collection,custom-fields,relations')
+        // NOTE: --include is intentionally omitted from cards list — metadata includes are a cards get feature.
+        // Removing unimplemented flag per CLA-1785 critic feedback (Issue #3).
         .option('--limit <number>', 'Maximum number of cards (default 25, max 100)', '25')
         .option('--json', 'Output as JSON')
         .action(async (boardId, options) => {
@@ -186,7 +192,8 @@ function buildProgram() {
                 process.exit(1);
             }
             const parsedLimit = parseInt(options.limit, 10);
-            const limit = (!isNaN(parsedLimit) && parsedLimit >= 1) ? parsedLimit : 25;
+            // CLA-1785 critic fix: enforce max 100 cap to prevent DoS via --limit 9999
+            const limit = (!isNaN(parsedLimit) && parsedLimit >= 1) ? Math.min(parsedLimit, 100) : 25;
             let cardList = await api.listCards(effectiveBoardId, limit, options.filter);
             if (options.status) {
                 cardList = cardList.filter(c => c.status?.toLowerCase() === options.status.toLowerCase());
@@ -483,6 +490,16 @@ function buildProgram() {
             process.exit(1);
         }
     });
+    // ─── members commands ────────────────────────────────────────────────────────
+    (0, members_1.registerMembersCommand)(program);
+    // ─── comments commands ───────────────────────────────────────────────────────
+    (0, comments_1.registerCommentsCommand)(program);
+    // ─── activity commands ───────────────────────────────────────────────────────
+    (0, activity_1.registerActivityCommand)(program);
+    // ─── webhooks commands ───────────────────────────────────────────────────────
+    (0, webhooks_1.registerWebhooksCommand)(program);
+    // ─── custom-fields commands ─────────────────────────────────────────────────
+    (0, custom_fields_1.registerCustomFieldsCommands)(program);
     return program;
 } // end buildProgram()
 // Only run when executed directly (not when imported in tests)

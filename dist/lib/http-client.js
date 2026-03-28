@@ -17,6 +17,8 @@ class FavroHttpClient {
         this.client.interceptors.request.use((cfg) => {
             if (this.auth?.token)
                 cfg.headers['Authorization'] = `Bearer ${this.auth.token}`;
+            if (this.auth?.organizationId)
+                cfg.headers['organizationId'] = this.auth.organizationId;
             return cfg;
         });
         this.client.interceptors.response.use((response) => response, async (error) => {
@@ -30,7 +32,8 @@ class FavroHttpClient {
                     const retryAfterSecs = retryAfterHeader ? parseInt(String(retryAfterHeader), 10) : undefined;
                     // Exponential backoff: 1s, 2s, 4s, 8s — capped at 30s
                     const expBackoffSecs = Math.min(Math.pow(2, retryCount), 30);
-                    const delaySecs = (!isNaN(retryAfterSecs) && retryAfterSecs > 0) ? retryAfterSecs : expBackoffSecs;
+                    const delaySecs = Math.min((!isNaN(retryAfterSecs) && retryAfterSecs > 0) ? retryAfterSecs : expBackoffSecs, 30 // Global cap: Retry-After cannot exceed 30s either
+                    );
                     delay = delaySecs * 1000;
                     // User-visible log: "⚠️ Rate limit detected, retrying after Ns..."
                     process.stderr.write((0, error_handler_1.rateLimitMessage)(delaySecs) + '\n');

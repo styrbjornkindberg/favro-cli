@@ -7,7 +7,7 @@ export interface CustomField {
 }
 export interface CardLink {
     linkId: string;
-    type: 'depends' | 'blocks' | 'duplicates' | 'relates';
+    type: 'depends-on' | 'blocks' | 'related' | 'duplicates';
     cardId: string;
     cardName?: string;
 }
@@ -18,7 +18,7 @@ export interface CardComment {
     author?: string;
 }
 export interface CardRelation {
-    type: 'depends' | 'blocks' | 'duplicates' | 'relates';
+    type: 'depends-on' | 'blocks' | 'related' | 'duplicates';
     cardId: string;
 }
 export interface Card {
@@ -61,6 +61,10 @@ export interface UpdateCardRequest {
     status?: string;
     assignees?: string[];
     tags?: string[];
+    /** Due date in YYYY-MM-DD format. Supported by Favro API updateCard endpoint. */
+    dueDate?: string;
+    /** Target board ID when moving a card between boards. Supported by Favro API updateCard endpoint. */
+    boardId?: string;
 }
 /**
  * Paginated response from Favro API.
@@ -79,7 +83,7 @@ export interface GetCardOptions {
 }
 export interface LinkCardRequest {
     toCardId: string;
-    type: 'depends' | 'blocks' | 'duplicates' | 'relates';
+    type: 'depends-on' | 'blocks' | 'related' | 'duplicates';
 }
 export interface MoveCardRequest {
     toBoardId: string;
@@ -101,6 +105,10 @@ export declare class CardsAPI {
      * Get a single card with optional includes (board, collection, custom-fields, links, comments).
      */
     getCard(cardId: string, options?: GetCardOptions): Promise<Card>;
+    /**
+     * Get all links for a card.
+     */
+    getCardLinks(cardId: string): Promise<CardLink[]>;
     /**
      * Link two cards together.
      */

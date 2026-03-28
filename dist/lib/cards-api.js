@@ -137,6 +137,13 @@ class CardsAPI {
         return card;
     }
     /**
+     * Get all links for a card.
+     */
+    async getCardLinks(cardId) {
+        const res = await this.client.get(`/cards/${cardId}/links`);
+        return res.entities ?? [];
+    }
+    /**
      * Link two cards together.
      */
     async linkCard(cardId, req) {

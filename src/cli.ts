@@ -44,6 +44,7 @@ import { registerCustomFieldsCommands } from './commands/custom-fields';
 import { registerMembersCommand } from './commands/members';
 import { registerCommentsCommand } from './commands/comments';
 import { registerActivityCommand } from './commands/activity';
+import { registerWebhooksCommand } from './commands/webhooks';
 import { logError, missingApiKeyError } from './lib/error-handler';
 import { ProgressBar } from './lib/progress';
 import { resolveApiKey } from './lib/config';
@@ -507,6 +508,9 @@ cards
 
   // ─── activity commands ───────────────────────────────────────────────────────
   registerActivityCommand(program);
+
+  // ─── webhooks commands ───────────────────────────────────────────────────────
+  registerWebhooksCommand(program);
 
   // ─── custom-fields commands ─────────────────────────────────────────────────
   registerCustomFieldsCommands(program);
