@@ -1510,6 +1510,78 @@ favro webhooks delete hook-003
 
 ## Batch Operations
 
+Favro CLI supports **two complementary approaches** for batch operations, each optimized for different use cases:
+
+### Command Variants — Which to Use?
+
+#### 1. Top-Level `favro batch` Commands (Recommended for Complex Operations)
+
+**Best for:**
+- Bulk updates from CSV files with precise field mapping
+- Complex filtering and multi-board workflows
+- Scripting and automation (stable command surface)
+- Operations involving 10+ cards
+
+**Commands:**
+- `favro batch update --from-csv <file>` — Update from structured data
+- `favro batch move --board <id> --filter <expr> [--to-board|--status]` — Bulk move/status
+- `favro batch assign --board <id> --filter <expr> --to <user>` — Bulk assign
+
+**Advantages:**
+- Explicit CSV format with predictable error messages
+- Comprehensive filter syntax (status, assignee, tag)
+- Atomic rollback on partial failure
+- `--dry-run` shows exact changes before applying
+
+**Example:**
+```bash
+# Update 50 cards from a CSV with precise field mappings
+favro batch update --from-csv cards.csv --dry-run
+favro batch update --from-csv cards.csv
+```
+
+---
+
+#### 2. `favro cards update` Command (Recommended for Quick/Simple Updates)
+
+**Best for:**
+- Single-card updates (name, status, assignee changes)
+- Simple same-status changes on a single board
+- Interactive workflows (confirmation prompt)
+- One-off updates or testing
+
+**Command:**
+- `favro cards update <cardId> --status <status> --assignees <list>` — Update single card
+
+**Advantages:**
+- Fast for single-card operations
+- Familiar `cards` command namespace
+- Built-in confirmation prompt (can skip with `--yes`)
+- Works well in interactive terminals
+
+**Example:**
+```bash
+# Quickly update one card
+favro cards update card-001 --status Done --assignees alice
+```
+
+---
+
+#### Summary Table
+
+| Scenario | Recommended | Why |
+|---|---|---|
+| Update 5+ cards from CSV | `favro batch update` | Structured data, predictable |
+| Move 10+ cards between boards | `favro batch move` | Efficient filtering, rollback |
+| Assign 20+ cards to same user | `favro batch assign` | Filter + assign, atomic |
+| Complex AI-driven bulk ops | `favro batch-smart` | Plain-English goals |
+| Update one specific card | `favro cards update` | Quick, interactive |
+| Quick status change on one card | `favro cards update` | Familiar interface |
+
+---
+
+### All Batch Commands
+
 All batch commands support `--dry-run` to preview changes, and `--json` for machine-readable output.
 
 ### `batch update`
