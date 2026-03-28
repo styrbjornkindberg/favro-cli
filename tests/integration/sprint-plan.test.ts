@@ -7,12 +7,12 @@
  * Without credentials, integration tests are skipped.
  */
 
-import { describe, it, expect, beforeAll } from 'vitest';
+// Jest imports (vitest API compatible)
 
-const INTEGRATION_GUARD = !!process.env.FAVRO_API_KEY && !!process.env.FAVRO_TEST_BOARD_ID;
-const describeOrSkip = INTEGRATION_GUARD ? describe : describe.skip;
+const SPRINT_INTEGRATION_GUARD = !!process.env.FAVRO_API_KEY && !!process.env.FAVRO_TEST_BOARD_ID;
+const describeSprintOrSkip = SPRINT_INTEGRATION_GUARD ? describe : describe.skip;
 
-describeOrSkip('Integration: favro sprint-plan', () => {
+describeSprintOrSkip('Integration: favro sprint-plan', () => {
   let SprintPlanAPI: typeof import('../../src/api/sprint-plan').SprintPlanAPI;
   let FavroHttpClient: typeof import('../../src/lib/http-client').default;
 
@@ -94,8 +94,8 @@ describe('SprintPlanAPI structural contract', () => {
       generatedAt: new Date().toISOString(),
     };
 
-    expect(fixture.budget).toBeTypeOf('number');
-    expect(fixture.totalSuggested).toBeTypeOf('number');
+    expect(typeof fixture.budget).toBe('number');
+    expect(typeof fixture.totalSuggested).toBe('number');
     expect(Array.isArray(fixture.suggestions)).toBe(true);
     expect(Array.isArray(fixture.overflow)).toBe(true);
   });

@@ -82,6 +82,12 @@ const members_1 = require("./commands/members");
 const comments_1 = require("./commands/comments");
 const activity_1 = require("./commands/activity");
 const webhooks_1 = require("./commands/webhooks");
+const context_1 = require("./commands/context");
+const propose_1 = require("./commands/propose");
+const execute_1 = require("./commands/execute");
+const query_1 = require("./commands/query");
+const standup_1 = require("./commands/standup");
+const sprint_plan_1 = require("./commands/sprint-plan");
 const error_handler_1 = require("./lib/error-handler");
 const progress_1 = require("./lib/progress");
 const config_1 = require("./lib/config");
@@ -355,27 +361,255 @@ function buildProgram() {
     });
     // ─── cards update ─────────────────────────────────────────────────────────────
     cards
-        .command('update <cardId>')
-        .description('Update an existing card by its card ID.\n\n' +
-        'Examples:\n' +
+        .command('update [cardId]')
+        .description('Update a card (single) or batch-update/move/assign cards.\n\n' +
+        'Single card update:\n' +
         '  favro cards update <cardId> --status "Done"\n' +
         '  favro cards update <cardId> --name "New title" --status "In Progress"\n' +
         '  favro cards update <cardId> --assignees "alice,bob"\n' +
-        '  favro cards update <cardId> --tags "bug,sprint-42"\n' +
         '  favro cards update <cardId> --status "Done" --dry-run\n\n' +
+        'Batch update from CSV:\n' +
+        '  favro cards update --from-csv bulk.csv --board Q2-Dev\n' +
+        '  favro cards update --from-csv bulk.csv --board Q2-Dev --dry-run\n\n' +
+        '  CSV columns: cardId, status, assignee, dueDate (all optional except cardId)\n\n' +
+        'Batch move/assign with filter:\n' +
+        '  favro cards update --board Q2-Dev --label urgent --status done\n' +
+        '  favro cards update --board Q2-Dev --assignee alice\n\n' +
         'Tip: Use `favro cards list --json` to find card IDs.')
-        .option('--name <name>', 'New card name')
-        .option('--description <desc>', 'Card description')
-        .option('--status <status>', 'Card status')
-        .option('--assignees <list>', 'Assignees (comma-separated)')
-        .option('--tags <list>', 'Tags (comma-separated)')
-        .option('--dry-run', 'Print what would be updated without making API calls')
+        .option('--name <name>', 'New card name (single card update)')
+        .option('--description <desc>', 'Card description (single card update)')
+        .option('--status <status>', 'Card status to set')
+        .option('--assignees <list>', 'Assignees (comma-separated, single card update)')
+        .option('--assignee <user>', 'Assignee for batch assign (use with --board)')
+        .option('--tags <list>', 'Tags (comma-separated, single card update)')
+        .option('--label <label>', 'Label/tag filter for batch operations (use with --board)')
+        .option('--board <id>', 'Board ID — required for batch operations, optional for single')
+        .option('--from-csv <file>', 'CSV file with card updates (columns: cardId, status, assignee, dueDate)')
+        .option('--dry-run', 'Preview changes without making API calls')
         .option('--json', 'Output as JSON')
+        .option('--verbose', 'Show per-card progress')
         .action(async (cardId, options) => {
         const token = await (0, config_1.resolveApiKey)();
         if (!token) {
             console.error(`Error: ${(0, error_handler_1.missingApiKeyError)()}`);
             process.exit(1);
+        }
+        // ── CSV batch update ──────────────────────────────────────────────────────
+        if (options.fromCsv) {
+            try {
+                const fs = await Promise.resolve().then(() => __importStar(require('fs/promises')));
+                const { parseCSVContent, csvRowToBulkOperation, BulkTransaction, formatBulkPreview, formatBulkSummary, } = await Promise.resolve().then(() => __importStar(require('./lib/bulk')));
+                let content;
+                try {
+                    content = await fs.readFile(options.fromCsv, 'utf-8');
+                }
+                catch (err) {
+                    console.error(`✗ Cannot read CSV file "${options.fromCsv}": ${err.message}`);
+                    process.exit(1);
+                    return;
+                }
+                // Map CSV columns: cardId → card_id, assignee → owner, dueDate → due_date
+                // (our bulk CSV format uses snake_case; accept camelCase too)
+                const normalised = content
+                    .split('\n')
+                    .map((line, i) => {
+                    if (i === 0) {
+                        // Normalise header row
+                        return line
+                            .replace(/\bcardId\b/gi, 'card_id')
+                            .replace(/\bassignee\b/gi, 'owner')
+                            .replace(/\bdueDate\b/gi, 'due_date');
+                    }
+                    return line;
+                })
+                    .join('\n');
+                const { rows, errors: parseErrors } = parseCSVContent(normalised);
+                if (parseErrors.length > 0) {
+                    console.error('✗ CSV validation errors:');
+                    for (const e of parseErrors) {
+                        console.error(`  Row ${e.row}: [${e.field}] ${e.message}`);
+                    }
+                    process.exit(1);
+                    return;
+                }
+                if (rows.length === 0) {
+                    console.error('✗ CSV file has no valid data rows');
+                    process.exit(1);
+                    return;
+                }
+                const client = new http_client_1.default({ auth: { token } });
+                const api = new cards_api_1.default(client);
+                // Build operations; fetch previousState for atomic rollback
+                const ops = [];
+                for (const row of rows) {
+                    let previousState;
+                    if (!options.dryRun) {
+                        try {
+                            const card = await api.getCard(row.card_id);
+                            previousState = {
+                                name: card.name,
+                                status: card.status,
+                                assignees: card.assignees,
+                                tags: card.tags,
+                                dueDate: card.dueDate,
+                                boardId: card.boardId,
+                            };
+                        }
+                        catch {
+                            previousState = {};
+                        }
+                    }
+                    ops.push(csvRowToBulkOperation(row, previousState));
+                }
+                if (options.dryRun) {
+                    if (!options.json) {
+                        const preview = formatBulkPreview(ops, `Dry-run preview — ${rows.length} update(s)`);
+                        console.log(preview);
+                        console.log(`ℹ  Dry-run mode. No changes were made.`);
+                        console.log(`   Run without --dry-run to apply these changes.`);
+                    }
+                    else {
+                        const tx = new BulkTransaction(api);
+                        tx.addAll(ops);
+                        console.log(tx.formatDryRunJSON());
+                    }
+                    return;
+                }
+                const tx = new BulkTransaction(api);
+                tx.addAll(ops);
+                if (!options.json) {
+                    console.log(`⚙  Applying ${ops.length} update(s)...`);
+                }
+                const result = await tx.execute({ verbose: options.verbose });
+                if (options.json) {
+                    console.log(JSON.stringify(result, null, 2));
+                }
+                else {
+                    console.log(formatBulkSummary(result));
+                }
+                if (result.failure > 0)
+                    process.exit(1);
+            }
+            catch (error) {
+                (0, error_handler_1.logError)(error, program.opts().verbose);
+                process.exit(1);
+            }
+            return;
+        }
+        // ── Batch move/assign with board filter ───────────────────────────────────
+        if (options.board && !cardId) {
+            try {
+                const { buildFilterFn } = await Promise.resolve().then(() => __importStar(require('./commands/batch')));
+                const { BulkTransaction, formatBulkPreview, formatBulkSummary, } = await Promise.resolve().then(() => __importStar(require('./lib/bulk')));
+                const client = new http_client_1.default({ auth: { token } });
+                const api = new cards_api_1.default(client);
+                let allCards;
+                try {
+                    allCards = await api.listCards(options.board, 10000);
+                }
+                catch (err) {
+                    if (err?.response?.status === 404) {
+                        console.error(`✗ Board not found: "${options.board}"`);
+                    }
+                    else {
+                        (0, error_handler_1.logError)(err, false);
+                    }
+                    process.exit(1);
+                    return;
+                }
+                // Build filter expressions from options.
+                // --label filters which cards to operate on (by tag).
+                // --status and --assignee are TARGET values to SET (not filter conditions).
+                const filterExprs = [];
+                if (options.label)
+                    filterExprs.push(`tag:${options.label}`);
+                const filterFn = buildFilterFn(filterExprs);
+                const matchingCards = allCards.filter(filterFn);
+                if (matchingCards.length === 0) {
+                    if (!options.json) {
+                        console.log(`\n⚠  No cards match the filter(s).`);
+                        console.log(`   Board has ${allCards.length} total card(s).`);
+                    }
+                    else {
+                        console.log(JSON.stringify({ total: 0, success: 0, failure: 0, skipped: 0, errors: [] }));
+                    }
+                    return;
+                }
+                // Determine operation type
+                const isAssignOnly = options.assignee && !options.status && !options.label;
+                let ops;
+                if (isAssignOnly) {
+                    // Batch assign: add assignee to matching cards
+                    const assignee = options.assignee;
+                    const toAssign = matchingCards.filter((card) => !(card.assignees ?? []).includes(assignee));
+                    if (toAssign.length === 0) {
+                        console.log(`\n⚠  All matching cards already assigned to "${assignee}".`);
+                        return;
+                    }
+                    ops = toAssign.map((card) => ({
+                        type: 'assign',
+                        cardId: card.cardId,
+                        cardName: card.name,
+                        changes: { assignees: [...(card.assignees ?? []), assignee] },
+                        previousState: { assignees: card.assignees ?? [] },
+                        status: 'pending',
+                    }));
+                }
+                else {
+                    // Batch status update / move
+                    ops = matchingCards.map((card) => {
+                        const changes = {};
+                        if (options.status)
+                            changes.status = options.status;
+                        return {
+                            type: 'update',
+                            cardId: card.cardId,
+                            cardName: card.name,
+                            changes,
+                            previousState: { status: card.status, assignees: card.assignees, boardId: card.boardId },
+                            status: 'pending',
+                        };
+                    });
+                }
+                if (options.dryRun) {
+                    const title = `Dry-run preview — update ${ops.length} card(s)`;
+                    if (!options.json) {
+                        console.log(formatBulkPreview(ops, title));
+                        console.log(`ℹ  Dry-run mode. No changes were made.`);
+                    }
+                    else {
+                        const tx = new BulkTransaction(api);
+                        tx.addAll(ops);
+                        console.log(tx.formatDryRunJSON());
+                    }
+                    return;
+                }
+                const tx = new BulkTransaction(api);
+                tx.addAll(ops);
+                if (!options.json) {
+                    console.log(`⚙  Updating ${ops.length} card(s)...`);
+                }
+                const result = await tx.execute({ verbose: options.verbose });
+                if (options.json) {
+                    console.log(JSON.stringify(result, null, 2));
+                }
+                else {
+                    console.log(formatBulkSummary(result));
+                }
+                if (result.failure > 0)
+                    process.exit(1);
+            }
+            catch (error) {
+                (0, error_handler_1.logError)(error, program.opts().verbose);
+                process.exit(1);
+            }
+            return;
+        }
+        // ── Single card update ────────────────────────────────────────────────────
+        if (!cardId) {
+            console.error('Error: provide a card ID, --from-csv <file>, or --board <id> for batch operations');
+            process.exit(1);
+            return;
         }
         try {
             const updateData = {};
@@ -500,6 +734,18 @@ function buildProgram() {
     (0, webhooks_1.registerWebhooksCommand)(program);
     // ─── custom-fields commands ─────────────────────────────────────────────────
     (0, custom_fields_1.registerCustomFieldsCommands)(program);
+    // ─── context command ─────────────────────────────────────────────────────────
+    (0, context_1.registerContextCommand)(program);
+    // ─── propose command ─────────────────────────────────────────────────────────
+    (0, propose_1.registerProposeCommand)(program);
+    // ─── execute command ─────────────────────────────────────────────────────────
+    (0, execute_1.registerExecuteCommand)(program);
+    // ─── query command ───────────────────────────────────────────────────────────
+    (0, query_1.registerQueryCommand)(program);
+    // ─── standup command ─────────────────────────────────────────────────────────
+    (0, standup_1.registerStandupCommand)(program);
+    // ─── sprint-plan command ─────────────────────────────────────────────────────
+    (0, sprint_plan_1.registerSprintPlanCommand)(program);
     return program;
 } // end buildProgram()
 // Only run when executed directly (not when imported in tests)

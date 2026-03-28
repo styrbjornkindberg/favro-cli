@@ -2232,4 +2232,151 @@ jobs:
 
 ---
 
-*Generated for CLA-1793 — FAVRO-031: User Documentation (SPEC-002)*
+## Error Message Reference (SPEC-003)
+
+### Authentication & Authorization
+
+| Error | Cause | Solution |
+|-------|-------|----------|
+| `Missing API key` | No FAVRO_API_KEY set and no saved config | Run `favro auth login` |
+| `Invalid API token` | Token is expired or malformed | Get a new token from favro.com |
+| `401 Unauthorized` | Authentication failed (wrong token) | Verify token: `favro auth check` |
+| `403 Forbidden` | You lack permission for this action | Check your org/board permissions |
+
+### Board & Card Operations
+
+| Error | Cause | Solution |
+|-------|-------|----------|
+| `Board '<id>' not found` | Board ID is invalid or inaccessible | Run `favro boards list` to find correct ID |
+| `Card '<id>' not found` | Card was deleted or ID is wrong | Use `favro query` to search by name |
+| `Status '<status>' not found` | Status name doesn't exist on board | List valid statuses: `favro boards get <id> --json \| jq '.columns'` |
+| `User '<email>' not found` | Email doesn't match any board member | List members: `favro members list --board <id>` |
+
+### Parsing & Natural Language
+
+| Error | Cause | Solution |
+|-------|-------|----------|
+| `Cannot parse action` | Syntax doesn't match expected pattern | Check `favro parse --help` for examples |
+| `Ambiguous card name` | Multiple cards match the search | Use a more specific card name |
+| `Unknown verb` | Verb (move, assign, etc.) not recognized | Use: move, assign, create, close, link, set |
+
+### Batch Operations
+
+| Error | Cause | Solution |
+|-------|-------|----------|
+| `CSV file not found` | File path is invalid | Check file exists: `ls -la <path>` |
+| `CSV missing required column` | Required 'card_id' column missing | Ensure CSV has: card_id, and one of: status, assignees, tags |
+| `Cannot parse goal` | Goal syntax not supported | Use patterns like "move all overdue cards to Review" |
+| `Goal returned 0 cards` | No cards matched the filter | Verify filter keywords and card state on board |
+
+### Rate Limiting & Timeouts
+
+| Error | Cause | Solution |
+|-------|-------|----------|
+| `429 Too Many Requests` | API rate limit exceeded | Automatic retry with backoff; if persists, split operations |
+| `408 Request Timeout` | Request took too long | Automatic retry; split large batches (< 250 cards) |
+| `503 Service Unavailable` | Favro API is down | Check https://status.favro.com and try again |
+
+### Network & Connectivity
+
+| Error | Cause | Solution |
+|-------|-------|----------|
+| `ECONNREFUSED` | Cannot connect to API | Check internet connection; verify firewall |
+| `ENOTFOUND` | DNS resolution failed | Check DNS: `nslookup api.favro.com` |
+| `ETIMEDOUT` | Network timeout | Check connection quality; try again later |
+
+### Custom Fields
+
+| Error | Cause | Solution |
+|-------|-------|----------|
+| `Field '<name>' not found` | Field ID or name is invalid | List fields: `favro custom-fields list --board <id>` |
+| `Invalid value for select field` | Value not in field's options | List options: `favro custom-fields values <field-id>` |
+| `Cannot set field without permissions` | Insufficient permissions on field | Ask board admin for write access |
+
+### Webhooks
+
+| Error | Cause | Solution |
+|-------|-------|----------|
+| `Invalid webhook URL` | URL format is wrong | Use HTTP or HTTPS; must be reachable |
+| `Duplicate webhook` | Same URL + event already exists | Delete old webhook first: `favro webhooks delete <id>` |
+| `Invalid event type` | Event name not recognized | Valid: card.created, card.updated, card.deleted |
+
+---
+
+## Common Issues & Debugging
+
+### Slow Performance
+
+**Problem:** `favro context` takes > 1s
+
+**Debug:**
+```bash
+DEBUG=favro:* favro context <board-id> 2>&1 | grep -E "^favro|ms$"
+```
+
+**Solutions:**
+- Reduce board size (archive old cards)
+- Use `--collection <id>` to limit scope
+- Split into smaller queries
+
+---
+
+**Problem:** Batch operations are slow
+
+**Debug:**
+```bash
+favro batch update --from-csv big.csv --verbose
+```
+
+**Solutions:**
+- Split CSV into chunks (< 250 rows)
+- Use `concurrency=1` (default) to reduce rate limit risk
+- Run at off-peak times
+
+---
+
+### Dry-Run Mismatch
+
+**Problem:** Dry-run shows different changes than actual execution
+
+**Likely cause:** Board state changed between proposal and execution (another user edited)
+
+**Solutions:**
+1. Always execute dry-run soon after proposal
+2. Propose + execute atomically in scripts
+3. Use `--force` to override stale warnings (use carefully!)
+
+---
+
+### Authentication Token Issues
+
+**Problem:** Token works locally but not in CI/CD
+
+**Debug:**
+```bash
+echo $FAVRO_API_KEY | wc -c  # Should be 32+ chars
+```
+
+**Solutions:**
+1. Verify token is correctly set in CI secrets (not visible in logs)
+2. Token must not have leading/trailing whitespace
+3. Regenerate token in favro.com if uncertain
+
+---
+
+### High Memory Usage
+
+**Problem:** Large batch operation uses > 500 MB RAM
+
+**Solutions:**
+```bash
+# Process in smaller chunks
+split -l 100 large.csv batch-
+for f in batch-*; do
+  favro batch update --from-csv "$f"
+done
+```
+
+---
+
+*Generated for CLA-1804 — FAVRO-042: SPEC-003 Integration Tests & Documentation*

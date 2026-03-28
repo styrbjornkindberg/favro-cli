@@ -641,9 +641,338 @@ done
 
 ---
 
+## AI-Powered Workflows (SPEC-003)
+
+These workflows leverage LLM-driven commands to automate complex tasks.
+
+### Workflow: Code Review Assignment
+
+Automatically assign code review cards based on sprint status:
+
+```bash
+# 1. Get board context
+favro context sprint-42 > board-snapshot.json
+
+# 2. Query for "In Progress" code review cards
+favro query sprint-42 "status:In Progress label:code-review"
+
+# 3. Propose auto-assignment of unassigned code reviews to alice
+favro propose sprint-42 'assign all code-review cards with no owner to alice' \
+  > proposal-$(date +%s).json
+
+# 4. Review and execute the proposal
+change_id=$(jq -r '.changeId' proposal-*.json)
+favro execute $change_id
+```
+
+### Workflow: Sprint Planning & Prioritization
+
+Semi-automatic sprint plan based on priority and capacity:
+
+```bash
+# 1. Get sprint suggestions for 40-point capacity
+favro sprint-plan sprint-42 --budget 40 > sprint-plan.json
+
+# 2. Review suggestions (see cards, priority scores)
+cat sprint-plan.json | jq '.suggestions[] | {title, priority_score, cumulative}'
+
+# 3. Move suggested cards to "Approved" status
+for card_id in $(jq -r '.suggestions[].id' sprint-plan.json); do
+  favro propose sprint-42 "move card $card_id to Approved" | \
+    jq -r '.changeId' | \
+    xargs -I {} favro execute {}
+done
+
+# 4. Standup: see what's in progress vs what's due soon
+favro standup sprint-42
+```
+
+### Workflow: Family/Personal Task Management
+
+Use `favro-cli` to manage shared household projects:
+
+```bash
+# 1. Initialize a household project board (one-time setup)
+board_id=$(favro boards create "2026 Home Projects" --json | jq -r '.boardId')
+
+# 2. Bulk create tasks from a list
+echo "Renovate kitchen,Garden fence repair,Paint basement" | \
+  tr ',' '\n' | \
+  while read task; do
+    favro cards create "$task" --board $board_id --status Backlog
+  done
+
+# 3. Parse natural language actions: "assign kitchen to alice"
+favro parse 'assign "Renovate kitchen" to alice'
+
+# 4. Semantic search: find overdue tasks
+favro query $board_id "due:<today"
+
+# 5. Batch close done items
+favro batch-smart $board_id --goal "close all Done cards"
+
+# 6. Standup: summary of what's blocked, due soon, in progress
+favro standup $board_id
+```
+
+### Workflow: Technical Debt & Risk Tracking
+
+Monitor and resolve technical debt semi-automatically:
+
+```bash
+# 1. Create a "Technical Debt" board
+debt_board=$(favro boards create "Tech Debt Q1 2026" --json | jq -r '.boardId')
+
+# 2. Get board context for analysis
+favro context $debt_board > debt-snapshot.json
+
+# 3. Query for high-priority items without owners
+favro query $debt_board "priority:high status:Backlog owner:none"
+
+# 4. Propose assignment of unassigned tech debt to the platform team
+favro propose $debt_board 'assign all high-priority tech debt with no owner to platform-team'
+
+# 5. Standup on tech debt progress
+favro standup $debt_board
+
+# 6. Archive resolved items
+favro batch-smart $debt_board --goal "close all Done cards"
+```
+
+---
+
+## Error Messages & Troubleshooting Guide
+
+### Authentication Errors
+
+**Error: `Missing API key`**
+```
+Error: You need to authenticate first. Run: favro auth login
+Or set FAVRO_API_KEY environment variable.
+```
+**Fix:**
+```bash
+favro auth login  # Interactive setup
+# OR
+export FAVRO_API_KEY=your_token_here
+```
+
+---
+
+**Error: `Invalid API token`**
+```
+Error: 401 Unauthorized — your API key is invalid or expired.
+```
+**Fix:**
+1. Get a new token from favro.com → Organization Settings → API tokens
+2. Update your config: `favro auth login --api-key NEW_KEY`
+3. Or set `FAVRO_API_KEY=NEW_KEY` in your shell
+
+---
+
+### Board & Card Errors
+
+**Error: `Board not found`**
+```
+Error: Board '<board-id>' not found or you don't have access.
+```
+**Fix:**
+```bash
+# List your boards to get the correct ID
+favro boards list
+```
+
+---
+
+**Error: `Card not found`**
+```
+Error: Card '<card-id>' not found. May have been deleted or is on a different board.
+```
+**Fix:**
+```bash
+# Search for the card by name
+favro query <board-id> "title:partial card name"
+```
+
+---
+
+### Parsing & Action Errors
+
+**Error: `Cannot parse action`**
+```
+Cannot parse move action. Expected: move card "<title>" from <status> to <status>
+```
+**Fix:** Check syntax. Examples:
+```bash
+# Correct
+favro propose board-id 'move "Fix bug" from Backlog to In Progress'
+favro propose board-id 'assign "Review PR" to alice'
+favro propose board-id 'close "Complete task"'
+
+# Incorrect (missing required parts)
+favro propose board-id 'move "Fix bug"'  # missing target status
+favro propose board-id 'assign "task"'    # missing assignee
+```
+
+---
+
+**Error: `Ambiguous card name`**
+```
+Ambiguous: Found multiple cards matching "fix". Did you mean:
+  1. Fix login bug (card-001)
+  2. Fix API timeout (card-002)
+  3. Fix CI pipeline (card-003)
+```
+**Fix:** Be more specific with the card name:
+```bash
+favro propose board-id 'move "Fix login bug" to Done'
+```
+
+---
+
+### Batch Operation Errors
+
+**Error: `CSV format invalid`**
+```
+Error: CSV file missing required column 'card_id'
+Required columns: card_id, (optional) status, assignees, tags
+```
+**Fix:** Check your CSV header row. Example:
+```csv
+card_id,status,assignees
+card-001,In Progress,alice@example.com
+card-002,Done,bob@example.com
+```
+
+---
+
+**Error: `Goal parsing failed`**
+```
+Cannot parse goal: "add urgent tag to all backlog cards"
+
+Supported patterns:
+  move all <filter> cards to <status>
+  assign all <filter> cards to <user>
+  close all <filter> cards
+  unassign all <filter> cards
+
+Filter keywords: overdue, blocked, unassigned, <status-name>
+```
+**Fix:** Use a supported goal pattern:
+```bash
+# ✓ Correct
+favro batch-smart board-id --goal "move all overdue cards to Review"
+favro batch-smart board-id --goal "assign all Backlog cards with no owner to alice"
+favro batch-smart board-id --goal "close all Done cards"
+
+# ✗ Unsupported
+favro batch-smart board-id --goal "add urgent tag to backlog"  # tags not supported yet
+```
+
+---
+
+### Rate Limiting & Timeouts
+
+**Error: `429 Too Many Requests`**
+```
+Error: Rate limited (429). Retrying in 3 seconds...
+Retry 1/3... Retry 2/3... OK
+```
+**Fix (automatic):** The CLI retries automatically with exponential backoff (max 30s).
+**Fix (manual):** Reduce concurrency in batch operations:
+```bash
+# Use sequential mode (slower, but less likely to rate-limit)
+favro batch update --from-csv updates.csv  # default concurrency=1
+```
+
+---
+
+**Error: `Request timeout (408)`**
+```
+Error: Request timeout (408). Retrying...
+```
+**Fix:** This is a temporary network issue. The CLI retries automatically. If it persists:
+1. Check your internet connection
+2. Try again in a moment
+3. For large operations, split into smaller batches
+
+---
+
+### Performance Issues
+
+**Issue: `Context snapshot is slow (> 1s)`**
+```
+⚠ Board context took 2.3s — consider filtering for a smaller board
+```
+**Fix:**
+```bash
+# Filter by collection first
+favro context <board-id> --collection <collection-id>
+# Or use a simpler board with fewer cards
+```
+
+---
+
+**Issue: `Batch operation is slow`**
+```
+⚠ Batch update of 500 cards took 4.2s — consider splitting
+```
+**Fix:**
+```bash
+# Split large batches
+split -l 250 big-batch.csv batch-part-
+for f in batch-part-*; do
+  favro batch update --from-csv "$f"
+done
+```
+
+---
+
+### Network & Connection Errors
+
+**Error: `ECONNREFUSED` / `Cannot reach API`**
+```
+Error: Failed to connect to favro.com API. Is the API endpoint correct?
+```
+**Fix:**
+1. Check your internet connection: `ping favro.com`
+2. Verify your firewall/VPN isn't blocking `https://api.favro.com`
+3. Check if Favro API is down: https://status.favro.com
+
+---
+
+**Error: `ENOTFOUND` / `DNS resolution failed`**
+```
+Error: DNS resolution failed. Cannot resolve api.favro.com
+```
+**Fix:**
+1. Check DNS: `nslookup api.favro.com`
+2. Try a different DNS server (e.g., 8.8.8.8)
+3. Restart your router/VPN
+
+---
+
+### Getting Help
+
+If you see an error not listed here:
+
+1. **Check the online docs:** https://github.com/square-moon/favro-cli#readme
+2. **Run with `--verbose` flag** to see more details:
+   ```bash
+   favro <command> --verbose
+   ```
+3. **Enable debug logging:**
+   ```bash
+   DEBUG=favro:* favro <command>
+   ```
+4. **Report the issue** with your error message and `--verbose` output
+
+---
+
 ## More Help
 
 - **Command reference:** [README.md](./README.md)
 - **API Reference (SPEC-002):** [API-REFERENCE.md](./API-REFERENCE.md)
 - **Installation & troubleshooting:** [INSTALL.md](./INSTALL.md)
+- **Performance guide:** [PERFORMANCE.md](./PERFORMANCE.md)
 - **Full documentation:** `favro --help`

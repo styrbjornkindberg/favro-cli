@@ -7,12 +7,12 @@
  * Without credentials, integration tests are skipped.
  */
 
-import { describe, it, expect, beforeAll } from 'vitest';
+// Jest imports (vitest API compatible)
 
-const INTEGRATION_GUARD = !!process.env.FAVRO_API_KEY && !!process.env.FAVRO_TEST_BOARD_ID;
-const describeOrSkip = INTEGRATION_GUARD ? describe : describe.skip;
+const STANDUP_INTEGRATION_GUARD = !!process.env.FAVRO_API_KEY && !!process.env.FAVRO_TEST_BOARD_ID;
+const describeStandupOrSkip = STANDUP_INTEGRATION_GUARD ? describe : describe.skip;
 
-describeOrSkip('Integration: favro standup', () => {
+describeStandupOrSkip('Integration: favro standup', () => {
   let StandupAPI: typeof import('../../src/api/standup').StandupAPI;
   let FavroHttpClient: typeof import('../../src/lib/http-client').default;
 
