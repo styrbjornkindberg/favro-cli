@@ -45,6 +45,7 @@ import { registerMembersCommand } from './commands/members';
 import { registerCommentsCommand } from './commands/comments';
 import { registerActivityCommand } from './commands/activity';
 import { registerWebhooksCommand } from './commands/webhooks';
+import { registerContextCommand } from './commands/context';
 import { logError, missingApiKeyError } from './lib/error-handler';
 import { ProgressBar } from './lib/progress';
 import { resolveApiKey } from './lib/config';
@@ -766,6 +767,9 @@ cards
 
   // ─── custom-fields commands ─────────────────────────────────────────────────
   registerCustomFieldsCommands(program);
+
+  // ─── context command ─────────────────────────────────────────────────────────
+  registerContextCommand(program);
 
   return program;
 } // end buildProgram()
