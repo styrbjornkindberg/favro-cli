@@ -10,6 +10,7 @@
  */
 
 import CardsAPI, { UpdateCardRequest } from './cards-api';
+import { Profiler, ConcurrencyController, BenchmarkResult } from './profiling';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -35,16 +36,6 @@ export interface BulkCardChanges {
   tags: string[];
   dueDate: string;
   boardId: string;
-}
-
-export interface BulkResult {
-  total: number;
-  success: number;
-  failure: number;
-  skipped: number;
-  rolledBack: number;
-  errors: Array<{ cardId: string; cardName?: string; error: string }>;
-  operations: BulkOperation[];
 }
 
 // ---------------------------------------------------------------------------
@@ -286,12 +277,36 @@ export function buildBulkRollbackRequest(op: BulkOperation): UpdateCardRequest {
  *   tx.add({ type: 'update', cardId: 'card-1', changes: { status: 'Done' }, status: 'pending' });
  *   const result = await tx.execute({ dryRun: false });
  */
+export interface BulkTransactionOptions {
+  interOpDelayMs?: number;
+  /** Max parallel in-flight requests. Default 1 (sequential). Set to 5 for parallel mode. */
+  concurrency?: number;
+  /** Enable performance profiling. Returns BenchmarkResult in execute() result. */
+  profile?: boolean;
+}
+
+export interface BulkResult {
+  total: number;
+  success: number;
+  failure: number;
+  skipped: number;
+  rolledBack: number;
+  errors: Array<{ cardId: string; cardName?: string; error: string }>;
+  operations: BulkOperation[];
+  /** Present when profile:true is passed to execute() */
+  benchmark?: BenchmarkResult;
+}
+
 export class BulkTransaction {
   private operations: BulkOperation[] = [];
   private interOpDelayMs: number;
+  private concurrency: number;
+  private enableProfiling: boolean;
 
-  constructor(private api: CardsAPI, options: { interOpDelayMs?: number } = {}) {
+  constructor(private api: CardsAPI, options: BulkTransactionOptions = {}) {
     this.interOpDelayMs = options.interOpDelayMs ?? 0;
+    this.concurrency = options.concurrency ?? 1;
+    this.enableProfiling = options.profile ?? false;
   }
 
   /**
@@ -355,55 +370,125 @@ export class BulkTransaction {
    * Execute all operations atomically.
    * If any operation fails, rolls back all completed operations.
    *
-   * @returns BulkResult with counts and error details
+   * Supports parallel execution via `concurrency` option (set in constructor).
+   * When concurrency > 1, operations run in parallel batches but atomicity is
+   * maintained: on any failure, all completed ops are rolled back.
+   *
+   * @returns BulkResult with counts and error details (+ benchmark if profiling enabled)
    */
-  async execute(options: { dryRun?: boolean; verbose?: boolean } = {}): Promise<BulkResult> {
+  async execute(options: { dryRun?: boolean; verbose?: boolean; profile?: boolean } = {}): Promise<BulkResult> {
     const { dryRun = false, verbose = false } = options;
+    const enableProfiling = options.profile ?? this.enableProfiling;
 
     if (dryRun) {
       return this.preview();
     }
 
+    const profiler = enableProfiling ? new Profiler('BulkTransaction.execute') : null;
     const completed: BulkOperation[] = [];
     const errors: Array<{ cardId: string; cardName?: string; error: string }> = [];
+    let aborted = false;
 
-    for (const op of this.operations) {
-      // Inter-operation delay to respect rate limits
-      if (completed.length > 0 && this.interOpDelayMs > 0) {
-        await sleep(this.interOpDelayMs);
+    if (this.concurrency <= 1) {
+      // === Sequential execution (original behavior, atomic) ===
+      const updateSpan = profiler?.startSpan('sequential-updates', { count: this.operations.length });
+
+      for (const op of this.operations) {
+        if (aborted) {
+          op.status = 'failed';
+          continue;
+        }
+
+        // Inter-operation delay to respect rate limits
+        if (completed.length > 0 && this.interOpDelayMs > 0) {
+          await sleep(this.interOpDelayMs);
+        }
+
+        try {
+          const updateReq = buildBulkUpdateRequest(op);
+          const updatedCard = await this.api.updateCard(op.cardId, updateReq);
+
+          // Populate cardName if not already set
+          if (!op.cardName && updatedCard?.name) {
+            op.cardName = updatedCard.name;
+          }
+
+          op.status = 'success';
+          completed.push(op);
+
+          if (verbose) {
+            process.stderr.write(`  ✓ [${op.cardId}] ${op.cardName ?? op.cardId}\n`);
+          }
+        } catch (err: any) {
+          const msg = err?.response?.data?.message ?? err?.message ?? String(err);
+          op.status = 'failed';
+          op.error = msg;
+          errors.push({ cardId: op.cardId, cardName: op.cardName, error: msg });
+          aborted = true;
+
+          if (verbose) {
+            process.stderr.write(`  ✗ [${op.cardId}] ${op.cardName ?? op.cardId}: ${msg}\n`);
+          }
+        }
       }
 
-      try {
-        const updateReq = buildBulkUpdateRequest(op);
-        const updatedCard = await this.api.updateCard(op.cardId, updateReq);
+      if (updateSpan) profiler!.endSpan(updateSpan);
+    } else {
+      // === Parallel execution (concurrency > 1) ===
+      // NOTE: Parallel mode does NOT guarantee strict atomic rollback of all concurrent ops.
+      // Use sequential mode when strict atomicity is required.
+      const controller = new ConcurrencyController(this.concurrency);
+      const parallelSpan = profiler?.startSpan('parallel-updates', {
+        count: this.operations.length,
+        concurrency: this.concurrency,
+      });
 
-        // Populate cardName if not already set
-        if (!op.cardName && updatedCard?.name) {
-          op.cardName = updatedCard.name;
-        }
+      let completedCount = 0;
 
-        op.status = 'success';
-        completed.push(op);
+      await controller.runAll(
+        this.operations.map((op) => async () => {
+          if (aborted) {
+            op.status = 'failed';
+            return;
+          }
 
-        if (verbose) {
-          process.stderr.write(`  ✓ [${op.cardId}] ${op.cardName ?? op.cardId}\n`);
-        }
-      } catch (err: any) {
-        const msg = err?.response?.data?.message ?? err?.message ?? String(err);
-        op.status = 'failed';
-        op.error = msg;
-        errors.push({ cardId: op.cardId, cardName: op.cardName, error: msg });
+          if (this.interOpDelayMs > 0 && completedCount > 0) {
+            await sleep(this.interOpDelayMs);
+          }
 
-        if (verbose) {
-          process.stderr.write(`  ✗ [${op.cardId}] ${op.cardName ?? op.cardId}: ${msg}\n`);
-        }
+          try {
+            const updateReq = buildBulkUpdateRequest(op);
+            const updatedCard = await this.api.updateCard(op.cardId, updateReq);
 
-        // Stop on first failure (atomic semantics)
-        break;
-      }
+            if (!op.cardName && updatedCard?.name) {
+              op.cardName = updatedCard.name;
+            }
+
+            op.status = 'success';
+            completed.push(op);
+            completedCount++;
+
+            if (verbose) {
+              process.stderr.write(`  ✓ [${op.cardId}] ${op.cardName ?? op.cardId}\n`);
+            }
+          } catch (err: any) {
+            const msg = err?.response?.data?.message ?? err?.message ?? String(err);
+            op.status = 'failed';
+            op.error = msg;
+            errors.push({ cardId: op.cardId, cardName: op.cardName, error: msg });
+            aborted = true;
+
+            if (verbose) {
+              process.stderr.write(`  ✗ [${op.cardId}] ${op.cardName ?? op.cardId}: ${msg}\n`);
+            }
+          }
+        })
+      );
+
+      if (parallelSpan) profiler!.endSpan(parallelSpan);
     }
 
-    // Mark remaining operations as failed (they were never attempted)
+    // Mark any remaining pending operations as failed
     for (const op of this.operations) {
       if (op.status === 'pending') {
         op.status = 'failed';
@@ -416,6 +501,8 @@ export class BulkTransaction {
       if (verbose) {
         process.stderr.write('\n⚠  Rolling back completed operations...\n');
       }
+
+      const rollbackSpan = profiler?.startSpan('rollback', { count: completed.length });
 
       for (const op of [...completed].reverse()) {
         try {
@@ -433,10 +520,14 @@ export class BulkTransaction {
         }
       }
 
+      if (rollbackSpan) profiler!.endSpan(rollbackSpan);
+
       if (verbose) {
         process.stderr.write('  Rollback complete.\n\n');
       }
     }
+
+    const benchmark = profiler?.finish(this.operations.length);
 
     return {
       total: this.operations.length,
@@ -446,6 +537,7 @@ export class BulkTransaction {
       rolledBack,
       errors,
       operations: [...this.operations],
+      ...(benchmark ? { benchmark } : {}),
     };
   }
 }

@@ -6,6 +6,7 @@
  * Type validation for select fields against allowed options
  */
 import FavroHttpClient from './http-client';
+import { CustomFieldCache, globalFieldCache } from './profiling';
 
 export type CustomFieldType = 'text' | 'select' | 'date' | 'user' | 'link' | string;
 
@@ -83,7 +84,21 @@ export function formatFieldType(field: CustomFieldDefinition): string {
 }
 
 export class CustomFieldsAPI {
-  constructor(private client: FavroHttpClient) {}
+  private cache: CustomFieldCache;
+
+  constructor(private client: FavroHttpClient, options: { cache?: CustomFieldCache; useGlobalCache?: boolean } = {}) {
+    // By default, use a fresh per-instance cache to ensure test isolation.
+    // Pass { useGlobalCache: true } in long-running batch operations to share the
+    // cache across multiple CustomFieldsAPI instances and avoid N+1 API calls.
+    // Pass { cache: myCache } to provide a specific shared cache instance.
+    if (options.cache) {
+      this.cache = options.cache;
+    } else if (options.useGlobalCache) {
+      this.cache = globalFieldCache;
+    } else {
+      this.cache = new CustomFieldCache();
+    }
+  }
 
   /**
    * List all custom field definitions for a board.
@@ -119,14 +134,48 @@ export class CustomFieldsAPI {
 
   /**
    * Get a single custom field definition by ID.
+   * Results are cached to avoid N+1 API calls in batch operations.
+   * Cache key is `${fieldId}:${boardId ?? ''}`.
+   *
    * @param fieldId - The ID of the custom field
    * @param boardId - Optional board ID to scope the field lookup
    */
   async getField(fieldId: string, boardId?: string): Promise<CustomFieldDefinition> {
-    if (boardId) {
-      return this.client.get<CustomFieldDefinition>(`/custom-fields/${fieldId}`, { params: { boardId } });
+    const cacheKey = boardId ? `${fieldId}:${boardId}` : fieldId;
+    const cached = this.cache.get<CustomFieldDefinition>(cacheKey);
+    if (cached) return cached;
+
+    const field = boardId
+      ? await this.client.get<CustomFieldDefinition>(`/custom-fields/${fieldId}`, { params: { boardId } })
+      : await this.client.get<CustomFieldDefinition>(`/custom-fields/${fieldId}`);
+
+    this.cache.set(cacheKey, field);
+    return field;
+  }
+
+  /**
+   * Pre-warm the field cache for a board.
+   * Call this before processing a batch of cards that use custom fields.
+   * Reduces N+1 API calls to a single bulk fetch.
+   *
+   * @param boardId - Board ID to pre-warm field definitions for
+   */
+  async preWarmCache(boardId: string): Promise<CustomFieldDefinition[]> {
+    const fields = await this.listFields(boardId);
+    for (const field of fields) {
+      const cacheKey = `${field.fieldId}:${boardId}`;
+      this.cache.set(cacheKey, field);
+      // Also cache without boardId for cross-board lookups
+      this.cache.set(field.fieldId, field);
     }
-    return this.client.get<CustomFieldDefinition>(`/custom-fields/${fieldId}`);
+    return fields;
+  }
+
+  /**
+   * Return cache statistics (useful for profiling/debugging N+1 issues).
+   */
+  cacheStats(): ReturnType<CustomFieldCache['stats']> {
+    return this.cache.stats();
   }
 
   /**
