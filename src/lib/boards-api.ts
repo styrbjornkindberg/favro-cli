@@ -289,7 +289,8 @@ export class BoardsAPI {
   }
 
   async updateBoard(boardId: string, data: { name?: string; description?: string }): Promise<Board> {
-    const raw = await this.client.patch<RawWidget>(`/widgets/${boardId}`, data);
+    // Favro uses PUT for widget updates (not PATCH)
+    const raw = await this.client.put<RawWidget>(`/widgets/${boardId}`, data);
     return normalizeWidget(raw);
   }
 
