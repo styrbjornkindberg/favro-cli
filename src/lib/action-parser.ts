@@ -279,22 +279,39 @@ function parseMoveAction(raw: string): MoveAction {
   // Expect: from <status> to <status>  OR  to <status> (from is optional)
   const fullMatch = rest.match(/^from\s+(.+?)\s+to\s+(.+)$/i);
   if (fullMatch) {
+    const fromStatus = fullMatch[1].trim();
+    const toStatus = fullMatch[2].trim();
+    // BUG 2 fix: Detect unquoted title truncation at boundary word.
+    if (toStatus.includes(' to ') || fromStatus.includes(' to ')) {
+      throw new ActionParseError(
+        `Unquoted title "${title}" may be truncated by boundary keyword. Use quotes.`,
+        raw
+      );
+    }
     return {
       type: 'move',
       title,
-      fromStatus: fullMatch[1].trim(),
-      toStatus: fullMatch[2].trim(),
+      fromStatus,
+      toStatus,
     };
   }
 
   // Just "to <status>"
   const toMatch = rest.match(/^to\s+(.+)$/i);
   if (toMatch) {
+    const toStatus = toMatch[1].trim();
+    // BUG 2 fix: Detect unquoted title truncation at boundary word.
+    if (toStatus.includes(' to ')) {
+      throw new ActionParseError(
+        `Unquoted title "${title}" may be truncated by boundary keyword. Use quotes.`,
+        raw
+      );
+    }
     return {
       type: 'move',
       title,
       fromStatus: '',
-      toStatus: toMatch[1].trim(),
+      toStatus,
     };
   }
 
@@ -324,6 +341,14 @@ function parseAssignAction(raw: string): AssignAction {
 
   // Owner can be quoted or unquoted
   let owner = toMatch[1].trim();
+
+  // BUG 2 fix: Detect unquoted title truncation at boundary word.
+  if (owner.includes(' to ')) {
+    throw new ActionParseError(
+      `Unquoted title "${title}" may be truncated by boundary keyword. Use quotes.`,
+      raw
+    );
+  }
   if ((owner.startsWith('"') && owner.endsWith('"')) ||
       (owner.startsWith("'") && owner.endsWith("'"))) {
     owner = owner.slice(1, -1);
@@ -393,7 +418,17 @@ function parseAddAction(raw: string): AddDateAction {
     );
   }
 
-  return { type: 'add-date', title, date: toMatch[1].trim() };
+  const date = toMatch[1].trim();
+
+  // BUG 2 fix: Detect unquoted title truncation at boundary word.
+  if (date.includes(' to ')) {
+    throw new ActionParseError(
+      `Unquoted title "${title}" may be truncated by boundary keyword. Use quotes.`,
+      raw
+    );
+  }
+
+  return { type: 'add-date', title, date };
 }
 
 function parseLinkAction(raw: string): LinkAction {
@@ -461,6 +496,14 @@ function parseCreateAction(raw: string): CreateAction {
   }
 
   const status = inMatch[1].trim();
+
+  // BUG 2 fix: Detect unquoted title truncation at boundary word.
+  if (status.includes(' in ') || status.includes(' to ')) {
+    throw new ActionParseError(
+      `Unquoted title "${title}" may be truncated by boundary keyword. Use quotes.`,
+      raw
+    );
+  }
   const withClause = inMatch[2]?.trim() ?? '';
 
   const result: CreateAction = { type: 'create', title, status };

@@ -40,6 +40,7 @@ import { registerCollectionsCreateCommand } from './commands/collections-create'
 import { registerCollectionsUpdateCommand } from './commands/collections-update';
 import { registerCardsGetCommand } from './commands/cards-get';
 import { registerCardsLinkCommands } from './commands/cards-link';
+import { registerCustomFieldsCommands } from './commands/custom-fields';
 import { logError, missingApiKeyError } from './lib/error-handler';
 import { ProgressBar } from './lib/progress';
 import { resolveApiKey } from './lib/config';
@@ -494,6 +495,9 @@ cards
       process.exit(1);
     }
   });
+
+  // ─── custom-fields commands ─────────────────────────────────────────────────
+  registerCustomFieldsCommands(program);
 
   return program;
 } // end buildProgram()

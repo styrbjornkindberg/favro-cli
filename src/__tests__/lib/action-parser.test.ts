@@ -1988,6 +1988,27 @@ describe('Bug regression tests — CLA-1803 resubmission', () => {
     expect(() => parseAction('close task to server')).toThrow(/truncated|boundary/i);
   });
 
+  // BUG 2 (ASSIGN): Unquoted Titles Silently Truncate at Boundary Words in assign action
+  it('EC026-BUG2 ASSIGN: Unquoted title with boundary word causes error (assign action)', () => {
+    // 'assign task to board to alice' should throw — title "task" drops "to board" silently, owner becomes "board to alice".
+    expect(() => parseAction('assign task to board to alice')).toThrow(ActionParseError);
+    expect(() => parseAction('assign task to board to alice')).toThrow(/truncated|boundary/i);
+  });
+
+  // BUG 2 (ADD): Unquoted Titles Silently Truncate at Boundary Words in add action
+  it('EC027-BUG2 ADD: Unquoted title with boundary word causes error (add action)', () => {
+    // 'add fix bug to server to 2026-01-01' should throw — title "fix bug" drops "to server", date becomes "server to 2026-01-01".
+    expect(() => parseAction('add fix bug to server to 2026-01-01')).toThrow(ActionParseError);
+    expect(() => parseAction('add fix bug to server to 2026-01-01')).toThrow(/truncated|boundary/i);
+  });
+
+  // BUG 2 (MOVE): Unquoted Titles Silently Truncate at Boundary Words in move action
+  it('EC028-BUG2 MOVE: Unquoted title with boundary word causes error (move action)', () => {
+    // 'move task to done to Archive' should throw — title "task" drops "to done", toStatus becomes "done to Archive".
+    expect(() => parseAction('move task to done to Archive')).toThrow(ActionParseError);
+    expect(() => parseAction('move task to done to Archive')).toThrow(/truncated|boundary/i);
+  });
+
   // BUG 3: Duplicate Exact-Match Titles Not Flagged as Ambiguous
   it('AR001-BUG3: Exact match with duplicate titles should return isAmbiguous=true', () => {
     // Previously returned { match: 'Fix bug', isAmbiguous: false } on first exact match.
