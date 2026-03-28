@@ -427,7 +427,7 @@ describeOrSkip('Cards — T003-T006 (get/list/link/unlink/move)', () => {
     if (!card1Id || !card2Id) { console.warn('Skipping: no cards created'); return; }
     const result = await runCLI([
       'cards', 'link', card1Id,
-      '--to', card2Id,
+      card2Id,
       '--type', 'related'
     ]);
     expect(result.exitCode).toBe(0);
@@ -437,7 +437,7 @@ describeOrSkip('Cards — T003-T006 (get/list/link/unlink/move)', () => {
     if (!card1Id || !card2Id) { console.warn('Skipping: no cards created'); return; }
     const result = await runCLI([
       'cards', 'unlink', card1Id,
-      '--from', card2Id
+      card2Id
     ]);
     expect(result.exitCode).toBe(0);
   }, 30000);
@@ -448,8 +448,8 @@ describeOrSkip('Cards — T003-T006 (get/list/link/unlink/move)', () => {
       'cards', 'move', card1Id,
       '--status', 'In Progress'
     ]);
-    // Best effort: may succeed or fail depending on available columns
-    expect(result.exitCode === 0 || result.stderr.length > 0).toBe(true);
+    // Best effort: command runs without crashing (exit 0 success or controlled error)
+    expect(result.exitCode === 0 || result.exitCode === 1).toBe(true);
   }, 30000);
 
   it('fails gracefully with missing token on cards list (error path)', async () => {
@@ -939,7 +939,7 @@ describeOrSkip('Batch Operations — T012 (update/move/assign with CSV)', () => 
       'batch', 'move',
       '--board', TEST_BOARD_ID,
       '--filter', 'status:Backlog',
-      '--to-status', 'In Progress',
+      '--status', 'In Progress',
       '--dry-run',
     ]);
     // dry-run should succeed even if no cards match
