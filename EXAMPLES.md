@@ -557,8 +557,93 @@ favro cards export abc123 --format csv --out ./exports/cards.csv
 
 ---
 
+## Performance Tips
+
+### Filter Early
+
+Use `--filter` in export commands rather than filtering the result with `jq` — it reduces data transfer and processing time:
+
+```bash
+# Fast: filter at source
+favro cards export board-001 --filter "status:Done" --format json
+
+# Slow: export everything, filter after
+favro cards export board-001 --format json | jq '.[] | select(.status == "Done")'
+```
+
+### Use Batch Commands Over Shell Loops
+
+A single `batch` command is far more efficient than looping `cards update`:
+
+```bash
+# Fast: one batch call
+favro batch assign --board board-001 --filter "status:Backlog" --to alice
+
+# Slow: N individual API calls
+favro cards list --board board-001 --status Backlog --json \
+  | jq -r '.[].cardId' \
+  | while read id; do favro cards update "$id" --assignees alice; done
+```
+
+### Paginate Large Activity Logs
+
+For boards with many cards, paginate the activity log to avoid large responses:
+
+```bash
+# Fetch in pages of 50
+favro activity log board-001 --limit 50 --offset 0    # page 1
+favro activity log board-001 --limit 50 --offset 50   # page 2
+favro activity log board-001 --limit 50 --offset 100  # page 3
+```
+
+### Always Dry-Run Batch Operations
+
+Preview before applying — it's free and prevents mistakes:
+
+```bash
+favro batch update --from-csv updates.csv --dry-run
+favro batch-smart board-001 --goal "close all Done cards" --dry-run
+```
+
+### Request Only the Includes You Need
+
+Each `--include` value adds API calls. Only request what you need:
+
+```bash
+# Faster: just stats
+favro boards get board-001 --include stats
+
+# Slower: everything
+favro boards get board-001 --include custom-fields,cards,members,stats,velocity
+```
+
+### Cache Board and Collection IDs
+
+IDs rarely change. Store them in environment variables to avoid repeated list calls:
+
+```bash
+export SPRINT_BOARD=$(favro boards list --json | jq -r '.[] | select(.name == "Sprint 43") | .boardId')
+favro cards list --board $SPRINT_BOARD
+favro activity log $SPRINT_BOARD --since 1d
+```
+
+### Split Large CSV Batches
+
+Keep batch CSV files under ~500 rows to avoid long-running operations:
+
+```bash
+split -l 500 big-updates.csv batch-part-
+for f in batch-part-*; do
+  echo "Processing $f..."
+  favro batch update --from-csv "$f" --verbose
+done
+```
+
+---
+
 ## More Help
 
 - **Command reference:** [README.md](./README.md)
+- **API Reference (SPEC-002):** [API-REFERENCE.md](./API-REFERENCE.md)
 - **Installation & troubleshooting:** [INSTALL.md](./INSTALL.md)
 - **Full documentation:** `favro --help`

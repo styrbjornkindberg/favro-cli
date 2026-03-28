@@ -10,6 +10,7 @@ Command-line interface for [Favro](https://favro.com) — manage boards and card
 - [Quick Start](#quick-start)
   - **[Installation Guide](./INSTALL.md)** — System requirements, troubleshooting
   - **[Examples & Workflows](./EXAMPLES.md)** — Real-world command patterns
+  - **[API Reference](./API-REFERENCE.md)** — Complete SPEC-002 endpoint reference
 - [Authentication](#authentication)
 - [Command Reference](#command-reference)
   - [auth](#auth)
@@ -638,3 +639,14 @@ For full exports use `favro cards export` which handles pagination automatically
 ## License
 
 See [LICENSE](./LICENSE).
+
+---
+
+## Documentation
+
+| Document | Description |
+|---|---|
+| [README.md](./README.md) | Quick start, base command reference, configuration |
+| [API-REFERENCE.md](./API-REFERENCE.md) | Full SPEC-002 endpoint reference (Collections, Boards, Cards, Custom Fields, Members, Comments, Activity, Webhooks, Batch) |
+| [EXAMPLES.md](./EXAMPLES.md) | Real-world workflows and patterns |
+| [INSTALL.md](./INSTALL.md) | Installation and system requirements |
