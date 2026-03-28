@@ -48,6 +48,7 @@ import { registerWebhooksCommand } from './commands/webhooks';
 import { registerContextCommand } from './commands/context';
 import { registerProposeCommand } from './commands/propose';
 import { registerExecuteCommand } from './commands/execute';
+import { registerQueryCommand } from './commands/query';
 import { logError, missingApiKeyError } from './lib/error-handler';
 import { ProgressBar } from './lib/progress';
 import { resolveApiKey } from './lib/config';
@@ -778,6 +779,9 @@ cards
 
   // ─── execute command ─────────────────────────────────────────────────────────
   registerExecuteCommand(program);
+
+  // ─── query command ───────────────────────────────────────────────────────────
+  registerQueryCommand(program);
 
   return program;
 } // end buildProgram()
