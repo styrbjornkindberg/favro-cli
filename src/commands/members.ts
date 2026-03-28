@@ -29,6 +29,11 @@ export function registerMembersCommand(program: Command): void {
     .action(async (options) => {
       const verbose = program.opts()?.verbose ?? false;
       try {
+        if (options.board && options.collection) {
+          console.error('Error: cannot specify both --board and --collection');
+          process.exit(1);
+        }
+
         const token = await resolveApiKey();
         if (!token) {
           console.error(`Error: ${missingApiKeyError()}`);
