@@ -49,6 +49,8 @@ import { registerContextCommand } from './commands/context';
 import { registerProposeCommand } from './commands/propose';
 import { registerExecuteCommand } from './commands/execute';
 import { registerQueryCommand } from './commands/query';
+import { registerStandupCommand } from './commands/standup';
+import { registerSprintPlanCommand } from './commands/sprint-plan';
 import { logError, missingApiKeyError } from './lib/error-handler';
 import { ProgressBar } from './lib/progress';
 import { resolveApiKey } from './lib/config';
@@ -782,6 +784,12 @@ cards
 
   // ─── query command ───────────────────────────────────────────────────────────
   registerQueryCommand(program);
+
+  // ─── standup command ─────────────────────────────────────────────────────────
+  registerStandupCommand(program);
+
+  // ─── sprint-plan command ─────────────────────────────────────────────────────
+  registerSprintPlanCommand(program);
 
   return program;
 } // end buildProgram()
