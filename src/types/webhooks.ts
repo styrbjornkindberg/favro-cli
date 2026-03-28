@@ -14,4 +14,4 @@ export interface Webhook {
 
 export type WebhookEvent = 'card.created' | 'card.updated';
 
-export const VALID_WEBHOOK_EVENTS: WebhookEvent[] = ['card.created', 'card.updated'];
+export const VALID_WEBHOOK_EVENTS = ['card.created', 'card.updated'] as const;
