@@ -17,13 +17,54 @@ export interface CustomFieldOption {
 }
 
 export interface CustomFieldDefinition {
+  /** Our internal field ID — mapped from Favro's customFieldId */
   fieldId: string;
+  /** Original Favro customFieldId */
+  customFieldId?: string;
   name: string;
   type: CustomFieldType;
   boardId?: string;
+  /** widgetCommonId from Favro API */
+  widgetCommonId?: string;
+  options?: CustomFieldOption[];
+  customFieldItems?: CustomFieldOption[];
+  required?: boolean;
+  enabled?: boolean;
+  description?: string;
+}
+
+interface RawCustomField {
+  customFieldId?: string;
+  fieldId?: string;
+  id?: string;
+  name: string;
+  type: string;
+  widgetCommonId?: string;
+  boardId?: string;
+  customFieldItems?: Array<{ customFieldItemId?: string; optionId?: string; name: string; color?: string }>;
   options?: CustomFieldOption[];
   required?: boolean;
-  description?: string;
+  enabled?: boolean;
+}
+
+function normalizeCustomField(raw: RawCustomField): CustomFieldDefinition {
+  const id = raw.customFieldId ?? raw.fieldId ?? raw.id ?? '';
+  const items = raw.customFieldItems?.map(item => ({
+    optionId: item.customFieldItemId ?? item.optionId ?? '',
+    name: item.name,
+    color: item.color,
+  })) ?? raw.options;
+  return {
+    fieldId: id,
+    customFieldId: raw.customFieldId,
+    name: raw.name,
+    type: raw.type,
+    widgetCommonId: raw.widgetCommonId,
+    boardId: raw.boardId ?? raw.widgetCommonId,
+    options: items,
+    required: raw.required,
+    enabled: raw.enabled,
+  };
 }
 
 export interface CustomFieldValue {
@@ -104,25 +145,29 @@ export class CustomFieldsAPI {
    * List all custom field definitions for a board.
    * Handles pagination automatically.
    */
-  async listFields(boardId: string): Promise<CustomFieldDefinition[]> {
+  async listFields(boardId?: string): Promise<CustomFieldDefinition[]> {
     const allFields: CustomFieldDefinition[] = [];
     let requestId: string | undefined;
     let page = 1;
 
     while (true) {
       const params: Record<string, unknown> = { limit: 100 };
+      // Favro /customfields is org-scoped; widgetCommonId filters to a specific board
+      if (boardId) {
+        params.widgetCommonId = boardId;
+      }
       if (requestId) {
         params.requestId = requestId;
         params.page = page;
       }
 
-      const response = await this.client.get<PaginatedResponse<CustomFieldDefinition>>(
+      const response = await this.client.get<PaginatedResponse<RawCustomField>>(
         // Favro endpoint: /customfields (no hyphen, org-scoped)
         '/customfields',
         { params }
       );
 
-      const fields = response.entities ?? [];
+      const fields = (response.entities ?? []).map(normalizeCustomField);
       allFields.push(...fields);
 
       requestId = response.requestId;
@@ -146,10 +191,11 @@ export class CustomFieldsAPI {
     const cached = this.cache.get<CustomFieldDefinition>(cacheKey);
     if (cached) return cached;
 
-    const field = boardId
-      ? await this.client.get<CustomFieldDefinition>(`/customfields/${fieldId}`, { params: { boardId } })
-      : await this.client.get<CustomFieldDefinition>(`/customfields/${fieldId}`);
+    const raw = boardId
+      ? await this.client.get<RawCustomField>(`/customfields/${fieldId}`, { params: { widgetCommonId: boardId } })
+      : await this.client.get<RawCustomField>(`/customfields/${fieldId}`);
 
+    const field = normalizeCustomField(raw);
     this.cache.set(cacheKey, field);
     return field;
   }

@@ -1,5 +1,57 @@
 import FavroHttpClient from './http-client';
 
+/** Raw card shape returned directly by the Favro REST API */
+interface RawCard {
+  cardId: string;
+  cardCommonId?: string;
+  name: string;
+  detailedDescription?: string;
+  widgetCommonId?: string;
+  columnId?: string;
+  laneId?: string | null;
+  archived?: boolean;
+  assignments?: Array<{ userId: string; completed?: boolean }>;
+  tags?: string[];
+  startDate?: string;
+  dueDate?: string;
+  sequentialId?: number;
+  createdByUserId?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  customFields?: unknown[];
+  dependencies?: unknown[];
+  status?: string;
+  // Allow passthrough of extra fields
+  [key: string]: unknown;
+}
+
+/**
+ * Normalize a raw Favro API card response to our internal Card interface.
+ * Maps Favro's field names (widgetCommonId, assignments, detailedDescription)
+ * to the CLI's expected format (boardId, assignees, description).
+ */
+function normalizeCard(raw: RawCard): Card {
+  return {
+    cardId: raw.cardId,
+    cardCommonId: raw.cardCommonId,
+    name: raw.name,
+    description: raw.detailedDescription ?? raw.description as string | undefined,
+    status: raw.status,
+    // Map assignments[].userId → assignees[]
+    assignees: (raw.assignments ?? []).map((a) => a.userId),
+    tags: raw.tags ?? [],
+    dueDate: raw.dueDate,
+    createdAt: raw.createdAt ?? '',
+    updatedAt: raw.updatedAt,
+    // Map widgetCommonId → boardId for internal consistency
+    boardId: raw.widgetCommonId ?? raw.boardId as string | undefined,
+    columnId: raw.columnId,
+    archived: raw.archived,
+    sequentialId: raw.sequentialId,
+    customFields: raw.customFields as Card['customFields'],
+  };
+}
+
 export interface CustomField {
   fieldId: string;
   name: string;
@@ -28,6 +80,8 @@ export interface CardRelation {
 
 export interface Card {
   cardId: string;
+  /** cardCommonId — stable ID across widgets; used for comments API */
+  cardCommonId?: string;
   name: string;
   description?: string;
   status?: string;
@@ -36,8 +90,12 @@ export interface Card {
   dueDate?: string;
   createdAt: string;
   updatedAt?: string;
+  /** boardId — our alias for widgetCommonId */
   boardId?: string;
+  columnId?: string;
   collectionId?: string;
+  archived?: boolean;
+  sequentialId?: number;
   // Populated via --include flags
   board?: { boardId: string; name: string; [key: string]: unknown };
   collection?: { collectionId: string; name: string; [key: string]: unknown };
@@ -141,7 +199,7 @@ export class CardsAPI {
 
       const response = await this.client.get<PaginatedResponse<Card>>(path, { params });
 
-      const entities = response.entities ?? [];
+      const entities = (response.entities as unknown as RawCard[] ?? []).map(normalizeCard);
       allCards.push(...entities);
 
       // Update pagination state from response
@@ -171,7 +229,8 @@ export class CardsAPI {
       params.include = includes.join(',');
     }
     const getConfig = Object.keys(params).length > 0 ? { params } : undefined;
-    const card = await this.client.get<Card>(`/cards/${cardId}`, getConfig);
+    const rawCard = await this.client.get<RawCard>(`/cards/${cardId}`, getConfig);
+    const card = normalizeCard(rawCard);
 
     // Hydrate board/collection if requested and not already present
     if (includes.includes('board') && card.boardId && !card.board) {

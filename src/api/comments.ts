@@ -1,6 +1,10 @@
 /**
  * Comments API — FavroApiClient methods
  * CLA-1789 FAVRO-027: Comments & Activity API
+ *
+ * Favro comments endpoint: GET /comments?cardCommonId=<cardCommonId>
+ * Note: requires cardCommonId (stable ID), not the per-widget cardId.
+ * This client accepts cardId and resolves cardCommonId automatically.
  */
 import FavroHttpClient from '../lib/http-client';
 import { Comment } from '../types/comments';
@@ -17,21 +21,23 @@ interface RawComment {
   commentId?: string;
   id?: string;
   cardId?: string;
+  cardCommonId?: string;
+  userId?: string;
   text?: string;
-  comment?: string; // alternate field name used by some Favro endpoints
+  comment?: string;   // Favro uses "comment" field name
   author?: string;
-  user?: string;    // alternate author field
+  created?: string;   // Favro uses "created" not "createdAt"
   createdAt?: string;
   updatedAt?: string;
 }
 
-function normalizeComment(raw: RawComment, cardId: string): Comment {
+function normalizeComment(raw: RawComment, fallbackCardId: string): Comment {
   return {
     commentId: raw.commentId ?? raw.id ?? '',
-    cardId: raw.cardId ?? cardId,
-    text: raw.text ?? raw.comment ?? '',
-    author: raw.author ?? raw.user,
-    createdAt: raw.createdAt ?? '',
+    cardId: raw.cardCommonId ?? raw.cardId ?? fallbackCardId,
+    text: raw.comment ?? raw.text ?? '',
+    author: raw.userId ?? raw.author,
+    createdAt: raw.created ?? raw.createdAt ?? '',
     updatedAt: raw.updatedAt,
   };
 }
@@ -40,15 +46,20 @@ export class CommentsApiClient {
   constructor(private client: FavroHttpClient) {}
 
   /**
-   * List all comments for a card, with automatic pagination.
+   * List all comments for a card.
+   * Accepts either cardId or cardCommonId — will resolve cardCommonId automatically if needed.
    */
-  async listComments(cardId: string, limit: number = 100): Promise<Comment[]> {
+  async listComments(cardIdOrCommonId: string, limit: number = 100): Promise<Comment[]> {
+    // Resolve cardCommonId: if the passed ID is a 24-char hex cardId, look it up
+    const cardCommonId = await this.resolveCardCommonId(cardIdOrCommonId);
+
     const allComments: Comment[] = [];
     let requestId: string | undefined;
     let page = 1;
 
     while (allComments.length < limit) {
       const params: Record<string, unknown> = {
+        cardCommonId,
         limit: Math.min(limit - allComments.length, 100),
       };
       if (requestId) {
@@ -56,12 +67,13 @@ export class CommentsApiClient {
         params.page = page;
       }
 
+      // Favro: GET /comments?cardCommonId=<cardCommonId>
       const response = await this.client.get<PaginatedResponse<RawComment>>(
-        `/cards/${cardId}/comments`,
+        '/comments',
         { params }
       );
 
-      const batch = (response.entities ?? []).map(raw => normalizeComment(raw, cardId));
+      const batch = (response.entities ?? []).map(raw => normalizeComment(raw, cardIdOrCommonId));
       allComments.push(...batch);
 
       requestId = response.requestId;
@@ -74,17 +86,50 @@ export class CommentsApiClient {
 
   /**
    * Add a comment to a card.
+   * Accepts either cardId or cardCommonId.
    */
-  async addComment(cardId: string, text: string): Promise<Comment> {
+  async addComment(cardIdOrCommonId: string, text: string): Promise<Comment> {
     if (!text || !text.trim()) {
       throw new Error('Comment text cannot be empty.');
     }
-
+    const cardCommonId = await this.resolveCardCommonId(cardIdOrCommonId);
     const raw = await this.client.post<RawComment>(
-      `/cards/${cardId}/comments`,
-      { comment: text.trim() }
+      '/comments',
+      { cardCommonId, comment: text.trim() }
     );
-    return normalizeComment(raw, cardId);
+    return normalizeComment(raw, cardIdOrCommonId);
+  }
+
+  /**
+   * Resolve cardCommonId from either a cardId or a cardCommonId.
+   * Favro cardIds are 24-char hex; cardCommonIds are also 24-char hex.
+   * We can't tell them apart by format, so we try cardCommonId directly first,
+   * and fall back to looking up by cardId.
+   */
+  private async resolveCardCommonId(cardIdOrCommonId: string): Promise<string> {
+    // Try using as-is first — Favro will 404 if it's a per-widget cardId
+    try {
+      const response = await this.client.get<PaginatedResponse<RawComment>>(
+        '/comments',
+        { params: { cardCommonId: cardIdOrCommonId, limit: 1 } }
+      );
+      if (response.entities !== undefined) {
+        // It worked as-is — it's already a cardCommonId (or returned results)
+        return cardIdOrCommonId;
+      }
+    } catch {
+      // Fall through to lookup
+    }
+
+    // Look up the card to get its cardCommonId
+    try {
+      const card = await this.client.get<{ cardCommonId?: string }>(`/cards/${cardIdOrCommonId}`);
+      if (card.cardCommonId) return card.cardCommonId;
+    } catch {
+      // Last resort: use as-is
+    }
+
+    return cardIdOrCommonId;
   }
 }
 
