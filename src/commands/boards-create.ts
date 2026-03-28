@@ -20,6 +20,7 @@ export function registerBoardsCreateCommand(boardsParent: Command): void {
     .option('--description <text>', 'Board description')
     .option('--json', 'Output created board as JSON')
     .option('--dry-run', 'Print what would be created without making API calls')
+    .option('--force', 'Bypass scope check')
     .action(async (collectionId: string, options) => {
       const verbose = boardsParent.parent?.opts()?.verbose ?? false;
       try {
@@ -35,6 +36,10 @@ export function registerBoardsCreateCommand(boardsParent: Command): void {
           console.error('✗ Board name cannot be empty or whitespace only.');
           process.exit(1);
         }
+
+        const { readConfig } = await import('../lib/config');
+        const { checkCollectionScope } = await import('../lib/safety');
+        checkCollectionScope(collectionId, await readConfig(), options.force);
 
         if (options.dryRun) {
           console.log(`[dry-run] Would create board: "${name}"`);

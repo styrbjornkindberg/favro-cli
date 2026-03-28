@@ -37,8 +37,8 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.registerCardsListCommand = registerCardsListCommand;
+const client_factory_1 = require("../lib/client-factory");
 const cards_api_1 = __importDefault(require("../lib/cards-api"));
-const http_client_1 = __importDefault(require("../lib/http-client"));
 const error_handler_1 = require("../lib/error-handler");
 const boards_api_1 = __importDefault(require("../lib/boards-api"));
 const query_parser_1 = require("../lib/query-parser");
@@ -89,13 +89,7 @@ function registerCardsListCommand(program) {
         const verbose = program.parent?.opts()?.verbose ?? program.opts()?.verbose ?? false;
         try {
             const token = process.env.FAVRO_API_TOKEN;
-            if (!token) {
-                console.error(`Error: ${(0, error_handler_1.missingApiKeyError)()}`);
-                process.exit(1);
-            }
-            const client = new http_client_1.default({
-                auth: { token }
-            });
+            const client = await (0, client_factory_1.createFavroClient)();
             const api = new cards_api_1.default(client);
             const parsedLimit = parseInt(options.limit, 10);
             const limit = isNaN(parsedLimit) || parsedLimit < 1 ? 50 : parsedLimit;

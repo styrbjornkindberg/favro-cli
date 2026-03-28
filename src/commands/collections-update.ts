@@ -17,6 +17,8 @@ export function registerCollectionsUpdateCommand(collectionsParent: Command): vo
     .option('--description <text>', 'New collection description')
     .option('--json', 'Output updated collection as JSON')
     .option('--dry-run', 'Print what would be updated without making API calls')
+    .option('--yes, -y', 'Skip confirmation prompt')
+    .option('--force', 'Bypass scope check')
     .action(async (id: string, options) => {
       const verbose = collectionsParent.parent?.opts()?.verbose ?? false;
       try {
@@ -42,6 +44,17 @@ export function registerCollectionsUpdateCommand(collectionsParent: Command): vo
         }
 
         const client = await createFavroClient();
+
+        const { readConfig } = await import('../lib/config');
+        const { checkCollectionScope, confirmAction } = await import('../lib/safety');
+        
+        checkCollectionScope(id, await readConfig(), options.force);
+        
+        if (!(await confirmAction(`Update collection ${id}?`, { yes: options.yes }))) {
+          console.log('Aborted.');
+          process.exit(0);
+        }
+
         const api = new CollectionsAPI(client);
 
         const collection = await api.updateCollection(id, updateData);

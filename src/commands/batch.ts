@@ -119,13 +119,24 @@ export function registerBatchUpdateCommand(batch: Command): void {
     .option('--dry-run', 'Preview changes without applying them')
     .option('--json', 'Output result as JSON')
     .option('--verbose', 'Show per-card progress')
+    .option('--yes, -y', 'Skip confirmation prompt')
+    .option('--force', 'Bypass scope check')
     .action(async (options: {
       fromCsv: string;
       dryRun?: boolean;
       json?: boolean;
       verbose?: boolean;
+      yes?: boolean;
+      force?: boolean;
     }) => {
       try {
+        if (!options.dryRun) {
+          const { confirmAction } = await import('../lib/safety');
+          if (!(await confirmAction('Apply these bulk updates from CSV?', { yes: options.yes }))) {
+            console.log('Aborted.');
+            process.exit(0);
+          }
+        }
 
         // Read and parse CSV
         let content: string;
@@ -246,6 +257,8 @@ export function registerBatchMoveCommand(batch: Command): void {
     .option('--dry-run', 'Preview changes without applying them')
     .option('--json', 'Output result as JSON')
     .option('--verbose', 'Show per-card progress')
+    .option('--yes, -y', 'Skip confirmation prompt')
+    .option('--force', 'Bypass scope check')
     .action(async (options: {
       board: string;
       toBoard?: string;
@@ -254,6 +267,8 @@ export function registerBatchMoveCommand(batch: Command): void {
       dryRun?: boolean;
       json?: boolean;
       verbose?: boolean;
+      yes?: boolean;
+      force?: boolean;
     }) => {
       try {
         if (!options.toBoard && !options.status) {
@@ -261,8 +276,19 @@ export function registerBatchMoveCommand(batch: Command): void {
           process.exit(1);
         }
 
-
         const client = await createFavroClient();
+        
+        const { readConfig } = await import('../lib/config');
+        const { checkScope, confirmAction } = await import('../lib/safety');
+        await checkScope(options.board, client, await readConfig(), options.force);
+        
+        if (!options.dryRun) {
+          if (!(await confirmAction(`Apply batch move to cards from board ${options.board}?`, { yes: options.yes }))) {
+            console.log('Aborted.');
+            process.exit(0);
+          }
+        }
+
         const api = new CardsAPI(client);
 
         // Fetch cards from source board
@@ -376,6 +402,8 @@ export function registerBatchAssignCommand(batch: Command): void {
     .option('--dry-run', 'Preview changes without applying them')
     .option('--json', 'Output result as JSON')
     .option('--verbose', 'Show per-card progress')
+    .option('--yes, -y', 'Skip confirmation prompt')
+    .option('--force', 'Bypass scope check')
     .action(async (options: {
       board: string;
       to: string;
@@ -383,12 +411,25 @@ export function registerBatchAssignCommand(batch: Command): void {
       dryRun?: boolean;
       json?: boolean;
       verbose?: boolean;
+      yes?: boolean;
+      force?: boolean;
     }) => {
       try {
-
         const assignee = resolveAssignee(options.to);
 
         const client = await createFavroClient();
+        
+        const { readConfig } = await import('../lib/config');
+        const { checkScope, confirmAction } = await import('../lib/safety');
+        await checkScope(options.board, client, await readConfig(), options.force);
+        
+        if (!options.dryRun) {
+          if (!(await confirmAction(`Apply batch assign to cards on board ${options.board}?`, { yes: options.yes }))) {
+            console.log('Aborted.');
+            process.exit(0);
+          }
+        }
+        
         const api = new CardsAPI(client);
 
         // Fetch cards from board

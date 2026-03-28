@@ -69,8 +69,9 @@ export function registerMembersCommand(program: Command): void {
     .description('Add a member by email to a board or collection')
     .requiredOption('--to <target-id>', 'Board or collection ID to add member to')
     .option('--board-target', 'Target is a board (default)')
-    .option('--collection-target', 'Target is a collection')
     .option('--json', 'Output as JSON')
+    .option('--dry-run', 'Print what would be added without making API calls')
+    .option('--force', 'Bypass scope check')
     .action(async (email: string, options) => {
       const verbose = program.opts()?.verbose ?? false;
       try {
@@ -79,11 +80,24 @@ export function registerMembersCommand(program: Command): void {
           process.exit(1);
         }
 
-
         // Default to board target unless --collection-target is specified
         const isBoardTarget = !options.collectionTarget;
 
+        if (options.dryRun) {
+          console.log(`[dry-run] Would add member ${email} to ${isBoardTarget ? 'board' : 'collection'} ${options.to}`);
+          return;
+        }
+
         const client = await createFavroClient();
+        
+        const { readConfig } = await import('../lib/config');
+        const { checkScope, checkCollectionScope } = await import('../lib/safety');
+        if (isBoardTarget) {
+          await checkScope(options.to, client, await readConfig(), options.force);
+        } else {
+          checkCollectionScope(options.to, await readConfig(), options.force);
+        }
+        
         const api = new FavroApiClient(client);
 
         const member = await api.addMember(email, options.to, isBoardTarget);
@@ -106,6 +120,8 @@ export function registerMembersCommand(program: Command): void {
     .requiredOption('--from <target-id>', 'Board or collection ID to remove member from')
     .option('--board-target', 'Target is a board (default)')
     .option('--collection-target', 'Target is a collection')
+    .option('--yes, -y', 'Skip confirmation prompt')
+    .option('--force', 'Bypass scope check')
     .action(async (memberId: string, options) => {
       const verbose = program.opts()?.verbose ?? false;
       try {
@@ -113,6 +129,20 @@ export function registerMembersCommand(program: Command): void {
         const isBoardTarget = !options.collectionTarget;
 
         const client = await createFavroClient();
+        
+        const { readConfig } = await import('../lib/config');
+        const { checkScope, checkCollectionScope, confirmAction } = await import('../lib/safety');
+        if (isBoardTarget) {
+          await checkScope(options.from, client, await readConfig(), options.force);
+        } else {
+          checkCollectionScope(options.from, await readConfig(), options.force);
+        }
+        
+        if (!(await confirmAction(`Remove member ${memberId} from ${options.from}?`, { yes: options.yes }))) {
+          console.log('Aborted.');
+          process.exit(0);
+        }
+        
         const api = new FavroApiClient(client);
 
         await api.removeMember(memberId, options.from, isBoardTarget);

@@ -23,6 +23,7 @@ import { writeCardsCSV, writeCardsJSON, normalizeCard, cardsToCSV } from './lib/
 import { applyFilters, ExportFormat } from './commands/cards-export';
 import { Card } from './lib/cards-api';
 import { registerAuthCommand } from './commands/auth';
+import { registerScopeCommand } from './commands/scope';
 import { registerBoardsListCommand } from './commands/boards-list';
 import { registerBoardsGetCommand } from './commands/boards-get';
 import { registerBoardsCreateCommand } from './commands/boards-create';
@@ -82,6 +83,9 @@ program
 
 // ─── auth commands ────────────────────────────────────────────────────────────
 registerAuthCommand(program);
+
+// ─── scope command ────────────────────────────────────────────────────────────
+registerScopeCommand(program);
 
 // ─── boards parent ────────────────────────────────────────────────────────────
 const boardsCmd = program.command('boards').description('Board operations');
@@ -264,6 +268,8 @@ cards
   .option('--bulk <file>', 'Bulk create from JSON file')
   .option('--csv <file>', 'Bulk import from CSV file (columns: name, description, status)')
   .option('--dry-run', 'Print what would be created without making API calls')
+  .option('--yes, -y', 'Skip confirmation prompt')
+  .option('--force', 'Bypass scope check')
   .option('--json', 'Output as JSON')
   .action(async (title: string | undefined, options) => {
     if (!title && !options.csv && !options.bulk) {
@@ -295,6 +301,12 @@ cards
         }
 
         const client = await createFavroClient();
+        if (options.board) {
+          const { readConfig } = await import('./lib/config');
+          const { checkScope } = await import('./lib/safety');
+          await checkScope(options.board, client, await readConfig(), options.force);
+        }
+
         const api = new CardsAPI(client);
         const progress = new ProgressBar('Creating cards', cards.length);
         progress.update(0);
@@ -314,6 +326,11 @@ cards
           return;
         }
         const client = await createFavroClient();
+        if (options.board) { // Note: bulk import JSON doesn't directly use --board as much, but if it does
+          const { readConfig } = await import('./lib/config');
+          const { checkScope } = await import('./lib/safety');
+          await checkScope(options.board, client, await readConfig(), options.force);
+        }
         const api = new CardsAPI(client);
         const total = Array.isArray(data) ? data.length : 1;
         const progress = new ProgressBar('Creating cards', total);
@@ -332,6 +349,12 @@ cards
       }
 
       const client = await createFavroClient();
+      if (options.board) {
+        const { readConfig } = await import('./lib/config');
+        const { checkScope } = await import('./lib/safety');
+        await checkScope(options.board, client, await readConfig(), options.force);
+      }
+      
       const api = new CardsAPI(client);
       const card = await api.createCard({
         name: title ?? '',
@@ -377,6 +400,8 @@ cards
   .option('--board <id>', 'Board ID — required for batch operations, optional for single')
   .option('--from-csv <file>', 'CSV file with card updates (columns: cardId, status, assignee, dueDate)')
   .option('--dry-run', 'Preview changes without making API calls')
+  .option('--yes, -y', 'Skip confirmation prompt')
+  .option('--force', 'Bypass scope check')
   .option('--json', 'Output as JSON')
   .option('--verbose', 'Show per-card progress')
   .action(async (cardId: string | undefined, options) => {
@@ -387,6 +412,14 @@ cards
 
     // ── CSV batch update ──────────────────────────────────────────────────────
     if (options.fromCsv) {
+      if (!options.dryRun) {
+        const { confirmAction } = await import('./lib/safety');
+        if (!(await confirmAction('Apply these bulk updates to cards from CSV?', { yes: options.yes }))) {
+          console.log('Aborted.');
+          process.exit(0);
+        }
+      }
+      
       try {
         const fs = await import('fs/promises');
         const {
@@ -502,7 +535,19 @@ cards
 
     // ── Batch move/assign with board filter ───────────────────────────────────
     if (options.board && !cardId) {
+      if (!options.dryRun) {
+        const { confirmAction } = await import('./lib/safety');
+        if (!(await confirmAction(`Apply batch updates to cards on board ${options.board}?`, { yes: options.yes }))) {
+          console.log('Aborted.');
+          process.exit(0);
+        }
+      }
+      
       try {
+        const { readConfig } = await import('./lib/config');
+        const { checkScope } = await import('./lib/safety');
+        await checkScope(options.board, client, await readConfig(), options.force);
+        
         const { buildFilterFn } = await import('./commands/batch');
         const {
           BulkTransaction,
@@ -637,11 +682,21 @@ cards
         return;
       }
 
-      const client = await createFavroClient();
       const api = new CardsAPI(client!);
-      const card = await api.updateCard(cardId, updateData);
-      console.log(`✓ Card updated: ${card.cardId}`);
-      if (options.json) console.log(JSON.stringify(card));
+      const card = await api.getCard(cardId);
+      
+      const { readConfig } = await import('./lib/config');
+      const { checkScope, confirmAction } = await import('./lib/safety');
+      await checkScope(card.boardId ?? '', client, await readConfig(), options.force);
+      
+      if (!(await confirmAction(`Update card "${card.name}" (${cardId})?`, { yes: options.yes }))) {
+        console.log('Aborted.');
+        process.exit(0);
+      }
+      
+      const updatedCard = await api.updateCard(cardId, updateData);
+      console.log(`✓ Card updated: ${updatedCard.cardId}`);
+      if (options.json) console.log(JSON.stringify(updatedCard));
     } catch (error) {
       logError(error, program.opts().verbose);
       process.exit(1);

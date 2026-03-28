@@ -17,6 +17,10 @@ export interface FavroConfig {
   organizationId?: string;
   defaultBoard?: string;
   defaultCollection?: string;
+  /** Guardrail lock: write commands restricted to this collection unless --force is used */
+  scopeCollectionId?: string;
+  /** Cached human-readable name of the locked collection */
+  scopeCollectionName?: string;
   outputFormat?: 'table' | 'json' | 'csv';
 }
 

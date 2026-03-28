@@ -57,10 +57,10 @@ exports.buildProgram = buildProgram;
 const commander_1 = require("commander");
 const path = __importStar(require("path"));
 const cards_api_1 = __importDefault(require("./lib/cards-api"));
-const http_client_1 = __importDefault(require("./lib/http-client"));
 const csv_1 = require("./lib/csv");
 const cards_export_1 = require("./commands/cards-export");
 const auth_1 = require("./commands/auth");
+const scope_1 = require("./commands/scope");
 const boards_list_1 = require("./commands/boards-list");
 const boards_get_1 = require("./commands/boards-get");
 const boards_create_1 = require("./commands/boards-create");
@@ -90,7 +90,7 @@ const standup_1 = require("./commands/standup");
 const sprint_plan_1 = require("./commands/sprint-plan");
 const error_handler_1 = require("./lib/error-handler");
 const progress_1 = require("./lib/progress");
-const config_1 = require("./lib/config");
+const client_factory_1 = require("./lib/client-factory");
 /**
  * Build the CLI program (exported for testing).
  * Guards parseAsync behind require.main === module so that
@@ -114,6 +114,8 @@ function buildProgram() {
         .option('--verbose', 'Show stack traces for errors');
     // ─── auth commands ────────────────────────────────────────────────────────────
     (0, auth_1.registerAuthCommand)(program);
+    // ─── scope command ────────────────────────────────────────────────────────────
+    (0, scope_1.registerScopeCommand)(program);
     // ─── boards parent ────────────────────────────────────────────────────────────
     const boardsCmd = program.command('boards').description('Board operations');
     // ─── boards list ─────────────────────────────────────────────────────────────
@@ -183,13 +185,8 @@ function buildProgram() {
         .option('--limit <number>', 'Maximum number of cards (default 25, max 100)', '25')
         .option('--json', 'Output as JSON')
         .action(async (boardId, options) => {
-        const token = await (0, config_1.resolveApiKey)();
-        if (!token) {
-            console.error(`Error: ${(0, error_handler_1.missingApiKeyError)()}`);
-            process.exit(1);
-        }
         try {
-            const client = new http_client_1.default({ auth: { token } });
+            const client = await (0, client_factory_1.createFavroClient)();
             const api = new cards_api_1.default(client);
             // Support positional boardId or --board option
             const effectiveBoardId = boardId ?? options.board;
@@ -273,13 +270,10 @@ function buildProgram() {
         .option('--bulk <file>', 'Bulk create from JSON file')
         .option('--csv <file>', 'Bulk import from CSV file (columns: name, description, status)')
         .option('--dry-run', 'Print what would be created without making API calls')
+        .option('--yes, -y', 'Skip confirmation prompt')
+        .option('--force', 'Bypass scope check')
         .option('--json', 'Output as JSON')
         .action(async (title, options) => {
-        const token = await (0, config_1.resolveApiKey)();
-        if (!token) {
-            console.error(`Error: ${(0, error_handler_1.missingApiKeyError)()}`);
-            process.exit(1);
-        }
         if (!title && !options.csv && !options.bulk) {
             console.error('Error: provide a title or use --csv/--bulk for bulk import');
             process.exit(1);
@@ -305,7 +299,12 @@ function buildProgram() {
                     cards.forEach(c => console.log(`  - ${c.name}`));
                     return;
                 }
-                const client = new http_client_1.default({ auth: { token } });
+                const client = await (0, client_factory_1.createFavroClient)();
+                if (options.board) {
+                    const { readConfig } = await Promise.resolve().then(() => __importStar(require('./lib/config')));
+                    const { checkScope } = await Promise.resolve().then(() => __importStar(require('./lib/safety')));
+                    await checkScope(options.board, client, await readConfig(), options.force);
+                }
                 const api = new cards_api_1.default(client);
                 const progress = new progress_1.ProgressBar('Creating cards', cards.length);
                 progress.update(0);
@@ -324,7 +323,12 @@ function buildProgram() {
                     console.log(`[dry-run] Would create ${count} cards from bulk JSON`);
                     return;
                 }
-                const client = new http_client_1.default({ auth: { token } });
+                const client = await (0, client_factory_1.createFavroClient)();
+                if (options.board) { // Note: bulk import JSON doesn't directly use --board as much, but if it does
+                    const { readConfig } = await Promise.resolve().then(() => __importStar(require('./lib/config')));
+                    const { checkScope } = await Promise.resolve().then(() => __importStar(require('./lib/safety')));
+                    await checkScope(options.board, client, await readConfig(), options.force);
+                }
                 const api = new cards_api_1.default(client);
                 const total = Array.isArray(data) ? data.length : 1;
                 const progress = new progress_1.ProgressBar('Creating cards', total);
@@ -341,7 +345,12 @@ function buildProgram() {
                 console.log(`[dry-run] Would create card: "${title}" on board ${options.board}`);
                 return;
             }
-            const client = new http_client_1.default({ auth: { token } });
+            const client = await (0, client_factory_1.createFavroClient)();
+            if (options.board) {
+                const { readConfig } = await Promise.resolve().then(() => __importStar(require('./lib/config')));
+                const { checkScope } = await Promise.resolve().then(() => __importStar(require('./lib/safety')));
+                await checkScope(options.board, client, await readConfig(), options.force);
+            }
             const api = new cards_api_1.default(client);
             const card = await api.createCard({
                 name: title ?? '',
@@ -386,16 +395,30 @@ function buildProgram() {
         .option('--board <id>', 'Board ID — required for batch operations, optional for single')
         .option('--from-csv <file>', 'CSV file with card updates (columns: cardId, status, assignee, dueDate)')
         .option('--dry-run', 'Preview changes without making API calls')
+        .option('--yes, -y', 'Skip confirmation prompt')
+        .option('--force', 'Bypass scope check')
         .option('--json', 'Output as JSON')
         .option('--verbose', 'Show per-card progress')
         .action(async (cardId, options) => {
-        const token = await (0, config_1.resolveApiKey)();
-        if (!token) {
-            console.error(`Error: ${(0, error_handler_1.missingApiKeyError)()}`);
+        // Resolve client once — shared across all 3 update code paths
+        let client;
+        try {
+            client = await (0, client_factory_1.createFavroClient)();
+        }
+        catch (err) {
+            (0, error_handler_1.logError)(err, program.opts().verbose);
             process.exit(1);
+            return;
         }
         // ── CSV batch update ──────────────────────────────────────────────────────
         if (options.fromCsv) {
+            if (!options.dryRun) {
+                const { confirmAction } = await Promise.resolve().then(() => __importStar(require('./lib/safety')));
+                if (!(await confirmAction('Apply these bulk updates to cards from CSV?', { yes: options.yes }))) {
+                    console.log('Aborted.');
+                    process.exit(0);
+                }
+            }
             try {
                 const fs = await Promise.resolve().then(() => __importStar(require('fs/promises')));
                 const { parseCSVContent, csvRowToBulkOperation, BulkTransaction, formatBulkPreview, formatBulkSummary, } = await Promise.resolve().then(() => __importStar(require('./lib/bulk')));
@@ -437,7 +460,6 @@ function buildProgram() {
                     process.exit(1);
                     return;
                 }
-                const client = new http_client_1.default({ auth: { token } });
                 const api = new cards_api_1.default(client);
                 // Build operations; fetch previousState for atomic rollback
                 const ops = [];
@@ -495,13 +517,23 @@ function buildProgram() {
                 process.exit(1);
             }
             return;
+            // (end of fromCsv path)
         }
         // ── Batch move/assign with board filter ───────────────────────────────────
         if (options.board && !cardId) {
+            if (!options.dryRun) {
+                const { confirmAction } = await Promise.resolve().then(() => __importStar(require('./lib/safety')));
+                if (!(await confirmAction(`Apply batch updates to cards on board ${options.board}?`, { yes: options.yes }))) {
+                    console.log('Aborted.');
+                    process.exit(0);
+                }
+            }
             try {
+                const { readConfig } = await Promise.resolve().then(() => __importStar(require('./lib/config')));
+                const { checkScope } = await Promise.resolve().then(() => __importStar(require('./lib/safety')));
+                await checkScope(options.board, client, await readConfig(), options.force);
                 const { buildFilterFn } = await Promise.resolve().then(() => __importStar(require('./commands/batch')));
                 const { BulkTransaction, formatBulkPreview, formatBulkSummary, } = await Promise.resolve().then(() => __importStar(require('./lib/bulk')));
-                const client = new http_client_1.default({ auth: { token } });
                 const api = new cards_api_1.default(client);
                 let allCards;
                 try {
@@ -627,12 +659,19 @@ function buildProgram() {
                 console.log(`[dry-run] Would update card ${cardId} with:`, JSON.stringify(updateData));
                 return;
             }
-            const client = new http_client_1.default({ auth: { token } });
             const api = new cards_api_1.default(client);
-            const card = await api.updateCard(cardId, updateData);
-            console.log(`✓ Card updated: ${card.cardId}`);
+            const card = await api.getCard(cardId);
+            const { readConfig } = await Promise.resolve().then(() => __importStar(require('./lib/config')));
+            const { checkScope, confirmAction } = await Promise.resolve().then(() => __importStar(require('./lib/safety')));
+            await checkScope(card.boardId ?? '', client, await readConfig(), options.force);
+            if (!(await confirmAction(`Update card "${card.name}" (${cardId})?`, { yes: options.yes }))) {
+                console.log('Aborted.');
+                process.exit(0);
+            }
+            const updatedCard = await api.updateCard(cardId, updateData);
+            console.log(`✓ Card updated: ${updatedCard.cardId}`);
             if (options.json)
-                console.log(JSON.stringify(card));
+                console.log(JSON.stringify(updatedCard));
         }
         catch (error) {
             (0, error_handler_1.logError)(error, program.opts().verbose);
@@ -659,11 +698,6 @@ function buildProgram() {
         .option('--filter <expression>', 'Filter cards (repeatable, e.g. "assignee:alice"). All conditions must match (AND logic)', (val, prev) => prev.concat([val]), [])
         .option('--limit <number>', 'Maximum cards to fetch', '10000')
         .action(async (board, options) => {
-        const token = await (0, config_1.resolveApiKey)();
-        if (!token) {
-            console.error(`Error: ${(0, error_handler_1.missingApiKeyError)()}`);
-            process.exit(1);
-        }
         const format = (options.format ?? 'json').toLowerCase();
         if (format !== 'json' && format !== 'csv') {
             console.error(`Error: Invalid format "${options.format}". Use --format json or --format csv`);
@@ -680,7 +714,7 @@ function buildProgram() {
         const parsedLimit = parseInt(options.limit ?? '10000', 10);
         const limit = !isNaN(parsedLimit) && parsedLimit >= 1 ? parsedLimit : 10000;
         try {
-            const client = new http_client_1.default({ auth: { token } });
+            const client = await (0, client_factory_1.createFavroClient)();
             const api = new cards_api_1.default(client);
             const spinner = new (await Promise.resolve().then(() => __importStar(require('./lib/progress')))).Spinner('Fetching cards');
             spinner.start();
@@ -690,10 +724,10 @@ function buildProgram() {
             if (filters.length > 0) {
                 const before = cardList.length;
                 cardList = (0, cards_export_1.applyFilters)(cardList, filters);
-                console.error(`ℹ Filters applied: ${before} → ${cardList.length} card(s)`);
+                console.error(`\u2139 Filters applied: ${before} \u2192 ${cardList.length} card(s)`);
             }
             if (cardList.length === 0) {
-                console.error('⚠ No cards to export (0 results after filtering).');
+                console.error('\u26a0 No cards to export (0 results after filtering).');
                 process.exit(0);
             }
             if (options.out) {
@@ -716,7 +750,7 @@ function buildProgram() {
                 else {
                     process.stdout.write(JSON.stringify(normalized, null, 2) + '\n');
                 }
-                console.error(`ℹ Exported ${cardList.length} card(s) to stdout (${format.toUpperCase()})`);
+                console.error(`\u2139 Exported ${cardList.length} card(s) to stdout (${format.toUpperCase()})`);
             }
         }
         catch (error) {

@@ -160,11 +160,32 @@ export function registerCustomFieldsCommands(program: Command): void {
       'For text/user/link fields, pass the string value directly.'
     )
     .option('--json', 'Output updated field value as JSON')
+    .option('--dry-run', 'Print what would be updated without making API calls')
+    .option('--yes, -y', 'Skip confirmation prompt')
+    .option('--force', 'Bypass scope check')
     .action(async (cardId: string, fieldId: string, value: string, options) => {
       const verbose = program.opts()?.verbose ?? false;
       try {
+        if (options.dryRun) {
+          console.log(`[dry-run] Would set custom field ${fieldId} on ${cardId} to "${value}"`);
+          return;
+        }
 
         const client = await createFavroClient();
+        
+        const { default: CardsAPI } = await import('../lib/cards-api');
+        const cardsApi = new CardsAPI(client);
+        const card = await cardsApi.getCard(cardId);
+        
+        const { readConfig } = await import('../lib/config');
+        const { checkScope, confirmAction } = await import('../lib/safety');
+        await checkScope(card.boardId ?? '', client, await readConfig(), options.force);
+        
+        if (!(await confirmAction(`Set custom field ${fieldId} on card ${cardId}?`, { yes: options.yes }))) {
+          console.log('Aborted.');
+          process.exit(0);
+        }
+
         const api = new CustomFieldsAPI(client);
 
         const result = await api.setFieldValue(cardId, fieldId, value);

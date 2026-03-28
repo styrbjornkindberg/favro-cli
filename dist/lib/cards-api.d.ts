@@ -23,6 +23,8 @@ export interface CardRelation {
 }
 export interface Card {
     cardId: string;
+    /** cardCommonId — stable ID across widgets; used for comments API */
+    cardCommonId?: string;
     name: string;
     description?: string;
     status?: string;
@@ -31,8 +33,12 @@ export interface Card {
     dueDate?: string;
     createdAt: string;
     updatedAt?: string;
+    /** boardId — our alias for widgetCommonId */
     boardId?: string;
+    columnId?: string;
     collectionId?: string;
+    archived?: boolean;
+    sequentialId?: number;
     board?: {
         boardId: string;
         name: string;
@@ -52,7 +58,11 @@ export interface CreateCardRequest {
     name: string;
     description?: string;
     status?: string;
+    /** widgetCommonId — the board (widget) to create the card on */
+    widgetCommonId?: string;
+    /** @deprecated Use widgetCommonId instead */
     boardId?: string;
+    columnId?: string;
     assignees?: string[];
 }
 export interface UpdateCardRequest {

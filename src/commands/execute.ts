@@ -27,12 +27,24 @@ export function registerExecuteCommand(program: Command): void {
     )
     .requiredOption('--change-id <id>', 'Change ID from `favro propose` output')
     .option('--pretty', 'Pretty-print JSON output')
+    .option('--yes, -y', 'Skip confirmation prompt')
+    .option('--force', 'Bypass scope check')
     .action(async (_board: string, options) => {
       const verbose = program.opts()?.verbose ?? false;
 
 
       try {
         const client = await createFavroClient();
+        
+        const { readConfig } = await import('../lib/config');
+        const { checkScope, confirmAction } = await import('../lib/safety');
+        await checkScope(_board, client, await readConfig(), options.force);
+        
+        if (!(await confirmAction(`Execute proposed change ${options.changeId} on board ${_board}?`, { yes: options.yes }))) {
+          console.log('Aborted.');
+          process.exit(0);
+        }
+
         const result = await executeChange(options.changeId, client);
 
         if (options.pretty) {

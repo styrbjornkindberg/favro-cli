@@ -34,6 +34,32 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CardsAPI = void 0;
+/**
+ * Normalize a raw Favro API card response to our internal Card interface.
+ * Maps Favro's field names (widgetCommonId, assignments, detailedDescription)
+ * to the CLI's expected format (boardId, assignees, description).
+ */
+function normalizeCard(raw) {
+    return {
+        cardId: raw.cardId,
+        cardCommonId: raw.cardCommonId,
+        name: raw.name,
+        description: raw.detailedDescription ?? raw.description,
+        status: raw.status,
+        // Map assignments[].userId → assignees[]
+        assignees: (raw.assignments ?? []).map((a) => a.userId),
+        tags: raw.tags ?? [],
+        dueDate: raw.dueDate,
+        createdAt: raw.createdAt ?? '',
+        updatedAt: raw.updatedAt,
+        // Map widgetCommonId → boardId for internal consistency
+        boardId: raw.widgetCommonId ?? raw.boardId,
+        columnId: raw.columnId,
+        archived: raw.archived,
+        sequentialId: raw.sequentialId,
+        customFields: raw.customFields,
+    };
+}
 class CardsAPI {
     constructor(client) {
         this.client = client;
@@ -49,7 +75,8 @@ class CardsAPI {
     async listCards(boardId, limit = 25, filter) {
         // Default 25; use explicit NaN/range check (not ||) to avoid limit=0 falsy bug
         const effectiveLimit = (isNaN(limit) || limit < 1) ? 25 : limit;
-        const path = boardId ? `/boards/${boardId}/cards` : '/cards';
+        // Favro API: GET /cards with widgetCommonId query param (not /boards/:id/cards)
+        const path = '/cards';
         const allCards = [];
         let page = 0;
         let totalPages = 1;
@@ -58,6 +85,10 @@ class CardsAPI {
             const params = {
                 limit: Math.min(effectiveLimit - allCards.length, 100), // request at most 100 per page
             };
+            // Favro uses widgetCommonId to scope cards to a board
+            if (boardId) {
+                params.widgetCommonId = boardId;
+            }
             if (filter) {
                 params.filter = filter;
             }
@@ -67,7 +98,7 @@ class CardsAPI {
                 params.page = page;
             }
             const response = await this.client.get(path, { params });
-            const entities = response.entities ?? [];
+            const entities = (response.entities ?? []).map(normalizeCard);
             allCards.push(...entities);
             // Update pagination state from response
             if (response.requestId) {
@@ -95,7 +126,8 @@ class CardsAPI {
             params.include = includes.join(',');
         }
         const getConfig = Object.keys(params).length > 0 ? { params } : undefined;
-        const card = await this.client.get(`/cards/${cardId}`, getConfig);
+        const rawCard = await this.client.get(`/cards/${cardId}`, getConfig);
+        const card = normalizeCard(rawCard);
         // Hydrate board/collection if requested and not already present
         if (includes.includes('board') && card.boardId && !card.board) {
             try {
@@ -113,23 +145,22 @@ class CardsAPI {
             }
             catch { /* best effort */ }
         }
-        if (includes.includes('custom-fields') && !card.customFields) {
-            try {
-                const cf = await this.client.get(`/cards/${cardId}/custom-fields`);
-                card.customFields = cf.entities ?? [];
-            }
-            catch { /* best effort */ }
-        }
+        // Custom fields are returned inline on card responses from Favro API,
+        // not via a separate endpoint.
         if (includes.includes('links') && !card.links) {
             try {
-                const lnk = await this.client.get(`/cards/${cardId}/links`);
+                // Favro: GET /cards/:cardId/dependencies
+                const lnk = await this.client.get(`/cards/${cardId}/dependencies`);
                 card.links = lnk.entities ?? [];
             }
             catch { /* best effort */ }
         }
         if ((includes.includes('comments') || includes.includes('relations')) && !card.comments) {
             try {
-                const cmt = await this.client.get(`/cards/${cardId}/comments`);
+                // Favro: GET /comments?cardCommonId=<cardId>
+                const cmt = await this.client.get('/comments', {
+                    params: { cardCommonId: cardId }
+                });
                 card.comments = cmt.entities ?? [];
             }
             catch { /* best effort */ }
@@ -140,14 +171,16 @@ class CardsAPI {
      * Get all links for a card.
      */
     async getCardLinks(cardId) {
-        const res = await this.client.get(`/cards/${cardId}/links`);
+        // Favro: GET /cards/:cardId/dependencies
+        const res = await this.client.get(`/cards/${cardId}/dependencies`);
         return res.entities ?? [];
     }
     /**
      * Link two cards together.
      */
     async linkCard(cardId, req) {
-        return this.client.post(`/cards/${cardId}/links`, {
+        // Favro: POST /cards/:cardId/dependencies
+        return this.client.post(`/cards/${cardId}/dependencies`, {
             toCardId: req.toCardId,
             type: req.type,
         });
@@ -156,35 +189,47 @@ class CardsAPI {
      * Remove a link between two cards.
      */
     async unlinkCard(cardId, fromCardId) {
-        await this.client.delete(`/cards/${cardId}/links/${fromCardId}`);
+        await this.client.delete(`/cards/${cardId}/dependencies/${fromCardId}`);
     }
     /**
      * Move a card to a different board.
      */
     async moveCard(cardId, req) {
-        return this.client.patch(`/cards/${cardId}/move`, {
-            boardId: req.toBoardId,
+        // Favro uses PUT /cards/:cardId with widgetCommonId to move cards
+        return this.client.put(`/cards/${cardId}`, {
+            widgetCommonId: req.toBoardId,
             position: req.position,
         });
     }
     async createCard(data) {
-        return this.client.post('/cards', data);
+        // Map boardId → widgetCommonId for callers using the old field name
+        const payload = { ...data };
+        if (payload.boardId && !payload.widgetCommonId) {
+            payload.widgetCommonId = payload.boardId;
+            delete payload.boardId;
+        }
+        return this.client.post('/cards', payload);
     }
     async createCards(cards) {
         const response = await this.client.post('/cards/bulk', { cards });
         return response.cards || [];
     }
     async updateCard(cardId, data) {
-        return this.client.patch(`/cards/${cardId}`, data);
+        // Favro uses PUT for card updates, not PATCH
+        return this.client.put(`/cards/${cardId}`, data);
     }
     async deleteCard(cardId) {
         await this.client.delete(`/cards/${cardId}`);
     }
     async searchCards(query, limit = 50) {
-        const response = await this.client.get('/cards/search', {
-            params: { q: query, limit }
+        // Favro has no /cards/search endpoint; use /cards with unique param for lookup
+        // or use todoList param for filtering. For general search, list all and filter client-side.
+        const response = await this.client.get('/cards', {
+            params: { unique: true, limit }
         });
-        return response.entities ?? [];
+        const all = response.entities ?? [];
+        const lc = query.toLowerCase();
+        return all.filter(c => (c.name ?? '').toLowerCase().includes(lc)).slice(0, limit);
     }
 }
 exports.CardsAPI = CardsAPI;

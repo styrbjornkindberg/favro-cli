@@ -424,11 +424,13 @@ export function registerBatchSmartCommand(program: Command): void {
     .requiredOption('--goal <goal>', 'Plain English goal (e.g. "move all overdue cards to Review")')
     .option('--dry-run', 'Preview changes without applying them')
     .option('--yes', 'Skip confirmation prompt')
+    .option('--force', 'Bypass scope check')
     .option('--json', 'Output result as JSON')
     .action(async (board: string, options: {
       goal: string;
       dryRun?: boolean;
       yes?: boolean;
+      force?: boolean;
       json?: boolean;
     }) => {
       const verbose = program.parent?.opts()?.verbose ?? program.opts()?.verbose ?? false;
@@ -447,6 +449,11 @@ export function registerBatchSmartCommand(program: Command): void {
 
         // 3. Fetch cards from board
         const client = await createFavroClient();
+        
+        const { readConfig } = await import('../lib/config');
+        const { checkScope } = await import('../lib/safety');
+        await checkScope(board, client, await readConfig(), options.force);
+        
         const api = new CardsAPI(client);
 
         let allCards: Card[];
@@ -510,16 +517,8 @@ export function registerBatchSmartCommand(program: Command): void {
 
         // 7. Confirmation prompt (unless --yes)
         if (!options.yes) {
-          const readline = await import('readline');
-          const confirmed = await new Promise<boolean>(resolve => {
-            const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-            rl.question(`Apply ${ops.length} change${ops.length === 1 ? '' : 's'}? (y/n) `, answer => {
-              rl.close();
-              resolve(answer.trim().toLowerCase() === 'y' || answer.trim().toLowerCase() === 'yes');
-            });
-          });
-
-          if (!confirmed) {
+          const { confirmAction } = await import('../lib/safety');
+          if (!(await confirmAction(`Apply ${ops.length} change${ops.length === 1 ? '' : 's'}?`))) {
             console.log('Batch update cancelled.');
             process.exit(0);
           }

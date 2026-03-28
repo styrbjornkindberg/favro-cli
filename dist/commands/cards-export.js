@@ -39,9 +39,9 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.applyFilter = applyFilter;
 exports.applyFilters = applyFilters;
 exports.registerCardsExportCommand = registerCardsExportCommand;
+const client_factory_1 = require("../lib/client-factory");
 const path = __importStar(require("path"));
 const cards_api_1 = __importDefault(require("../lib/cards-api"));
-const http_client_1 = __importDefault(require("../lib/http-client"));
 const csv_1 = require("../lib/csv");
 const error_handler_1 = require("../lib/error-handler");
 const boards_api_1 = __importDefault(require("../lib/boards-api"));
@@ -87,10 +87,6 @@ function registerCardsExportCommand(program) {
         const verbose = program.parent?.opts()?.verbose ?? program.opts()?.verbose ?? false;
         // Check FAVRO_API_TOKEN early
         const token = process.env.FAVRO_API_TOKEN;
-        if (!token) {
-            console.error(`Error: ${(0, error_handler_1.missingApiKeyError)()}`);
-            process.exit(1);
-        }
         // Validate format
         const format = (options.format ?? 'json').toLowerCase();
         if (format !== 'json' && format !== 'csv') {
@@ -110,9 +106,7 @@ function registerCardsExportCommand(program) {
         const parsedLimit = parseInt(options.limit ?? '10000', 10);
         const limit = !isNaN(parsedLimit) && parsedLimit >= 1 ? parsedLimit : 10000;
         try {
-            const client = new http_client_1.default({
-                auth: { token },
-            });
+            const client = await (0, client_factory_1.createFavroClient)();
             const api = new cards_api_1.default(client);
             // Fetch cards (pagination handled in CardsAPI)
             const spinner = new progress_1.Spinner('Fetching cards');

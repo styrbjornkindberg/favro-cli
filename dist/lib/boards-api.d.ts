@@ -1,5 +1,5 @@
 import FavroHttpClient from './http-client';
-export type BoardType = 'board' | 'list' | 'kanban';
+export type BoardType = 'board' | 'list' | 'kanban' | 'backlog';
 export interface Board {
     boardId: string;
     name: string;

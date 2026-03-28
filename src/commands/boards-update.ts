@@ -17,6 +17,8 @@ export function registerBoardsUpdateCommand(boardsParent: Command): void {
     .option('--description <text>', 'New board description')
     .option('--json', 'Output updated board as JSON')
     .option('--dry-run', 'Print what would be updated without making API calls')
+    .option('--yes, -y', 'Skip confirmation prompt')
+    .option('--force', 'Bypass scope check')
     .action(async (id: string, options) => {
       const verbose = boardsParent.parent?.opts()?.verbose ?? false;
       try {
@@ -43,6 +45,17 @@ export function registerBoardsUpdateCommand(boardsParent: Command): void {
         }
 
         const client = await createFavroClient();
+        
+        const { readConfig } = await import('../lib/config');
+        const { checkScope, confirmAction } = await import('../lib/safety');
+        
+        await checkScope(id, client, await readConfig(), options.force);
+        
+        if (!(await confirmAction(`Update board ${id}?`, { yes: options.yes }))) {
+          console.log('Aborted.');
+          process.exit(0);
+        }
+
         const api = new BoardsAPI(client);
 
         const board = await api.updateBoard(id, updateData);

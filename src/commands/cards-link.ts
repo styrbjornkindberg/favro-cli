@@ -58,6 +58,8 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
     )
     .requiredOption('--type <type>', `Link type: ${VALID_LINK_TYPES.join('|')}`)
     .option('--json', 'Output link details as JSON')
+    .option('--yes, -y', 'Skip confirmation prompt')
+    .option('--force', 'Bypass scope check')
     .action(async (cardId: string, toCardId: string, options) => {
       const verbose = cardsCmd.parent?.opts()?.verbose ?? cardsCmd.opts()?.verbose ?? false;
       try {
@@ -76,6 +78,17 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
 
         const client = await createFavroClient();
         const api = new CardsAPI(client);
+        
+        const card = await api.getCard(cardId);
+        
+        const { readConfig } = await import('../lib/config');
+        const { checkScope, confirmAction } = await import('../lib/safety');
+        await checkScope(card.boardId ?? '', client, await readConfig(), options.force);
+        
+        if (!(await confirmAction(`Link card ${cardId} to ${toCardId} (${type})?`, { yes: options.yes }))) {
+          console.log('Aborted.');
+          process.exit(0);
+        }
 
         // Circular dependency detection for depends-on
         if (type === 'depends-on') {
@@ -111,12 +124,25 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
       'Examples:\n' +
       '  favro cards unlink CARD-A CARD-B\n'
     )
-    .action(async (cardId: string, fromCardId: string) => {
+    .option('--yes, -y', 'Skip confirmation prompt')
+    .option('--force', 'Bypass scope check')
+    .action(async (cardId: string, fromCardId: string, options) => {
       const verbose = cardsCmd.parent?.opts()?.verbose ?? cardsCmd.opts()?.verbose ?? false;
       try {
 
         const client = await createFavroClient();
         const api = new CardsAPI(client);
+        
+        const card = await api.getCard(cardId);
+        
+        const { readConfig } = await import('../lib/config');
+        const { checkScope, confirmAction } = await import('../lib/safety');
+        await checkScope(card.boardId ?? '', client, await readConfig(), options.force);
+        
+        if (!(await confirmAction(`Unlink card ${cardId} from ${fromCardId}?`, { yes: options.yes }))) {
+          console.log('Aborted.');
+          process.exit(0);
+        }
 
         await api.unlinkCard(cardId, fromCardId);
         console.log(`✓ Unlinked card ${cardId} from ${fromCardId}`);
@@ -145,6 +171,8 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
     .requiredOption('--to-board <boardId>', 'Destination board ID')
     .option('--position <pos>', `Position on board: ${VALID_POSITIONS.join('|')}`)
     .option('--json', 'Output updated card as JSON')
+    .option('--yes, -y', 'Skip confirmation prompt')
+    .option('--force', 'Bypass scope check')
     .action(async (cardId: string, options) => {
       const verbose = cardsCmd.parent?.opts()?.verbose ?? cardsCmd.opts()?.verbose ?? false;
       try {
@@ -156,6 +184,21 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
 
         const client = await createFavroClient();
         const api = new CardsAPI(client);
+        
+        const cardOrigin = await api.getCard(cardId);
+        
+        const { readConfig } = await import('../lib/config');
+        const { checkScope, confirmAction } = await import('../lib/safety');
+        const config = await readConfig();
+        
+        // Check scope of both origin board and destination board
+        await checkScope(cardOrigin.boardId ?? '', client, config, options.force);
+        await checkScope(options.toBoard, client, config, options.force);
+        
+        if (!(await confirmAction(`Move card ${cardId} to board ${options.toBoard}?`, { yes: options.yes }))) {
+          console.log('Aborted.');
+          process.exit(0);
+        }
 
         const card = await api.moveCard(cardId, {
           toBoardId: options.toBoard,

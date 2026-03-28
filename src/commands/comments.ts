@@ -78,6 +78,8 @@ export function registerCommentsCommand(program: Command): void {
     )
     .requiredOption('--text <comment>', 'Comment text to add')
     .option('--json', 'Output as JSON')
+    .option('--dry-run', 'Print what would be added without making API calls')
+    .option('--force', 'Bypass scope check')
     .action(async (cardId: string, options) => {
       const verbose = program.opts()?.verbose ?? false;
       try {
@@ -86,8 +88,21 @@ export function registerCommentsCommand(program: Command): void {
           process.exit(1);
         }
 
+        if (options.dryRun) {
+          console.log(`[dry-run] Would add comment to ${cardId}: "${options.text}"`);
+          return;
+        }
 
         const client = await createFavroClient();
+        
+        const { default: CardsAPI } = await import('../lib/cards-api');
+        const cardsApi = new CardsAPI(client);
+        const card = await cardsApi.getCard(cardId);
+        
+        const { readConfig } = await import('../lib/config');
+        const { checkScope } = await import('../lib/safety');
+        await checkScope(card.boardId ?? '', client, await readConfig(), options.force);
+
         const api = new CommentsApiClient(client);
 
         const comment = await api.addComment(cardId, options.text);

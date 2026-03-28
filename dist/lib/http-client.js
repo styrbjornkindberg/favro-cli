@@ -10,18 +10,36 @@ class FavroHttpClient {
     constructor(config = {}) {
         this.auth = config.auth;
         this.client = axios_1.default.create({
-            baseURL: config.baseURL || 'https://api.favro.com/v1',
+            baseURL: config.baseURL || 'https://favro.com/api/v1',
             timeout: 30000,
             headers: { 'Content-Type': 'application/json' }
         });
         this.client.interceptors.request.use((cfg) => {
-            if (this.auth?.token)
-                cfg.headers['Authorization'] = `Bearer ${this.auth.token}`;
+            if (this.auth?.token) {
+                if (this.auth.email) {
+                    // Favro API requires HTTP Basic Auth: email:apiToken
+                    const credentials = Buffer.from(`${this.auth.email}:${this.auth.token}`).toString('base64');
+                    cfg.headers['Authorization'] = `Basic ${credentials}`;
+                }
+                else {
+                    // Fallback for legacy/testing — Basic auth without email won't work against live API
+                    cfg.headers['Authorization'] = `Bearer ${this.auth.token}`;
+                }
+            }
             if (this.auth?.organizationId)
                 cfg.headers['organizationId'] = this.auth.organizationId;
+            // Forward backend routing header for paginated requests
+            if (this.backendId)
+                cfg.headers['X-Favro-Backend-Identifier'] = this.backendId;
             return cfg;
         });
-        this.client.interceptors.response.use((response) => response, async (error) => {
+        this.client.interceptors.response.use((response) => {
+            // Capture backend routing identifier for pagination
+            const bid = response.headers?.['x-favro-backend-identifier'];
+            if (bid)
+                this.backendId = bid;
+            return response;
+        }, async (error) => {
             const retryCount = error.config?._retryCount ?? 0;
             if (this.shouldRetry(error) && retryCount < 4) {
                 error.config._retryCount = retryCount + 1;
@@ -60,6 +78,9 @@ class FavroHttpClient {
     }
     async patch(url, data, config) {
         return (await this.client.patch(url, data, config)).data;
+    }
+    async put(url, data, config) {
+        return (await this.client.put(url, data, config)).data;
     }
     async delete(url, config) {
         return (await this.client.delete(url, config)).data;

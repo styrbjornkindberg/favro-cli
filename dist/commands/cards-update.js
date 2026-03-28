@@ -39,9 +39,9 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.BATCH_LIMIT = void 0;
 exports.confirmPrompt = confirmPrompt;
 exports.registerCardsUpdateCommand = registerCardsUpdateCommand;
+const client_factory_1 = require("../lib/client-factory");
 const readline = __importStar(require("readline"));
 const cards_api_1 = __importDefault(require("../lib/cards-api"));
-const http_client_1 = __importDefault(require("../lib/http-client"));
 const error_handler_1 = require("../lib/error-handler");
 const query_parser_1 = require("../lib/query-parser");
 /**
@@ -90,13 +90,7 @@ function registerCardsUpdateCommand(program) {
                 }
             }
             const token = process.env.FAVRO_API_TOKEN;
-            if (!token) {
-                console.error(`Error: ${(0, error_handler_1.missingApiKeyError)()}`);
-                process.exit(1);
-            }
-            const client = new http_client_1.default({
-                auth: { token },
-            });
+            const client = await (0, client_factory_1.createFavroClient)();
             const api = new cards_api_1.default(client);
             const updateData = {};
             if (options.name)

@@ -3,6 +3,19 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.BoardsAPI = void 0;
 exports.aggregateBoardStats = aggregateBoardStats;
 exports.calculateVelocity = calculateVelocity;
+/** Normalize a raw Favro widget object into the CLI Board interface */
+function normalizeWidget(w) {
+    return {
+        boardId: w.widgetCommonId,
+        name: w.name,
+        type: w.type,
+        collectionId: (w.collectionIds ?? [])[0],
+        // columns is count of columns for display; raw response gives column objects
+        columns: Array.isArray(w.columns) ? w.columns.length : undefined,
+        createdAt: w.createdAt ?? '',
+        updatedAt: w.updatedAt ?? '',
+    };
+}
 /**
  * Aggregate board stats from board data.
  * If raw card data is provided, compute from cards; otherwise use board metadata.
@@ -74,8 +87,8 @@ class BoardsAPI {
                 params.requestId = requestId;
                 params.page = page;
             }
-            const response = await this.client.get('/boards', { params });
-            const boards = response.entities || [];
+            const response = await this.client.get('/widgets', { params });
+            const boards = (response.entities || []).map(normalizeWidget);
             allBoards.push(...boards);
             requestId = response.requestId;
             if (!requestId || !response.pages || page >= response.pages || boards.length === 0)
@@ -85,7 +98,8 @@ class BoardsAPI {
         return allBoards;
     }
     async getBoard(boardId) {
-        return this.client.get(`/boards/${boardId}`);
+        const raw = await this.client.get(`/widgets/${boardId}`);
+        return normalizeWidget(raw);
     }
     /**
      * Get a board with optional extended data.
@@ -96,11 +110,11 @@ class BoardsAPI {
         if (include && include.length > 0) {
             params.include = include.join(',');
         }
-        const board = await this.client.get(`/boards/${boardId}`, { params });
+        const raw = await this.client.get(`/widgets/${boardId}`, { params });
+        const board = { ...normalizeWidget(raw) };
         // Stats and velocity are computed client-side if requested
         if (include?.includes('stats') || include?.includes('velocity')) {
             let cards;
-            // If cards were included in the response, use them
             if (Array.isArray(board.cards)) {
                 cards = board.cards;
             }
@@ -130,8 +144,8 @@ class BoardsAPI {
                 p.requestId = requestId;
                 p.page = page;
             }
-            const response = await this.client.get('/boards', { params: p });
-            const boards = response.entities || [];
+            const response = await this.client.get('/widgets', { params: p });
+            const boards = (response.entities || []).map(normalizeWidget);
             // Augment each board with stats/velocity if requested
             for (const board of boards) {
                 if (include?.includes('stats')) {
@@ -153,16 +167,20 @@ class BoardsAPI {
      * Create a board in a collection with optional type.
      */
     async createBoardInCollection(collectionId, data) {
-        return this.client.post('/boards', { ...data, collectionId });
+        const raw = await this.client.post('/widgets', { ...data, collectionId });
+        return normalizeWidget(raw);
     }
     async createBoard(data) {
-        return this.client.post('/boards', data);
+        const raw = await this.client.post('/widgets', data);
+        return normalizeWidget(raw);
     }
     async updateBoard(boardId, data) {
-        return this.client.patch(`/boards/${boardId}`, data);
+        // Favro uses PUT for widget updates (not PATCH)
+        const raw = await this.client.put(`/widgets/${boardId}`, data);
+        return normalizeWidget(raw);
     }
     async deleteBoard(boardId) {
-        await this.client.delete(`/boards/${boardId}`);
+        await this.client.delete(`/widgets/${boardId}`);
     }
     async listCollections(pageSize = 50) {
         const allCollections = [];

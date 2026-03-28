@@ -64,9 +64,14 @@ export function registerWebhooksCommand(program: Command): void {
     )
     .requiredOption('--event <event>', `Event type (${VALID_WEBHOOK_EVENTS.join('|')})`)
     .requiredOption('--target <url>', 'Target URL for webhook delivery (HTTP or HTTPS)')
+    .option('--dry-run', 'Print what would be created without making API calls')
     .action(async (options) => {
       const verbose = program.opts()?.verbose ?? false;
       try {
+        if (options.dryRun) {
+          console.log(`[dry-run] Would create webhook: event=${options.event}, target=${options.target}`);
+          return;
+        }
         const client = await createFavroClient();
         const api = new FavroWebhooksAPI(client);
 
@@ -89,9 +94,16 @@ export function registerWebhooksCommand(program: Command): void {
       '  favro webhooks delete <webhook-id>\n\n' +
       'Tip: Use `favro webhooks list` to find webhook IDs.'
     )
-    .action(async (webhookId: string) => {
+    .option('--yes, -y', 'Skip confirmation prompt')
+    .action(async (webhookId: string, options) => {
       const verbose = program.opts()?.verbose ?? false;
       try {
+        const { confirmAction } = await import('../lib/safety');
+        if (!(await confirmAction(`Delete webhook ${webhookId}?`, { yes: options.yes }))) {
+          console.log('Aborted.');
+          process.exit(0);
+        }
+        
         const client = await createFavroClient();
         const api = new FavroWebhooksAPI(client);
 
