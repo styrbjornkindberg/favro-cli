@@ -188,19 +188,35 @@ describe('Cards API', () => {
   // --- linkCard ---
 
   test('linkCard posts to /cards/:id/links', async () => {
-    const link = { linkId: 'lnk-1', type: 'depends', cardId: 'card-2' };
+    const link = { linkId: 'lnk-1', type: 'depends-on', cardId: 'card-2' };
     mockClient.post.mockResolvedValue(link);
-    const result = await api.linkCard('card-1', { toCardId: 'card-2', type: 'depends' });
+    const result = await api.linkCard('card-1', { toCardId: 'card-2', type: 'depends-on' });
     expect(result.linkId).toBe('lnk-1');
     expect(mockClient.post).toHaveBeenCalledWith('/cards/card-1/links', {
       toCardId: 'card-2',
-      type: 'depends',
+      type: 'depends-on',
     });
   });
 
   test('linkCard propagates errors', async () => {
     mockClient.post.mockRejectedValue(new Error('Card not found'));
-    await expect(api.linkCard('bad-id', { toCardId: 'other', type: 'relates' })).rejects.toThrow('Card not found');
+    await expect(api.linkCard('bad-id', { toCardId: 'other', type: 'related' })).rejects.toThrow('Card not found');
+  });
+
+  // --- getCardLinks ---
+
+  test('getCardLinks fetches /cards/:id/links', async () => {
+    const links = [{ linkId: 'lnk-1', type: 'depends-on', cardId: 'card-2' }];
+    mockClient.get.mockResolvedValue({ entities: links });
+    const result = await api.getCardLinks('card-1');
+    expect(result).toEqual(links);
+    expect(mockClient.get).toHaveBeenCalledWith('/cards/card-1/links');
+  });
+
+  test('getCardLinks returns empty array when entities missing', async () => {
+    mockClient.get.mockResolvedValue({});
+    const result = await api.getCardLinks('card-1');
+    expect(result).toEqual([]);
   });
 
   // --- unlinkCard ---

@@ -9,7 +9,7 @@ export interface CustomField {
 
 export interface CardLink {
   linkId: string;
-  type: 'depends' | 'blocks' | 'duplicates' | 'relates';
+  type: 'depends-on' | 'blocks' | 'related' | 'duplicates';
   cardId: string;
   cardName?: string;
 }
@@ -22,7 +22,7 @@ export interface CardComment {
 }
 
 export interface CardRelation {
-  type: 'depends' | 'blocks' | 'duplicates' | 'relates';
+  type: 'depends-on' | 'blocks' | 'related' | 'duplicates';
   cardId: string;
 }
 
@@ -86,7 +86,7 @@ export interface GetCardOptions {
 
 export interface LinkCardRequest {
   toCardId: string;
-  type: 'depends' | 'blocks' | 'duplicates' | 'relates';
+  type: 'depends-on' | 'blocks' | 'related' | 'duplicates';
 }
 
 export interface MoveCardRequest {
@@ -197,6 +197,14 @@ export class CardsAPI {
       } catch { /* best effort */ }
     }
     return card;
+  }
+
+  /**
+   * Get all links for a card.
+   */
+  async getCardLinks(cardId: string): Promise<CardLink[]> {
+    const res = await this.client.get<{ entities: CardLink[] }>(`/cards/${cardId}/links`);
+    return res.entities ?? [];
   }
 
   /**
