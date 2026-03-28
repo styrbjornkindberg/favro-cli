@@ -5,9 +5,8 @@
  */
 import { Command } from 'commander';
 import BoardsAPI, { Board, Collection, ExtendedBoard, aggregateBoardStats, calculateVelocity } from '../lib/boards-api';
-import FavroHttpClient from '../lib/http-client';
-import { resolveApiKey } from '../lib/config';
-import { logError, missingApiKeyError } from '../lib/error-handler';
+import { createFavroClient } from '../lib/client-factory';
+import { logError } from '../lib/error-handler';
 
 export function formatBoardsTable(boards: Board[]): void {
   if (boards.length === 0) {
@@ -58,8 +57,21 @@ export function formatBoardsExtendedTable(boards: ExtendedBoard[]): void {
  * Warns if multiple collections match.
  * Returns empty array if no match found.
  */
-export function filterBoardsByCollection(boards: Board[], collections: Collection[], collectionName: string): Board[] {
-  const lc = collectionName.trim().toLowerCase();
+export function filterBoardsByCollection(boards: Board[], collections: Collection[], collectionNameOrId: string): Board[] {
+  const trimmed = collectionNameOrId.trim();
+  const lc = trimmed.toLowerCase();
+
+  // If the arg looks like a collection ID (24-char hex), try exact ID match first
+  if (/^[0-9a-f]{24}$/i.test(trimmed)) {
+    const idMatch = collections.find(c => c.collectionId === trimmed);
+    if (idMatch) {
+      return boards.filter(b => b.collectionId === idMatch.collectionId);
+    }
+    // Also filter boards directly by collectionId even if collection is not listed
+    const direct = boards.filter(b => b.collectionId === trimmed);
+    if (direct.length > 0) return direct;
+  }
+
   const matches = collections.filter(c => (c.name ?? '').toLowerCase().includes(lc));
 
   if (matches.length === 0) {
@@ -67,7 +79,7 @@ export function filterBoardsByCollection(boards: Board[], collections: Collectio
   }
 
   if (matches.length > 1) {
-    console.warn(`⚠️ Multiple collections match "${collectionName}": ${matches.map(c => c.name).join(', ')}`);
+    console.warn(`⚠️ Multiple collections match "${collectionNameOrId}": ${matches.map(c => c.name).join(', ')}`);
     console.log(`Using first match: "${matches[0].name}"\n`);
   }
 
@@ -91,11 +103,6 @@ export function registerBoardsListCommand(boardsParent: Command): void {
       // Resolve --verbose from the root program (parent of parent)
       const verbose = boardsParent.parent?.opts()?.verbose ?? false;
       try {
-        const token = await resolveApiKey();
-        if (!token) {
-          console.error(`Error: ${missingApiKeyError()}`);
-          process.exit(1);
-        }
 
         const include = options.include
           ? options.include.split(',').map((s: string) => s.trim()).filter(Boolean)
@@ -109,7 +116,7 @@ export function registerBoardsListCommand(boardsParent: Command): void {
           }
         }
 
-        const client = new FavroHttpClient({ auth: { token } });
+        const client = await createFavroClient();
         const api = new BoardsAPI(client);
 
         let boards: ExtendedBoard[];

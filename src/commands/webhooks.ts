@@ -8,9 +8,8 @@
  *   favro webhooks delete <webhook-id>
  */
 import { Command } from 'commander';
-import FavroHttpClient from '../lib/http-client';
-import { resolveApiKey } from '../lib/config';
-import { logError, missingApiKeyError } from '../lib/error-handler';
+import { createFavroClient } from '../lib/client-factory';
+import { logError } from '../lib/error-handler';
 import { FavroWebhooksAPI, VALID_WEBHOOK_EVENTS } from '../api/webhooks';
 
 export function registerWebhooksCommand(program: Command): void {
@@ -26,13 +25,7 @@ export function registerWebhooksCommand(program: Command): void {
     .action(async (options) => {
       const verbose = program.opts()?.verbose ?? false;
       try {
-        const token = await resolveApiKey();
-        if (!token) {
-          console.error(`Error: ${missingApiKeyError()}`);
-          process.exit(1);
-        }
-
-        const client = new FavroHttpClient({ auth: { token } });
+        const client = await createFavroClient();
         const api = new FavroWebhooksAPI(client);
 
         const webhooks = await api.list();
@@ -74,13 +67,7 @@ export function registerWebhooksCommand(program: Command): void {
     .action(async (options) => {
       const verbose = program.opts()?.verbose ?? false;
       try {
-        const token = await resolveApiKey();
-        if (!token) {
-          console.error(`Error: ${missingApiKeyError()}`);
-          process.exit(1);
-        }
-
-        const client = new FavroHttpClient({ auth: { token } });
+        const client = await createFavroClient();
         const api = new FavroWebhooksAPI(client);
 
         const webhook = await api.create(options.event, options.target);
@@ -105,13 +92,7 @@ export function registerWebhooksCommand(program: Command): void {
     .action(async (webhookId: string) => {
       const verbose = program.opts()?.verbose ?? false;
       try {
-        const token = await resolveApiKey();
-        if (!token) {
-          console.error(`Error: ${missingApiKeyError()}`);
-          process.exit(1);
-        }
-
-        const client = new FavroHttpClient({ auth: { token } });
+        const client = await createFavroClient();
         const api = new FavroWebhooksAPI(client);
 
         await api.delete(webhookId);

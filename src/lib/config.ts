@@ -11,6 +11,10 @@ import * as os from 'os';
 
 export interface FavroConfig {
   apiKey?: string;
+  /** Email address used for Basic Auth */
+  email?: string;
+  /** Favro organization ID — sent as `organizationId` header on all org-level requests */
+  organizationId?: string;
   defaultBoard?: string;
   defaultCollection?: string;
   outputFormat?: 'table' | 'json' | 'csv';
@@ -78,6 +82,27 @@ export async function resolveApiKey(flagApiKey?: string): Promise<string | undef
   if (config.apiKey) return config.apiKey;
   if (process.env.FAVRO_API_TOKEN) return process.env.FAVRO_API_TOKEN;
   return undefined;
+}
+
+/**
+ * Resolve full auth credentials needed for the Favro API:
+ *   - token (API key)
+ *   - email (for Basic Auth)
+ *   - organizationId (sent as header on all org-level requests)
+ *
+ * Priority order for each field:
+ *   flag override > FAVRO_* env var > ~/.favro/config.json
+ */
+export async function resolveAuth(flags?: {
+  apiKey?: string;
+  email?: string;
+  organizationId?: string;
+}): Promise<{ token: string | undefined; email: string | undefined; organizationId: string | undefined }> {
+  const token = await resolveApiKey(flags?.apiKey);
+  const config = await readConfig();
+  const email = flags?.email ?? process.env.FAVRO_EMAIL ?? config.email;
+  const organizationId = flags?.organizationId ?? process.env.FAVRO_ORGANIZATION_ID ?? config.organizationId;
+  return { token, email, organizationId };
 }
 
 /**

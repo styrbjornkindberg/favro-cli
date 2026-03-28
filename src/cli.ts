@@ -19,7 +19,6 @@
 import { Command } from 'commander';
 import * as path from 'path';
 import CardsAPI, { UpdateCardRequest } from './lib/cards-api';
-import FavroHttpClient from './lib/http-client';
 import { writeCardsCSV, writeCardsJSON, normalizeCard, cardsToCSV } from './lib/csv';
 import { applyFilters, ExportFormat } from './commands/cards-export';
 import { Card } from './lib/cards-api';
@@ -51,9 +50,9 @@ import { registerExecuteCommand } from './commands/execute';
 import { registerQueryCommand } from './commands/query';
 import { registerStandupCommand } from './commands/standup';
 import { registerSprintPlanCommand } from './commands/sprint-plan';
-import { logError, missingApiKeyError } from './lib/error-handler';
+import { logError } from './lib/error-handler';
 import { ProgressBar } from './lib/progress';
-import { resolveApiKey } from './lib/config';
+import { createFavroClient } from './lib/client-factory';
 
 /**
  * Build the CLI program (exported for testing).
@@ -169,13 +168,8 @@ cards
   .option('--limit <number>', 'Maximum number of cards (default 25, max 100)', '25')
   .option('--json', 'Output as JSON')
   .action(async (boardId: string | undefined, options) => {
-    const token = await resolveApiKey();
-    if (!token) {
-      console.error(`Error: ${missingApiKeyError()}`);
-      process.exit(1);
-    }
     try {
-      const client = new FavroHttpClient({ auth: { token } });
+      const client = await createFavroClient();
       const api = new CardsAPI(client);
 
       // Support positional boardId or --board option
@@ -272,11 +266,6 @@ cards
   .option('--dry-run', 'Print what would be created without making API calls')
   .option('--json', 'Output as JSON')
   .action(async (title: string | undefined, options) => {
-    const token = await resolveApiKey();
-    if (!token) {
-      console.error(`Error: ${missingApiKeyError()}`);
-      process.exit(1);
-    }
     if (!title && !options.csv && !options.bulk) {
       console.error('Error: provide a title or use --csv/--bulk for bulk import');
       process.exit(1);
@@ -305,7 +294,7 @@ cards
           return;
         }
 
-        const client = new FavroHttpClient({ auth: { token } });
+        const client = await createFavroClient();
         const api = new CardsAPI(client);
         const progress = new ProgressBar('Creating cards', cards.length);
         progress.update(0);
@@ -324,7 +313,7 @@ cards
           console.log(`[dry-run] Would create ${count} cards from bulk JSON`);
           return;
         }
-        const client = new FavroHttpClient({ auth: { token } });
+        const client = await createFavroClient();
         const api = new CardsAPI(client);
         const total = Array.isArray(data) ? data.length : 1;
         const progress = new ProgressBar('Creating cards', total);
@@ -342,7 +331,7 @@ cards
         return;
       }
 
-      const client = new FavroHttpClient({ auth: { token } });
+      const client = await createFavroClient();
       const api = new CardsAPI(client);
       const card = await api.createCard({
         name: title ?? '',
@@ -391,11 +380,10 @@ cards
   .option('--json', 'Output as JSON')
   .option('--verbose', 'Show per-card progress')
   .action(async (cardId: string | undefined, options) => {
-    const token = await resolveApiKey();
-    if (!token) {
-      console.error(`Error: ${missingApiKeyError()}`);
-      process.exit(1);
-    }
+    // Resolve client once — shared across all 3 update code paths
+    let client: import('./lib/http-client').default;
+    try { client = await createFavroClient(); }
+    catch (err: any) { logError(err, program.opts().verbose); process.exit(1); return; }
 
     // ── CSV batch update ──────────────────────────────────────────────────────
     if (options.fromCsv) {
@@ -451,7 +439,6 @@ cards
           return;
         }
 
-        const client = new FavroHttpClient({ auth: { token } });
         const api = new CardsAPI(client);
 
         // Build operations; fetch previousState for atomic rollback
@@ -510,6 +497,7 @@ cards
         process.exit(1);
       }
       return;
+    // (end of fromCsv path)
     }
 
     // ── Batch move/assign with board filter ───────────────────────────────────
@@ -522,8 +510,7 @@ cards
           formatBulkSummary,
         } = await import('./lib/bulk');
 
-        const client = new FavroHttpClient({ auth: { token } });
-        const api = new CardsAPI(client);
+        const api = new CardsAPI(client!);
 
         let allCards: Card[];
         try {
@@ -650,8 +637,8 @@ cards
         return;
       }
 
-      const client = new FavroHttpClient({ auth: { token } });
-      const api = new CardsAPI(client);
+      const client = await createFavroClient();
+      const api = new CardsAPI(client!);
       const card = await api.updateCard(cardId, updateData);
       console.log(`✓ Card updated: ${card.cardId}`);
       if (options.json) console.log(JSON.stringify(card));
@@ -688,12 +675,6 @@ cards
   )
   .option('--limit <number>', 'Maximum cards to fetch', '10000')
   .action(async (board: string, options) => {
-    const token = await resolveApiKey();
-    if (!token) {
-      console.error(`Error: ${missingApiKeyError()}`);
-      process.exit(1);
-    }
-
     const format = (options.format ?? 'json').toLowerCase() as ExportFormat;
     if (format !== 'json' && format !== 'csv') {
       console.error(`Error: Invalid format "${options.format}". Use --format json or --format csv`);
@@ -713,7 +694,7 @@ cards
     const limit = !isNaN(parsedLimit) && parsedLimit >= 1 ? parsedLimit : 10000;
 
     try {
-      const client = new FavroHttpClient({ auth: { token } });
+      const client = await createFavroClient();
       const api = new CardsAPI(client);
 
       const spinner = new (await import('./lib/progress')).Spinner('Fetching cards');
@@ -725,11 +706,11 @@ cards
       if (filters.length > 0) {
         const before = cardList.length;
         cardList = applyFilters(cardList, filters);
-        console.error(`ℹ Filters applied: ${before} → ${cardList.length} card(s)`);
+        console.error(`\u2139 Filters applied: ${before} \u2192 ${cardList.length} card(s)`);
       }
 
       if (cardList.length === 0) {
-        console.error('⚠ No cards to export (0 results after filtering).');
+        console.error('\u26a0 No cards to export (0 results after filtering).');
         process.exit(0);
       }
 
@@ -750,7 +731,7 @@ cards
         } else {
           process.stdout.write(JSON.stringify(normalized, null, 2) + '\n');
         }
-        console.error(`ℹ Exported ${cardList.length} card(s) to stdout (${format.toUpperCase()})`);
+        console.error(`\u2139 Exported ${cardList.length} card(s) to stdout (${format.toUpperCase()})`);
       }
     } catch (error) {
       logError(error, program.opts().verbose);

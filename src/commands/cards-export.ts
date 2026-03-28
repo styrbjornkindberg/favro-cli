@@ -9,9 +9,9 @@
  *   favro cards export <board> --format csv --filter "status:done OR status:in-progress" --out done.csv
  */
 import { Command } from 'commander';
+import { createFavroClient } from '../lib/client-factory';
 import * as path from 'path';
 import CardsAPI, { Card } from '../lib/cards-api';
-import FavroHttpClient from '../lib/http-client';
 import { writeCardsCSV, writeCardsJSON } from '../lib/csv';
 import { logError, missingApiKeyError, suggestBoard } from '../lib/error-handler';
 import BoardsAPI from '../lib/boards-api';
@@ -66,10 +66,6 @@ export function registerCardsExportCommand(program: Command): void {
       const verbose = program.parent?.opts()?.verbose ?? program.opts()?.verbose ?? false;
       // Check FAVRO_API_TOKEN early
       const token = process.env.FAVRO_API_TOKEN;
-      if (!token) {
-        console.error(`Error: ${missingApiKeyError()}`);
-        process.exit(1);
-      }
 
       // Validate format
       const format = (options.format ?? 'json').toLowerCase() as ExportFormat;
@@ -93,9 +89,7 @@ export function registerCardsExportCommand(program: Command): void {
       const limit = !isNaN(parsedLimit) && parsedLimit >= 1 ? parsedLimit : 10000;
 
       try {
-        const client = new FavroHttpClient({
-          auth: { token },
-        });
+        const client = await createFavroClient();
         const api = new CardsAPI(client);
 
         // Fetch cards (pagination handled in CardsAPI)

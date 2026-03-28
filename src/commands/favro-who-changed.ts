@@ -6,10 +6,9 @@
  * Shows timestamps in both relative and absolute (ISO 8601) format.
  */
 import { Command } from 'commander';
-import FavroHttpClient from '../lib/http-client';
 import AuditAPI, { formatTimestamp } from '../lib/audit-api';
-import { logError, missingApiKeyError } from '../lib/error-handler';
-import { resolveApiKey } from '../lib/config';
+import { logError } from '../lib/error-handler';
+import { createFavroClient } from '../lib/client-factory';
 
 export function registerWhoChangedCommand(program: Command): void {
   program
@@ -29,16 +28,11 @@ export function registerWhoChangedCommand(program: Command): void {
     .action(async (cardTitle: string, options) => {
       const verbose = program.parent?.opts()?.verbose ?? program.opts()?.verbose ?? false;
       try {
-        const token = await resolveApiKey();
-        if (!token) {
-          console.error(`Error: ${missingApiKeyError()}`);
-          process.exit(1);
-        }
 
         const limitRaw = parseInt(options.limit, 10);
         const limit = isNaN(limitRaw) || limitRaw < 1 ? 200 : limitRaw;
 
-        const client = new FavroHttpClient({ auth: { token } });
+        const client = await createFavroClient();
         const api = new AuditAPI(client);
 
         const results = await api.getCardHistory(cardTitle, options.board, limit);

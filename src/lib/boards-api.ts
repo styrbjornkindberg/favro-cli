@@ -1,6 +1,35 @@
 import FavroHttpClient from './http-client';
 
-export type BoardType = 'board' | 'list' | 'kanban';
+export type BoardType = 'board' | 'list' | 'kanban' | 'backlog';
+
+// Raw widget object from the Favro API
+interface RawWidget {
+  widgetCommonId: string;
+  organizationId?: string;
+  collectionIds?: string[];
+  name: string;
+  type?: string;
+  color?: string;
+  archived?: boolean;
+  lanes?: Array<{ laneId: string; name: string }>;
+  columns?: Array<{ columnId: string; name: string; color?: string }>;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+/** Normalize a raw Favro widget object into the CLI Board interface */
+function normalizeWidget(w: RawWidget): Board {
+  return {
+    boardId: w.widgetCommonId,
+    name: w.name,
+    type: w.type as BoardType | undefined,
+    collectionId: (w.collectionIds ?? [])[0],
+    // columns is count of columns for display; raw response gives column objects
+    columns: Array.isArray(w.columns) ? w.columns.length : undefined,
+    createdAt: w.createdAt ?? '',
+    updatedAt: w.updatedAt ?? '',
+  };
+}
 
 export interface Board {
   boardId: string;
@@ -155,8 +184,8 @@ export class BoardsAPI {
         params.page = page;
       }
 
-      const response = await this.client.get<PaginatedResponse<Board>>('/boards', { params });
-      const boards = response.entities || [];
+      const response = await this.client.get<PaginatedResponse<RawWidget>>('/widgets', { params });
+      const boards = (response.entities || []).map(normalizeWidget);
       allBoards.push(...boards);
 
       requestId = response.requestId;
@@ -168,7 +197,8 @@ export class BoardsAPI {
   }
 
   async getBoard(boardId: string): Promise<Board> {
-    return this.client.get<Board>(`/boards/${boardId}`);
+    const raw = await this.client.get<RawWidget>(`/widgets/${boardId}`);
+    return normalizeWidget(raw);
   }
 
   /**
@@ -180,14 +210,14 @@ export class BoardsAPI {
     if (include && include.length > 0) {
       params.include = include.join(',');
     }
-    const board = await this.client.get<ExtendedBoard>(`/boards/${boardId}`, { params });
+    const raw = await this.client.get<RawWidget>(`/widgets/${boardId}`, { params });
+    const board: ExtendedBoard = { ...normalizeWidget(raw) };
 
     // Stats and velocity are computed client-side if requested
     if (include?.includes('stats') || include?.includes('velocity')) {
       let cards: Array<{ status?: string; dueDate?: string; updatedAt?: string }> | undefined;
-      // If cards were included in the response, use them
-      if (Array.isArray(board.cards)) {
-        cards = board.cards;
+      if (Array.isArray((board as any).cards)) {
+        cards = (board as any).cards;
       }
       if (include?.includes('stats')) {
         board.stats = aggregateBoardStats(board, cards);
@@ -220,8 +250,8 @@ export class BoardsAPI {
         p.page = page;
       }
 
-      const response = await this.client.get<PaginatedResponse<ExtendedBoard>>('/boards', { params: p });
-      const boards = response.entities || [];
+      const response = await this.client.get<PaginatedResponse<RawWidget>>('/widgets', { params: p });
+      const boards = (response.entities || []).map(normalizeWidget) as ExtendedBoard[];
 
       // Augment each board with stats/velocity if requested
       for (const board of boards) {
@@ -249,19 +279,22 @@ export class BoardsAPI {
     collectionId: string,
     data: { name: string; type?: BoardType; description?: string }
   ): Promise<Board> {
-    return this.client.post<Board>('/boards', { ...data, collectionId });
+    const raw = await this.client.post<RawWidget>('/widgets', { ...data, collectionId });
+    return normalizeWidget(raw);
   }
 
   async createBoard(data: { name: string; description?: string; collectionId?: string }): Promise<Board> {
-    return this.client.post<Board>('/boards', data);
+    const raw = await this.client.post<RawWidget>('/widgets', data);
+    return normalizeWidget(raw);
   }
 
   async updateBoard(boardId: string, data: { name?: string; description?: string }): Promise<Board> {
-    return this.client.patch<Board>(`/boards/${boardId}`, data);
+    const raw = await this.client.patch<RawWidget>(`/widgets/${boardId}`, data);
+    return normalizeWidget(raw);
   }
 
   async deleteBoard(boardId: string): Promise<void> {
-    await this.client.delete(`/boards/${boardId}`);
+    await this.client.delete(`/widgets/${boardId}`);
   }
 
   async listCollections(pageSize: number = 50): Promise<Collection[]> {

@@ -6,9 +6,8 @@
  */
 import { Command } from 'commander';
 import BoardsAPI, { ExtendedBoard } from '../lib/boards-api';
-import FavroHttpClient from '../lib/http-client';
-import { resolveApiKey } from '../lib/config';
-import { logError, missingApiKeyError } from '../lib/error-handler';
+import { createFavroClient } from '../lib/client-factory';
+import { logError } from '../lib/error-handler';
 
 const VALID_INCLUDES = ['custom-fields', 'cards', 'members', 'stats', 'velocity'];
 
@@ -85,11 +84,6 @@ export function registerBoardsGetCommand(boardsParent: Command): void {
     .action(async (id: string, options) => {
       const verbose = boardsParent.parent?.opts()?.verbose ?? false;
       try {
-        const token = await resolveApiKey();
-        if (!token) {
-          console.error(`Error: ${missingApiKeyError()}`);
-          process.exit(1);
-        }
 
         const include = options.include
           ? options.include.split(',').map((s: string) => s.trim()).filter(Boolean)
@@ -104,7 +98,7 @@ export function registerBoardsGetCommand(boardsParent: Command): void {
           }
         }
 
-        const client = new FavroHttpClient({ auth: { token } });
+        const client = await createFavroClient();
         const api = new BoardsAPI(client);
 
         const board = await api.getBoardWithIncludes(id, include);

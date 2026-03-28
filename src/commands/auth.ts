@@ -9,9 +9,10 @@
  *   favro auth verify  — validates API key against Favro API (spec-compliant name)
  */
 import { Command } from 'commander';
+import FavroHttpClient from '../lib/http-client';
 import * as readline from 'readline';
 import { readConfig, writeConfig, CONFIG_FILE, resolveApiKey } from '../lib/config';
-import FavroHttpClient from '../lib/http-client';
+
 import { logError } from '../lib/error-handler';
 
 /**
@@ -53,9 +54,9 @@ export async function promptInput(question: string, masked: boolean = false): Pr
  * Returns true if valid, false if unauthorized.
  * Throws for unexpected errors.
  */
-export async function validateApiKey(apiKey: string): Promise<boolean> {
+export async function validateApiKey(apiKey: string, email: string): Promise<boolean> {
   try {
-    const client = new FavroHttpClient({ auth: { token: apiKey } });
+    const client = new FavroHttpClient({ auth: { token: apiKey, email } });
     await client.get('/organizations');
     return true;
   } catch (err: any) {
@@ -74,9 +75,11 @@ export async function validateApiKey(apiKey: string): Promise<boolean> {
  */
 async function runVerify(options: { apiKey?: string }, verbose = false): Promise<void> {
   let apiKey: string | undefined;
+  let email: string | undefined;
   try {
-    // Fix (Issue 3): use resolveApiKey() for consistent priority, including FAVRO_API_TOKEN legacy fallback
-    apiKey = await resolveApiKey(options.apiKey);
+    const auth = await (await import('../lib/config')).resolveAuth({ apiKey: options.apiKey });
+    apiKey = auth.token;
+    email = auth.email;
   } catch (err: any) {
     logError(err, verbose);
     process.exit(1);
@@ -87,9 +90,14 @@ async function runVerify(options: { apiKey?: string }, verbose = false): Promise
     process.exit(1);
   }
 
+  if (!email) {
+    console.error('Error: Email not configured. Run `favro auth login` first');
+    process.exit(1);
+  }
+
   console.log('Checking API key...');
   try {
-    const valid = await validateApiKey(apiKey);
+    const valid = await validateApiKey(apiKey, email);
     if (valid) {
       console.log('✓ API key is valid');
     } else {
@@ -109,29 +117,95 @@ export function registerAuthCommand(program: Command): void {
   // ─── auth login ─────────────────────────────────────────────────────────────
   auth
     .command('login')
-    .description('Set up your Favro API key')
+    .description('Set up your Favro credentials (email + API key)')
     .option('--api-key <key>', 'API key to save (skip interactive prompt)')
+    .option('--email <email>', 'Email address to save (skip interactive prompt)')
     .action(async (options) => {
       const verbose = program.parent?.opts()?.verbose ?? program.opts()?.verbose ?? false;
       let apiKey = options.apiKey as string | undefined;
+      let email = options.email as string | undefined;
 
-      if (!apiKey) {
-        console.log('Enter your Favro API key.');
-        // Fix (Issue 7): corrected URL
-        console.log('You can generate one at: https://favro.com/ → Organization Settings → API tokens\n');
-        apiKey = await promptInput('API key: ', true);
+      console.log('Favro CLI — Authentication Setup');
+      console.log('─'.repeat(40));
+
+      if (!email) {
+        console.log('Enter the email address associated with your Favro account.');
+        email = await promptInput('Email: ', false);
+      }
+      if (!email || email.length === 0) {
+        console.error('✗ No email provided.');
+        process.exit(1);
       }
 
+      if (!apiKey) {
+        console.log('\nEnter your Favro API token.');
+        console.log('Generate one at: https://favro.com/ → Profile → API tokens\n');
+        apiKey = await promptInput('API token: ', true);
+      }
       if (!apiKey || apiKey.length === 0) {
         console.error('✗ No API key provided.');
         process.exit(1);
       }
 
+      // Validate credentials before saving
+      process.stdout.write('\nValidating credentials...');
+      try {
+        const valid = await validateApiKey(apiKey, email);
+        if (!valid) {
+          process.stdout.write(' ✗\n');
+          console.error('✗ Invalid credentials. Check your email and API token and try again.');
+          process.exit(1);
+        }
+        process.stdout.write(' ✓\n');
+      } catch (err: any) {
+        process.stdout.write(' ✗\n');
+        logError(err, verbose);
+        process.exit(1);
+      }
+
+      // Auto-discover organization ID
+      let organizationId: string | undefined;
+      try {
+        process.stdout.write('Fetching organization...');
+        const client = new FavroHttpClient({ auth: { token: apiKey, email } });
+        const response = await client.get<{ entities: Array<{ organizationId: string; name: string }> }>('/organizations');
+        const orgs = response.entities ?? [];
+
+        if (orgs.length === 0) {
+          process.stdout.write(' ⚠\n');
+          console.warn('⚠  No organizations found for this account. You can set FAVRO_ORGANIZATION_ID manually.');
+        } else if (orgs.length === 1) {
+          organizationId = orgs[0].organizationId;
+          process.stdout.write(` ✓ (${orgs[0].name})\n`);
+        } else {
+          process.stdout.write('\n');
+          console.log('\nMultiple organizations found:');
+          orgs.forEach((org: { organizationId: string; name: string }, i: number) => console.log(`  ${i + 1}. ${org.name} (${org.organizationId})`));
+          const pick = await promptInput(`\nSelect organization [1-${orgs.length}]: `, false);
+          const idx = parseInt(pick, 10) - 1;
+          if (idx >= 0 && idx < orgs.length) {
+            organizationId = orgs[idx].organizationId;
+            console.log(`✓ Using: ${orgs[idx].name}`);
+          } else {
+            console.error('✗ Invalid selection.');
+            process.exit(1);
+          }
+        }
+      } catch (err: any) {
+        process.stdout.write(' ✗\n');
+        logError(err, verbose);
+        process.exit(1);
+      }
+
+      // Save everything to config
       try {
         const existing = await readConfig();
-        const updated = { ...existing, apiKey };
+        const updated = { ...existing, apiKey, email, ...(organizationId ? { organizationId } : {}) };
         await writeConfig(updated);
-        console.log(`✓ API key saved to ${CONFIG_FILE}`);
+        console.log(`\n✓ Credentials saved to ${CONFIG_FILE}`);
+        if (!organizationId) {
+          console.log('  ⚠  Organization ID not saved. Set FAVRO_ORGANIZATION_ID or re-run `favro auth login`.');
+        }
       } catch (err: any) {
         logError(err, verbose);
         process.exit(1);

@@ -12,9 +12,8 @@
  * If no cards match, explains why.
  */
 import { Command } from 'commander';
-import FavroHttpClient from '../lib/http-client';
-import { resolveApiKey } from '../lib/config';
-import { logError, missingApiKeyError } from '../lib/error-handler';
+import { createFavroClient } from '../lib/client-factory';
+import { logError } from '../lib/error-handler';
 import QueryAPI from '../api/query';
 
 export function registerQueryCommand(program: Command): void {
@@ -44,17 +43,12 @@ export function registerQueryCommand(program: Command): void {
     .option('--limit <number>', 'Maximum number of cards to search (default 1000)', '1000')
     .option('--json', 'Output matched cards as JSON')
     .action(async (board: string, queryParts: string[], options) => {
-      const token = await resolveApiKey();
-      if (!token) {
-        console.error(`Error: ${missingApiKeyError()}`);
-        process.exit(1);
-      }
 
       try {
         const query = queryParts.join(' ');
         const cardLimit = parseInt(options.limit, 10) || 1000;
 
-        const client = new FavroHttpClient({ auth: { token } });
+        const client = await createFavroClient();
         const api = new QueryAPI(client);
 
         const result = await api.execute(board, query, cardLimit);

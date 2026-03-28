@@ -6,9 +6,8 @@
  */
 import { Command } from 'commander';
 import BoardsAPI, { BoardType } from '../lib/boards-api';
-import FavroHttpClient from '../lib/http-client';
-import { resolveApiKey } from '../lib/config';
-import { logError, missingApiKeyError } from '../lib/error-handler';
+import { createFavroClient } from '../lib/client-factory';
+import { logError } from '../lib/error-handler';
 
 const VALID_TYPES: BoardType[] = ['board', 'list', 'kanban'];
 
@@ -24,11 +23,6 @@ export function registerBoardsCreateCommand(boardsParent: Command): void {
     .action(async (collectionId: string, options) => {
       const verbose = boardsParent.parent?.opts()?.verbose ?? false;
       try {
-        const token = await resolveApiKey();
-        if (!token) {
-          console.error(`Error: ${missingApiKeyError()}`);
-          process.exit(1);
-        }
 
         const boardType = options.type as BoardType;
         if (!VALID_TYPES.includes(boardType)) {
@@ -52,7 +46,7 @@ export function registerBoardsCreateCommand(boardsParent: Command): void {
           return;
         }
 
-        const client = new FavroHttpClient({ auth: { token } });
+        const client = await createFavroClient();
         const api = new BoardsAPI(client);
 
         const board = await api.createBoardInCollection(collectionId, {

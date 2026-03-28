@@ -6,9 +6,8 @@
  *   favro activity log <board-id> [--since 2h|1d|7d] [--limit N] [--offset N] [--format json|table]
  */
 import { Command } from 'commander';
-import FavroHttpClient from '../lib/http-client';
-import { resolveApiKey } from '../lib/config';
-import { logError, missingApiKeyError } from '../lib/error-handler';
+import { createFavroClient } from '../lib/client-factory';
+import { logError } from '../lib/error-handler';
 import ActivityApiClient, { parseSince, formatTimestamp } from '../api/activity';
 
 export function registerActivityCommand(program: Command): void {
@@ -39,11 +38,6 @@ export function registerActivityCommand(program: Command): void {
     .action(async (boardId: string, options) => {
       const verbose = program.opts()?.verbose ?? false;
       try {
-        const token = await resolveApiKey();
-        if (!token) {
-          console.error(`Error: ${missingApiKeyError()}`);
-          process.exit(1);
-        }
 
         let since: Date | undefined;
         try {
@@ -65,7 +59,7 @@ export function registerActivityCommand(program: Command): void {
           process.exit(1);
         }
 
-        const client = new FavroHttpClient({ auth: { token } });
+        const client = await createFavroClient();
         const api = new ActivityApiClient(client);
 
         const entries = await api.getBoardActivity(boardId, since, limit, offset);

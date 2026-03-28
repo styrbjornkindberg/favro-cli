@@ -11,9 +11,8 @@
 import { Command } from 'commander';
 import * as fsPromises from 'fs/promises';
 import CardsAPI, { Card } from '../lib/cards-api';
-import FavroHttpClient from '../lib/http-client';
-import { resolveApiKey } from '../lib/config';
-import { logError, missingApiKeyError } from '../lib/error-handler';
+import { createFavroClient } from '../lib/client-factory';
+import { logError } from '../lib/error-handler';
 import {
   BulkTransaction,
   BulkOperation,
@@ -127,11 +126,6 @@ export function registerBatchUpdateCommand(batch: Command): void {
       verbose?: boolean;
     }) => {
       try {
-        const token = await resolveApiKey();
-        if (!token) {
-          console.error(`Error: ${missingApiKeyError()}`);
-          process.exit(1);
-        }
 
         // Read and parse CSV
         let content: string;
@@ -158,7 +152,7 @@ export function registerBatchUpdateCommand(batch: Command): void {
         }
 
         // Execute or prepare operations (fetch previousState for rollback)
-        const client = new FavroHttpClient({ auth: { token } });
+        const client = await createFavroClient();
         const api = new CardsAPI(client);
 
         const ops: BulkOperation[] = [];
@@ -267,13 +261,8 @@ export function registerBatchMoveCommand(batch: Command): void {
           process.exit(1);
         }
 
-        const token = await resolveApiKey();
-        if (!token) {
-          console.error(`Error: ${missingApiKeyError()}`);
-          process.exit(1);
-        }
 
-        const client = new FavroHttpClient({ auth: { token } });
+        const client = await createFavroClient();
         const api = new CardsAPI(client);
 
         // Fetch cards from source board
@@ -396,15 +385,10 @@ export function registerBatchAssignCommand(batch: Command): void {
       verbose?: boolean;
     }) => {
       try {
-        const token = await resolveApiKey();
-        if (!token) {
-          console.error(`Error: ${missingApiKeyError()}`);
-          process.exit(1);
-        }
 
-        const assignee = resolveAssignee(options.to, token);
+        const assignee = resolveAssignee(options.to);
 
-        const client = new FavroHttpClient({ auth: { token } });
+        const client = await createFavroClient();
         const api = new CardsAPI(client);
 
         // Fetch cards from board

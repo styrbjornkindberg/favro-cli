@@ -4,9 +4,8 @@
  */
 import { Command } from 'commander';
 import CardsAPI from '../lib/cards-api';
-import FavroHttpClient from '../lib/http-client';
-import { logError, missingApiKeyError } from '../lib/error-handler';
-import { resolveApiKey } from '../lib/config';
+import { logError } from '../lib/error-handler';
+import { createFavroClient } from '../lib/client-factory';
 
 export const VALID_LINK_TYPES = ['depends-on', 'blocks', 'related', 'duplicates'];
 const VALID_POSITIONS = ['top', 'bottom'];
@@ -62,11 +61,6 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
     .action(async (cardId: string, toCardId: string, options) => {
       const verbose = cardsCmd.parent?.opts()?.verbose ?? cardsCmd.opts()?.verbose ?? false;
       try {
-        const token = await resolveApiKey();
-        if (!token) {
-          console.error(`Error: ${missingApiKeyError()}`);
-          process.exit(1);
-        }
 
         // Self-link prevention
         if (cardId === toCardId) {
@@ -80,7 +74,7 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
           process.exit(1);
         }
 
-        const client = new FavroHttpClient({ auth: { token } });
+        const client = await createFavroClient();
         const api = new CardsAPI(client);
 
         // Circular dependency detection for depends-on
@@ -120,13 +114,8 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
     .action(async (cardId: string, fromCardId: string) => {
       const verbose = cardsCmd.parent?.opts()?.verbose ?? cardsCmd.opts()?.verbose ?? false;
       try {
-        const token = await resolveApiKey();
-        if (!token) {
-          console.error(`Error: ${missingApiKeyError()}`);
-          process.exit(1);
-        }
 
-        const client = new FavroHttpClient({ auth: { token } });
+        const client = await createFavroClient();
         const api = new CardsAPI(client);
 
         await api.unlinkCard(cardId, fromCardId);
@@ -159,18 +148,13 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
     .action(async (cardId: string, options) => {
       const verbose = cardsCmd.parent?.opts()?.verbose ?? cardsCmd.opts()?.verbose ?? false;
       try {
-        const token = await resolveApiKey();
-        if (!token) {
-          console.error(`Error: ${missingApiKeyError()}`);
-          process.exit(1);
-        }
 
         if (options.position && !VALID_POSITIONS.includes(options.position.toLowerCase())) {
           console.error(`Error: Invalid position '${options.position}'. Valid: ${VALID_POSITIONS.join(', ')}`);
           process.exit(1);
         }
 
-        const client = new FavroHttpClient({ auth: { token } });
+        const client = await createFavroClient();
         const api = new CardsAPI(client);
 
         const card = await api.moveCard(cardId, {
@@ -206,13 +190,8 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
     .action(async (cardId: string, options) => {
       const verbose = cardsCmd.parent?.opts()?.verbose ?? cardsCmd.opts()?.verbose ?? false;
       try {
-        const token = await resolveApiKey();
-        if (!token) {
-          console.error(`Error: ${missingApiKeyError()}`);
-          process.exit(1);
-        }
 
-        const client = new FavroHttpClient({ auth: { token } });
+        const client = await createFavroClient();
         const api = new CardsAPI(client);
 
         const includes = options.relationships ? ['links'] : [];
@@ -257,13 +236,8 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
     .action(async (cardId: string, options) => {
       const verbose = cardsCmd.parent?.opts()?.verbose ?? cardsCmd.opts()?.verbose ?? false;
       try {
-        const token = await resolveApiKey();
-        if (!token) {
-          console.error(`Error: ${missingApiKeyError()}`);
-          process.exit(1);
-        }
 
-        const client = new FavroHttpClient({ auth: { token } });
+        const client = await createFavroClient();
         const api = new CardsAPI(client);
 
         const links = await api.getCardLinks(cardId);
@@ -304,13 +278,8 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
     .action(async (cardId: string, options) => {
       const verbose = cardsCmd.parent?.opts()?.verbose ?? cardsCmd.opts()?.verbose ?? false;
       try {
-        const token = await resolveApiKey();
-        if (!token) {
-          console.error(`Error: ${missingApiKeyError()}`);
-          process.exit(1);
-        }
 
-        const client = new FavroHttpClient({ auth: { token } });
+        const client = await createFavroClient();
         const api = new CardsAPI(client);
 
         const links = await api.getCardLinks(cardId);
@@ -351,13 +320,8 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
     .action(async (cardId: string, options) => {
       const verbose = cardsCmd.parent?.opts()?.verbose ?? cardsCmd.opts()?.verbose ?? false;
       try {
-        const token = await resolveApiKey();
-        if (!token) {
-          console.error(`Error: ${missingApiKeyError()}`);
-          process.exit(1);
-        }
 
-        const client = new FavroHttpClient({ auth: { token } });
+        const client = await createFavroClient();
         const api = new CardsAPI(client);
 
         // blocked-by = links where other cards block this card.

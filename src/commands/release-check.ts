@@ -6,10 +6,9 @@
  */
 import { Command } from 'commander';
 import CardsAPI, { Card } from '../lib/cards-api';
-import FavroHttpClient from '../lib/http-client';
-import { logError, missingApiKeyError, suggestBoard } from '../lib/error-handler';
+import { logError, suggestBoard } from '../lib/error-handler';
 import BoardsAPI from '../lib/boards-api';
-import { resolveApiKey } from '../lib/config';
+import { createFavroClient } from '../lib/client-factory';
 
 export interface ReleaseCheckResult {
   board: string;
@@ -82,13 +81,7 @@ export function registerReleaseCheckCommand(program: Command): void {
     .action(async (board: string, options) => {
       const verbose = program.parent?.opts()?.verbose ?? program.opts()?.verbose ?? false;
       try {
-        const token = await resolveApiKey();
-        if (!token) {
-          console.error(`Error: ${missingApiKeyError()}`);
-          process.exit(1);
-        }
-
-        const client = new FavroHttpClient({ auth: { token } });
+        const client = await createFavroClient();
         const api = new CardsAPI(client);
 
         // Fetch all cards from board (with high limit)
@@ -198,8 +191,7 @@ export function registerReleaseCheckCommand(program: Command): void {
         if (board && error?.response?.status === 404) {
           // Board not found — fetch available boards and suggest
           try {
-            const token = await resolveApiKey();
-            const boardsApi = new BoardsAPI(new FavroHttpClient({ auth: { token: token! } }));
+            const boardsApi = new BoardsAPI(await createFavroClient());
             const boards = await boardsApi.listBoards();
             const boardNames = boards.map(b => b.name);
             const helpfulMsg = suggestBoard(board, boardNames);

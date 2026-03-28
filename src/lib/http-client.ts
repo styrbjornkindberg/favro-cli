@@ -3,29 +3,49 @@ import { rateLimitMessage } from './error-handler';
 
 export interface AuthConfig {
   token?: string;
+  /** User email — required for HTTP Basic Auth */
+  email?: string;
   organizationId?: string;
 }
 
 export class FavroHttpClient {
   private client: AxiosInstance;
   private auth?: AuthConfig;
+  /** Backend routing identifier — must be forwarded on paginated requests */
+  private backendId?: string;
 
   constructor(config: { baseURL?: string; auth?: AuthConfig } = {}) {
     this.auth = config.auth;
     this.client = axios.create({
-      baseURL: config.baseURL || 'https://api.favro.com/v1',
+      baseURL: config.baseURL || 'https://favro.com/api/v1',
       timeout: 30000,
       headers: { 'Content-Type': 'application/json' }
     });
 
     this.client.interceptors.request.use((cfg) => {
-      if (this.auth?.token) cfg.headers['Authorization'] = `Bearer ${this.auth.token}`;
+      if (this.auth?.token) {
+        if (this.auth.email) {
+          // Favro API requires HTTP Basic Auth: email:apiToken
+          const credentials = Buffer.from(`${this.auth.email}:${this.auth.token}`).toString('base64');
+          cfg.headers['Authorization'] = `Basic ${credentials}`;
+        } else {
+          // Fallback for legacy/testing — Basic auth without email won't work against live API
+          cfg.headers['Authorization'] = `Bearer ${this.auth.token}`;
+        }
+      }
       if (this.auth?.organizationId) cfg.headers['organizationId'] = this.auth.organizationId;
+      // Forward backend routing header for paginated requests
+      if (this.backendId) cfg.headers['X-Favro-Backend-Identifier'] = this.backendId;
       return cfg;
     });
 
     this.client.interceptors.response.use(
-      (response) => response,
+      (response) => {
+        // Capture backend routing identifier for pagination
+        const bid = response.headers?.['x-favro-backend-identifier'];
+        if (bid) this.backendId = bid;
+        return response;
+      },
       async (error: AxiosError) => {
         const retryCount = (error.config as any)?._retryCount ?? 0;
         if (this.shouldRetry(error) && retryCount < 4) {

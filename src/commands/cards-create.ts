@@ -3,8 +3,8 @@
  * FAVRO-006: Cards Create Command (Bulk + Single)
  */
 import { Command } from 'commander';
+import { createFavroClient } from '../lib/client-factory';
 import CardsAPI from '../lib/cards-api';
-import FavroHttpClient from '../lib/http-client';
 import { logError, missingApiKeyError } from '../lib/error-handler';
 import { ProgressBar } from '../lib/progress';
 import { parseQuery } from '../lib/query-parser';
@@ -30,10 +30,6 @@ export function registerCardsCreateCommand(program: Command): void {
       const verbose = program.parent?.opts()?.verbose ?? program.opts()?.verbose ?? false;
       try {
         const token = process.env.FAVRO_API_TOKEN;
-        if (!token) {
-          console.error(`Error: ${missingApiKeyError()}`);
-          process.exit(1);
-        }
 
         // Parse filter if provided
         if (options.filter) {
@@ -45,9 +41,7 @@ export function registerCardsCreateCommand(program: Command): void {
           }
         }
 
-        const client = new FavroHttpClient({
-          auth: { token },
-        });
+        const client = await createFavroClient();
         const api = new CardsAPI(client);
 
         if (options.bulk) {

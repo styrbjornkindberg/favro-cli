@@ -6,9 +6,8 @@
  */
 import { Command } from 'commander';
 import BoardsAPI from '../lib/boards-api';
-import FavroHttpClient from '../lib/http-client';
-import { resolveApiKey } from '../lib/config';
-import { logError, missingApiKeyError } from '../lib/error-handler';
+import { createFavroClient } from '../lib/client-factory';
+import { logError } from '../lib/error-handler';
 
 export function registerBoardsUpdateCommand(boardsParent: Command): void {
   boardsParent
@@ -21,11 +20,6 @@ export function registerBoardsUpdateCommand(boardsParent: Command): void {
     .action(async (id: string, options) => {
       const verbose = boardsParent.parent?.opts()?.verbose ?? false;
       try {
-        const token = await resolveApiKey();
-        if (!token) {
-          console.error(`Error: ${missingApiKeyError()}`);
-          process.exit(1);
-        }
 
         const name = options.name?.trim();
         if (options.name && !name) {
@@ -48,7 +42,7 @@ export function registerBoardsUpdateCommand(boardsParent: Command): void {
           return;
         }
 
-        const client = new FavroHttpClient({ auth: { token } });
+        const client = await createFavroClient();
         const api = new BoardsAPI(client);
 
         const board = await api.updateBoard(id, updateData);

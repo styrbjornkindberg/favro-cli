@@ -3,8 +3,8 @@
  * FAVRO-008: Cards List Command with filtering and table output
  */
 import { Command } from 'commander';
+import { createFavroClient } from '../lib/client-factory';
 import CardsAPI, { Card } from '../lib/cards-api';
-import FavroHttpClient from '../lib/http-client';
 import { logError, missingApiKeyError, suggestBoard } from '../lib/error-handler';
 import BoardsAPI from '../lib/boards-api';
 import { parseQuery, filterCards } from '../lib/query-parser';
@@ -61,13 +61,7 @@ export function registerCardsListCommand(program: Command): void {
       const verbose = program.parent?.opts()?.verbose ?? program.opts()?.verbose ?? false;
       try {
         const token = process.env.FAVRO_API_TOKEN;
-        if (!token) {
-          console.error(`Error: ${missingApiKeyError()}`);
-          process.exit(1);
-        }
-        const client = new FavroHttpClient({
-          auth: { token }
-        });
+        const client = await createFavroClient();
         const api = new CardsAPI(client);
 
         const parsedLimit = parseInt(options.limit, 10);

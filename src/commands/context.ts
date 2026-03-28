@@ -16,9 +16,8 @@
  *   - Stats (card counts by status and owner)
  */
 import { Command } from 'commander';
-import FavroHttpClient from '../lib/http-client';
-import { resolveApiKey } from '../lib/config';
-import { logError, missingApiKeyError } from '../lib/error-handler';
+import { createFavroClient } from '../lib/client-factory';
+import { logError } from '../lib/error-handler';
 import ContextAPI from '../api/context';
 
 export function registerContextCommand(program: Command): void {
@@ -46,17 +45,12 @@ export function registerContextCommand(program: Command): void {
     .action(async (board: string, options) => {
       const verbose = program.opts()?.verbose ?? false;
 
-      const token = await resolveApiKey();
-      if (!token) {
-        console.error(`Error: ${missingApiKeyError()}`);
-        process.exit(1);
-      }
 
       const parsedLimit = parseInt(options.limit ?? '1000', 10);
       const cardLimit = (!isNaN(parsedLimit) && parsedLimit >= 1) ? parsedLimit : 1000;
 
       try {
-        const client = new FavroHttpClient({ auth: { token } });
+        const client = await createFavroClient();
         const api = new ContextAPI(client);
 
         const snapshot = await api.getSnapshot(board, cardLimit);

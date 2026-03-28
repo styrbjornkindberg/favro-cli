@@ -6,9 +6,8 @@
  */
 import { Command } from 'commander';
 import CollectionsAPI from '../lib/collections-api';
-import FavroHttpClient from '../lib/http-client';
-import { resolveApiKey } from '../lib/config';
-import { logError, missingApiKeyError } from '../lib/error-handler';
+import { createFavroClient } from '../lib/client-factory';
+import { logError } from '../lib/error-handler';
 
 export function registerCollectionsCreateCommand(collectionsParent: Command): void {
   collectionsParent
@@ -21,11 +20,6 @@ export function registerCollectionsCreateCommand(collectionsParent: Command): vo
     .action(async (options) => {
       const verbose = collectionsParent.parent?.opts()?.verbose ?? false;
       try {
-        const token = await resolveApiKey();
-        if (!token) {
-          console.error(`Error: ${missingApiKeyError()}`);
-          process.exit(1);
-        }
 
         const name = options.name?.trim();
         if (!name) {
@@ -41,7 +35,7 @@ export function registerCollectionsCreateCommand(collectionsParent: Command): vo
           return;
         }
 
-        const client = new FavroHttpClient({ auth: { token } });
+        const client = await createFavroClient();
         const api = new CollectionsAPI(client);
 
         const collection = await api.createCollection({

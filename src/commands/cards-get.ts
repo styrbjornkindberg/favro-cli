@@ -4,9 +4,8 @@
  */
 import { Command } from 'commander';
 import CardsAPI from '../lib/cards-api';
-import FavroHttpClient from '../lib/http-client';
-import { logError, missingApiKeyError } from '../lib/error-handler';
-import { resolveApiKey } from '../lib/config';
+import { logError } from '../lib/error-handler';
+import { createFavroClient } from '../lib/client-factory';
 
 const VALID_INCLUDES = ['board', 'collection', 'custom-fields', 'links', 'comments', 'relations'];
 
@@ -32,11 +31,6 @@ export function registerCardsGetCommand(cardsCmd: Command): void {
     .action(async (cardId: string, options) => {
       const verbose = cardsCmd.parent?.opts()?.verbose ?? cardsCmd.opts()?.verbose ?? false;
       try {
-        const token = await resolveApiKey();
-        if (!token) {
-          console.error(`Error: ${missingApiKeyError()}`);
-          process.exit(1);
-        }
 
         const includes: string[] = [];
         if (options.include) {
@@ -49,7 +43,7 @@ export function registerCardsGetCommand(cardsCmd: Command): void {
           includes.push(...requested);
         }
 
-        const client = new FavroHttpClient({ auth: { token } });
+        const client = await createFavroClient();
         const api = new CardsAPI(client);
 
         const card = await api.getCard(cardId, { include: includes });

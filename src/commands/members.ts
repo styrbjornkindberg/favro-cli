@@ -9,9 +9,8 @@
  *   favro members permissions <member-id> --board <board-id>
  */
 import { Command } from 'commander';
-import FavroHttpClient from '../lib/http-client';
-import { resolveApiKey } from '../lib/config';
-import { logError, missingApiKeyError } from '../lib/error-handler';
+import { createFavroClient } from '../lib/client-factory';
+import { logError } from '../lib/error-handler';
 import { FavroApiClient, isValidEmail } from '../api/members';
 
 export function registerMembersCommand(program: Command): void {
@@ -34,13 +33,7 @@ export function registerMembersCommand(program: Command): void {
           process.exit(1);
         }
 
-        const token = await resolveApiKey();
-        if (!token) {
-          console.error(`Error: ${missingApiKeyError()}`);
-          process.exit(1);
-        }
-
-        const client = new FavroHttpClient({ auth: { token } });
+        const client = await createFavroClient();
         const api = new FavroApiClient(client);
 
         const members = await api.getMembers({
@@ -86,16 +79,11 @@ export function registerMembersCommand(program: Command): void {
           process.exit(1);
         }
 
-        const token = await resolveApiKey();
-        if (!token) {
-          console.error(`Error: ${missingApiKeyError()}`);
-          process.exit(1);
-        }
 
         // Default to board target unless --collection-target is specified
         const isBoardTarget = !options.collectionTarget;
 
-        const client = new FavroHttpClient({ auth: { token } });
+        const client = await createFavroClient();
         const api = new FavroApiClient(client);
 
         const member = await api.addMember(email, options.to, isBoardTarget);
@@ -121,15 +109,10 @@ export function registerMembersCommand(program: Command): void {
     .action(async (memberId: string, options) => {
       const verbose = program.opts()?.verbose ?? false;
       try {
-        const token = await resolveApiKey();
-        if (!token) {
-          console.error(`Error: ${missingApiKeyError()}`);
-          process.exit(1);
-        }
 
         const isBoardTarget = !options.collectionTarget;
 
-        const client = new FavroHttpClient({ auth: { token } });
+        const client = await createFavroClient();
         const api = new FavroApiClient(client);
 
         await api.removeMember(memberId, options.from, isBoardTarget);
@@ -149,13 +132,7 @@ export function registerMembersCommand(program: Command): void {
     .action(async (memberId: string, options) => {
       const verbose = program.opts()?.verbose ?? false;
       try {
-        const token = await resolveApiKey();
-        if (!token) {
-          console.error(`Error: ${missingApiKeyError()}`);
-          process.exit(1);
-        }
-
-        const client = new FavroHttpClient({ auth: { token } });
+        const client = await createFavroClient();
         const api = new FavroApiClient(client);
 
         const level = await api.getMemberPermissions(memberId, options.board);

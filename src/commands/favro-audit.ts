@@ -6,10 +6,9 @@
  * Supports relative time filter and pagination for large audit logs.
  */
 import { Command } from 'commander';
-import FavroHttpClient from '../lib/http-client';
 import AuditAPI, { parseSince, formatTimestamp } from '../lib/audit-api';
-import { logError, missingApiKeyError } from '../lib/error-handler';
-import { resolveApiKey } from '../lib/config';
+import { logError } from '../lib/error-handler';
+import { createFavroClient } from '../lib/client-factory';
 
 const PAGE_SIZE = 100;
 
@@ -34,11 +33,6 @@ export function registerAuditCommand(program: Command): void {
     .action(async (board: string, options) => {
       const verbose = program.parent?.opts()?.verbose ?? program.opts()?.verbose ?? false;
       try {
-        const token = await resolveApiKey();
-        if (!token) {
-          console.error(`Error: ${missingApiKeyError()}`);
-          process.exit(1);
-        }
 
         let since: Date | undefined;
         try {
@@ -53,7 +47,7 @@ export function registerAuditCommand(program: Command): void {
         const pageSizeRaw = parseInt(options.pageSize, 10);
         const pageSize = isNaN(pageSizeRaw) || pageSizeRaw < 1 ? PAGE_SIZE : pageSizeRaw;
 
-        const client = new FavroHttpClient({ auth: { token } });
+        const client = await createFavroClient();
         const api = new AuditAPI(client);
 
         const entries = await api.getBoardAuditLog(board, since, limit);

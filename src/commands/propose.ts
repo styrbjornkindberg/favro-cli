@@ -10,9 +10,8 @@
  */
 
 import { Command } from 'commander';
-import FavroHttpClient from '../lib/http-client';
-import { resolveApiKey } from '../lib/config';
-import { logError, missingApiKeyError } from '../lib/error-handler';
+import { createFavroClient } from '../lib/client-factory';
+import { logError } from '../lib/error-handler';
 import { proposeChange, ValidationError } from '../api/propose';
 import { ActionParseError } from '../lib/action-parser';
 
@@ -36,14 +35,9 @@ export function registerProposeCommand(program: Command): void {
     .action(async (board: string, options) => {
       const verbose = program.opts()?.verbose ?? false;
 
-      const token = await resolveApiKey();
-      if (!token) {
-        console.error(`Error: ${missingApiKeyError()}`);
-        process.exit(1);
-      }
 
       try {
-        const client = new FavroHttpClient({ auth: { token } });
+        const client = await createFavroClient();
         const result = await proposeChange(board, options.action, client);
 
         const output = {

@@ -15,9 +15,8 @@ import CustomFieldsAPI, {
   CustomFieldOption,
   formatFieldType,
 } from '../lib/custom-fields-api';
-import FavroHttpClient from '../lib/http-client';
-import { resolveApiKey } from '../lib/config';
-import { logError, missingApiKeyError } from '../lib/error-handler';
+import { createFavroClient } from '../lib/client-factory';
+import { logError } from '../lib/error-handler';
 
 // ─── Formatters ──────────────────────────────────────────────────────────────
 
@@ -108,13 +107,8 @@ export function registerCustomFieldsCommands(program: Command): void {
     .action(async (boardId: string, options) => {
       const verbose = program.opts()?.verbose ?? false;
       try {
-        const token = await resolveApiKey();
-        if (!token) {
-          console.error(`Error: ${missingApiKeyError()}`);
-          process.exit(1);
-        }
 
-        const client = new FavroHttpClient({ auth: { token } });
+        const client = await createFavroClient();
         const api = new CustomFieldsAPI(client);
 
         const fields = await api.listFields(boardId);
@@ -139,13 +133,8 @@ export function registerCustomFieldsCommands(program: Command): void {
     .action(async (fieldId: string, options) => {
       const verbose = program.opts()?.verbose ?? false;
       try {
-        const token = await resolveApiKey();
-        if (!token) {
-          console.error(`Error: ${missingApiKeyError()}`);
-          process.exit(1);
-        }
 
-        const client = new FavroHttpClient({ auth: { token } });
+        const client = await createFavroClient();
         const api = new CustomFieldsAPI(client);
 
         const field = await api.getField(fieldId);
@@ -174,13 +163,8 @@ export function registerCustomFieldsCommands(program: Command): void {
     .action(async (cardId: string, fieldId: string, value: string, options) => {
       const verbose = program.opts()?.verbose ?? false;
       try {
-        const token = await resolveApiKey();
-        if (!token) {
-          console.error(`Error: ${missingApiKeyError()}`);
-          process.exit(1);
-        }
 
-        const client = new FavroHttpClient({ auth: { token } });
+        const client = await createFavroClient();
         const api = new CustomFieldsAPI(client);
 
         const result = await api.setFieldValue(cardId, fieldId, value);
@@ -207,13 +191,8 @@ export function registerCustomFieldsCommands(program: Command): void {
     .action(async (fieldId: string, options) => {
       const verbose = program.opts()?.verbose ?? false;
       try {
-        const token = await resolveApiKey();
-        if (!token) {
-          console.error(`Error: ${missingApiKeyError()}`);
-          process.exit(1);
-        }
 
-        const client = new FavroHttpClient({ auth: { token } });
+        const client = await createFavroClient();
         const api = new CustomFieldsAPI(client);
 
         const opts = await api.listFieldValues(fieldId, options.board);

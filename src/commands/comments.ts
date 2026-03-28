@@ -7,9 +7,8 @@
  *   favro comments add <card-id> --text "COMMENT"
  */
 import { Command } from 'commander';
-import FavroHttpClient from '../lib/http-client';
-import { resolveApiKey } from '../lib/config';
-import { logError, missingApiKeyError } from '../lib/error-handler';
+import { createFavroClient } from '../lib/client-factory';
+import { logError } from '../lib/error-handler';
 import CommentsApiClient from '../api/comments';
 import { formatTimestamp } from '../lib/audit-api';
 
@@ -34,16 +33,11 @@ export function registerCommentsCommand(program: Command): void {
     .action(async (cardId: string, options) => {
       const verbose = program.opts()?.verbose ?? false;
       try {
-        const token = await resolveApiKey();
-        if (!token) {
-          console.error(`Error: ${missingApiKeyError()}`);
-          process.exit(1);
-        }
 
         const limitRaw = parseInt(options.limit, 10);
         const limit = !isNaN(limitRaw) && limitRaw >= 1 ? limitRaw : 100;
 
-        const client = new FavroHttpClient({ auth: { token } });
+        const client = await createFavroClient();
         const api = new CommentsApiClient(client);
 
         const comments = await api.listComments(cardId, limit);
@@ -92,13 +86,8 @@ export function registerCommentsCommand(program: Command): void {
           process.exit(1);
         }
 
-        const token = await resolveApiKey();
-        if (!token) {
-          console.error(`Error: ${missingApiKeyError()}`);
-          process.exit(1);
-        }
 
-        const client = new FavroHttpClient({ auth: { token } });
+        const client = await createFavroClient();
         const api = new CommentsApiClient(client);
 
         const comment = await api.addComment(cardId, options.text);

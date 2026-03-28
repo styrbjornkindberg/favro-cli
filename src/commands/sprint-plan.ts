@@ -15,9 +15,8 @@
  */
 
 import { Command } from 'commander';
-import FavroHttpClient from '../lib/http-client';
-import { resolveApiKey } from '../lib/config';
-import { logError, missingApiKeyError } from '../lib/error-handler';
+import { createFavroClient } from '../lib/client-factory';
+import { logError } from '../lib/error-handler';
 import SprintPlanAPI, { type SprintCard } from '../api/sprint-plan';
 
 function formatSprintCard(card: SprintCard, index: number): string {
@@ -50,11 +49,6 @@ export function registerSprintPlanCommand(program: Command): void {
     .option('--json', 'Output as JSON')
     .option('--limit <number>', 'Maximum cards to fetch (default 500)', '500')
     .action(async (options) => {
-      const token = await resolveApiKey();
-      if (!token) {
-        console.error(`Error: ${missingApiKeyError()}`);
-        process.exit(1);
-      }
 
       const board = options.board;
       if (!board) {
@@ -70,7 +64,7 @@ export function registerSprintPlanCommand(program: Command): void {
 
       try {
         const cardLimit = parseInt(options.limit, 10) || 500;
-        const client = new FavroHttpClient({ auth: { token } });
+        const client = await createFavroClient();
         const api = new SprintPlanAPI(client);
 
         const result = await api.getSuggestions(board, budget, cardLimit);

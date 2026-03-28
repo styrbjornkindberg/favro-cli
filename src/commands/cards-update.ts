@@ -3,9 +3,9 @@
  * FAVRO-007: Cards Update Command
  */
 import { Command } from 'commander';
+import { createFavroClient } from '../lib/client-factory';
 import * as readline from 'readline';
 import CardsAPI, { UpdateCardRequest } from '../lib/cards-api';
-import FavroHttpClient from '../lib/http-client';
 import { logError, missingApiKeyError } from '../lib/error-handler';
 import { parseQuery } from '../lib/query-parser';
 
@@ -67,14 +67,8 @@ export function registerCardsUpdateCommand(program: Command): void {
         }
 
         const token = process.env.FAVRO_API_TOKEN;
-        if (!token) {
-          console.error(`Error: ${missingApiKeyError()}`);
-          process.exit(1);
-        }
 
-        const client = new FavroHttpClient({
-          auth: { token },
-        });
+        const client = await createFavroClient();
         const api = new CardsAPI(client);
 
         const updateData: UpdateCardRequest = {};

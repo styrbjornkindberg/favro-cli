@@ -12,9 +12,8 @@
  */
 import { Command } from 'commander';
 import CardsAPI, { Card, UpdateCardRequest } from '../lib/cards-api';
-import FavroHttpClient from '../lib/http-client';
-import { logError, missingApiKeyError } from '../lib/error-handler';
-import { resolveApiKey } from '../lib/config';
+import { logError } from '../lib/error-handler';
+import { createFavroClient } from '../lib/client-factory';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -436,11 +435,6 @@ export function registerBatchSmartCommand(program: Command): void {
 
       try {
         // 1. Resolve API key
-        const token = await resolveApiKey();
-        if (!token) {
-          console.error(`Error: ${missingApiKeyError()}`);
-          process.exit(1);
-        }
 
         // 2. Parse goal
         let parsedGoal: ParsedGoal;
@@ -452,7 +446,7 @@ export function registerBatchSmartCommand(program: Command): void {
         }
 
         // 3. Fetch cards from board
-        const client = new FavroHttpClient({ auth: { token } });
+        const client = await createFavroClient();
         const api = new CardsAPI(client);
 
         let allCards: Card[];
