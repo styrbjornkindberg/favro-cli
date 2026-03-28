@@ -17,4 +17,17 @@ module.exports = {
   maxWorkers: 1,
   // Verbose output to see each test result
   verbose: true,
+  // Collect coverage from all source files (CLA-1792 SPEC-002 requirement: ≥85%)
+  collectCoverage: false, // Off by default; enable with --coverage flag
+  collectCoverageFrom: [
+    'src/**/*.ts',
+    '!src/**/*.d.ts',
+    '!src/index.ts',
+  ],
+  coverageThresholds: {
+    global: {
+      statements: 85,
+      lines: 85,
+    },
+  },
 };
