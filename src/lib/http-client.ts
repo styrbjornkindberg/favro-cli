@@ -3,6 +3,7 @@ import { rateLimitMessage } from './error-handler';
 
 export interface AuthConfig {
   token?: string;
+  organizationId?: string;
 }
 
 export class FavroHttpClient {
@@ -19,6 +20,7 @@ export class FavroHttpClient {
 
     this.client.interceptors.request.use((cfg) => {
       if (this.auth?.token) cfg.headers['Authorization'] = `Bearer ${this.auth.token}`;
+      if (this.auth?.organizationId) cfg.headers['organizationId'] = this.auth.organizationId;
       return cfg;
     });
 

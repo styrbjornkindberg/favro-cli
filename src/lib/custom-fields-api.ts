@@ -119,8 +119,13 @@ export class CustomFieldsAPI {
 
   /**
    * Get a single custom field definition by ID.
+   * @param fieldId - The ID of the custom field
+   * @param boardId - Optional board ID to scope the field lookup
    */
-  async getField(fieldId: string): Promise<CustomFieldDefinition> {
+  async getField(fieldId: string, boardId?: string): Promise<CustomFieldDefinition> {
+    if (boardId) {
+      return this.client.get<CustomFieldDefinition>(`/custom-fields/${fieldId}`, { params: { boardId } });
+    }
     return this.client.get<CustomFieldDefinition>(`/custom-fields/${fieldId}`);
   }
 
@@ -224,8 +229,8 @@ export class CustomFieldsAPI {
    * List all possible values (options) for a select-type field.
    * Returns empty array for non-select fields.
    */
-  async listFieldValues(fieldId: string): Promise<CustomFieldOption[]> {
-    const field = await this.getField(fieldId);
+  async listFieldValues(fieldId: string, boardId?: string): Promise<CustomFieldOption[]> {
+    const field = await this.getField(fieldId, boardId);
     return field.options ?? [];
   }
 }

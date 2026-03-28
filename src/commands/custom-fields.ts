@@ -216,7 +216,7 @@ export function registerCustomFieldsCommands(program: Command): void {
         const client = new FavroHttpClient({ auth: { token } });
         const api = new CustomFieldsAPI(client);
 
-        const opts = await api.listFieldValues(fieldId);
+        const opts = await api.listFieldValues(fieldId, options.board);
 
         if (options.json) {
           console.log(JSON.stringify(opts, null, 2));
