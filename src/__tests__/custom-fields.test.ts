@@ -298,6 +298,38 @@ describe('CustomFieldsAPI', () => {
       ).rejects.toThrow(/Invalid date "not-a-date"/);
     });
 
+    test('throws for empty string date value', async () => {
+      mockClient.get.mockResolvedValue(sampleDateField);
+
+      await expect(
+        api.setFieldValue('card-1', 'field-date-1', '')
+      ).rejects.toThrow(/requires a value/);
+    });
+
+    test('throws for blank/whitespace date value', async () => {
+      mockClient.get.mockResolvedValue(sampleDateField);
+
+      await expect(
+        api.setFieldValue('card-1', 'field-date-1', '   ')
+      ).rejects.toThrow(/requires a value/);
+    });
+
+    test('throws for non-ISO date format like MM/DD/YYYY', async () => {
+      mockClient.get.mockResolvedValue(sampleDateField);
+
+      await expect(
+        api.setFieldValue('card-1', 'field-date-1', '12/31/2024')
+      ).rejects.toThrow(/Invalid date "12\/31\/2024"/);
+    });
+
+    test('throws for invalid calendar date like 2024-02-30', async () => {
+      mockClient.get.mockResolvedValue(sampleDateField);
+
+      await expect(
+        api.setFieldValue('card-1', 'field-date-1', '2024-02-30')
+      ).rejects.toThrow(/Invalid date "2024-02-30"/);
+    });
+
     test('accepts valid ISO 8601 date', async () => {
       mockClient.get.mockResolvedValue(sampleDateField);
       mockClient.patch.mockResolvedValue({ fieldId: 'field-date-1', value: '2024-12-31' });
@@ -309,16 +341,23 @@ describe('CustomFieldsAPI', () => {
       );
     });
 
-    test('proceeds without validation if field lookup fails', async () => {
-      mockClient.get.mockRejectedValue(new Error('Not found'));
-      mockClient.patch.mockResolvedValue({ fieldId: 'field-text-1', value: 'fallback' });
+    test('accepts valid ISO 8601 datetime with timezone', async () => {
+      mockClient.get.mockResolvedValue(sampleDateField);
+      mockClient.patch.mockResolvedValue({ fieldId: 'field-date-1', value: '2024-12-31T00:00:00Z' });
 
-      const result = await api.setFieldValue('card-1', 'field-text-1', 'fallback');
-      expect(result.value).toBe('fallback');
+      await api.setFieldValue('card-1', 'field-date-1', '2024-12-31T00:00:00Z');
       expect(mockClient.patch).toHaveBeenCalledWith(
-        '/cards/card-1/custom-fields/field-text-1',
-        { value: 'fallback' }
+        '/cards/card-1/custom-fields/field-date-1',
+        { value: '2024-12-31T00:00:00Z' }
       );
+    });
+
+    test('rejects when getField fails (no silent bypass)', async () => {
+      mockClient.get.mockRejectedValue(new Error('Network error'));
+
+      await expect(
+        api.setFieldValue('card-1', 'field-text-1', 'fallback')
+      ).rejects.toThrow(/Network error/);
     });
 
     test('sets user field value', async () => {

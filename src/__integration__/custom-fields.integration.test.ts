@@ -25,10 +25,10 @@ describeIf(RUN_INTEGRATION)('Custom Fields Integration Tests', () => {
   beforeAll(() => {
     if (!FAVRO_API_TOKEN) throw new Error('FAVRO_API_TOKEN not set');
     const client = new FavroHttpClient({
-      auth: { token: FAVRO_API_TOKEN },
-      baseUrl: `https://favro.com/api/v1`,
-      headers: {
-        'organizationId': FAVRO_ORG,
+      baseURL: `https://favro.com/api/v1`,
+      auth: {
+        token: FAVRO_API_TOKEN,
+        organizationId: FAVRO_ORG,
       },
     });
     api = new CustomFieldsAPI(client);

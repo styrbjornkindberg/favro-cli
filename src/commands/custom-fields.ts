@@ -202,6 +202,7 @@ export function registerCustomFieldsCommands(program: Command): void {
   cfCmd
     .command('values <field-id>')
     .description('List all possible values (options) for a select-type custom field')
+    .option('--board <board-id>', 'Board ID to scope the field lookup')
     .option('--json', 'Output as JSON')
     .action(async (fieldId: string, options) => {
       const verbose = program.opts()?.verbose ?? false;
