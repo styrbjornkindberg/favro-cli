@@ -51,6 +51,13 @@ Comprehensive reference for all SPEC-002 endpoints in `favro-cli`.
   - [webhooks list](#webhooks-list)
   - [webhooks create](#webhooks-create)
   - [webhooks delete](#webhooks-delete)
+- [Columns](#columns)
+- [Widgets](#widgets)
+- [Tags](#tags)
+- [Tasks & Tasklists](#tasks--tasklists)
+- [Dependencies](#dependencies)
+- [Attachments](#attachments)
+- [Users & Groups](#users--groups)
 - [Batch Operations](#batch-operations)
   - [batch update](#batch-update)
   - [batch move](#batch-move)
@@ -76,6 +83,13 @@ SPEC-002 extends the base CLI with nine endpoint categories:
 | **Comments** | list, add | Card comment management |
 | **Activity** | log | Board and card activity history |
 | **Webhooks** | list, create, delete | Configure HTTP event notifications |
+| **Columns** | list, create, update | Directly manage board structures |
+| **Widgets** | list, add | Map cards to multiple boards natively |
+| **Tags** | list, create, delete | Workspace tag management |
+| **Tasks** | list, add | Internal card checklists |
+| **Dependencies** | list, add | Native API blockers & relates-to |
+| **Attachments** | upload | Add files to cards/comments |
+| **Users & Groups**| list | Manage identity outside of boards |
 | **Batch Operations** | update, move, assign, smart-batch | Bulk card mutations with rollback support |
 
 ---
@@ -1505,6 +1519,63 @@ favro webhooks delete hook-003
 
 **Error cases:**
 - Webhook not found → `Webhook not found: "<id>". It may have already been deleted.`
+
+---
+
+## Columns
+
+Allows direct inspection and management of board workflows without full context payloads.
+
+- `favro columns list <boardId>`
+- `favro columns create <boardId> --name "New State"`
+- `favro columns update <boardId> --column <columnId> --name "Updated State"`
+
+---
+
+## Widgets
+
+The Widget API is how Favro technically places the same `card` onto multiple different `boards` (e.g. from a Backlog board to a Kanban board). 
+
+- `favro widgets list --card <cardCommonId>` (See all boards a card sits on)
+- `favro widgets add <boardId> <cardCommonId>` (Adds an existing card to a new board without duplicating the underlying card)
+
+---
+
+## Tags
+
+- `favro tags list` (Shows all global workspace tags)
+- `favro tags create --name "Bug" --color red`
+
+---
+
+## Tasks & Tasklists
+
+Allows management of the granular checklists inside a single card.
+
+- `favro tasks list <cardId>`
+- `favro tasks add <cardId> "Create new DB schema"`
+
+---
+
+## Dependencies
+
+Directly uses Favro's native Dependency API for strict blockers instead of generic link mapping.
+
+- `favro dependencies list`
+- `favro dependencies add <sourceId> <targetId> --type blocks`
+
+---
+
+## Attachments
+
+- `favro attachments upload <cardId> --file ./error.log`
+
+---
+
+## Users & Groups
+
+- `favro users list`
+- `favro groups list`
 
 ---
 

@@ -51,6 +51,13 @@ import { registerExecuteCommand } from './commands/execute';
 import { registerQueryCommand } from './commands/query';
 import { registerStandupCommand } from './commands/standup';
 import { registerSprintPlanCommand } from './commands/sprint-plan';
+import { registerColumnsCommands } from './commands/columns';
+import { registerWidgetsCommands } from './commands/widgets';
+import { registerTagsCommands } from './commands/tags';
+import { registerTasksCommands } from './commands/tasks';
+import { registerDependenciesCommands } from './commands/dependencies';
+import { registerAttachmentsCommands } from './commands/attachments';
+import { registerUsersCommands } from './commands/users';
 import { logError } from './lib/error-handler';
 import { ProgressBar } from './lib/progress';
 import { createFavroClient } from './lib/client-factory';
@@ -122,6 +129,27 @@ registerCollectionsListCommand(collectionsCmd);
 registerCollectionsGetCommand(collectionsCmd);
 registerCollectionsCreateCommand(collectionsCmd);
 registerCollectionsUpdateCommand(collectionsCmd);
+
+// ─── columns commands ────────────────────────────────────────────────────────
+registerColumnsCommands(program);
+
+// ─── widgets commands ────────────────────────────────────────────────────────
+registerWidgetsCommands(program);
+
+// ─── tags commands ────────────────────────────────────────────────────────
+registerTagsCommands(program);
+
+// ─── tasks commands ────────────────────────────────────────────────────────
+registerTasksCommands(program);
+
+// ─── dependencies commands ────────────────────────────────────────────────────────
+registerDependenciesCommands(program);
+
+// ─── attachments commands ────────────────────────────────────────────────────────
+registerAttachmentsCommands(program);
+
+// ─── users & groups commands ───────────────────────────────────────────────────
+registerUsersCommands(program);
 
 // ─── cards parent ────────────────────────────────────────────────────────────
 const cards = program.command('cards').description(

@@ -394,7 +394,83 @@ Set a custom field value on a card.
 
 ---
 
-## Members
+## Columns & Widgets
+
+### `columns list <boardId>` 📖 READ
+List all columns/workflow states on a board.
+
+### `columns create <boardId>` ⚠️ WRITE
+Create a new column on a board.
+
+| Flag | Description |
+|------|-------------|
+| `--name <name>` | **Required.** Column name |
+| `--position <pos>`| Column position (0-indexed) |
+
+### `columns update <columnId>` ⚠️ WRITE
+Update an existing column.
+
+### `widgets list` 📖 READ
+List all boards a specific card sits on natively.
+
+| Flag | Description |
+|------|-------------|
+| `--card <cardCommonId>` | **Required.** Card common ID |
+
+### `widgets add <boardId> <cardCommonId>` ⚠️ WRITE
+Add an existing card to a new board natively without duplicating it.
+
+---
+
+## Tasks & Dependencies
+
+### `tasks list <cardCommonId>` 📖 READ
+List granular checklist items inside a single card.
+
+### `tasks add <cardCommonId> <name>` ⚠️ WRITE
+Add a checklist item to a card.
+
+### `dependencies list <cardId>` 📖 READ
+List linked blocker/relation dependencies for a card.
+
+### `dependencies add <sourceId> <targetId>` ⚠️ WRITE
+Add a dependency link between cards.
+
+| Flag | Description |
+|------|-------------|
+| `--type <type>` | **Required.** `blocks`, `depends-on`, `relates-to`, `duplicates` |
+
+---
+
+## Tags & Attachments
+
+### `tags list` 📖 READ
+List all global workspace tags.
+
+### `tags create` ⚠️ WRITE
+Create a new global tag.
+
+| Flag | Description |
+|------|-------------|
+| `--name <name>` | **Required.** Tag name |
+| `--color <color>` | Tag color |
+
+### `attachments upload <cardCommonId>` ⚠️ WRITE
+Upload an attachment to a card.
+
+| Flag | Description |
+|------|-------------|
+| `--file <path>` | **Required.** Path to file to upload |
+
+---
+
+## Members, Users & Groups
+
+### `users list` 📖 READ
+List workspace users.
+
+### `groups list` 📖 READ
+List workspace user groups.
 
 ### `members list` 📖 READ
 List workspace members.

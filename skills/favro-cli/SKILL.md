@@ -94,6 +94,15 @@ favro audit <board> --since 1d           # Recent changes audit
 favro custom-fields list <boardId>
 favro comments list <cardId>
 favro members list --board <boardId>
+
+# Meta & Structure
+favro columns list <boardId>
+favro widgets list --card <cardCommonId>
+favro tags list
+favro tasks list <cardId>
+favro dependencies list <cardId>
+favro users list
+favro groups list
 ```
 
 ### Write Operations (scope-checked, confirmation-required)
@@ -128,6 +137,17 @@ favro members remove <memberId> --from <boardId> [-y]
 # Webhooks
 favro webhooks create --event <event> --target <url> [--dry-run]
 favro webhooks delete <webhookId> [-y]
+
+# Advanced Structure
+favro columns create <boardId> --name "Name" [--dry-run] [-y]
+favro columns update <columnId> --name "New Name" [--dry-run] [-y]
+favro widgets add <boardId> <cardCommonId> [--dry-run] [-y]
+
+# Meta & Assets
+favro tags create --name "Tag" [--dry-run] [-y]
+favro tasks add <cardId> "Task Name" [--dry-run] [-y]
+favro dependencies add <sourceId> <targetId> --type blocks [--dry-run] [-y]
+favro attachments upload <cardId> --file ./path [--dry-run] [-y]
 ```
 
 ### Bulk / AI Operations (high blast radius — extra caution)

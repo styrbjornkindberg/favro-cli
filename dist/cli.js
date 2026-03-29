@@ -88,6 +88,13 @@ const execute_1 = require("./commands/execute");
 const query_1 = require("./commands/query");
 const standup_1 = require("./commands/standup");
 const sprint_plan_1 = require("./commands/sprint-plan");
+const columns_1 = require("./commands/columns");
+const widgets_1 = require("./commands/widgets");
+const tags_1 = require("./commands/tags");
+const tasks_1 = require("./commands/tasks");
+const dependencies_1 = require("./commands/dependencies");
+const attachments_1 = require("./commands/attachments");
+const users_1 = require("./commands/users");
 const error_handler_1 = require("./lib/error-handler");
 const progress_1 = require("./lib/progress");
 const client_factory_1 = require("./lib/client-factory");
@@ -142,6 +149,20 @@ function buildProgram() {
     (0, collections_get_1.registerCollectionsGetCommand)(collectionsCmd);
     (0, collections_create_1.registerCollectionsCreateCommand)(collectionsCmd);
     (0, collections_update_1.registerCollectionsUpdateCommand)(collectionsCmd);
+    // ─── columns commands ────────────────────────────────────────────────────────
+    (0, columns_1.registerColumnsCommands)(program);
+    // ─── widgets commands ────────────────────────────────────────────────────────
+    (0, widgets_1.registerWidgetsCommands)(program);
+    // ─── tags commands ────────────────────────────────────────────────────────
+    (0, tags_1.registerTagsCommands)(program);
+    // ─── tasks commands ────────────────────────────────────────────────────────
+    (0, tasks_1.registerTasksCommands)(program);
+    // ─── dependencies commands ────────────────────────────────────────────────────────
+    (0, dependencies_1.registerDependenciesCommands)(program);
+    // ─── attachments commands ────────────────────────────────────────────────────────
+    (0, attachments_1.registerAttachmentsCommands)(program);
+    // ─── users & groups commands ───────────────────────────────────────────────────
+    (0, users_1.registerUsersCommands)(program);
     // ─── cards parent ────────────────────────────────────────────────────────────
     const cards = program.command('cards').description('Card operations — get, list, create, update, export, link, unlink, and move cards.\n\n' +
         'Subcommands:\n' +
