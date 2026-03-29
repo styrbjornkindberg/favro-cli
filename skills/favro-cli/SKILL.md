@@ -5,7 +5,7 @@ description: How to use the favro-cli tool to manage Favro project management bo
 
 # Favro CLI — Agent Operating Guide
 
-This skill teaches you how to operate the `favro-cli` tool safely and effectively. The CLI is installed locally and invoked as `node dist/cli.js` from the project root at `/Users/styrbjorn/Sites/favro-cli`. It provides full CRUD access to a production Favro workspace — treat it with care.
+This skill teaches you how to operate the `favro-cli` tool safely and effectively. The CLI provides full CRUD access to a production Favro workspace — treat it with care.
 
 ## ⚠️ The Prime Directive: Never Damage Production
 
@@ -68,7 +68,7 @@ Every write-capable command supports three safety flags. Learn them:
 
 ## 3. Command Reference
 
-The CLI path is: `node dist/cli.js` (from `/Users/styrbjorn/Sites/favro-cli`)
+The CLI is invoked via the `favro` command.
 
 For the full command reference with all flags and options, read: [📋 Command Reference](./references/command-reference.md)
 

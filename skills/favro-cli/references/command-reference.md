@@ -2,8 +2,7 @@
 
 This reference documents every command, flag, and option available in the favro-cli.
 
-**CLI invocation:** `node dist/cli.js` (from project root `/Users/styrbjorn/Sites/favro-cli`)  
-**Alias:** You can also use `favro` if the bin is linked.
+**CLI invocation:** `favro` command (if installed/linked globally) or `node dist/cli.js` (from source).
 
 ## Table of Contents
 
