@@ -1,0 +1,261 @@
+---
+name: favro-cli
+description: How to use the favro-cli tool to manage Favro project management boards, cards, collections, members, and more via the command line. Use this skill whenever the user asks about Favro cards, boards, sprints, backlogs, standup views, batch card operations, card linking, project planning, or any task involving the Favro workspace. Also use this skill when you need to look up, create, update, move, or query cards on Favro boards — even if the user doesn't explicitly mention "favro" but is clearly talking about their project management workflow. This is the authoritative guide for safe CLI usage with write-safety guardrails.
+---
+
+# Favro CLI — Agent Operating Guide
+
+This skill teaches you how to operate the `favro-cli` tool safely and effectively. The CLI is installed locally and invoked as `node dist/cli.js` from the project root at `/Users/styrbjorn/Sites/favro-cli`. It provides full CRUD access to a production Favro workspace — treat it with care.
+
+## ⚠️ The Prime Directive: Never Damage Production
+
+You have write access to a real, shared production Favro workspace with real projects, real boards, and real people depending on them. The safety guardrails described below exist specifically to prevent you from:
+
+1. Creating cards/boards in the wrong collection
+2. Moving or reassigning cards outside your designated sandbox
+3. Bulk-modifying cards without the user's explicit consent
+
+**Your default behavior must be cautious.** When in doubt, use `--dry-run` first, then show the user what would happen, and only execute the real mutation after they confirm.
+
+---
+
+## 1. Before You Do Anything: Set Scope
+
+The `favro scope` command restricts all write operations to a single collection. This is your safety net.
+
+```bash
+# Check what collection you're locked to
+favro scope show
+
+# Lock to a specific collection (do this FIRST in every session)
+favro scope set <collectionId>
+
+# Clear the lock (rarely needed)
+favro scope clear
+```
+
+**Rule:** At the start of every session that involves writing to Favro, verify the scope with `favro scope show`. If no scope is set, ask the user which collection to work in before proceeding with any writes.
+
+If the scope is already set, confirm with the user: "I see the scope is locked to **[collection name]**. Should I continue working in this collection?"
+
+### How scope enforcement works
+
+Every write command checks the target board's parent collection against the locked scope. If the board doesn't belong to the locked collection, the command exits with a clear error and **no mutation is made**. This protects every other collection in the workspace.
+
+To explicitly bypass (only when the user directs you to), use `--force`.
+
+---
+
+## 2. The Safety Flag Trio
+
+Every write-capable command supports three safety flags. Learn them:
+
+| Flag | Short | Effect |
+|------|-------|--------|
+| `--dry-run` | — | Preview without executing. No API calls. |
+| `--yes` | `-y` | Skip the interactive `[y/N]` confirmation prompt. |
+| `--force` | — | Bypass scope check. **Use only when explicitly told to.** |
+
+### Your standard operating procedure for writes
+
+1. **First run:** Always use `--dry-run` to preview the change
+2. **Show the user** the dry-run output
+3. **Second run:** Execute with `--yes` after the user confirms (or let the prompt appear if running interactively)
+
+**Never combine `--force` with `--yes` unless the user has explicitly instructed you to bypass scope.** This combination removes all safety nets.
+
+---
+
+## 3. Command Reference
+
+The CLI path is: `node dist/cli.js` (from `/Users/styrbjorn/Sites/favro-cli`)
+
+For the full command reference with all flags and options, read: [📋 Command Reference](./references/command-reference.md)
+
+Here is a quick overview of the most commonly used commands:
+
+### Read Operations (always safe)
+
+```bash
+# List & inspect
+favro collections list [--json]
+favro boards list [collectionId] [--json]
+favro cards list --board <boardId> [--json] [--limit N]
+favro cards get <cardId> [--json] [--include board,collection]
+
+# Smart views
+favro context <board>                    # Full board snapshot for AI workflows
+favro query <board> "status:done"        # Semantic card search
+favro standup --board <board>            # Daily standup view
+favro sprint-plan --board <board>        # Sprint planning suggestions
+favro audit <board> --since 1d           # Recent changes audit
+
+# Inspection
+favro custom-fields list <boardId>
+favro comments list <cardId>
+favro members list --board <boardId>
+```
+
+### Write Operations (scope-checked, confirmation-required)
+
+```bash
+# Cards
+favro cards create "Title" --board <boardId> [--dry-run] [-y]
+favro cards update <cardId> --name "New Name" --board <boardId> [--dry-run] [-y]
+
+# Card relationships
+favro cards link <cardId> <toCardId> --type <type> [-y]
+favro cards unlink <cardId> <fromCardId> [-y]
+favro cards move <cardId> --to-board <boardId> [-y]
+
+# Boards
+favro boards create <collectionId> --name "Name" [--dry-run]
+favro boards update <boardId> --name "Name" [-y]
+
+# Collections
+favro collections update <collectionId> --name "Name" [-y]
+
+# Comments
+favro comments add <cardId> --text "Comment" [--dry-run]
+
+# Custom fields
+favro custom-fields set <cardId> <fieldId> "value" [--dry-run] [-y]
+
+# Members
+favro members add <email> --to <boardId> [--dry-run]
+favro members remove <memberId> --from <boardId> [-y]
+
+# Webhooks
+favro webhooks create --event <event> --target <url> [--dry-run]
+favro webhooks delete <webhookId> [-y]
+```
+
+### Bulk / AI Operations (high blast radius — extra caution)
+
+```bash
+# Batch from CSV
+favro batch update --from-csv cards.csv [--dry-run] [-y]
+favro batch move --board <srcId> --to-board <dstId> --filter "status:Done" [--dry-run] [-y]
+favro batch assign --board <boardId> --filter "status:Backlog" --to @me [--dry-run] [-y]
+
+# Natural language batch
+favro batch-smart <board> --goal "move all overdue cards to Review" [--dry-run] [--yes]
+
+# Propose → Execute (two-step safety)
+favro propose <board> --action "move card 'Fix login' to Review"
+favro execute <board> --change-id <ch_xxx> [-y]
+```
+
+---
+
+## 4. Common Workflows
+
+### Getting oriented in a new session
+
+```bash
+favro scope show                                    # Verify scope
+favro collections list                              # See all collections
+favro boards list <scopedCollectionId>               # Boards in your sandbox
+favro cards list --board <boardId> --json | head -50  # Peek at cards
+favro context <boardId>                              # Full snapshot
+```
+
+### Creating a card safely
+
+```bash
+# Step 1: Dry-run preview
+favro cards create "Implement user auth" --board <boardId> --dry-run
+
+# Step 2: Execute after user confirms
+favro cards create "Implement user auth" --board <boardId> --yes
+```
+
+### Updating multiple cards
+
+```bash
+# Step 1: Preview the batch operation
+favro batch-smart <boardId> --goal "assign all Backlog cards with no owner to alice" --dry-run
+
+# Step 2: Execute (will prompt for confirmation)
+favro batch-smart <boardId> --goal "assign all Backlog cards with no owner to alice"
+```
+
+### Investigating card history
+
+```bash
+favro who-changed "Fix login bug"
+favro audit <boardId> --since 1w
+favro comments list <cardId>
+```
+
+---
+
+## 5. Understanding Favro's Data Model
+
+```
+Organization
+  └── Collection (e.g. "Product Team Q1")
+       └── Board (e.g. "Sprint 42", "Feature Backlog")
+            └── Column (e.g. "Todo", "In Progress", "Done")
+                 └── Card (the actual work item)
+```
+
+Key relationships:
+- A **collection** contains multiple **boards**
+- A **board** has **columns** representing workflow stages
+- A **card** lives on a board in a specific column
+- Cards can be **linked** (depends-on, blocks, relates-to)
+- Cards have **assignees**, **tags**, **custom fields**, and **due dates**
+
+**IDs are hex strings** (e.g. `a82adb26b63df3bbaeb39e7c`). You'll get them from list/get commands.
+
+---
+
+## 6. Error Recovery
+
+### "Scope violation" error
+You tried to write to a board outside the locked collection. This is the safety system working correctly.
+- Run `favro scope show` to verify what you're locked to
+- Run `favro boards list <scopedCollectionId>` to find boards you CAN write to
+- If the user explicitly wants to work in a different collection, use `favro scope set <newCollectionId>`
+
+### "Request failed with status code 403"
+The API key doesn't have permission for this operation. Check with the user.
+
+### "Request failed with status code 404"
+The entity doesn't exist. Double-check the ID by listing the parent resource.
+
+### Batch operation failures
+Batch operations use atomic rollback — if any card in a batch fails, all changes are rolled back automatically. Check the error output for which card failed and why.
+
+---
+
+## 7. Configuration
+
+Auth credentials and scope are stored in `~/.favro/config.json`:
+
+```json
+{
+  "apiKey": "...",
+  "email": "user@example.com",
+  "organizationId": "...",
+  "scopeCollectionId": "...",
+  "scopeCollectionName": "..."
+}
+```
+
+To authenticate: `favro auth login <apiToken>`
+To verify: `favro auth verify`
+
+---
+
+## 8. Golden Rules for AI Agents
+
+1. **Scope first.** Always verify `favro scope show` before writing. No scope = ask the user.
+2. **Dry-run first.** Every write gets a `--dry-run` preview before the real call.
+3. **Show, don't surprise.** Present dry-run output to the user before executing.
+4. **Never `--force` unprompted.** The `--force` flag exists for the user's convenience, not yours.
+5. **List before you act.** Looking up IDs with read commands is free and safe. Don't guess.
+6. **Batch with care.** Bulk operations affect many cards. Always `--dry-run` first.
+7. **One collection at a time.** Work within the scoped collection. If you need to switch, tell the user and set the new scope explicitly.
+8. **Clean up test data.** If you create test cards, track their IDs and offer to clean them up.
