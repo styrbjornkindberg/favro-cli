@@ -119,7 +119,7 @@ export function registerBatchUpdateCommand(batch: Command): void {
     .option('--dry-run', 'Preview changes without applying them')
     .option('--json', 'Output result as JSON')
     .option('--verbose', 'Show per-card progress')
-    .option('--yes, -y', 'Skip confirmation prompt')
+    .option('-y, --yes', 'Skip confirmation prompt')
     .option('--force', 'Bypass scope check')
     .action(async (options: {
       fromCsv: string;
@@ -257,7 +257,7 @@ export function registerBatchMoveCommand(batch: Command): void {
     .option('--dry-run', 'Preview changes without applying them')
     .option('--json', 'Output result as JSON')
     .option('--verbose', 'Show per-card progress')
-    .option('--yes, -y', 'Skip confirmation prompt')
+    .option('-y, --yes', 'Skip confirmation prompt')
     .option('--force', 'Bypass scope check')
     .action(async (options: {
       board: string;
@@ -402,7 +402,7 @@ export function registerBatchAssignCommand(batch: Command): void {
     .option('--dry-run', 'Preview changes without applying them')
     .option('--json', 'Output result as JSON')
     .option('--verbose', 'Show per-card progress')
-    .option('--yes, -y', 'Skip confirmation prompt')
+    .option('-y, --yes', 'Skip confirmation prompt')
     .option('--force', 'Bypass scope check')
     .action(async (options: {
       board: string;

@@ -161,7 +161,7 @@ export function registerCustomFieldsCommands(program: Command): void {
     )
     .option('--json', 'Output updated field value as JSON')
     .option('--dry-run', 'Print what would be updated without making API calls')
-    .option('--yes, -y', 'Skip confirmation prompt')
+    .option('-y, --yes', 'Skip confirmation prompt')
     .option('--force', 'Bypass scope check')
     .action(async (cardId: string, fieldId: string, value: string, options) => {
       const verbose = program.opts()?.verbose ?? false;

@@ -58,7 +58,7 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
     )
     .requiredOption('--type <type>', `Link type: ${VALID_LINK_TYPES.join('|')}`)
     .option('--json', 'Output link details as JSON')
-    .option('--yes, -y', 'Skip confirmation prompt')
+    .option('-y, --yes', 'Skip confirmation prompt')
     .option('--force', 'Bypass scope check')
     .action(async (cardId: string, toCardId: string, options) => {
       const verbose = cardsCmd.parent?.opts()?.verbose ?? cardsCmd.opts()?.verbose ?? false;
@@ -124,7 +124,7 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
       'Examples:\n' +
       '  favro cards unlink CARD-A CARD-B\n'
     )
-    .option('--yes, -y', 'Skip confirmation prompt')
+    .option('-y, --yes', 'Skip confirmation prompt')
     .option('--force', 'Bypass scope check')
     .action(async (cardId: string, fromCardId: string, options) => {
       const verbose = cardsCmd.parent?.opts()?.verbose ?? cardsCmd.opts()?.verbose ?? false;
@@ -171,7 +171,7 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
     .requiredOption('--to-board <boardId>', 'Destination board ID')
     .option('--position <pos>', `Position on board: ${VALID_POSITIONS.join('|')}`)
     .option('--json', 'Output updated card as JSON')
-    .option('--yes, -y', 'Skip confirmation prompt')
+    .option('-y, --yes', 'Skip confirmation prompt')
     .option('--force', 'Bypass scope check')
     .action(async (cardId: string, options) => {
       const verbose = cardsCmd.parent?.opts()?.verbose ?? cardsCmd.opts()?.verbose ?? false;

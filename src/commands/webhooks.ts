@@ -94,7 +94,7 @@ export function registerWebhooksCommand(program: Command): void {
       '  favro webhooks delete <webhook-id>\n\n' +
       'Tip: Use `favro webhooks list` to find webhook IDs.'
     )
-    .option('--yes, -y', 'Skip confirmation prompt')
+    .option('-y, --yes', 'Skip confirmation prompt')
     .action(async (webhookId: string, options) => {
       const verbose = program.opts()?.verbose ?? false;
       try {

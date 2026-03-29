@@ -268,7 +268,7 @@ cards
   .option('--bulk <file>', 'Bulk create from JSON file')
   .option('--csv <file>', 'Bulk import from CSV file (columns: name, description, status)')
   .option('--dry-run', 'Print what would be created without making API calls')
-  .option('--yes, -y', 'Skip confirmation prompt')
+  .option('-y, --yes', 'Skip confirmation prompt')
   .option('--force', 'Bypass scope check')
   .option('--json', 'Output as JSON')
   .action(async (title: string | undefined, options) => {
@@ -400,7 +400,7 @@ cards
   .option('--board <id>', 'Board ID — required for batch operations, optional for single')
   .option('--from-csv <file>', 'CSV file with card updates (columns: cardId, status, assignee, dueDate)')
   .option('--dry-run', 'Preview changes without making API calls')
-  .option('--yes, -y', 'Skip confirmation prompt')
+  .option('-y, --yes', 'Skip confirmation prompt')
   .option('--force', 'Bypass scope check')
   .option('--json', 'Output as JSON')
   .option('--verbose', 'Show per-card progress')

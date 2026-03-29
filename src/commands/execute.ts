@@ -27,7 +27,7 @@ export function registerExecuteCommand(program: Command): void {
     )
     .requiredOption('--change-id <id>', 'Change ID from `favro propose` output')
     .option('--pretty', 'Pretty-print JSON output')
-    .option('--yes, -y', 'Skip confirmation prompt')
+    .option('-y, --yes', 'Skip confirmation prompt')
     .option('--force', 'Bypass scope check')
     .action(async (_board: string, options) => {
       const verbose = program.opts()?.verbose ?? false;

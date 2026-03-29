@@ -17,7 +17,7 @@ export function registerBoardsUpdateCommand(boardsParent: Command): void {
     .option('--description <text>', 'New board description')
     .option('--json', 'Output updated board as JSON')
     .option('--dry-run', 'Print what would be updated without making API calls')
-    .option('--yes, -y', 'Skip confirmation prompt')
+    .option('-y, --yes', 'Skip confirmation prompt')
     .option('--force', 'Bypass scope check')
     .action(async (id: string, options) => {
       const verbose = boardsParent.parent?.opts()?.verbose ?? false;

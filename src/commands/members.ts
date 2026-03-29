@@ -120,7 +120,7 @@ export function registerMembersCommand(program: Command): void {
     .requiredOption('--from <target-id>', 'Board or collection ID to remove member from')
     .option('--board-target', 'Target is a board (default)')
     .option('--collection-target', 'Target is a collection')
-    .option('--yes, -y', 'Skip confirmation prompt')
+    .option('-y, --yes', 'Skip confirmation prompt')
     .option('--force', 'Bypass scope check')
     .action(async (memberId: string, options) => {
       const verbose = program.opts()?.verbose ?? false;
