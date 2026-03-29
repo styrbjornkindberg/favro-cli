@@ -13,9 +13,12 @@ Command-line interface for [Favro](https://favro.com) — manage boards and card
   - **[API Reference](./API-REFERENCE.md)** — Complete SPEC-002 endpoint reference
 - [Authentication](#authentication)
 - [Command Reference](#command-reference)
-  - [auth](#auth)
-  - [boards](#boards)
-  - [cards](#cards)
+  - [Global Options](#global-options)
+  - [Scope / Safety](#scope)
+  - [Collections & Boards](#collections)
+  - [Cards](#cards)
+  - [Comments, Members, Webhooks](#comments)
+  - [Batch & AI Commands](#batch-operations)
 - [Configuration](#configuration)
 - [Examples](#examples)
   - [Bulk Create from CSV](#bulk-create-from-csv)
@@ -128,220 +131,475 @@ When multiple sources are configured, the CLI uses this priority order:
 
 ## Command Reference
 
-### auth
+## Global Options
 
-Manage your Favro API credentials.
-
-```
-favro auth --help
-```
-
-#### `favro auth login`
-
-Save your API key to the local config file.
-
-```bash
-favro auth login
-favro auth login --api-key YOUR_KEY_HERE
-```
-
-| Option | Description |
-|--------|-------------|
-| `--api-key <key>` | API key to save (skips interactive prompt) |
-
-#### `favro auth check`
-
-Verify the currently configured API key is valid.
-
-```bash
-favro auth check
-favro auth check --api-key YOUR_KEY_HERE
-```
-
-| Option | Description |
-|--------|-------------|
-| `--api-key <key>` | API key to check (overrides config/env) |
+| Flag | Description |
+|------|-------------|
+| `--verbose` | Show detailed error output and debug info |
+| `--help` | Display help for any command |
 
 ---
 
-### boards
-
-Work with Favro boards.
+## Auth
 
 ```
-favro boards --help
-```
-
-#### `favro boards list`
-
-List all boards you have access to. Optionally filter by collection.
-
-```bash
-favro boards list
-favro boards list --collection "Sprint 42"
-favro boards list --json
-```
-
-| Option | Description |
-|--------|-------------|
-| `--collection <name>` | Filter boards by collection name (substring match, case-insensitive) |
-| `--json` | Output raw JSON instead of a table |
-
-**Example output:**
-
-```
-Found 3 board(s):
-┌─────────┬──────────────────────┬────────────────┬───────┬─────────┬────────────┐
-│ (index) │ ID                   │ Name           │ Cards │ Columns │ Updated    │
-├─────────┼──────────────────────┼────────────────┼───────┼─────────┼────────────┤
-│ 0       │ 'abc123'             │ 'Sprint 42'    │ 18    │ 5       │ '2025-03-01'│
-└─────────┴──────────────────────┴────────────────┴───────┴─────────┴────────────┘
+favro auth login     — Store API token
+favro auth logout    — Remove stored credentials
+favro auth verify    — Test the current token
+favro auth check     — Show stored credential info
 ```
 
 ---
 
-### cards
+## Scope
 
-Work with cards on Favro boards.
+Controls write-safety scope locking. **READ THIS BEFORE ANY WRITES.**
 
-```
-favro cards --help
-```
+| Command | Description |
+|---------|-------------|
+| `favro scope set <collectionId>` | Lock writes to this collection |
+| `favro scope show` | Display current lock |
+| `favro scope clear` | Remove lock |
 
-#### `favro cards list`
-
-List cards from a board with optional filters.
-
-```bash
-favro cards list --board <boardId>
-favro cards list --board <boardId> --status "In Progress" --limit 100
-favro cards list --board <boardId> --assignee alice
-favro cards list --board <boardId> --tag bug --json
-```
-
-| Option | Description |
-|--------|-------------|
-| `--board <id>` | Board ID to list cards from |
-| `--status <status>` | Filter by status (case-insensitive) |
-| `--assignee <user>` | Filter by assignee (substring match) |
-| `--tag <tag>` | Filter by tag (substring match) |
-| `--limit <number>` | Maximum number of cards to return (default: 50) |
-| `--json` | Output raw JSON instead of a table |
-
-> **Tip:** Use `favro boards list` to find board IDs.
+When scope is set, every write command checks the target board's parent collection. If it doesn't match, the command **exits with an error** before any API mutation.
 
 ---
 
-#### `favro cards create`
+## Collections
 
-Create one or more cards. Supports single-card creation, bulk JSON import, and CSV import.
+### `collections list`
+List all collections in the organization.
 
-```bash
-# Single card
-favro cards create "Fix the login bug" --board <boardId>
-favro cards create "Add dark mode" --board <boardId> --description "User-requested feature" --status "Backlog"
+| Flag | Description |
+|------|-------------|
+| `--json` | Output raw JSON |
 
-# Bulk from CSV
-favro cards create --csv tasks.csv --board <boardId>
+### `collections get <id>`
+Get a single collection by ID.
 
-# Bulk from JSON
-favro cards create --bulk tasks.json --board <boardId>
+| Flag | Description |
+|------|-------------|
+| `--json` | Output raw JSON |
 
-# Dry run (preview without creating)
-favro cards create "Test card" --board <boardId> --dry-run
-favro cards create --csv tasks.csv --board <boardId> --dry-run
-```
+### `collections create` ⚠️ WRITE
+Create a new collection.
 
-| Option | Description |
-|--------|-------------|
-| `--board <id>` | Target board ID |
+| Flag | Description |
+|------|-------------|
+| `--name <name>` | **Required.** Collection name |
+| `--description <text>` | Collection description |
+| `--json` | Output raw JSON |
+| `--dry-run` | Preview only |
+
+### `collections update <id>` ⚠️ WRITE
+Update collection properties.
+
+| Flag | Description |
+|------|-------------|
+| `--name <name>` | New name |
+| `--description <text>` | New description |
+| `--json` | Output raw JSON |
+| `-y, --yes` | Skip confirmation |
+| `--force` | Bypass scope check |
+
+---
+
+## Boards
+
+### `boards list [collectionId]`
+List boards, optionally filtered by collection.
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Output raw JSON |
+
+### `boards get <id>`
+Get board details including columns, members, and stats.
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Output raw JSON |
+| `--columns` | Include column definitions |
+
+### `boards create <collectionId>` ⚠️ WRITE
+Create a new board.
+
+| Flag | Description |
+|------|-------------|
+| `--name <name>` | **Required.** Board name |
+| `--type <type>` | Board type: `board` or `backlog` |
+| `--json` | Output raw JSON |
+| `--dry-run` | Preview only |
+| `--force` | Bypass scope check |
+
+### `boards update <id>` ⚠️ WRITE
+Update board properties.
+
+| Flag | Description |
+|------|-------------|
+| `--name <name>` | New name |
+| `--json` | Output raw JSON |
+| `-y, --yes` | Skip confirmation |
+| `--force` | Bypass scope check |
+
+---
+
+## Cards
+
+### `cards get <cardId>`
+Retrieve a card by ID.
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Output raw JSON |
+| `--include <fields>` | Include extra data: `board`, `collection` |
+| `--board <boardId>` | Board context for the card |
+
+### `cards list`
+List cards on a board.
+
+| Flag | Description |
+|------|-------------|
+| `--board <boardId>` | **Required.** Board to list from |
+| `--json` | Output raw JSON |
+| `--limit <n>` | Max cards (default: 100) |
+| `--filter <expr>` | Filter expression (repeatable) |
+
+### `cards create <title>` ⚠️ WRITE
+Create a new card.
+
+| Flag | Description |
+|------|-------------|
+| `--board <boardId>` | **Required.** Target board |
+| `--status <status>` | Initial status/column |
+| `--assignees <users>` | Comma-separated assignees |
+| `--tags <tags>` | Comma-separated tags |
+| `--due-date <date>` | Due date (ISO 8601) |
 | `--description <text>` | Card description |
-| `--status <status>` | Initial card status |
-| `--assignee <user>` | Assignee username or user ID |
-| `--csv <file>` | Bulk import from CSV file (columns: `name`, `description`, `status`) |
-| `--bulk <file>` | Bulk import from JSON file (array of card objects) |
-| `--dry-run` | Print what would be created without making API calls |
-| `--json` | Output created card(s) as JSON |
+| `--json` | Output raw JSON |
+| `--dry-run` | Preview only |
+| `-y, --yes` | Skip confirmation |
+| `--force` | Bypass scope check |
 
-**CSV format for bulk import:**
+Also supports bulk CSV import:
+| Flag | Description |
+|------|-------------|
+| `--from-csv <file>` | Create cards from CSV file |
 
-```csv
-name,description,status
-"Fix login bug","Users can't log in on Safari","In Progress"
-"Add dark mode","Design mockup attached","Backlog"
-"Update API docs","Swagger spec needs refresh","Todo"
-```
+### `cards update <cardId>` ⚠️ WRITE
+Update an existing card.
 
-**JSON format for bulk import:**
+| Flag | Description |
+|------|-------------|
+| `--board <boardId>` | Board context |
+| `--name <name>` | New title |
+| `--status <status>` | New status |
+| `--assignees <users>` | New assignees |
+| `--tags <tags>` | New tags |
+| `--due-date <date>` | New due date |
+| `--description <text>` | New description |
+| `--json` | Output raw JSON |
+| `--dry-run` | Preview only |
+| `-y, --yes` | Skip confirmation |
+| `--force` | Bypass scope check |
 
-```json
-[
-  { "name": "Fix login bug", "description": "Safari issue", "status": "In Progress" },
-  { "name": "Add dark mode", "status": "Backlog" }
-]
-```
+### `cards export <board>` 📖 READ
+Export all cards from a board.
+
+| Flag | Description |
+|------|-------------|
+| `--format <fmt>` | `json` or `csv` |
+| `--out <file>` | Output file path |
+| `--filter <expr>` | Filter expression (repeatable) |
+
+### `cards link <cardId> <toCardId>` ⚠️ WRITE
+Create a link between two cards.
+
+| Flag | Description |
+|------|-------------|
+| `--type <type>` | **Required.** `depends-on`, `blocks`, `relates-to` |
+| `--json` | Output raw JSON |
+| `-y, --yes` | Skip confirmation |
+| `--force` | Bypass scope check |
+
+### `cards unlink <cardId> <fromCardId>` ⚠️ WRITE
+Remove a link between two cards.
+
+| Flag | Description |
+|------|-------------|
+| `-y, --yes` | Skip confirmation |
+| `--force` | Bypass scope check |
+
+### `cards move <cardId>` ⚠️ WRITE
+Move a card to a different board.
+
+| Flag | Description |
+|------|-------------|
+| `--to-board <boardId>` | **Required.** Destination board |
+| `--position <pos>` | `top` or `bottom` |
+| `--json` | Output raw JSON |
+| `-y, --yes` | Skip confirmation |
+| `--force` | Bypass scope check |
+
+---
+
+## Comments
+
+### `comments list <cardId>` 📖 READ
+List all comments on a card.
+
+| Flag | Description |
+|------|-------------|
+| `--limit <n>` | Max comments (default: 100) |
+| `--json` | Output raw JSON |
+
+### `comments add <cardId>` ⚠️ WRITE
+Add a comment to a card.
+
+| Flag | Description |
+|------|-------------|
+| `--text <comment>` | **Required.** Comment body |
+| `--json` | Output raw JSON |
+| `--dry-run` | Preview only |
+| `--force` | Bypass scope check |
 
 ---
 
-#### `favro cards update`
+## Custom Fields
 
-Update an existing card by its ID.
+### `custom-fields list <boardId>` 📖 READ
+List all custom fields for a board.
 
-```bash
-favro cards update <cardId> --status "Done"
-favro cards update <cardId> --name "Renamed title" --status "In Progress"
-favro cards update <cardId> --assignees "alice,bob"
-favro cards update <cardId> --tags "bug,priority" --dry-run
-```
+### `custom-fields get <fieldId>` 📖 READ
+Get field definition and options.
 
-| Option | Description |
-|--------|-------------|
-| `--name <name>` | New card title |
-| `--description <desc>` | New card description |
-| `--status <status>` | New card status |
-| `--assignees <list>` | Comma-separated list of assignees |
-| `--tags <list>` | Comma-separated list of tags |
-| `--dry-run` | Print what would be updated without making API calls |
-| `--json` | Output updated card as JSON |
+### `custom-fields values <fieldId>` 📖 READ
+List allowed values for a select field.
+
+### `custom-fields set <cardId> <fieldId> <value>` ⚠️ WRITE
+Set a custom field value on a card.
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Output raw JSON |
+| `--dry-run` | Preview only |
+| `-y, --yes` | Skip confirmation |
+| `--force` | Bypass scope check |
+
+---
+
+## Members
+
+### `members list` 📖 READ
+List workspace members.
+
+| Flag | Description |
+|------|-------------|
+| `--board <boardId>` | Filter by board |
+| `--collection <collectionId>` | Filter by collection |
+| `--json` | Output raw JSON |
+
+### `members add <email>` ⚠️ WRITE
+Add a member to a board or collection.
+
+| Flag | Description |
+|------|-------------|
+| `--to <targetId>` | **Required.** Board or collection ID |
+| `--board-target` | Target is a board (default) |
+| `--collection-target` | Target is a collection |
+| `--json` | Output raw JSON |
+| `--dry-run` | Preview only |
+| `--force` | Bypass scope check |
+
+### `members remove <memberId>` ⚠️ WRITE
+Remove a member.
+
+| Flag | Description |
+|------|-------------|
+| `--from <targetId>` | **Required.** Board or collection ID |
+| `--board-target` | Target is a board (default) |
+| `--collection-target` | Target is a collection |
+| `-y, --yes` | Skip confirmation |
+| `--force` | Bypass scope check |
+
+### `members permissions <memberId>` 📖 READ
+Check member's permission level on a board.
+
+| Flag | Description |
+|------|-------------|
+| `--board <boardId>` | **Required.** Board ID |
+| `--json` | Output raw JSON |
 
 ---
 
-#### `favro cards export`
+## Webhooks
 
-Export all cards from a board to JSON or CSV. Supports filtering and large datasets (10k+ cards with backpressure-aware streaming).
+### `webhooks list` 📖 READ
+List all configured webhooks.
 
-```bash
-# Export to file
-favro cards export <boardId> --format csv --out sprint.csv
-favro cards export <boardId> --format json --out sprint.json
+### `webhooks create` ⚠️ WRITE
+Create a new webhook.
 
-# Export to stdout (pipe-friendly)
-favro cards export <boardId> --format json | jq '.[] | .name'
-favro cards export <boardId> --format csv | head -20
+| Flag | Description |
+|------|-------------|
+| `--event <event>` | **Required.** `card.created` or `card.updated` |
+| `--target <url>` | **Required.** Delivery URL |
+| `--dry-run` | Preview only |
 
-# Filter before exporting
-favro cards export <boardId> --format csv --filter "assignee:alice" --out alice.csv
-favro cards export <boardId> --format json --filter "status:Done" --filter "tag:sprint-42"
-```
+### `webhooks delete <webhookId>` ⚠️ WRITE
+Delete a webhook.
 
-| Option | Description |
-|--------|-------------|
-| `--format <format>` | Export format: `json` or `csv` (default: `json`) |
-| `--out <file>` | Output file path (defaults to stdout) |
-| `--filter <expression>` | Filter expression (repeatable). Format: `field:value`. Supports `assignee`, `status`, `tag`. |
-| `--limit <number>` | Maximum cards to fetch (default: 10000) |
-
-**Filter expression examples:**
-
-| Expression | Matches cards where... |
-|------------|------------------------|
-| `assignee:alice` | `alice` is in the assignee list |
-| `status:Done` | status is `Done` |
-| `tag:bug` | `bug` tag is applied |
-
-Multiple `--filter` flags are combined with **AND** logic.
+| Flag | Description |
+|------|-------------|
+| `-y, --yes` | Skip confirmation |
 
 ---
+
+## Batch Operations
+
+### `batch update` ⚠️ WRITE — HIGH BLAST RADIUS
+Update cards from a CSV file.
+
+| Flag | Description |
+|------|-------------|
+| `--from-csv <file>` | **Required.** CSV file |
+| `--dry-run` | Preview only |
+| `--json` | Output raw JSON |
+| `--verbose` | Per-card progress |
+| `-y, --yes` | Skip confirmation |
+| `--force` | Bypass scope check |
+
+CSV format: `card_id,status,owner,due_date,custom_field_x`
+
+### `batch move` ⚠️ WRITE — HIGH BLAST RADIUS
+Move matching cards between boards/statuses.
+
+| Flag | Description |
+|------|-------------|
+| `--board <id>` | **Required.** Source board |
+| `--to-board <id>` | Target board |
+| `--status <value>` | Target status |
+| `--filter <expr>` | Filter expression (repeatable, AND logic) |
+| `--dry-run` | Preview only |
+| `--json` | Output raw JSON |
+| `--verbose` | Per-card progress |
+| `-y, --yes` | Skip confirmation |
+| `--force` | Bypass scope check |
+
+### `batch assign` ⚠️ WRITE — HIGH BLAST RADIUS
+Assign matching cards to a user.
+
+| Flag | Description |
+|------|-------------|
+| `--board <id>` | **Required.** Board ID |
+| `--to <user>` | **Required.** User to assign (`@me` for yourself) |
+| `--filter <expr>` | Filter expression (repeatable) |
+| `--dry-run` | Preview only |
+| `--json` | Output raw JSON |
+| `--verbose` | Per-card progress |
+| `-y, --yes` | Skip confirmation |
+| `--force` | Bypass scope check |
+
+Filter syntax: `status:<value>`, `assignee:<user>`, `tag:<tag>`
+
+---
+
+## AI / Smart Commands
+
+### `context <board>` 📖 READ
+Full board snapshot for AI workflows — returns board metadata, columns, custom fields, members, cards, and stats in one JSON blob.
+
+| Flag | Description |
+|------|-------------|
+| `--limit <n>` | Max cards (default: 1000) |
+
+### `query <board> <query...>` 📖 READ
+Semantic card search with natural language.
+
+Query patterns: `status:done`, `assigned:@alice`, `blocked`, `priority:high`, `tag:bug`, `due:overdue`, free text.
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Output raw JSON |
+| `--limit <n>` | Max results |
+
+### `standup` 📖 READ
+Daily standup view — groups cards by status category.
+
+| Flag | Description |
+|------|-------------|
+| `--board <board>` | Board to report on |
+| `--json` | Output raw JSON |
+
+### `sprint-plan` 📖 READ
+Sprint planning — suggests backlog cards sorted by priority×effort.
+
+| Flag | Description |
+|------|-------------|
+| `--board <board>` | Board to plan from |
+| `--budget <n>` | Max effort budget |
+| `--json` | Output raw JSON |
+
+### `batch-smart <board>` ⚠️ WRITE — HIGH BLAST RADIUS
+Natural language batch operations.
+
+| Flag | Description |
+|------|-------------|
+| `--goal <goal>` | **Required.** Plain English goal |
+| `--dry-run` | Preview only |
+| `--yes` | Skip confirmation |
+| `--force` | Bypass scope check |
+| `--json` | Output raw JSON |
+
+Supported goal patterns:
+- `move all <filter> cards to <status>`
+- `assign all <filter> cards [with no owner] to <user>`
+- `close all <filter> cards`
+- `unassign all <filter> cards`
+
+### `propose <board>` 📖 READ (generates preview)
+Propose a change — generates a dry-run preview with a change ID.
+
+| Flag | Description |
+|------|-------------|
+| `--action <action>` | **Required.** Plain English action |
+| `--pretty` | Pretty-print output |
+
+### `execute <board>` ⚠️ WRITE
+Execute a proposed change.
+
+| Flag | Description |
+|------|-------------|
+| `--change-id <id>` | **Required.** From `propose` output |
+| `--pretty` | Pretty-print output |
+| `-y, --yes` | Skip confirmation |
+| `--force` | Bypass scope check |
+
+### `audit <board>` 📖 READ
+Board change audit log.
+
+| Flag | Description |
+|------|-------------|
+| `--since <period>` | Time range: `1h`, `1d`, `1w` |
+| `--limit <n>` | Max entries (default: 100) |
+| `--json` | Output raw JSON |
+
+### `who-changed <cardTitle>` 📖 READ
+Card edit history by title search.
+
+| Flag | Description |
+|------|-------------|
+| `--board <boardId>` | Narrow search to board |
+| `--json` | Output raw JSON |
+
+### `risks <board>` 📖 READ
+Board risk analysis — surfaces blocked, stale, unassigned, and incomplete cards.
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Output raw JSON |
+| `--stale-days <n>` | Days without update to consider stale |
+
 
 ## Configuration
 
