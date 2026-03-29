@@ -32,11 +32,17 @@ Command-line interface for [Favro](https://favro.com) — manage boards and card
 
 ## Installation
 
-```bash
-npm install -g @square-moon/favro-cli
-```
+This CLI is designed for local source installation.
 
 Requires **Node.js 18+**.
+
+```bash
+git clone https://github.com/square-moon/favro-cli.git
+cd favro-cli
+npm install
+npm run build
+npm link
+```
 
 After install, the `favro` command is available globally:
 

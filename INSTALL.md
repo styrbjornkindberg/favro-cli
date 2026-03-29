@@ -20,13 +20,19 @@ Before you begin, ensure you have:
 
 ## Installation Steps
 
-### 1. Install the CLI
+### 1. Clone and Install the CLI
+
+This CLI is designed for local source installation.
 
 ```bash
-npm install -g @square-moon/favro-cli
+git clone https://github.com/square-moon/favro-cli.git
+cd favro-cli
+npm install
+npm run build
+npm link
 ```
 
-This makes the `favro` command available globally on your system.
+This builds the project and symlinks the `favro` command globally on your system.
 
 ### 2. Verify Installation
 
@@ -106,14 +112,15 @@ Expected output:
 
 ### `command not found: favro`
 
-The CLI is installed but not in your PATH. Try:
+The CLI is symlinked but the global bin folder is not in your PATH. Try:
 
 ```bash
 # Verify the global npm bin directory
 npm config get prefix
 
-# If not in PATH, reinstall with explicit location
-npm install -g @square-moon/favro-cli
+# Make sure you ran npm link from the project directory
+cd /path/to/favro-cli
+npm link
 ```
 
 ---
@@ -146,11 +153,11 @@ To fix:
 
 ### `EACCES: permission denied` during install
 
-You're trying to install globally without permissions. Fix with:
+You're trying to use `npm link` without permissions. Fix with:
 
 ```bash
 # Option 1: Use sudo (not recommended)
-sudo npm install -g @square-moon/favro-cli
+sudo npm link
 
 # Option 2: Fix npm permissions (recommended)
 # See: https://docs.npmjs.com/resolving-eacces-permissions-errors-when-installing-npm-packages-globally
@@ -186,10 +193,11 @@ Then run `favro auth login` again.
 
 ## Uninstall
 
-To remove the CLI:
+To remove the CLI, unlink it from the project directory:
 
 ```bash
-npm uninstall -g @square-moon/favro-cli
+cd /path/to/favro-cli
+npm unlink
 ```
 
 To remove your saved config:
