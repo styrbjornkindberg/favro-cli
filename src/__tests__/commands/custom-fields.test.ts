@@ -19,6 +19,20 @@ jest.mock('../../lib/custom-fields-api');
 import CustomFieldsAPI from '../../lib/custom-fields-api';
 const MockCustomFieldsAPI = CustomFieldsAPI as jest.MockedClass<typeof CustomFieldsAPI>;
 
+jest.mock('../../lib/cards-api', () => {
+  return {
+    __esModule: true,
+    default: jest.fn().mockImplementation(() => ({
+      getCard: jest.fn().mockResolvedValue({ boardId: 'board-1' })
+    }))
+  };
+});
+
+jest.mock('../../lib/safety', () => ({
+  checkScope: jest.fn().mockResolvedValue(true),
+  confirmAction: jest.fn().mockResolvedValue(true)
+}));
+
 const SAMPLE_TEXT_FIELD = {
   fieldId: 'field-1',
   name: 'Notes',

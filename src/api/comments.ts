@@ -26,6 +26,7 @@ interface RawComment {
   text?: string;
   comment?: string;   // Favro uses "comment" field name
   author?: string;
+  user?: string;
   created?: string;   // Favro uses "created" not "createdAt"
   createdAt?: string;
   updatedAt?: string;
@@ -36,7 +37,7 @@ function normalizeComment(raw: RawComment, fallbackCardId: string): Comment {
     commentId: raw.commentId ?? raw.id ?? '',
     cardId: raw.cardCommonId ?? raw.cardId ?? fallbackCardId,
     text: raw.comment ?? raw.text ?? '',
-    author: raw.userId ?? raw.author,
+    author: raw.userId ?? raw.author ?? raw.user,
     createdAt: raw.created ?? raw.createdAt ?? '',
     updatedAt: raw.updatedAt,
   };

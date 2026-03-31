@@ -31,7 +31,7 @@ describe('FavroHttpClient', () => {
   test('creates axios instance with default base URL', () => {
     new FavroHttpClient();
     expect(mockedAxios.create).toHaveBeenCalledWith(
-      expect.objectContaining({ baseURL: 'https://api.favro.com/v1' })
+      expect.objectContaining({ baseURL: 'https://favro.com/api/v1' })
     );
   });
 

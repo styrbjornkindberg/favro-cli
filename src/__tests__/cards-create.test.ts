@@ -11,6 +11,9 @@ import * as fs from 'fs/promises';
 jest.mock('../lib/cards-api');
 jest.mock('../lib/http-client');
 jest.mock('fs/promises');
+jest.mock('../lib/config');
+
+import * as config from '../lib/config';
 
 const mockFs = fs as jest.Mocked<typeof fs>;
 
@@ -39,6 +42,8 @@ describe('Cards Create Command', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     process.env.FAVRO_API_TOKEN = 'test-token';
+    (config.resolveApiKey as jest.Mock).mockResolvedValue('test-token');
+    (config.readConfig as jest.Mock).mockResolvedValue({});
     consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
     consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => { throw new Error('process.exit'); });

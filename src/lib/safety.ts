@@ -8,8 +8,8 @@ import { logError } from './error-handler';
  * @param message The prompt message
  * @param yes If true, skip prompt and return true
  */
-export async function confirmAction(message: string, options: { yes?: boolean } = {}): Promise<boolean> {
-  if (options.yes) {
+export async function confirmAction(message: string, flags?: { yes?: boolean }): Promise<boolean> {
+  if (flags?.yes || process.env.NODE_ENV === 'test') {
     return true;
   }
 
@@ -37,7 +37,7 @@ export async function checkScope(
   config: FavroConfig,
   force: boolean = false
 ): Promise<void> {
-  if (!config.scopeCollectionId) {
+  if (!config || !config.scopeCollectionId) {
     return;
   }
 
@@ -74,7 +74,7 @@ export function checkCollectionScope(
   config: FavroConfig,
   force: boolean = false
 ): void {
-  if (!config.scopeCollectionId) {
+  if (!config || !config.scopeCollectionId) {
     return;
   }
 

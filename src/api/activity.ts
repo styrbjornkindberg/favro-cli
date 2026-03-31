@@ -85,7 +85,7 @@ export class ActivityApiClient {
     for (const card of relevant) {
       if (all.length >= offset + limit) break;
 
-      const cardActivity = await this.getCardActivity(card.cardId, 50);
+      const cardActivity = await this.getCardActivity(card.cardId, 50, boardId);
 
       if (cardActivity.length > 0) {
         for (const entry of cardActivity) {
@@ -134,7 +134,7 @@ export class ActivityApiClient {
   /**
    * Get activity entries for a single card with pagination.
    */
-  async getCardActivity(cardId: string, limit: number = 100): Promise<ActivityEntry[]> {
+  async getCardActivity(cardId: string, limit: number = 100, boardId?: string): Promise<ActivityEntry[]> {
     const entries: ActivityEntry[] = [];
     let page = 0;
     let totalPages = 1;
@@ -155,7 +155,7 @@ export class ActivityApiClient {
           `/cards/${cardId}/activities`,
           { params }
         );
-        const batch = (response.entities ?? []).map(raw => normalizeActivity(raw));
+        const batch = (response.entities ?? []).map(raw => normalizeActivity(raw, boardId));
         entries.push(...batch);
 
         if (response.requestId) {

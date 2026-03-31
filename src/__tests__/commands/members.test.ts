@@ -10,6 +10,11 @@ import * as apiMembers from '../../api/members';
 jest.mock('../../lib/http-client');
 jest.mock('../../lib/config');
 jest.mock('../../api/members');
+jest.mock('../../lib/safety', () => ({
+  checkScope: jest.fn().mockResolvedValue(true),
+  checkCollectionScope: jest.fn().mockResolvedValue(true),
+  confirmAction: jest.fn().mockResolvedValue(true)
+}));
 
 const MockFavroApiClient = apiMembers.FavroApiClient as jest.MockedClass<typeof apiMembers.FavroApiClient>;
 

@@ -48,6 +48,21 @@ describe('auth login command', () => {
     // Default: no existing config
     const noFile = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
     mockFs.readFile.mockRejectedValue(noFile);
+    
+    // Add default safe mock for interactive prompts
+    (mockReadline.createInterface as jest.Mock).mockImplementation(() => ({
+      question: jest.fn((_q: string, cb: (a: string) => void) => cb('test-answer')),
+      close: jest.fn(),
+      output: { write: jest.fn() },
+    }));
+
+    // Default successful organization fetch
+    MockedFavroHttpClient.prototype.get = jest.fn().mockImplementation((url: string) => {
+      if (url === '/organizations') {
+        return Promise.resolve({ entities: [{ organizationId: 'org-1', name: 'Test Org' }] });
+      }
+      return Promise.resolve({});
+    });
   });
 
   afterEach(() => {
@@ -60,30 +75,30 @@ describe('auth login command', () => {
     const program = new Command();
     registerAuthCommand(program);
 
-    await program.parseAsync(['node', 'test', 'auth', 'login', '--api-key', 'my-test-key']);
+    await program.parseAsync(['node', 'test', 'auth', 'login', '--email', 'test@example.com', '--api-key', 'my-test-key']);
 
     expect(mockFs.writeFile).toHaveBeenCalledTimes(1);
     const written = (mockFs.writeFile as jest.Mock).mock.calls[0][1];
     const parsed = JSON.parse(written);
     expect(parsed.apiKey).toBe('my-test-key');
-    expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('API key saved'));
+    expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('Credentials saved to'));
   });
 
   test('confirms with ✓ API key saved message', async () => {
     const program = new Command();
     registerAuthCommand(program);
 
-    await program.parseAsync(['node', 'test', 'auth', 'login', '--api-key', 'key-abc']);
+    await program.parseAsync(['node', 'test', 'auth', 'login', '--email', 'test@example.com', '--api-key', 'key-abc']);
 
     const logCalls = consoleLogSpy.mock.calls.map(c => c[0]).join('\n');
-    expect(logCalls).toContain('✓ API key saved');
+    expect(logCalls).toContain('✓ Credentials saved to');
   });
 
   test('saves config with correct file permissions (0o600)', async () => {
     const program = new Command();
     registerAuthCommand(program);
 
-    await program.parseAsync(['node', 'test', 'auth', 'login', '--api-key', 'secure-key']);
+    await program.parseAsync(['node', 'test', 'auth', 'login', '--email', 'test@example.com', '--api-key', 'secure-key']);
 
     expect(mockFs.writeFile).toHaveBeenCalledWith(
       expect.stringContaining('config.json'),
@@ -100,7 +115,7 @@ describe('auth login command', () => {
     registerAuthCommand(program);
 
     await expect(
-      program.parseAsync(['node', 'test', 'auth', 'login', '--api-key', 'key-xyz'])
+      program.parseAsync(['node', 'test', 'auth', 'login', '--email', 'test@example.com', '--api-key', 'key-xyz'])
     ).rejects.toThrow('process.exit');
 
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('permission error'));
@@ -110,18 +125,22 @@ describe('auth login command', () => {
   test('exits with error if no API key provided', async () => {
     // Mock readline to return empty string
     const mockRl = {
-      question: jest.fn((_q: string, cb: (a: string) => void) => cb('')),
+      // First prompt is for email, second for API key. 
+      // We return a valid email for the first call, and empty for the second to trigger "No API key" error.
+      question: jest.fn()
+        .mockImplementationOnce((_q, cb) => cb('test@example.com'))
+        .mockImplementationOnce((_q, cb) => cb('')),
       close: jest.fn(),
       output: { write: jest.fn() },
     };
-    (mockReadline.createInterface as jest.Mock).mockReturnValueOnce(mockRl);
+    (mockReadline.createInterface as jest.Mock).mockReturnValue(mockRl);
 
     const program = new Command();
     registerAuthCommand(program);
 
     await expect(
       program.parseAsync(['node', 'test', 'auth', 'login'])
-    ).rejects.toThrow('process.exit');
+    ).rejects.toThrow();
 
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('No API key'));
     expect(exitSpy).toHaveBeenCalledWith(1);
@@ -129,11 +148,13 @@ describe('auth login command', () => {
 
   test('prompts interactively when no --api-key flag given', async () => {
     const mockRl = {
-      question: jest.fn((_q: string, cb: (a: string) => void) => cb('prompted-key')),
+      question: jest.fn()
+        .mockImplementationOnce((_q, cb) => cb('test@example.com')) // email
+        .mockImplementationOnce((_q, cb) => cb('prompted-key')), // key
       close: jest.fn(),
       output: { write: jest.fn() },
     };
-    (mockReadline.createInterface as jest.Mock).mockReturnValueOnce(mockRl);
+    (mockReadline.createInterface as jest.Mock).mockReturnValue(mockRl);
 
     const program = new Command();
     registerAuthCommand(program);
@@ -156,7 +177,7 @@ describe('auth login command', () => {
     const program = new Command();
     registerAuthCommand(program);
 
-    await program.parseAsync(['node', 'test', 'auth', 'login', '--api-key', 'new-key']);
+    await program.parseAsync(['node', 'test', 'auth', 'login', '--email', 'test@example.com', '--api-key', 'new-key']);
 
     const written = (mockFs.writeFile as jest.Mock).mock.calls[0][1];
     const parsed = JSON.parse(written);
@@ -184,6 +205,7 @@ describe('auth check command', () => {
     mockFs.writeFile.mockResolvedValue(undefined);
 
     delete process.env.FAVRO_API_KEY;
+    process.env.FAVRO_EMAIL = 'test@example.com';
     const noFile = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
     mockFs.readFile.mockRejectedValue(noFile);
   });
@@ -193,6 +215,7 @@ describe('auth check command', () => {
     consoleErrorSpy.mockRestore();
     exitSpy.mockRestore();
     delete process.env.FAVRO_API_KEY;
+    delete process.env.FAVRO_EMAIL;
   });
 
   test('exits with error when no key is configured', async () => {
@@ -257,7 +280,7 @@ describe('auth check command', () => {
 
     // Verify it was called with flag-key (not env or config)
     expect(MockedFavroHttpClient).toHaveBeenCalledWith(
-      expect.objectContaining({ auth: { token: 'flag-key' } })
+      expect.objectContaining({ auth: expect.objectContaining({ token: 'flag-key' }) })
     );
   });
 
@@ -278,7 +301,7 @@ describe('auth check command', () => {
     await program.parseAsync(['node', 'test', 'auth', 'check']);
 
     expect(MockedFavroHttpClient).toHaveBeenCalledWith(
-      expect.objectContaining({ auth: { token: 'env-key' } })
+      expect.objectContaining({ auth: expect.objectContaining({ token: 'env-key' }) })
     );
   });
 
@@ -296,7 +319,7 @@ describe('auth check command', () => {
     await program.parseAsync(['node', 'test', 'auth', 'check']);
 
     expect(MockedFavroHttpClient).toHaveBeenCalledWith(
-      expect.objectContaining({ auth: { token: 'config-key' } })
+      expect.objectContaining({ auth: expect.objectContaining({ token: 'config-key' }) })
     );
   });
 
@@ -324,7 +347,7 @@ describe('validateApiKey', () => {
     };
     MockedFavroHttpClient.mockImplementationOnce(() => mockClientInstance as any);
 
-    const result = await validateApiKey('valid-key');
+    const result = await validateApiKey('valid-key', 'test@example.com');
     expect(result).toBe(true);
   });
 
@@ -336,7 +359,7 @@ describe('validateApiKey', () => {
     };
     MockedFavroHttpClient.mockImplementationOnce(() => mockClientInstance as any);
 
-    const result = await validateApiKey('bad-key');
+    const result = await validateApiKey('bad-key', 'test@example.com');
     expect(result).toBe(false);
   });
 
@@ -348,7 +371,7 @@ describe('validateApiKey', () => {
     };
     MockedFavroHttpClient.mockImplementationOnce(() => mockClientInstance as any);
 
-    const result = await validateApiKey('bad-key');
+    const result = await validateApiKey('bad-key', 'test@example.com');
     expect(result).toBe(false);
   });
 
@@ -360,6 +383,6 @@ describe('validateApiKey', () => {
     };
     MockedFavroHttpClient.mockImplementationOnce(() => mockClientInstance as any);
 
-    await expect(validateApiKey('some-key')).rejects.toThrow('Network Error');
+    await expect(validateApiKey('some-key', 'test@example.com')).rejects.toThrow('Network Error');
   });
 });

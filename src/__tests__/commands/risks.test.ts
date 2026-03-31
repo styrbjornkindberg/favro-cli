@@ -180,12 +180,17 @@ describe('risks command', () => {
   });
 
   it('should respect custom --stale-days flag', async () => {
-    const mockListCards = jest.fn().mockResolvedValue([sampleCards[2]]);
+    const notStaleDate = new Date();
+    notStaleDate.setDate(notStaleDate.getDate() - 25); // 25 days ago
+    const mockListCards = jest.fn().mockResolvedValue([{
+      ...sampleCards[2],
+      updatedAt: notStaleDate.toISOString()
+    }]);
     const program = buildProgram(mockListCards);
 
     await program.parseAsync(['node', 'favro', 'risks', 'board-1', '--stale-days', '30']);
 
-    // Card 3 was updated 26 days ago, so should NOT be stale with 30-day threshold
+    // Card should NOT be stale with 30-day threshold (it's 25 days old)
     expect(consoleLogSpy).not.toHaveBeenCalledWith(expect.stringContaining('⏳ STALE'));
   });
 

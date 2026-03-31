@@ -11,9 +11,11 @@ import { registerCardsExportCommand, applyFilter, applyFilters } from '../comman
 import { escapeCsvField, cardsToCSV, normalizeCard, writeCardsCSV, writeCardsJSON } from '../lib/csv';
 import CardsAPI, { Card } from '../lib/cards-api';
 import FavroHttpClient from '../lib/http-client';
+import * as config from '../lib/config';
 
 jest.mock('../lib/cards-api');
 jest.mock('../lib/http-client');
+jest.mock('../lib/config');
 
 // ----------------------------
 // Sample card fixtures
@@ -394,6 +396,7 @@ describe('registerCardsExportCommand', () => {
     tmpDir = fs.mkdtempSync(path.join(process.cwd(), '.test-tmp-'));
     // Set token so tests don't fail on missing token check
     process.env.FAVRO_API_TOKEN = 'test-token';
+    (config.resolveApiKey as jest.Mock).mockResolvedValue('test-token');
     (FavroHttpClient as jest.MockedClass<typeof FavroHttpClient>).mockImplementation(() => ({} as any));
   });
 
@@ -584,6 +587,7 @@ describe('registerCardsExportCommand', () => {
   // Fix #2: FAVRO_API_TOKEN missing should exit with error
   test('exits with error when FAVRO_API_TOKEN is not set', async () => {
     delete process.env.FAVRO_API_TOKEN;
+    (config.resolveApiKey as jest.Mock).mockResolvedValue(null);
     mockApi(sampleCards);
 
     const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});

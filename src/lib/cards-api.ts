@@ -313,6 +313,10 @@ export class CardsAPI {
       payload.widgetCommonId = payload.boardId;
       delete payload.boardId;
     }
+    if (payload.description !== undefined) {
+      payload.detailedDescription = payload.description;
+      delete payload.description;
+    }
     return this.client.post<Card>('/cards', payload);
   }
 
@@ -322,8 +326,17 @@ export class CardsAPI {
   }
 
   async updateCard(cardId: string, data: UpdateCardRequest): Promise<Card> {
+    const payload: Record<string, unknown> = { ...data };
+    if (payload.description !== undefined) {
+      payload.detailedDescription = payload.description;
+      delete payload.description;
+    }
+    if (payload.boardId !== undefined) {
+      payload.widgetCommonId = payload.boardId;
+      delete payload.boardId;
+    }
     // Favro uses PUT for card updates, not PATCH
-    return this.client.put<Card>(`/cards/${cardId}`, data);
+    return this.client.put<Card>(`/cards/${cardId}`, payload);
   }
 
   async deleteCard(cardId: string): Promise<void> {
@@ -331,14 +344,10 @@ export class CardsAPI {
   }
 
   async searchCards(query: string, limit: number = 50): Promise<Card[]> {
-    // Favro has no /cards/search endpoint; use /cards with unique param for lookup
-    // or use todoList param for filtering. For general search, list all and filter client-side.
-    const response = await this.client.get<PaginatedResponse<Card>>('/cards', {
-      params: { unique: true, limit }
+    const response = await this.client.get<PaginatedResponse<Card>>('/cards/search', {
+      params: { q: query, limit }
     });
-    const all = response.entities ?? [];
-    const lc = query.toLowerCase();
-    return all.filter(c => (c.name ?? '').toLowerCase().includes(lc)).slice(0, limit);
+    return response.entities ?? [];
   }
 }
 

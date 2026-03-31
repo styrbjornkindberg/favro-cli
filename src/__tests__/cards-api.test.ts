@@ -7,13 +7,14 @@ import FavroHttpClient from '../lib/http-client';
 
 describe('Cards API', () => {
   let api: CardsAPI;
-  let mockClient: jest.Mocked<Pick<FavroHttpClient, 'get' | 'post' | 'patch' | 'delete'>>;
+  let mockClient: jest.Mocked<Pick<FavroHttpClient, 'get' | 'post' | 'patch' | 'put' | 'delete'>>;
 
   beforeEach(() => {
     mockClient = {
       get: jest.fn(),
       post: jest.fn(),
       patch: jest.fn(),
+      put: jest.fn(),
       delete: jest.fn(),
     };
     api = new CardsAPI(mockClient as any);
@@ -35,7 +36,7 @@ describe('Cards API', () => {
   test('listCards with board id uses correct endpoint', async () => {
     mockClient.get.mockResolvedValue({ entities: [] });
     await api.listCards('board-xyz');
-    expect(mockClient.get).toHaveBeenCalledWith('/boards/board-xyz/cards', expect.any(Object));
+    expect(mockClient.get).toHaveBeenCalledWith('/cards', expect.objectContaining({ params: expect.objectContaining({ widgetCommonId: 'board-xyz' }) }));
   });
 
   test('listCards without board id uses /cards endpoint', async () => {
@@ -47,7 +48,7 @@ describe('Cards API', () => {
   test('listCards with custom limit passes it to API', async () => {
     mockClient.get.mockResolvedValue({ entities: [] });
     await api.listCards('board-1', 100);
-    expect(mockClient.get).toHaveBeenCalledWith(expect.any(String), { params: { limit: 100 } });
+    expect(mockClient.get).toHaveBeenCalledWith('/cards', { params: { limit: 100, widgetCommonId: 'board-1' } });
   });
 
   test('listCards returns empty array when entities missing', async () => {
@@ -192,7 +193,7 @@ describe('Cards API', () => {
     mockClient.post.mockResolvedValue(link);
     const result = await api.linkCard('card-1', { toCardId: 'card-2', type: 'depends-on' });
     expect(result.linkId).toBe('lnk-1');
-    expect(mockClient.post).toHaveBeenCalledWith('/cards/card-1/links', {
+    expect(mockClient.post).toHaveBeenCalledWith('/cards/card-1/dependencies', {
       toCardId: 'card-2',
       type: 'depends-on',
     });
@@ -210,7 +211,7 @@ describe('Cards API', () => {
     mockClient.get.mockResolvedValue({ entities: links });
     const result = await api.getCardLinks('card-1');
     expect(result).toEqual(links);
-    expect(mockClient.get).toHaveBeenCalledWith('/cards/card-1/links');
+    expect(mockClient.get).toHaveBeenCalledWith('/cards/card-1/dependencies');
   });
 
   test('getCardLinks returns empty array when entities missing', async () => {
@@ -224,7 +225,7 @@ describe('Cards API', () => {
   test('unlinkCard calls DELETE on /cards/:id/links/:fromId', async () => {
     mockClient.delete.mockResolvedValue(undefined);
     await api.unlinkCard('card-1', 'card-2');
-    expect(mockClient.delete).toHaveBeenCalledWith('/cards/card-1/links/card-2');
+    expect(mockClient.delete).toHaveBeenCalledWith('/cards/card-1/dependencies/card-2');
   });
 
   test('unlinkCard propagates errors', async () => {
@@ -234,29 +235,29 @@ describe('Cards API', () => {
 
   // --- moveCard ---
 
-  test('moveCard patches /cards/:id/move', async () => {
+  test('moveCard calls put on /cards/:id', async () => {
     const card = { cardId: 'card-1', name: 'Task', createdAt: '2026-01-01', boardId: 'board-2' };
-    mockClient.patch.mockResolvedValue(card);
+    mockClient.put.mockResolvedValue(card);
     const result = await api.moveCard('card-1', { toBoardId: 'board-2', position: 'top' });
     expect(result.boardId).toBe('board-2');
-    expect(mockClient.patch).toHaveBeenCalledWith('/cards/card-1/move', {
-      boardId: 'board-2',
+    expect(mockClient.put).toHaveBeenCalledWith('/cards/card-1', {
+      widgetCommonId: 'board-2',
       position: 'top',
     });
   });
 
   test('moveCard without position sends undefined position', async () => {
     const card = { cardId: 'card-1', name: 'Task', createdAt: '2026-01-01' };
-    mockClient.patch.mockResolvedValue(card);
+    mockClient.put.mockResolvedValue(card);
     await api.moveCard('card-1', { toBoardId: 'board-2' });
-    expect(mockClient.patch).toHaveBeenCalledWith('/cards/card-1/move', {
-      boardId: 'board-2',
+    expect(mockClient.put).toHaveBeenCalledWith('/cards/card-1', {
+      widgetCommonId: 'board-2',
       position: undefined,
     });
   });
 
   test('moveCard propagates errors', async () => {
-    mockClient.patch.mockRejectedValue(new Error('Board not found'));
+    mockClient.put.mockRejectedValue(new Error('Board not found'));
     await expect(api.moveCard('card-1', { toBoardId: 'bad-board' })).rejects.toThrow('Board not found');
   });
 
@@ -279,7 +280,7 @@ describe('Cards API', () => {
     const result = await api.createCard({ name: 'Full', description: 'desc', status: 'todo', boardId: 'board-1' });
     expect(result.description).toBe('desc');
     expect(mockClient.post).toHaveBeenCalledWith('/cards', {
-      name: 'Full', description: 'desc', status: 'todo', boardId: 'board-1'
+      name: 'Full', detailedDescription: 'desc', status: 'todo', widgetCommonId: 'board-1'
     });
   });
 
@@ -327,23 +328,23 @@ describe('Cards API', () => {
 
   // --- updateCard ---
 
-  test('updateCard patches card by id', async () => {
+  test('updateCard updates card by id', async () => {
     const updated = { cardId: 'card-1', name: 'Updated', createdAt: '2026-01-01', updatedAt: '2026-01-02' };
-    mockClient.patch.mockResolvedValue(updated);
+    mockClient.put.mockResolvedValue(updated);
     const result = await api.updateCard('card-1', { name: 'Updated' });
     expect(result.name).toBe('Updated');
-    expect(mockClient.patch).toHaveBeenCalledWith('/cards/card-1', { name: 'Updated' });
+    expect(mockClient.put).toHaveBeenCalledWith('/cards/card-1', { name: 'Updated' });
   });
 
   test('updateCard with tags parsed as array', async () => {
     const updated = { cardId: 'card-1', name: 'Task', tags: ['bug', 'urgent'], createdAt: '2026-01-01', updatedAt: '2026-01-02' };
-    mockClient.patch.mockResolvedValue(updated);
+    mockClient.put.mockResolvedValue(updated);
     const result = await api.updateCard('card-1', { tags: ['bug', 'urgent'] });
     expect(result.tags).toEqual(['bug', 'urgent']);
   });
 
   test('updateCard propagates errors', async () => {
-    mockClient.patch.mockRejectedValue(new Error('Card not found'));
+    mockClient.put.mockRejectedValue(new Error('Card not found'));
     await expect(api.updateCard('bad-id', { name: 'X' })).rejects.toThrow('Card not found');
   });
 

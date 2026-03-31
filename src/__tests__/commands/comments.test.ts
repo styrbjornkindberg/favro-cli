@@ -6,12 +6,17 @@ import { Command } from 'commander';
 import { registerCommentsCommand } from '../../commands/comments';
 import * as config from '../../lib/config';
 import * as apiComments from '../../api/comments';
+import * as safety from '../../lib/safety';
+import CardsAPI from '../../lib/cards-api';
 
 jest.mock('../../lib/http-client');
 jest.mock('../../lib/config');
 jest.mock('../../api/comments');
+jest.mock('../../lib/safety');
+jest.mock('../../lib/cards-api');
 
 const MockCommentsApiClient = apiComments.default as jest.MockedClass<typeof apiComments.default>;
+const MockCardsAPI = CardsAPI as jest.MockedClass<typeof CardsAPI>;
 
 const SAMPLE_COMMENTS = [
   {
@@ -46,6 +51,9 @@ async function runCli(args: string[]): Promise<void> {
 beforeEach(() => {
   jest.clearAllMocks();
   (config.resolveApiKey as jest.Mock).mockResolvedValue('test-token');
+  (config.readConfig as jest.Mock).mockResolvedValue({});
+  (safety.checkScope as jest.Mock).mockResolvedValue(undefined);
+  MockCardsAPI.prototype.getCard = jest.fn().mockResolvedValue({ cardId: 'card-abc', boardId: 'board-1' });
 });
 
 // ─── comments list ────────────────────────────────────────────────────────────

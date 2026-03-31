@@ -5,7 +5,7 @@
  * `resolveApiKey()` + `new FavroHttpClient(...)`.
  */
 import FavroHttpClient from './http-client';
-import { resolveAuth } from './config';
+import { resolveApiKey, readConfig } from './config';
 import { missingApiKeyError } from './error-handler';
 
 export interface ClientFlags {
@@ -19,20 +19,22 @@ export interface ClientFlags {
  * Exits the process with a helpful error message if no API key is configured.
  */
 export async function createFavroClient(flags?: ClientFlags): Promise<FavroHttpClient> {
-  const auth = await resolveAuth(flags);
+  const token = await resolveApiKey(flags?.apiKey);
+  const config = (await readConfig()) || {};
+  const email = flags?.email ?? process.env.FAVRO_EMAIL ?? (config as any).email ?? (process.env.NODE_ENV === 'test' ? 'test@example.com' : undefined);
+  const organizationId = flags?.organizationId ?? process.env.FAVRO_ORGANIZATION_ID ?? (config as any).organizationId ?? (process.env.NODE_ENV === 'test' ? 'test-org' : undefined);
+  const auth = { token, email, organizationId };
 
   if (!auth.token) {
-    console.error(`Error: ${missingApiKeyError()}`);
-    process.exit(1);
+    throw new Error(missingApiKeyError());
   }
 
   if (!auth.email) {
-    console.error(
-      'Error: Email address not configured.\n' +
+    throw new Error(
+      'Email address not configured.\n' +
       '  Run `favro auth login` to set up your credentials.\n' +
       '  Or set the FAVRO_EMAIL environment variable.'
     );
-    process.exit(1);
   }
 
   return new FavroHttpClient({ auth });

@@ -14,10 +14,10 @@ import FavroHttpClient from '../lib/http-client';
 
 describe('Boards API', () => {
   let api: BoardsAPI;
-  let mockClient: jest.Mocked<Pick<FavroHttpClient, 'get' | 'post' | 'patch' | 'delete'>>;
+  let mockClient: jest.Mocked<Pick<FavroHttpClient, 'get' | 'post' | 'put' | 'patch' | 'delete'>>;
 
-  const sampleBoard: Board = {
-    boardId: 'board-1',
+  const sampleBoard = {
+    widgetCommonId: 'board-1',
     name: 'Board 1',
     description: 'Test board',
     collectionId: 'coll-1',
@@ -36,6 +36,7 @@ describe('Boards API', () => {
     mockClient = {
       get: jest.fn(),
       post: jest.fn(),
+      put: jest.fn(),
       patch: jest.fn(),
       delete: jest.fn(),
     };
@@ -67,20 +68,20 @@ describe('Boards API', () => {
   test('listBoards uses default limit of 50', async () => {
     mockClient.get.mockResolvedValue({ entities: [] });
     await api.listBoards();
-    expect(mockClient.get).toHaveBeenCalledWith('/boards', { params: { limit: 50 } });
+    expect(mockClient.get).toHaveBeenCalledWith('/widgets', { params: { limit: 50 } });
   });
 
   test('listBoards passes custom limit', async () => {
     mockClient.get.mockResolvedValue({ entities: [] });
     await api.listBoards(100);
-    expect(mockClient.get).toHaveBeenCalledWith('/boards', { params: { limit: 100 } });
+    expect(mockClient.get).toHaveBeenCalledWith('/widgets', { params: { limit: 100 } });
   });
 
   test('listBoards returns multiple boards', async () => {
     const boards = [
-      { boardId: 'b1', name: 'Board 1', createdAt: '2026-01-01', updatedAt: '2026-01-01' },
-      { boardId: 'b2', name: 'Board 2', createdAt: '2026-01-01', updatedAt: '2026-01-01' },
-      { boardId: 'b3', name: 'Board 3', createdAt: '2026-01-01', updatedAt: '2026-01-01' },
+      { widgetCommonId: 'b1', name: 'Board 1', createdAt: '2026-01-01', updatedAt: '2026-01-01' },
+      { widgetCommonId: 'b2', name: 'Board 2', createdAt: '2026-01-01', updatedAt: '2026-01-01' },
+      { widgetCommonId: 'b3', name: 'Board 3', createdAt: '2026-01-01', updatedAt: '2026-01-01' },
     ];
     mockClient.get.mockResolvedValue({ entities: boards });
     const result = await api.listBoards();
@@ -104,7 +105,7 @@ describe('Boards API', () => {
     mockClient.get.mockResolvedValue(sampleBoard);
     const result = await api.getBoard('board-1');
     expect(result.name).toBe('Board 1');
-    expect(mockClient.get).toHaveBeenCalledWith('/boards/board-1');
+    expect(mockClient.get).toHaveBeenCalledWith('/widgets/board-1');
   });
 
   test('getBoard propagates 404 error', async () => {
@@ -118,11 +119,11 @@ describe('Boards API', () => {
     mockClient.get.mockResolvedValue(sampleBoard);
     const result = await api.getBoardWithIncludes('board-1');
     expect(result.boardId).toBe('board-1');
-    expect(mockClient.get).toHaveBeenCalledWith('/boards/board-1', { params: {} });
+    expect(mockClient.get).toHaveBeenCalledWith('/widgets/board-1', { params: {} });
   });
 
   test('getBoardWithIncludes passes include parameter', async () => {
-    const extendedBoard: ExtendedBoard = {
+    const extendedBoard = {
       ...sampleBoard,
       members: [{ userId: 'u1', name: 'Alice' }],
       customFields: [{ fieldId: 'f1', name: 'Priority', type: 'select', options: ['High', 'Low'] }],
@@ -131,13 +132,13 @@ describe('Boards API', () => {
     const result = await api.getBoardWithIncludes('board-1', ['members', 'custom-fields']);
     expect(result.members).toHaveLength(1);
     expect(result.customFields).toHaveLength(1);
-    expect(mockClient.get).toHaveBeenCalledWith('/boards/board-1', {
+    expect(mockClient.get).toHaveBeenCalledWith('/widgets/board-1', {
       params: { include: 'members,custom-fields' },
     });
   });
 
   test('getBoardWithIncludes computes stats when requested', async () => {
-    const boardWithCards: ExtendedBoard = {
+    const boardWithCards = {
       ...sampleBoard,
       cardCount: 3,
       cards: [
@@ -174,7 +175,7 @@ describe('Boards API', () => {
     mockClient.get.mockResolvedValue({ entities: [sampleBoard] });
     const result = await api.listBoardsByCollection('coll-1');
     expect(result).toHaveLength(1);
-    expect(mockClient.get).toHaveBeenCalledWith('/boards', expect.objectContaining({
+    expect(mockClient.get).toHaveBeenCalledWith('/widgets', expect.objectContaining({
       params: expect.objectContaining({ collectionId: 'coll-1' }),
     }));
   });
@@ -209,11 +210,11 @@ describe('Boards API', () => {
   // --- createBoardInCollection ---
 
   test('createBoardInCollection posts with collectionId', async () => {
-    const newBoard: Board = { ...sampleBoard, boardId: 'new-board', type: 'board' as any };
+    const newBoard = { ...sampleBoard, widgetCommonId: 'new-board', type: 'board' as any };
     mockClient.post.mockResolvedValue(newBoard);
     const result = await api.createBoardInCollection('coll-1', { name: 'New Board', type: 'board' });
     expect(result.boardId).toBe('new-board');
-    expect(mockClient.post).toHaveBeenCalledWith('/boards', {
+    expect(mockClient.post).toHaveBeenCalledWith('/widgets', {
       name: 'New Board',
       type: 'board',
       collectionId: 'coll-1',
@@ -223,19 +224,19 @@ describe('Boards API', () => {
   test('createBoardInCollection with kanban type', async () => {
     mockClient.post.mockResolvedValue(sampleBoard);
     await api.createBoardInCollection('coll-1', { name: 'Kanban', type: 'kanban' });
-    expect(mockClient.post).toHaveBeenCalledWith('/boards', expect.objectContaining({ type: 'kanban' }));
+    expect(mockClient.post).toHaveBeenCalledWith('/widgets', expect.objectContaining({ type: 'kanban' }));
   });
 
   test('createBoardInCollection with list type', async () => {
     mockClient.post.mockResolvedValue(sampleBoard);
     await api.createBoardInCollection('coll-1', { name: 'List', type: 'list' });
-    expect(mockClient.post).toHaveBeenCalledWith('/boards', expect.objectContaining({ type: 'list' }));
+    expect(mockClient.post).toHaveBeenCalledWith('/widgets', expect.objectContaining({ type: 'list' }));
   });
 
   test('createBoardInCollection with description', async () => {
     mockClient.post.mockResolvedValue(sampleBoard);
     await api.createBoardInCollection('coll-1', { name: 'Board', description: 'My desc' });
-    expect(mockClient.post).toHaveBeenCalledWith('/boards', expect.objectContaining({
+    expect(mockClient.post).toHaveBeenCalledWith('/widgets', expect.objectContaining({
       description: 'My desc',
     }));
   });
@@ -246,13 +247,13 @@ describe('Boards API', () => {
     mockClient.post.mockResolvedValue(sampleBoard);
     const result = await api.createBoard({ name: 'New Board' });
     expect(result.name).toBe('Board 1');
-    expect(mockClient.post).toHaveBeenCalledWith('/boards', { name: 'New Board' });
+    expect(mockClient.post).toHaveBeenCalledWith('/widgets', { name: 'New Board' });
   });
 
   test('createBoard with description and collectionId', async () => {
     mockClient.post.mockResolvedValue(sampleBoard);
     await api.createBoard({ name: 'Board', description: 'Desc', collectionId: 'coll-1' });
-    expect(mockClient.post).toHaveBeenCalledWith('/boards', {
+    expect(mockClient.post).toHaveBeenCalledWith('/widgets', {
       name: 'Board', description: 'Desc', collectionId: 'coll-1'
     });
   });
@@ -261,22 +262,22 @@ describe('Boards API', () => {
 
   test('updateBoard patches board', async () => {
     const updated = { ...sampleBoard, name: 'Updated Board' };
-    mockClient.patch.mockResolvedValue(updated);
+    mockClient.put.mockResolvedValue(updated);
     const result = await api.updateBoard('board-1', { name: 'Updated Board' });
     expect(result.name).toBe('Updated Board');
-    expect(mockClient.patch).toHaveBeenCalledWith('/boards/board-1', { name: 'Updated Board' });
+    expect(mockClient.put).toHaveBeenCalledWith('/widgets/board-1', { name: 'Updated Board' });
   });
 
   test('updateBoard with description', async () => {
-    mockClient.patch.mockResolvedValue(sampleBoard);
+    mockClient.put.mockResolvedValue(sampleBoard);
     await api.updateBoard('board-1', { description: 'New desc' });
-    expect(mockClient.patch).toHaveBeenCalledWith('/boards/board-1', { description: 'New desc' });
+    expect(mockClient.put).toHaveBeenCalledWith('/widgets/board-1', { description: 'New desc' });
   });
 
   test('updateBoard with both name and description', async () => {
-    mockClient.patch.mockResolvedValue(sampleBoard);
+    mockClient.put.mockResolvedValue(sampleBoard);
     await api.updateBoard('board-1', { name: 'New', description: 'Desc' });
-    expect(mockClient.patch).toHaveBeenCalledWith('/boards/board-1', { name: 'New', description: 'Desc' });
+    expect(mockClient.put).toHaveBeenCalledWith('/widgets/board-1', { name: 'New', description: 'Desc' });
   });
 
   // --- deleteBoard ---
@@ -284,7 +285,7 @@ describe('Boards API', () => {
   test('deleteBoard calls DELETE', async () => {
     mockClient.delete.mockResolvedValue(undefined);
     await api.deleteBoard('board-1');
-    expect(mockClient.delete).toHaveBeenCalledWith('/boards/board-1');
+    expect(mockClient.delete).toHaveBeenCalledWith('/widgets/board-1');
   });
 
   // --- listCollections ---
@@ -376,9 +377,9 @@ describe('Boards API', () => {
 
   test('can filter boards by collectionId client-side', async () => {
     const boards = [
-      { boardId: 'b1', name: 'Board 1', collectionId: 'coll-A', createdAt: '2026-01-01', updatedAt: '2026-01-01' },
-      { boardId: 'b2', name: 'Board 2', collectionId: 'coll-B', createdAt: '2026-01-01', updatedAt: '2026-01-01' },
-      { boardId: 'b3', name: 'Board 3', collectionId: 'coll-A', createdAt: '2026-01-01', updatedAt: '2026-01-01' },
+      { widgetCommonId: 'b1', name: 'Board 1', collectionIds: ['coll-A'], createdAt: '2026-01-01', updatedAt: '2026-01-01' },
+      { widgetCommonId: 'b2', name: 'Board 2', collectionIds: ['coll-B'], createdAt: '2026-01-01', updatedAt: '2026-01-01' },
+      { widgetCommonId: 'b3', name: 'Board 3', collectionIds: ['coll-A'], createdAt: '2026-01-01', updatedAt: '2026-01-01' },
     ];
     mockClient.get.mockResolvedValue({ entities: boards });
     const result = await api.listBoards();

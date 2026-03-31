@@ -142,6 +142,9 @@ describe('Missing FAVRO_API_TOKEN — command fast-fail', () => {
     consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => { throw new Error('process.exit'); });
     delete process.env.FAVRO_API_TOKEN;
+    delete process.env.FAVRO_API_KEY;
+    delete process.env.FAVRO_EMAIL;
+    jest.spyOn(require('fs/promises'), 'readFile').mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
   });
 
   afterEach(() => {

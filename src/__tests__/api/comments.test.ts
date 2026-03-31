@@ -28,7 +28,7 @@ describe('CommentsApiClient.listComments', () => {
     const api = new CommentsApiClient(client as any);
     const comments = await api.listComments('card-1');
     expect(comments).toEqual([]);
-    expect(client.get).toHaveBeenCalledWith('/cards/card-1/comments', expect.anything());
+    expect(client.get).toHaveBeenCalledWith('/comments', expect.anything());
   });
 
   it('returns normalized comments from single page', async () => {
@@ -64,6 +64,10 @@ describe('CommentsApiClient.listComments', () => {
   it('paginates across multiple pages', async () => {
     const client = {
       get: jest.fn()
+        // First mock is consumed by resolveCardCommonId
+        .mockResolvedValueOnce({
+          entities: [{ commentId: 'c-0', text: 'Zero', createdAt: '2024-01-01T00:00:00Z' }],
+        })
         .mockResolvedValueOnce({
           entities: [{ commentId: 'c-1', text: 'First', createdAt: '2024-01-01T00:00:00Z' }],
           requestId: 'req-1',
@@ -108,7 +112,7 @@ describe('CommentsApiClient.addComment', () => {
     const client = { post: mockPost };
     const api = new CommentsApiClient(client as any);
     const result = await api.addComment('card-1', 'Test comment');
-    expect(mockPost).toHaveBeenCalledWith('/cards/card-1/comments', { comment: 'Test comment' });
+    expect(mockPost).toHaveBeenCalledWith('/comments', { cardCommonId: 'card-1', comment: 'Test comment' });
     expect(result.text).toBe('Test comment');
     expect(result.cardId).toBe('card-1');
   });
@@ -122,7 +126,7 @@ describe('CommentsApiClient.addComment', () => {
     const client = { post: mockPost };
     const api = new CommentsApiClient(client as any);
     await api.addComment('card-1', '  Trimmed  ');
-    expect(mockPost).toHaveBeenCalledWith('/cards/card-1/comments', { comment: 'Trimmed' });
+    expect(mockPost).toHaveBeenCalledWith('/comments', { cardCommonId: 'card-1', comment: 'Trimmed' });
   });
 
   it('throws when comment text is empty', async () => {

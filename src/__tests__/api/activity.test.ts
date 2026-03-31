@@ -31,7 +31,7 @@ const SAMPLE_ACTIVITY = {
 function makeClientWithCards(cards: any[], activityEntries: any[] = []): any {
   return {
     get: jest.fn().mockImplementation((url: string) => {
-      if (url.includes('/activity')) {
+      if (url.includes('/activities')) {
         return Promise.resolve({ entities: activityEntries });
       }
       // Cards list endpoint
@@ -47,7 +47,7 @@ describe('ActivityApiClient.getCardActivity', () => {
     const api = new ActivityApiClient(client as any);
     const result = await api.getCardActivity('card-1');
     expect(result).toEqual([]);
-    expect(client.get).toHaveBeenCalledWith('/cards/card-1/activity', expect.anything());
+    expect(client.get).toHaveBeenCalledWith('/cards/card-1/activities', expect.anything());
   });
 
   it('returns normalized activity entries', async () => {

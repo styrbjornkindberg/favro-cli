@@ -210,8 +210,8 @@ export class BoardsAPI {
     if (include && include.length > 0) {
       params.include = include.join(',');
     }
-    const raw = await this.client.get<RawWidget>(`/widgets/${boardId}`, { params });
-    const board: ExtendedBoard = { ...normalizeWidget(raw) };
+    const raw = await this.client.get<any>(`/widgets/${boardId}`, { params });
+    const board: ExtendedBoard = { ...raw, ...normalizeWidget(raw) };
 
     // Stats and velocity are computed client-side if requested
     if (include?.includes('stats') || include?.includes('velocity')) {
@@ -251,7 +251,7 @@ export class BoardsAPI {
       }
 
       const response = await this.client.get<PaginatedResponse<RawWidget>>('/widgets', { params: p });
-      const boards = (response.entities || []).map(normalizeWidget) as ExtendedBoard[];
+      const boards = (response.entities || []).map(w => ({ ...w, ...normalizeWidget(w) })) as ExtendedBoard[];
 
       // Augment each board with stats/velocity if requested
       for (const board of boards) {

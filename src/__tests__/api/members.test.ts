@@ -60,7 +60,7 @@ describe('FavroApiClient.getMembers', () => {
     client.get = jest.fn().mockResolvedValue({ entities: [] });
 
     await api.getMembers({ boardId: 'board-123' });
-    expect(client.get).toHaveBeenCalledWith('/members', expect.objectContaining({
+    expect(client.get).toHaveBeenCalledWith('/users', expect.objectContaining({
       params: expect.objectContaining({ boardId: 'board-123' }),
     }));
   });
@@ -69,7 +69,7 @@ describe('FavroApiClient.getMembers', () => {
     client.get = jest.fn().mockResolvedValue({ entities: [] });
 
     await api.getMembers({ collectionId: 'coll-456' });
-    expect(client.get).toHaveBeenCalledWith('/members', expect.objectContaining({
+    expect(client.get).toHaveBeenCalledWith('/users', expect.objectContaining({
       params: expect.objectContaining({ collectionId: 'coll-456' }),
     }));
   });

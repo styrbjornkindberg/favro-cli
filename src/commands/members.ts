@@ -69,6 +69,7 @@ export function registerMembersCommand(program: Command): void {
     .description('Add a member by email to a board or collection')
     .requiredOption('--to <target-id>', 'Board or collection ID to add member to')
     .option('--board-target', 'Target is a board (default)')
+    .option('--collection-target', 'Target is a collection')
     .option('--json', 'Output as JSON')
     .option('--dry-run', 'Print what would be added without making API calls')
     .option('--force', 'Bypass scope check')

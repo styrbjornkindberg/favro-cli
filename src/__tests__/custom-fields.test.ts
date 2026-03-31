@@ -170,8 +170,8 @@ describe('CustomFieldsAPI', () => {
       expect(result).toHaveLength(2);
       expect(result[0].fieldId).toBe('field-text-1');
       expect(mockClient.get).toHaveBeenCalledWith(
-        '/boards/board-1/custom-fields',
-        expect.objectContaining({ params: expect.objectContaining({ limit: 100 }) })
+        '/customfields',
+        expect.objectContaining({ params: expect.objectContaining({ limit: 100, widgetCommonId: 'board-1' }) })
       );
     });
 
@@ -200,8 +200,8 @@ describe('CustomFieldsAPI', () => {
       // Second call should include requestId and page
       expect(mockClient.get).toHaveBeenNthCalledWith(
         2,
-        '/boards/board-1/custom-fields',
-        expect.objectContaining({ params: expect.objectContaining({ requestId: 'req-1', page: 2 }) })
+        '/customfields',
+        expect.objectContaining({ params: expect.objectContaining({ requestId: 'req-1', page: 2, widgetCommonId: 'board-1' }) })
       );
     });
 
@@ -234,7 +234,7 @@ describe('CustomFieldsAPI', () => {
       const result = await api.getField('field-select-1');
       expect(result.fieldId).toBe('field-select-1');
       expect(result.type).toBe('select');
-      expect(mockClient.get).toHaveBeenCalledWith('/custom-fields/field-select-1');
+      expect(mockClient.get).toHaveBeenCalledWith('/customfields/field-select-1');
     });
   });
 
@@ -404,7 +404,7 @@ describe('CustomFieldsAPI', () => {
       await api.listFieldValues('field-select-1', 'board-xyz');
       expect(mockClient.get).toHaveBeenCalledWith(
         expect.any(String),
-        expect.objectContaining({ params: { boardId: 'board-xyz' } })
+        expect.objectContaining({ params: { widgetCommonId: 'board-xyz' } })
       );
     });
   });
