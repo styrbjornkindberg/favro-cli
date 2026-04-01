@@ -53,28 +53,42 @@ export class WidgetsAPI {
   }
 
   /**
-   * Add a card to a board by creating a new widget instance of it.
+   * Add a card to a board by committing it via the cards API.
+   * Favro's PUT /cards/:cardId with widgetCommonId + dragMode 'commit'
+   * adds the card to the target board without removing it from its current board.
    */
   async addWidgetToBoard(boardId: string, cardCommonId: string, columnId?: string): Promise<Widget> {
-    const payload: any = { type: 'card', name: 'Placeholder' }; // When referencing an existing commonId, Favro maps the native fields over
-    // If we specify cardCommonId in the payload, wait, Favro API documentation says:
-    // "Create a widget" -> POST /widgets. Required: name, type ('card'), collectionId or boardId.
-    // To add an existing card to a board, you pass `cardCommonId` and `boardId`.
-    
-    // Favro schema for attaching a card:
-    const data: any = {
-      boardId,
-      cardCommonId,
-      type: 'card',
-      name: 'Card Instance' // Usually overridden by the server using the existing cardCommonId properties
+    // Step 1: Resolve cardCommonId → cardId by fetching any instance
+    const res = await this.client.get<{ entities: Array<{ cardId: string; cardCommonId: string; name: string }> }>(
+      '/cards',
+      { params: { cardCommonId, unique: true } }
+    );
+
+    if (!res.entities || res.entities.length === 0) {
+      throw new Error(`No card found with cardCommonId: ${cardCommonId}`);
+    }
+
+    const cardId = res.entities[0].cardId;
+
+    // Step 2: Commit the card to the target board
+    const data: Record<string, unknown> = {
+      widgetCommonId: boardId,
+      dragMode: 'commit',
     };
-    
-    // if column is provided, place it there
     if (columnId) {
       data.columnId = columnId;
     }
 
-    return this.client.post<Widget>('/widgets', data);
+    const updated = await this.client.put<any>(`/cards/${cardId}`, data);
+
+    // Return a Widget-shaped response for CLI compatibility
+    return {
+      widgetCommonId: updated.widgetCommonId ?? boardId,
+      name: updated.name ?? res.entities[0].name,
+      type: 'card',
+      cardId: updated.cardId ?? cardId,
+      columnId: updated.columnId,
+    };
   }
 }
 

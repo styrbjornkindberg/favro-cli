@@ -208,6 +208,10 @@ class CardsAPI {
             payload.widgetCommonId = payload.boardId;
             delete payload.boardId;
         }
+        if (payload.description !== undefined) {
+            payload.detailedDescription = payload.description;
+            delete payload.description;
+        }
         return this.client.post('/cards', payload);
     }
     async createCards(cards) {
@@ -215,21 +219,31 @@ class CardsAPI {
         return response.cards || [];
     }
     async updateCard(cardId, data) {
+        const payload = { ...data };
+        if (payload.description !== undefined) {
+            payload.detailedDescription = payload.description;
+            delete payload.description;
+        }
+        if (payload.boardId !== undefined) {
+            payload.widgetCommonId = payload.boardId;
+            delete payload.boardId;
+        }
+        // Favro API uses addAssignmentIds/removeAssignmentIds, not assignees
+        if (payload.assignees !== undefined) {
+            payload.addAssignmentIds = payload.assignees;
+            delete payload.assignees;
+        }
         // Favro uses PUT for card updates, not PATCH
-        return this.client.put(`/cards/${cardId}`, data);
+        return this.client.put(`/cards/${cardId}`, payload);
     }
     async deleteCard(cardId) {
         await this.client.delete(`/cards/${cardId}`);
     }
     async searchCards(query, limit = 50) {
-        // Favro has no /cards/search endpoint; use /cards with unique param for lookup
-        // or use todoList param for filtering. For general search, list all and filter client-side.
-        const response = await this.client.get('/cards', {
-            params: { unique: true, limit }
+        const response = await this.client.get('/cards/search', {
+            params: { q: query, limit }
         });
-        const all = response.entities ?? [];
-        const lc = query.toLowerCase();
-        return all.filter(c => (c.name ?? '').toLowerCase().includes(lc)).slice(0, limit);
+        return response.entities ?? [];
     }
 }
 exports.CardsAPI = CardsAPI;

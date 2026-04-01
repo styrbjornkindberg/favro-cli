@@ -111,7 +111,7 @@ class BoardsAPI {
             params.include = include.join(',');
         }
         const raw = await this.client.get(`/widgets/${boardId}`, { params });
-        const board = { ...normalizeWidget(raw) };
+        const board = { ...raw, ...normalizeWidget(raw) };
         // Stats and velocity are computed client-side if requested
         if (include?.includes('stats') || include?.includes('velocity')) {
             let cards;
@@ -145,7 +145,7 @@ class BoardsAPI {
                 p.page = page;
             }
             const response = await this.client.get('/widgets', { params: p });
-            const boards = (response.entities || []).map(normalizeWidget);
+            const boards = (response.entities || []).map(w => ({ ...w, ...normalizeWidget(w) }));
             // Augment each board with stats/velocity if requested
             for (const board of boards) {
                 if (include?.includes('stats')) {

@@ -335,6 +335,11 @@ export class CardsAPI {
       payload.widgetCommonId = payload.boardId;
       delete payload.boardId;
     }
+    // Favro API uses addAssignmentIds/removeAssignmentIds, not assignees
+    if (payload.assignees !== undefined) {
+      payload.addAssignmentIds = payload.assignees;
+      delete payload.assignees;
+    }
     // Favro uses PUT for card updates, not PATCH
     return this.client.put<Card>(`/cards/${cardId}`, payload);
   }

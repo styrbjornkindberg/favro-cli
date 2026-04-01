@@ -141,7 +141,7 @@ favro webhooks delete <webhookId> [-y]
 # Advanced Structure
 favro columns create <boardId> --name "Name" [--dry-run] [-y]
 favro columns update <columnId> --name "New Name" [--dry-run] [-y]
-favro widgets add <boardId> <cardCommonId> [--dry-run] [-y]
+favro widgets add <boardId> <cardCommonId> [--dry-run] [-y]  # Commit card to another board
 
 # Meta & Assets
 favro tags create --name "Tag" [--dry-run] [-y]

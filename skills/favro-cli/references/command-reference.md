@@ -16,8 +16,14 @@ This reference documents every command, flag, and option available in the favro-
 8. [Custom Fields](#custom-fields)
 9. [Members](#members)
 10. [Webhooks](#webhooks)
-11. [Batch Operations](#batch-operations)
-12. [AI / Smart Commands](#ai-smart-commands)
+11. [Columns](#columns)
+12. [Widgets](#widgets)
+13. [Tags](#tags)
+14. [Tasks](#tasks)
+15. [Dependencies](#dependencies)
+16. [Attachments](#attachments)
+17. [Batch Operations](#batch-operations)
+18. [AI / Smart Commands](#ai-smart-commands)
 
 ---
 
@@ -342,6 +348,172 @@ Delete a webhook.
 | Flag | Description |
 |------|-------------|
 | `-y, --yes` | Skip confirmation |
+
+---
+
+## Columns
+
+Manage board columns/workflow states.
+
+### `columns list <boardId>` 📖 READ
+
+List all columns on a board.
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Output raw JSON |
+
+### `columns create <boardId>` ⚠️ WRITE
+
+Create a new column on a board.
+
+| Flag | Description |
+|------|-------------|
+| `--name <name>` | **Required.** Column name |
+| `--position <n>` | Column position (0-based) |
+| `--dry-run` | Preview only |
+| `-y, --yes` | Skip confirmation |
+| `--json` | Output raw JSON |
+
+### `columns update <columnId>` ⚠️ WRITE
+
+Update an existing column.
+
+| Flag | Description |
+|------|-------------|
+| `--name <name>` | New column name |
+| `--position <n>` | New position |
+| `--dry-run` | Preview only |
+| `-y, --yes` | Skip confirmation |
+| `--json` | Output raw JSON |
+
+---
+
+## Widgets
+
+Manage card instances across boards. In Favro, a card can exist on multiple boards — each instance is a "widget".
+
+### `widgets list` 📖 READ
+
+List all board instances of a specific card.
+
+| Flag | Description |
+|------|-------------|
+| `--card <cardCommonId>` | **Required.** The cardCommonId to trace |
+| `--json` | Output raw JSON |
+
+### `widgets add <boardId> <cardCommonId>` ⚠️ WRITE
+
+Commit an existing card to another board. The card remains on its current board(s) and a new instance is created on the target board.
+
+| Flag | Description |
+|------|-------------|
+| `--column <columnId>` | Place the card in a specific column |
+| `--dry-run` | Preview only |
+| `-y, --yes` | Skip confirmation |
+| `--force` | Bypass scope check |
+| `--json` | Output raw JSON |
+
+---
+
+## Tags
+
+Manage global workspace tags.
+
+### `tags list` 📖 READ
+
+List all tags in the workspace.
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Output raw JSON |
+
+### `tags create` ⚠️ WRITE
+
+Create a new global tag.
+
+| Flag | Description |
+|------|-------------|
+| `--name <name>` | **Required.** Tag name |
+| `--color <color>` | Tag color |
+| `--dry-run` | Preview only |
+| `-y, --yes` | Skip confirmation |
+| `--json` | Output raw JSON |
+
+---
+
+## Tasks
+
+Manage checklist items inside a card.
+
+### `tasks list <cardCommonId>` 📖 READ
+
+List all tasks (checklist items) on a card.
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Output raw JSON |
+
+### `tasks add <cardCommonId> <name>` ⚠️ WRITE
+
+Create a new task on a card.
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Preview only |
+| `-y, --yes` | Skip confirmation |
+| `--json` | Output raw JSON |
+
+### `tasks complete <taskId>` ⚠️ WRITE
+
+Mark a task as completed.
+
+| Flag | Description |
+|------|-------------|
+| `-y, --yes` | Skip confirmation |
+| `--json` | Output raw JSON |
+
+---
+
+## Dependencies
+
+Manage card dependency links (blockers/related).
+
+### `dependencies list <cardId>` 📖 READ
+
+List dependencies for a card.
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Output raw JSON |
+
+### `dependencies add <sourceId> <targetId>` ⚠️ WRITE
+
+Add a dependency link between two cards.
+
+| Flag | Description |
+|------|-------------|
+| `--type <type>` | **Required.** Dependency type: `blocks`, `depends-on`, `related` |
+| `--dry-run` | Preview only |
+| `-y, --yes` | Skip confirmation |
+| `--json` | Output raw JSON |
+
+---
+
+## Attachments
+
+Manage card file attachments.
+
+### `attachments upload <cardCommonId>` ⚠️ WRITE
+
+Upload a file attachment to a card.
+
+| Flag | Description |
+|------|-------------|
+| `--file <path>` | **Required.** File path to upload |
+| `--dry-run` | Preview only |
+| `-y, --yes` | Skip confirmation |
+| `--json` | Output raw JSON |
 
 ---
 
