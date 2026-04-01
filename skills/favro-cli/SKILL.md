@@ -176,6 +176,22 @@ favro groups delete <groupId> [-y]
 ### Bulk / AI Operations (high blast radius — extra caution)
 
 ```bash
+# AI-Powered Commands (requires `favro ai setup` or env vars)
+favro ai setup --provider anthropic --api-key sk-ant-...  # Configure AI provider
+favro ai setup --provider openai --api-key sk-...         # Or use OpenAI
+favro ai setup --provider ollama                          # Or use local Ollama
+
+favro ask <board> "What cards are blocked?"               # Ask questions about a board
+favro ask <board> "Summarize alice workload" --json       # JSON output
+favro ask <board> "What changed recently?" --context-only # Dump context without LLM call
+
+favro do <board> "move all overdue cards to Review"       # AI-planned multi-step execution
+favro do <board> "assign unassigned bugs to alice" --dry-run  # Preview without executing
+favro do <board> "triage new cards" --yes                 # Skip confirmation
+
+favro explain <cardId>                                    # AI summary of a card
+favro explain <cardId> --json                             # JSON output
+
 # Batch from CSV
 favro batch update --from-csv cards.csv [--dry-run] [-y]
 favro batch move --board <srcId> --to-board <dstId> --filter "status:Done" [--dry-run] [-y]

@@ -98,6 +98,7 @@ const tasklists_1 = require("./commands/tasklists");
 const dependencies_1 = require("./commands/dependencies");
 const attachments_1 = require("./commands/attachments");
 const users_1 = require("./commands/users");
+const ai_1 = require("./commands/ai");
 const error_handler_1 = require("./lib/error-handler");
 const progress_1 = require("./lib/progress");
 const client_factory_1 = require("./lib/client-factory");
@@ -120,7 +121,7 @@ function buildProgram() {
         'Authentication:\n' +
         '  Set FAVRO_API_KEY env var, or run `favro auth login` to save to ~/.favro/config.json\n\n' +
         'Full docs: https://github.com/square-moon/favro-cli#readme')
-        .version('1.0.0')
+        .version('1.1.0')
         .option('--verbose', 'Show stack traces for errors');
     // ─── auth commands ────────────────────────────────────────────────────────────
     (0, auth_1.registerAuthCommand)(program);
@@ -170,6 +171,8 @@ function buildProgram() {
     (0, attachments_1.registerAttachmentsCommands)(program);
     // ─── users & groups commands ───────────────────────────────────────────────────
     (0, users_1.registerUsersCommands)(program);
+    // ─── AI commands ────────────────────────────────────────────────────────────
+    (0, ai_1.registerAICommands)(program);
     // ─── cards parent ────────────────────────────────────────────────────────────
     const cards = program.command('cards').description('Card operations — get, list, create, update, export, link, unlink, and move cards.\n\n' +
         'Subcommands:\n' +

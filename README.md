@@ -858,6 +858,52 @@ Board risk analysis — surfaces blocked, stale, unassigned, and incomplete card
 | `--json` | Output raw JSON |
 | `--stale-days <n>` | Days without update to consider stale |
 
+---
+
+## LLM-Powered AI Commands
+
+These commands use a configured AI provider (Anthropic Claude, OpenAI GPT, or local Ollama) to analyze boards and generate execution plans.
+
+### Setup
+
+```bash
+# Configure with Anthropic (recommended)
+favro ai setup --provider anthropic --api-key sk-ant-...
+
+# Or use environment variables
+export ANTHROPIC_API_KEY=sk-ant-...
+favro ai setup  # auto-detects from env
+
+# Or use local Ollama (no API key needed)
+favro ai setup --provider ollama
+```
+
+### `ask <board> <question>` 📖 READ
+Ask an AI question about a board — fetches board context and sends to the LLM.
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Output raw JSON |
+| `--context-only` | Dump context without LLM call |
+| `--limit <n>` | Max cards in context (default: 1000) |
+
+### `do <board> <goal>` ⚠️ WRITE — HIGH BLAST RADIUS
+AI-planned multi-step execution — the LLM generates an execution plan, previews it, and executes after confirmation.
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Preview plan without executing |
+| `-y, --yes` | Skip confirmation |
+| `--json` | Output plan as JSON |
+
+### `explain <cardId>` 📖 READ
+AI-generated card summary — fetches card + comments, produces structured analysis.
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Output raw JSON |
+| `--board <boardId>` | Board context for richer analysis |
+
 
 ## Configuration
 
@@ -870,7 +916,12 @@ The config file lives at `~/.favro/config.json` and is created automatically by 
   "apiKey": "your_api_key_here",
   "defaultBoard": "board-id-optional",
   "defaultCollection": "My Collection",
-  "outputFormat": "table"
+  "outputFormat": "table",
+  "ai": {
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-20250514",
+    "apiKey": "sk-ant-..."
+  }
 }
 ```
 
@@ -882,6 +933,10 @@ The config file lives at `~/.favro/config.json` and is created automatically by 
 | `defaultBoard` | string | Default board ID (for future use) |
 | `defaultCollection` | string | Default collection name (for future use) |
 | `outputFormat` | `"table"` \| `"json"` \| `"csv"` | Default output format (for future use) |
+| `ai.provider` | `"anthropic"` \| `"openai"` \| `"ollama"` | AI provider for LLM commands |
+| `ai.model` | string | Model name (optional, auto-defaults) |
+| `ai.apiKey` | string | Provider API key (or use env vars) |
+| `ai.ollamaBaseUrl` | string | Ollama URL (default: `http://localhost:11434`) |
 
 ### File permissions
 

@@ -61,6 +61,7 @@ import { registerTaskListsCommands } from './commands/tasklists';
 import { registerDependenciesCommands } from './commands/dependencies';
 import { registerAttachmentsCommands } from './commands/attachments';
 import { registerUsersCommands } from './commands/users';
+import { registerAICommands } from './commands/ai';
 import { logError } from './lib/error-handler';
 import { ProgressBar } from './lib/progress';
 import { createFavroClient } from './lib/client-factory';
@@ -88,7 +89,7 @@ program
     '  Set FAVRO_API_KEY env var, or run `favro auth login` to save to ~/.favro/config.json\n\n' +
     'Full docs: https://github.com/square-moon/favro-cli#readme'
   )
-  .version('1.0.0')
+  .version('1.1.0')
   .option('--verbose', 'Show stack traces for errors');
 
 // ─── auth commands ────────────────────────────────────────────────────────────
@@ -158,6 +159,9 @@ registerAttachmentsCommands(program);
 
 // ─── users & groups commands ───────────────────────────────────────────────────
 registerUsersCommands(program);
+
+// ─── AI commands ────────────────────────────────────────────────────────────
+registerAICommands(program);
 
 // ─── cards parent ────────────────────────────────────────────────────────────
 const cards = program.command('cards').description(
