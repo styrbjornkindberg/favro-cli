@@ -1,0 +1,25 @@
+name: triage
+description: "Triage new unassigned cards — identify and categorize cards needing attention"
+triggers:
+  - manual
+steps:
+  - command: query
+    args:
+      board: "{{board}}"
+      query: "assigned:none"
+  - command: ask
+    args:
+      board: "{{board}}"
+      question: "List all cards with no assignee grouped by priority. For each, suggest who should own it based on current workload distribution."
+  - command: do
+    args:
+      board: "{{board}}"
+      goal: "{{goal}}"
+    confirm: true
+variables:
+  board:
+    prompt: "Which board to triage?"
+    default: "{{scope.board}}"
+  goal:
+    prompt: "What triage action to take?"
+    default: "assign high priority to cards mentioning 'bug' or 'crash'"

@@ -27,6 +27,7 @@ This reference documents every command, flag, and option available in the favro-
 19. [Batch Operations](#batch-operations)
 20. [AI / Smart Commands](#ai-smart-commands)
 21. [LLM-Powered AI Commands](#llm-powered-ai-commands)
+22. [Skills — Reusable Workflows](#skills--reusable-workflows)
 
 ---
 
@@ -950,4 +951,97 @@ Examples:
 ```bash
 favro explain abc123
 favro explain abc123 --json
+```
+
+---
+
+## Skills — Reusable Workflows
+
+Skills are YAML-defined multi-step workflows that chain CLI commands together. Stored in `~/.favro/skills/` (user) and shipped built-in.
+
+### `skill list` 📖 READ
+List all available skills (builtin + user).
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Output as JSON |
+
+### `skill run <name>` ⚠️ WRITE (may execute write steps)
+Execute a skill by name.
+
+| Flag | Description |
+|------|-------------|
+| `--board <board>` | Board ID or name (overrides skill default) |
+| `--dry-run` | Preview steps without executing |
+| `-y, --yes` | Skip confirmation prompts |
+| `--var <key=value...>` | Set skill variables |
+| `--json` | Output results as JSON |
+
+### `skill create <name>` 🔧 CONFIG
+Create a new skill from a starter template.
+
+| Flag | Description |
+|------|-------------|
+| `--description <desc>` | Skill description |
+
+### `skill edit <name>` 🔧 CONFIG
+Open a skill YAML file in `$EDITOR`.
+
+### `skill export <name>` 📖 READ
+Output a skill as YAML to stdout.
+
+### `skill import <path>` 🔧 CONFIG
+Import a skill from a YAML file.
+
+### `skill delete <name>` ⚠️ WRITE
+Delete a user skill (cannot delete builtin skills).
+
+### `skill record <name>` 🔧 CONFIG
+Start recording CLI commands as a skill.
+
+| Flag | Description |
+|------|-------------|
+| `--description <desc>` | Skill description |
+
+### `skill stop` 🔧 CONFIG
+Stop recording and save the skill.
+
+### Built-in Skills
+
+| Name | Description |
+|------|-------------|
+| `daily-digest` | Standup + overdue + blocked cards in one view |
+| `triage` | Find unassigned cards, suggest owners, assign with AI |
+| `sprint-close` | Summarize completed work, audit recent changes |
+| `stale-cleanup` | Find cards with no recent activity, suggest actions |
+| `release-prep` | Generate changelog from done cards, flag blockers |
+
+### Skill YAML Format
+
+```yaml
+name: my-workflow
+description: "What this skill does"
+triggers:
+  - manual
+steps:
+  - command: standup
+    args:
+      board: "{{board}}"
+  - command: ask
+    args:
+      board: "{{board}}"
+      question: "What cards need attention?"
+  - command: do
+    args:
+      board: "{{board}}"
+      goal: "{{goal}}"
+    confirm: true        # Always prompt before execution
+    continueOnError: true # Continue even if this step fails
+variables:
+  board:
+    prompt: "Which board?"
+    default: "{{scope.board}}"
+  goal:
+    prompt: "What action?"
+    default: "assign unassigned bugs"
 ```

@@ -1,0 +1,18 @@
+name: stale-cleanup
+description: "Find and flag stale cards with no recent activity"
+triggers:
+  - manual
+steps:
+  - command: ask
+    args:
+      board: "{{board}}"
+      question: "List all cards that have not been updated in the last 14 days. Group them by assignee. For each, suggest whether to close, reassign, or flag for review."
+  - command: query
+    args:
+      board: "{{board}}"
+      query: "assigned:none"
+    continueOnError: true
+variables:
+  board:
+    prompt: "Which board to clean up?"
+    default: "{{scope.board}}"

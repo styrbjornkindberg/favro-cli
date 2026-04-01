@@ -23,6 +23,7 @@ Command-line interface for [Favro](https://favro.com) — manage boards and card
   - [Members, Users & Groups](#members-users--groups)
   - [Webhooks](#webhooks)
   - [Batch & AI Commands](#batch-operations)
+  - [Git Integration](#git-integration)
 - [Configuration](#configuration)
 - [Examples](#examples)
   - [Bulk Create from CSV](#bulk-create-from-csv)
@@ -903,6 +904,103 @@ AI-generated card summary — fetches card + comments, produces structured analy
 |------|-------------|
 | `--json` | Output raw JSON |
 | `--board <boardId>` | Board context for richer analysis |
+
+---
+
+---
+
+## Git Integration
+
+Bridge your git workflow with Favro cards. Creates `.favro.json` in your project root to link a board and track branch→card mappings.
+
+### `git link` ⚠️ WRITE
+Connect a git repository to a Favro board.
+
+| Flag | Description |
+|------|-------------|
+| `--board <boardId>` | **Required.** Board ID to link |
+| `--prefix <prefix>` | Card ID prefix pattern (e.g. `CARD` for `CARD-123`) |
+| `--branch-pattern <pat>` | Branch naming pattern (default: `feature/{{cardId}}-{{slug}}`) |
+
+Creates `.favro.json` in the project root.
+
+### `git branch <cardId>` ⚠️ WRITE
+Create a feature branch from a card and move the card to "In Progress".
+
+| Flag | Description |
+|------|-------------|
+| `--no-move` | Donʼt move card to In Progress |
+| `-y, --yes` | Skip confirmation |
+
+Branch name is auto-generated from the card title: `feature/<cardId>-<slugified-title>`.
+
+### `git commit` ⚠️ WRITE
+Smart commit with auto-detected card reference from the current branch.
+
+| Flag | Description |
+|------|-------------|
+| `-m <message>` | **Required.** Commit message |
+| `--card <cardId>` | Override card ID (otherwise auto-detected from branch) |
+| `--comment` | Also post the commit message as a Favro comment |
+| `--no-prefix` | Skip card-ID prefix on the commit message |
+
+### `git sync` ⚠️ WRITE — HIGH BLAST RADIUS
+Analyze all branches and sync card statuses: merged branches → Done, open branches → In Progress.
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Preview only |
+| `-y, --yes` | Skip confirmation |
+| `--json` | Output raw JSON |
+
+### `git todos` 📖 READ (optionally ⚠️ WRITE with `--create`)
+Scan the codebase for `TODO`, `FIXME`, `HACK`, `XXX` comments.
+
+| Flag | Description |
+|------|-------------|
+| `--board <boardId>` | Board for card creation |
+| `--create` | Create Favro cards from found TODOs |
+| `--dry-run` | Preview card creation only |
+| `-y, --yes` | Skip confirmation |
+| `--json` | Output raw JSON |
+| `--limit <n>` | Max TODOs to display |
+
+---
+
+## Skills — Reusable Workflows
+
+Skills are YAML-defined multi-step workflows that chain CLI commands. Stored in `~/.favro/skills/` (user) or shipped built-in.
+
+```bash
+# List available skills
+favro skill list
+
+# Run a built-in skill
+favro skill run daily-digest --board <boardId>
+favro skill run triage --board <boardId> --dry-run
+favro skill run sprint-close --board <boardId>
+
+# Create, edit, share
+favro skill create my-workflow
+favro skill edit my-workflow
+favro skill export my-workflow > my-workflow.yaml
+favro skill import ./shared-skill.yaml
+
+# Record commands as a skill
+favro skill record my-recording
+# ... run favro commands ...
+favro skill stop
+```
+
+### Built-in Skills
+
+| Name | Description |
+|------|-------------|
+| `daily-digest` | Standup + overdue + blocked cards in one view |
+| `triage` | Find unassigned cards, suggest owners, assign with AI |
+| `sprint-close` | Summarize completed work, audit recent changes |
+| `stale-cleanup` | Find cards with no recent activity, suggest actions |
+| `release-prep` | Generate changelog from done cards, flag blockers |
 
 
 ## Configuration

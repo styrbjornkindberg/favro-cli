@@ -192,6 +192,36 @@ favro do <board> "triage new cards" --yes                 # Skip confirmation
 favro explain <cardId>                                    # AI summary of a card
 favro explain <cardId> --json                             # JSON output
 
+# Skills — Reusable Workflows
+favro skill list                                          # List available skills (builtin + user)
+favro skill run <name> --board <boardId>                  # Execute a skill
+favro skill run daily-digest --board <boardId>            # Built-in: standup + overdue + blocked
+favro skill run triage --board <boardId>                  # Built-in: find & assign unowned cards
+favro skill run sprint-close --board <boardId>            # Built-in: summarize & archive done
+favro skill run stale-cleanup --board <boardId>           # Built-in: flag stale cards
+favro skill run release-prep --board <boardId>            # Built-in: changelog + readiness check
+favro skill create <name>                                 # Create a new skill from template
+favro skill edit <name>                                   # Open skill in $EDITOR
+favro skill export <name>                                 # Output skill YAML to stdout
+favro skill import <path>                                 # Import from YAML file
+favro skill delete <name>                                 # Delete a user skill
+favro skill record <name>                                 # Start recording commands as a skill
+favro skill stop                                          # Stop recording and save
+
+# Git ↔ Cards Bridge
+favro git link --board <boardId>                          # Connect repo to a Favro board (creates .favro.json)
+favro git link --board <boardId> --prefix CARD            # With card prefix pattern
+favro git branch <cardId>                                 # Create feature branch, move card to In Progress
+favro git branch <cardId> --no-move                       # Create branch without moving card
+favro git commit -m "fix bug"                             # Smart commit with auto card ref from branch
+favro git commit -m "fix bug" --comment                   # Also post commit as Favro comment
+favro git commit -m "fix bug" --card <cardId>             # Explicit card override
+favro git sync                                            # Sync branch status to cards (merged→Done)
+favro git sync --dry-run                                  # Preview sync without changes
+favro git todos                                           # Scan codebase for TODO/FIXME/HACK/XXX
+favro git todos --create --board <boardId>                # Create Favro cards from TODOs
+favro git todos --json                                    # JSON output
+
 # Batch from CSV
 favro batch update --from-csv cards.csv [--dry-run] [-y]
 favro batch move --board <srcId> --to-board <dstId> --filter "status:Done" [--dry-run] [-y]

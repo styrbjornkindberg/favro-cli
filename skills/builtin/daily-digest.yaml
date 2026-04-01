@@ -1,0 +1,22 @@
+name: daily-digest
+description: "Daily standup digest — standup overview + risk analysis in one view"
+triggers:
+  - manual
+steps:
+  - command: standup
+    args:
+      board: "{{board}}"
+  - command: query
+    args:
+      board: "{{board}}"
+      query: "due:overdue"
+    continueOnError: true
+  - command: query
+    args:
+      board: "{{board}}"
+      query: "blocked"
+    continueOnError: true
+variables:
+  board:
+    prompt: "Which board?"
+    default: "{{scope.board}}"

@@ -1,0 +1,24 @@
+name: sprint-close
+description: "Sprint close — summarize completed work and archive done cards"
+triggers:
+  - manual
+steps:
+  - command: query
+    args:
+      board: "{{board}}"
+      query: "status:done"
+  - command: ask
+    args:
+      board: "{{board}}"
+      question: "Generate a sprint summary: how many cards were completed, who completed the most, what categories of work were done, and what remains incomplete."
+  - command: audit
+    args:
+      board: "{{board}}"
+      since: "{{since}}"
+variables:
+  board:
+    prompt: "Which board?"
+    default: "{{scope.board}}"
+  since:
+    prompt: "How far back to audit?"
+    default: "1w"

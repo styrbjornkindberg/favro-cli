@@ -1,0 +1,22 @@
+name: release-prep
+description: "Release preparation — check readiness and generate changelog from completed cards"
+triggers:
+  - manual
+steps:
+  - command: query
+    args:
+      board: "{{board}}"
+      query: "status:done"
+  - command: query
+    args:
+      board: "{{board}}"
+      query: "blocked"
+    continueOnError: true
+  - command: ask
+    args:
+      board: "{{board}}"
+      question: "Generate a release changelog from all completed cards. Group changes by category (features, bugs, improvements). Also flag any cards still blocked or in progress that may affect the release."
+variables:
+  board:
+    prompt: "Which board?"
+    default: "{{scope.board}}"
