@@ -28,6 +28,7 @@ import { registerBoardsListCommand } from './commands/boards-list';
 import { registerBoardsGetCommand } from './commands/boards-get';
 import { registerBoardsCreateCommand } from './commands/boards-create';
 import { registerBoardsUpdateCommand } from './commands/boards-update';
+import { registerBoardsDeleteCommand } from './commands/boards-delete';
 import { registerReleaseCheckCommand } from './commands/release-check';
 import { registerRisksCommand } from './commands/risks';
 import { registerBatchSmartCommand } from './commands/batch-smart';
@@ -38,6 +39,7 @@ import { registerCollectionsListCommand } from './commands/collections-list';
 import { registerCollectionsGetCommand } from './commands/collections-get';
 import { registerCollectionsCreateCommand } from './commands/collections-create';
 import { registerCollectionsUpdateCommand } from './commands/collections-update';
+import { registerCollectionsDeleteCommand } from './commands/collections-delete';
 import { registerCardsGetCommand } from './commands/cards-get';
 import { registerCardsLinkCommands } from './commands/cards-link';
 import { registerCustomFieldsCommands } from './commands/custom-fields';
@@ -55,6 +57,7 @@ import { registerColumnsCommands } from './commands/columns';
 import { registerWidgetsCommands } from './commands/widgets';
 import { registerTagsCommands } from './commands/tags';
 import { registerTasksCommands } from './commands/tasks';
+import { registerTaskListsCommands } from './commands/tasklists';
 import { registerDependenciesCommands } from './commands/dependencies';
 import { registerAttachmentsCommands } from './commands/attachments';
 import { registerUsersCommands } from './commands/users';
@@ -108,6 +111,7 @@ registerBoardsCreateCommand(boardsCmd);
 
 // ─── boards update ───────────────────────────────────────────────────────────
 registerBoardsUpdateCommand(boardsCmd);
+registerBoardsDeleteCommand(boardsCmd);
 
 // ─── release-check command ──────────────────────────────────────────────────────
 registerReleaseCheckCommand(program);
@@ -129,6 +133,7 @@ registerCollectionsListCommand(collectionsCmd);
 registerCollectionsGetCommand(collectionsCmd);
 registerCollectionsCreateCommand(collectionsCmd);
 registerCollectionsUpdateCommand(collectionsCmd);
+registerCollectionsDeleteCommand(collectionsCmd);
 
 // ─── columns commands ────────────────────────────────────────────────────────
 registerColumnsCommands(program);
@@ -141,6 +146,9 @@ registerTagsCommands(program);
 
 // ─── tasks commands ────────────────────────────────────────────────────────
 registerTasksCommands(program);
+
+// ─── tasklists commands ────────────────────────────────────────────────────────
+registerTaskListsCommands(program);
 
 // ─── dependencies commands ────────────────────────────────────────────────────────
 registerDependenciesCommands(program);

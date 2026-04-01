@@ -128,6 +128,10 @@ export declare class CardsAPI {
      */
     unlinkCard(cardId: string, fromCardId: string): Promise<void>;
     /**
+     * Remove all dependencies from a card.
+     */
+    deleteAllDependencies(cardId: string): Promise<void>;
+    /**
      * Move a card to a different board.
      */
     moveCard(cardId: string, req: MoveCardRequest): Promise<Card>;

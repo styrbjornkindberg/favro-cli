@@ -20,10 +20,12 @@ This reference documents every command, flag, and option available in the favro-
 12. [Widgets](#widgets)
 13. [Tags](#tags)
 14. [Tasks](#tasks)
-15. [Dependencies](#dependencies)
-16. [Attachments](#attachments)
-17. [Batch Operations](#batch-operations)
-18. [AI / Smart Commands](#ai-smart-commands)
+15. [Task Lists](#task-lists)
+16. [Dependencies](#dependencies)
+17. [Attachments](#attachments)
+18. [Users & Groups](#users--groups)
+19. [Batch Operations](#batch-operations)
+20. [AI / Smart Commands](#ai-smart-commands)
 
 ---
 
@@ -94,46 +96,6 @@ Update collection properties.
 |------|-------------|
 | `--name <name>` | New name |
 | `--description <text>` | New description |
-| `--json` | Output raw JSON |
-| `-y, --yes` | Skip confirmation |
-| `--force` | Bypass scope check |
-
----
-
-## Boards
-
-### `boards list [collectionId]`
-List boards, optionally filtered by collection.
-
-| Flag | Description |
-|------|-------------|
-| `--json` | Output raw JSON |
-
-### `boards get <id>`
-Get board details including columns, members, and stats.
-
-| Flag | Description |
-|------|-------------|
-| `--json` | Output raw JSON |
-| `--columns` | Include column definitions |
-
-### `boards create <collectionId>` ⚠️ WRITE
-Create a new board.
-
-| Flag | Description |
-|------|-------------|
-| `--name <name>` | **Required.** Board name |
-| `--type <type>` | Board type: `board` or `backlog` |
-| `--json` | Output raw JSON |
-| `--dry-run` | Preview only |
-| `--force` | Bypass scope check |
-
-### `boards update <id>` ⚠️ WRITE
-Update board properties.
-
-| Flag | Description |
-|------|-------------|
-| `--name <name>` | New name |
 | `--json` | Output raw JSON |
 | `-y, --yes` | Skip confirmation |
 | `--force` | Bypass scope check |
@@ -237,6 +199,64 @@ Move a card to a different board.
 | `-y, --yes` | Skip confirmation |
 | `--force` | Bypass scope check |
 
+### `collections delete <id>` ⚠️ DESTRUCTIVE
+Delete a collection permanently.
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Preview only |
+| `-y, --yes` | Skip confirmation |
+| `--force` | Bypass scope check |
+
+---
+
+## Boards
+
+### `boards list [collectionId]`
+List boards, optionally filtered by collection.
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Output raw JSON |
+
+### `boards get <id>`
+Get board details including columns, members, and stats.
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Output raw JSON |
+| `--columns` | Include column definitions |
+
+### `boards create <collectionId>` ⚠️ WRITE
+Create a new board.
+
+| Flag | Description |
+|------|-------------|
+| `--name <name>` | **Required.** Board name |
+| `--type <type>` | Board type: `board` or `backlog` |
+| `--json` | Output raw JSON |
+| `--dry-run` | Preview only |
+| `--force` | Bypass scope check |
+
+### `boards update <id>` ⚠️ WRITE
+Update board properties.
+
+| Flag | Description |
+|------|-------------|
+| `--name <name>` | New name |
+| `--json` | Output raw JSON |
+| `-y, --yes` | Skip confirmation |
+| `--force` | Bypass scope check |
+
+### `boards delete <id>` ⚠️ DESTRUCTIVE
+Delete a board permanently.
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Preview only |
+| `-y, --yes` | Skip confirmation |
+| `--force` | Bypass scope check |
+
 ---
 
 ## Comments
@@ -249,6 +269,13 @@ List all comments on a card.
 | `--limit <n>` | Max comments (default: 100) |
 | `--json` | Output raw JSON |
 
+### `comments get <commentId>` 📖 READ
+Get a single comment by ID.
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Output raw JSON |
+
 ### `comments add <cardId>` ⚠️ WRITE
 Add a comment to a card.
 
@@ -258,6 +285,23 @@ Add a comment to a card.
 | `--json` | Output raw JSON |
 | `--dry-run` | Preview only |
 | `--force` | Bypass scope check |
+
+### `comments update <commentId>` ⚠️ WRITE
+Update an existing comment.
+
+| Flag | Description |
+|------|-------------|
+| `--text <text>` | **Required.** New comment body |
+| `--json` | Output raw JSON |
+| `--dry-run` | Preview only |
+| `-y, --yes` | Skip confirmation |
+
+### `comments delete <commentId>` ⚠️ WRITE
+Delete a comment.
+
+| Flag | Description |
+|------|-------------|
+| `-y, --yes` | Skip confirmation |
 
 ---
 
@@ -440,6 +484,27 @@ Create a new global tag.
 | `-y, --yes` | Skip confirmation |
 | `--json` | Output raw JSON |
 
+### `tags update <tagId>` ⚠️ WRITE
+
+Update a tag's name and/or color.
+
+| Flag | Description |
+|------|-------------|
+| `--name <name>` | New tag name |
+| `--color <color>` | New tag color |
+| `--dry-run` | Preview only |
+| `-y, --yes` | Skip confirmation |
+| `--json` | Output raw JSON |
+
+### `tags delete <tagId>` ⚠️ WRITE
+
+Delete a tag.
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Preview only |
+| `-y, --yes` | Skip confirmation |
+
 ---
 
 ## Tasks
@@ -473,6 +538,83 @@ Mark a task as completed.
 | `-y, --yes` | Skip confirmation |
 | `--json` | Output raw JSON |
 
+### `tasks update <taskId>` ⚠️ WRITE
+
+Update a task's name, completed state, or position.
+
+| Flag | Description |
+|------|-------------|
+| `--name <name>` | New task name |
+| `--completed` | Mark as completed |
+| `--not-completed` | Mark as not completed |
+| `--position <n>` | New position (0-based) |
+| `--dry-run` | Preview only |
+| `-y, --yes` | Skip confirmation |
+| `--json` | Output raw JSON |
+
+### `tasks delete <taskId>` ⚠️ WRITE
+
+Delete a task.
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Preview only |
+| `-y, --yes` | Skip confirmation |
+
+---
+
+## Task Lists
+
+Manage task lists (checklists) on cards.
+
+### `tasklists list <cardCommonId>` 📖 READ
+
+List all task lists on a card.
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Output raw JSON |
+
+### `tasklists get <taskListId>` 📖 READ
+
+Get a task list by ID.
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Output raw JSON |
+
+### `tasklists create <cardCommonId>` ⚠️ WRITE
+
+Create a new task list on a card.
+
+| Flag | Description |
+|------|-------------|
+| `--name <name>` | **Required.** Task list name |
+| `--position <n>` | Position (0-based) |
+| `--dry-run` | Preview only |
+| `-y, --yes` | Skip confirmation |
+| `--json` | Output raw JSON |
+
+### `tasklists update <taskListId>` ⚠️ WRITE
+
+Update a task list.
+
+| Flag | Description |
+|------|-------------|
+| `--name <name>` | New name |
+| `--position <n>` | New position |
+| `--dry-run` | Preview only |
+| `-y, --yes` | Skip confirmation |
+| `--json` | Output raw JSON |
+
+### `tasklists delete <taskListId>` ⚠️ WRITE
+
+Delete a task list.
+
+| Flag | Description |
+|------|-------------|
+| `-y, --yes` | Skip confirmation |
+
 ---
 
 ## Dependencies
@@ -498,6 +640,23 @@ Add a dependency link between two cards.
 | `-y, --yes` | Skip confirmation |
 | `--json` | Output raw JSON |
 
+### `dependencies delete <cardId> <targetId>` ⚠️ WRITE
+
+Remove a single dependency link between two cards.
+
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Preview only |
+| `-y, --yes` | Skip confirmation |
+
+### `dependencies delete-all <cardId>` ⚠️ DESTRUCTIVE
+
+Remove ALL dependencies from a card.
+
+| Flag | Description |
+|------|-------------|
+| `-y, --yes` | Skip confirmation |
+
 ---
 
 ## Attachments
@@ -514,6 +673,72 @@ Upload a file attachment to a card.
 | `--dry-run` | Preview only |
 | `-y, --yes` | Skip confirmation |
 | `--json` | Output raw JSON |
+
+### `attachments upload-to-comment <commentId>` ⚠️ WRITE
+
+Upload a file attachment to a comment.
+
+| Flag | Description |
+|------|-------------|
+| `--file <path>` | **Required.** File path to upload |
+| `--dry-run` | Preview only |
+| `-y, --yes` | Skip confirmation |
+| `--json` | Output raw JSON |
+
+---
+
+## Users & Groups
+
+### `users list` 📖 READ
+List all workspace members.
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Output raw JSON |
+
+### `groups list` 📖 READ
+List all user groups.
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Output raw JSON |
+
+### `groups get <groupId>` 📖 READ
+Get a group by ID.
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Output raw JSON |
+
+### `groups create` ⚠️ WRITE
+Create a new user group.
+
+| Flag | Description |
+|------|-------------|
+| `--name <name>` | **Required.** Group name |
+| `--members <ids>` | Comma-separated user IDs to add |
+| `--dry-run` | Preview only |
+| `-y, --yes` | Skip confirmation |
+| `--json` | Output raw JSON |
+
+### `groups update <groupId>` ⚠️ WRITE
+Update a user group.
+
+| Flag | Description |
+|------|-------------|
+| `--name <name>` | New group name |
+| `--add-members <ids>` | Comma-separated user IDs to add |
+| `--remove-members <ids>` | Comma-separated user IDs to remove |
+| `--dry-run` | Preview only |
+| `-y, --yes` | Skip confirmation |
+| `--json` | Output raw JSON |
+
+### `groups delete <groupId>` ⚠️ WRITE
+Delete a user group.
+
+| Flag | Description |
+|------|-------------|
+| `-y, --yes` | Skip confirmation |
 
 ---
 

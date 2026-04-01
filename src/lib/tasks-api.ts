@@ -59,9 +59,13 @@ export class TasksAPI {
   /**
    * Toggle completion status of a task.
    */
-  async updateTask(taskId: string, completed: boolean): Promise<Task> {
-    const payload = { completed };
+  async updateTask(taskId: string, data: { name?: string; completed?: boolean; position?: number } | boolean): Promise<Task> {
+    const payload = typeof data === 'boolean' ? { completed: data } : data;
     return this.client.put<Task>(`/tasks/${taskId}`, payload);
+  }
+
+  async deleteTask(taskId: string): Promise<void> {
+    await this.client.delete(`/tasks/${taskId}`);
   }
 }
 

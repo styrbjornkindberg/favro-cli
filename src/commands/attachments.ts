@@ -58,4 +58,38 @@ export function registerAttachmentsCommands(program: Command): void {
         process.exit(1);
       }
     });
+
+  attachmentsCmd
+    .command('upload-to-comment <commentId>')
+    .description('Upload an attachment to a comment')
+    .requiredOption('--file <path>', 'Path to file to upload')
+    .option('--json', 'Output as JSON')
+    .option('--dry-run', 'Preview without making API calls')
+    .option('-y, --yes', 'Skip confirmation prompt')
+    .action(async (commentId: string, options) => {
+      const verbose = attachmentsCmd.opts()?.verbose ?? false;
+      try {
+        if (options.dryRun) {
+          dryRunLog('uploading', 'attachment', `${options.file} to comment ${commentId}`);
+          process.exit(0);
+        }
+
+        if (!(await confirmAction(`Upload file "${options.file}" to comment ${commentId}?`, { yes: options.yes }))) {
+          process.exit(0);
+        }
+
+        const client = await createFavroClient();
+        const attachApi = new AttachmentsAPI(client);
+        const attachRes = await attachApi.uploadAttachmentToComment(commentId, options.file);
+
+        if (options.json) {
+          console.log(JSON.stringify(attachRes, null, 2));
+        } else {
+          console.log(`✓ Attachment uploaded to comment: ${attachRes.attachmentId} (${attachRes.name})`);
+        }
+      } catch (error: any) {
+        logError(error, verbose);
+        process.exit(1);
+      }
+    });
 }

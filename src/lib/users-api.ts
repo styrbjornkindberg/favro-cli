@@ -83,6 +83,24 @@ export class UsersAPI {
 
     return allGroups;
   }
+
+  async getGroup(groupId: string): Promise<UserGroup> {
+    return this.client.get<UserGroup>(`/usergroups/${groupId}`);
+  }
+
+  async createGroup(name: string, userIds?: string[]): Promise<UserGroup> {
+    const payload: Record<string, any> = { name };
+    if (userIds && userIds.length > 0) payload.members = userIds;
+    return this.client.post<UserGroup>('/usergroups', payload);
+  }
+
+  async updateGroup(groupId: string, data: { name?: string; addMembers?: string[]; removeMembers?: string[] }): Promise<UserGroup> {
+    return this.client.put<UserGroup>(`/usergroups/${groupId}`, data);
+  }
+
+  async deleteGroup(groupId: string): Promise<void> {
+    await this.client.delete(`/usergroups/${groupId}`);
+  }
 }
 
 export default UsersAPI;

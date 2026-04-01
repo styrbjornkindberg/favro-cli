@@ -65,6 +65,7 @@ const boards_list_1 = require("./commands/boards-list");
 const boards_get_1 = require("./commands/boards-get");
 const boards_create_1 = require("./commands/boards-create");
 const boards_update_1 = require("./commands/boards-update");
+const boards_delete_1 = require("./commands/boards-delete");
 const release_check_1 = require("./commands/release-check");
 const risks_1 = require("./commands/risks");
 const batch_smart_1 = require("./commands/batch-smart");
@@ -75,6 +76,7 @@ const collections_list_1 = require("./commands/collections-list");
 const collections_get_1 = require("./commands/collections-get");
 const collections_create_1 = require("./commands/collections-create");
 const collections_update_1 = require("./commands/collections-update");
+const collections_delete_1 = require("./commands/collections-delete");
 const cards_get_1 = require("./commands/cards-get");
 const cards_link_1 = require("./commands/cards-link");
 const custom_fields_1 = require("./commands/custom-fields");
@@ -92,6 +94,7 @@ const columns_1 = require("./commands/columns");
 const widgets_1 = require("./commands/widgets");
 const tags_1 = require("./commands/tags");
 const tasks_1 = require("./commands/tasks");
+const tasklists_1 = require("./commands/tasklists");
 const dependencies_1 = require("./commands/dependencies");
 const attachments_1 = require("./commands/attachments");
 const users_1 = require("./commands/users");
@@ -133,6 +136,7 @@ function buildProgram() {
     (0, boards_create_1.registerBoardsCreateCommand)(boardsCmd);
     // ─── boards update ───────────────────────────────────────────────────────────
     (0, boards_update_1.registerBoardsUpdateCommand)(boardsCmd);
+    (0, boards_delete_1.registerBoardsDeleteCommand)(boardsCmd);
     // ─── release-check command ──────────────────────────────────────────────────────
     (0, release_check_1.registerReleaseCheckCommand)(program);
     // ─── risks command ───────────────────────────────────────────────────────────────
@@ -149,6 +153,7 @@ function buildProgram() {
     (0, collections_get_1.registerCollectionsGetCommand)(collectionsCmd);
     (0, collections_create_1.registerCollectionsCreateCommand)(collectionsCmd);
     (0, collections_update_1.registerCollectionsUpdateCommand)(collectionsCmd);
+    (0, collections_delete_1.registerCollectionsDeleteCommand)(collectionsCmd);
     // ─── columns commands ────────────────────────────────────────────────────────
     (0, columns_1.registerColumnsCommands)(program);
     // ─── widgets commands ────────────────────────────────────────────────────────
@@ -157,6 +162,8 @@ function buildProgram() {
     (0, tags_1.registerTagsCommands)(program);
     // ─── tasks commands ────────────────────────────────────────────────────────
     (0, tasks_1.registerTasksCommands)(program);
+    // ─── tasklists commands ────────────────────────────────────────────────────────
+    (0, tasklists_1.registerTaskListsCommands)(program);
     // ─── dependencies commands ────────────────────────────────────────────────────────
     (0, dependencies_1.registerDependenciesCommands)(program);
     // ─── attachments commands ────────────────────────────────────────────────────────

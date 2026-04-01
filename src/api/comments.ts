@@ -134,6 +134,27 @@ export class CommentsApiClient {
   }
 
   /**
+   * Get a single comment by its commentId.
+   * Favro: GET /comments/:commentId
+   */
+  async getComment(commentId: string): Promise<Comment> {
+    const raw = await this.client.get<RawComment>(`/comments/${commentId}`);
+    return normalizeComment(raw, raw.cardCommonId ?? raw.cardId ?? '');
+  }
+
+  /**
+   * Update a comment's text.
+   * Favro: PUT /comments/:commentId
+   */
+  async updateComment(commentId: string, text: string): Promise<Comment> {
+    if (!text || !text.trim()) {
+      throw new Error('Comment text cannot be empty.');
+    }
+    const raw = await this.client.put<RawComment>(`/comments/${commentId}`, { comment: text.trim() });
+    return normalizeComment(raw, raw.cardCommonId ?? raw.cardId ?? '');
+  }
+
+  /**
    * Delete a comment by its commentId.
    * Favro: DELETE /comments/:commentId
    */

@@ -93,6 +93,7 @@ favro audit <board> --since 1d           # Recent changes audit
 # Inspection
 favro custom-fields list <boardId>
 favro comments list <cardId>
+favro comments get <commentId>           # Get a single comment by ID
 favro members list --board <boardId>
 
 # Meta & Structure
@@ -100,9 +101,12 @@ favro columns list <boardId>
 favro widgets list --card <cardCommonId>
 favro tags list
 favro tasks list <cardId>
+favro tasklists list <cardCommonId>      # List task lists (checklists) on a card
+favro tasklists get <taskListId>         # Get a task list by ID
 favro dependencies list <cardId>
 favro users list
 favro groups list
+favro groups get <groupId>               # Get a single group by ID
 ```
 
 ### Write Operations (scope-checked, confirmation-required)
@@ -120,12 +124,16 @@ favro cards move <cardId> --to-board <boardId> [-y]
 # Boards
 favro boards create <collectionId> --name "Name" [--dry-run]
 favro boards update <boardId> --name "Name" [-y]
+favro boards delete <boardId> [--dry-run] [-y] [--force]
 
 # Collections
 favro collections update <collectionId> --name "Name" [-y]
+favro collections delete <collectionId> [--dry-run] [-y] [--force]
 
 # Comments
 favro comments add <cardId> --text "Comment" [--dry-run]
+favro comments update <commentId> --text "New text" [--dry-run] [-y]
+favro comments delete <commentId> [-y]
 
 # Custom fields
 favro custom-fields set <cardId> <fieldId> "value" [--dry-run] [-y]
@@ -145,9 +153,24 @@ favro widgets add <boardId> <cardCommonId> [--dry-run] [-y]  # Commit card to an
 
 # Meta & Assets
 favro tags create --name "Tag" [--dry-run] [-y]
+favro tags update <tagId> --name "New Name" --color <color> [--dry-run] [-y]
+favro tags delete <tagId> [--dry-run] [-y]
 favro tasks add <cardId> "Task Name" [--dry-run] [-y]
+favro tasks update <taskId> --name "Name" --completed [--dry-run] [-y]
+favro tasks delete <taskId> [--dry-run] [-y]
+favro tasklists create <cardCommonId> --name "Checklist" [--dry-run] [-y]
+favro tasklists update <taskListId> --name "New Name" [--dry-run] [-y]
+favro tasklists delete <taskListId> [-y]
 favro dependencies add <sourceId> <targetId> --type blocks [--dry-run] [-y]
+favro dependencies delete <cardId> <targetId> [--dry-run] [-y]
+favro dependencies delete-all <cardId> [-y]
 favro attachments upload <cardId> --file ./path [--dry-run] [-y]
+favro attachments upload-to-comment <commentId> --file ./path [--dry-run] [-y]
+
+# User Groups
+favro groups create --name "Group" [--members id1,id2] [--dry-run] [-y]
+favro groups update <groupId> --name "New Name" [--add-members ids] [--dry-run] [-y]
+favro groups delete <groupId> [-y]
 ```
 
 ### Bulk / AI Operations (high blast radius — extra caution)

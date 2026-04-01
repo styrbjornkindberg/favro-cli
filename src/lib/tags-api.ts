@@ -57,6 +57,14 @@ export class TagsAPI {
     }
     return this.client.post<Tag>('/tags', payload);
   }
+
+  async updateTag(tagId: string, data: { name?: string; color?: string }): Promise<Tag> {
+    return this.client.put<Tag>(`/tags/${tagId}`, data);
+  }
+
+  async deleteTag(tagId: string): Promise<void> {
+    await this.client.delete(`/tags/${tagId}`);
+  }
 }
 
 export default TagsAPI;

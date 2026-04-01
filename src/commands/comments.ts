@@ -17,6 +17,39 @@ export function registerCommentsCommand(program: Command): void {
     .command('comments')
     .description('Card comment operations — list and add comments to cards');
 
+  // ─── comments get ───────────────────────────────────────────────────────────
+  commentsCmd
+    .command('get <commentId>')
+    .description(
+      'Get a single comment by ID.\n\n' +
+      'Examples:\n' +
+      '  favro comments get <commentId>\n' +
+      '  favro comments get <commentId> --json\n\n' +
+      'Tip: Use `favro comments list <cardId>` to find comment IDs.'
+    )
+    .option('--json', 'Output as JSON')
+    .action(async (commentId: string, options) => {
+      const verbose = program.opts()?.verbose ?? false;
+      try {
+        const client = await createFavroClient();
+        const api = new CommentsApiClient(client);
+        const comment = await api.getComment(commentId);
+
+        if (options.json) {
+          console.log(JSON.stringify(comment, null, 2));
+          return;
+        }
+
+        const ts = formatTimestamp(comment.createdAt);
+        const author = comment.author ? ` by ${comment.author}` : '';
+        console.log(`[${comment.commentId}]${author} — ${ts}`);
+        console.log(`  ${comment.text}`);
+      } catch (error) {
+        logError(error, verbose);
+        process.exit(1);
+      }
+    });
+
   // ─── comments list ─────────────────────────────────────────────────────────
   commentsCmd
     .command('list <cardId>')
@@ -113,6 +146,54 @@ export function registerCommentsCommand(program: Command): void {
         }
 
         console.log(`✓ Comment added: ${comment.commentId}`);
+      } catch (error) {
+        logError(error, verbose);
+        process.exit(1);
+      }
+    });
+
+  // ─── comments update ────────────────────────────────────────────────────────
+  commentsCmd
+    .command('update <commentId>')
+    .description(
+      'Update a comment\'s text.\n\n' +
+      'Examples:\n' +
+      '  favro comments update <commentId> --text "Updated text"\n' +
+      '  favro comments update <commentId> --text "Fixed typo" --json\n\n' +
+      'Tip: Use `favro comments list <cardId>` to find comment IDs.'
+    )
+    .requiredOption('--text <comment>', 'New comment text')
+    .option('--json', 'Output as JSON')
+    .option('--dry-run', 'Print what would be updated without making API calls')
+    .option('-y, --yes', 'Skip confirmation prompt')
+    .action(async (commentId: string, options) => {
+      const verbose = program.opts()?.verbose ?? false;
+      try {
+        if (!options.text || !options.text.trim()) {
+          console.error('Error: Comment text cannot be empty.');
+          process.exit(1);
+        }
+
+        if (options.dryRun) {
+          console.log(`[dry-run] Would update comment ${commentId}: "${options.text}"`);
+          return;
+        }
+
+        const { confirmAction } = await import('../lib/safety');
+        if (!(await confirmAction(`Update comment ${commentId}?`, { yes: options.yes }))) {
+          process.exit(0);
+        }
+
+        const client = await createFavroClient();
+        const api = new CommentsApiClient(client);
+        const comment = await api.updateComment(commentId, options.text);
+
+        if (options.json) {
+          console.log(JSON.stringify(comment, null, 2));
+          return;
+        }
+
+        console.log(`✓ Comment updated: ${comment.commentId}`);
       } catch (error) {
         logError(error, verbose);
         process.exit(1);

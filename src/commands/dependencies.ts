@@ -85,4 +85,74 @@ export function registerDependenciesCommands(program: Command): void {
         process.exit(1);
       }
     });
+
+  depsCommand
+    .command('delete <cardId> <targetId>')
+    .description('Remove a single dependency link between two cards')
+    .option('--dry-run', 'Preview without making API calls')
+    .option('-y, --yes', 'Skip confirmation prompt')
+    .option('--force', 'Bypass bounds checking')
+    .action(async (cardId: string, targetId: string, options) => {
+      const verbose = depsCommand.opts()?.verbose ?? false;
+      try {
+        if (options.dryRun) {
+          dryRunLog('removing', 'dependency', `${cardId} -> ${targetId}`);
+          return;
+        }
+
+        const config = await readConfig();
+        const client = await createFavroClient();
+        const api = new CardsAPI(client);
+        const card = await api.getCard(cardId);
+        if (card && card.boardId) {
+          await checkScope(card.boardId, client, config, options.force);
+        }
+
+        if (!(await confirmAction(`Remove dependency ${cardId} -> ${targetId}?`, { yes: options.yes }))) {
+          return;
+        }
+
+        await api.unlinkCard(cardId, targetId);
+
+        console.log(`✓ Dependency removed: ${cardId} -> ${targetId}`);
+      } catch (error: any) {
+        logError(error, verbose);
+        process.exit(1);
+      }
+    });
+
+  depsCommand
+    .command('delete-all <cardId>')
+    .description('Remove all dependencies from a card')
+    .option('--dry-run', 'Preview without making API calls')
+    .option('-y, --yes', 'Skip confirmation prompt')
+    .option('--force', 'Bypass bounds checking')
+    .action(async (cardId: string, options) => {
+      const verbose = depsCommand.opts()?.verbose ?? false;
+      try {
+        if (options.dryRun) {
+          dryRunLog('removing all dependencies from', 'card', cardId);
+          return;
+        }
+
+        const config = await readConfig();
+        const client = await createFavroClient();
+        const api = new CardsAPI(client);
+        const card = await api.getCard(cardId);
+        if (card && card.boardId) {
+          await checkScope(card.boardId, client, config, options.force);
+        }
+
+        if (!(await confirmAction(`Remove ALL dependencies from card ${cardId}? This cannot be undone.`, { yes: options.yes }))) {
+          return;
+        }
+
+        await api.deleteAllDependencies(cardId);
+
+        console.log(`✓ All dependencies removed from card ${cardId}`);
+      } catch (error: any) {
+        logError(error, verbose);
+        process.exit(1);
+      }
+    });
 }

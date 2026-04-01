@@ -79,6 +79,10 @@ export class CollectionsAPI {
   async updateCollection(collectionId: string, data: { name?: string; description?: string }): Promise<Collection> {
     return this.client.patch<Collection>(`/collections/${collectionId}`, data);
   }
+
+  async deleteCollection(collectionId: string): Promise<void> {
+    await this.client.delete(`/collections/${collectionId}`);
+  }
 }
 
 export default CollectionsAPI;

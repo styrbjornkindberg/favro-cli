@@ -192,6 +192,12 @@ class CardsAPI {
         await this.client.delete(`/cards/${cardId}/dependencies/${fromCardId}`);
     }
     /**
+     * Remove all dependencies from a card.
+     */
+    async deleteAllDependencies(cardId) {
+        await this.client.delete(`/cards/${cardId}/dependencies`);
+    }
+    /**
      * Move a card to a different board.
      */
     async moveCard(cardId, req) {

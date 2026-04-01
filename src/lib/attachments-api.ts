@@ -44,6 +44,26 @@ export class AttachmentsAPI {
 
     return res.data;
   }
+
+  /**
+   * Upload an attachment to a comment.
+   */
+  async uploadAttachmentToComment(commentId: string, filePath: string): Promise<Attachment> {
+    const fileName = path.basename(filePath);
+    const axiosClient = this.client.getClient();
+    const form = new FormData();
+    const buffer = await fs.readFile(filePath);
+    const blob = new Blob([buffer]);
+    form.append('file', blob, fileName);
+
+    const res = await axiosClient.post(`/comments/${commentId}/attachments`, form, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      }
+    });
+
+    return res.data;
+  }
 }
 
 export default AttachmentsAPI;

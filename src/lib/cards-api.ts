@@ -296,6 +296,13 @@ export class CardsAPI {
   }
 
   /**
+   * Remove all dependencies from a card.
+   */
+  async deleteAllDependencies(cardId: string): Promise<void> {
+    await this.client.delete(`/cards/${cardId}/dependencies`);
+  }
+
+  /**
    * Move a card to a different board.
    */
   async moveCard(cardId: string, req: MoveCardRequest): Promise<Card> {
