@@ -7,6 +7,8 @@
  * Without credentials, integration tests are skipped.
  */
 
+export {};
+
 // Jest imports (vitest API compatible)
 
 const SPRINT_INTEGRATION_GUARD = !!process.env.FAVRO_API_KEY && !!process.env.FAVRO_TEST_BOARD_ID;

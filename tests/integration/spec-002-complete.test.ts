@@ -29,7 +29,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { vi } from 'vitest';
+// Jest/Vitest compat: use jest.* directly — vitest setup aliases jest → vi
 import axios from 'axios';
 
 // ─── API Client imports ───────────────────────────────────────────────────────
@@ -1047,8 +1047,8 @@ describe('Rate Limiting — 429 responses and exponential backoff', () => {
     const mockAxios = {
       create: () => ({
         interceptors: {
-          request: { use: vi.fn() },
-          response: { use: vi.fn() },
+          request: { use: jest.fn() },
+          response: { use: jest.fn() },
         },
         get: async () => {
           callCount++;
@@ -1561,15 +1561,15 @@ describe('BulkTransaction — unit tests for atomic operations', () => {
 describe('Custom Fields — formatter unit tests', () => {
 
   it('formatFieldsTable prints nothing for empty array', () => {
-    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const spy = jest.spyOn(console, 'log').mockImplementation(() => {});
     formatFieldsTable([]);
     expect(spy).toHaveBeenCalledWith(expect.stringContaining('No custom fields'));
     spy.mockRestore();
   });
 
   it('formatFieldsTable prints table for non-empty array', () => {
-    const spy = vi.spyOn(console, 'table').mockImplementation(() => {});
-    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const spy = jest.spyOn(console, 'table').mockImplementation(() => {});
+    const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
     formatFieldsTable([
       { fieldId: 'f1', name: 'Priority', type: 'select', required: true, options: [{ optionId: 'o1', name: 'High' }] },
     ]);
@@ -1579,7 +1579,7 @@ describe('Custom Fields — formatter unit tests', () => {
   });
 
   it('formatFieldDetail prints field details', () => {
-    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const spy = jest.spyOn(console, 'log').mockImplementation(() => {});
     formatFieldDetail({
       fieldId: 'f1',
       name: 'Priority',
@@ -1595,22 +1595,22 @@ describe('Custom Fields — formatter unit tests', () => {
   });
 
   it('formatFieldDetail works without optional fields', () => {
-    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const spy = jest.spyOn(console, 'log').mockImplementation(() => {});
     formatFieldDetail({ fieldId: 'f2', name: 'Notes', type: 'text' });
     expect(spy).toHaveBeenCalledWith(expect.stringContaining('f2'));
     spy.mockRestore();
   });
 
   it('formatFieldValuesTable shows empty message', () => {
-    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const spy = jest.spyOn(console, 'log').mockImplementation(() => {});
     formatFieldValuesTable([]);
     expect(spy).toHaveBeenCalledWith(expect.stringContaining('No custom field values'));
     spy.mockRestore();
   });
 
   it('formatFieldValuesTable renders table for values', () => {
-    const tableSpy = vi.spyOn(console, 'table').mockImplementation(() => {});
-    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const tableSpy = jest.spyOn(console, 'table').mockImplementation(() => {});
+    const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
     formatFieldValuesTable([
       { fieldId: 'f1', value: 'High', displayValue: 'High' },
     ]);
@@ -1620,15 +1620,15 @@ describe('Custom Fields — formatter unit tests', () => {
   });
 
   it('formatOptionsTable shows empty message', () => {
-    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const spy = jest.spyOn(console, 'log').mockImplementation(() => {});
     formatOptionsTable([]);
     expect(spy).toHaveBeenCalledWith(expect.stringContaining('No options'));
     spy.mockRestore();
   });
 
   it('formatOptionsTable renders table for options', () => {
-    const tableSpy = vi.spyOn(console, 'table').mockImplementation(() => {});
-    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const tableSpy = jest.spyOn(console, 'table').mockImplementation(() => {});
+    const logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
     formatOptionsTable([
       { optionId: 'o1', name: 'High', color: '#ff0000' },
       { optionId: 'o2', name: 'Low' },

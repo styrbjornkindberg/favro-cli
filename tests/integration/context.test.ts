@@ -7,6 +7,8 @@
  * Without credentials, the guard skips integration tests.
  */
 
+export {};
+
 const INTEGRATION_GUARD = !!process.env.FAVRO_API_KEY && !!process.env.FAVRO_TEST_BOARD_ID;
 const describeOrSkip = INTEGRATION_GUARD ? describe : describe.skip;
 

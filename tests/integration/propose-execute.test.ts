@@ -6,16 +6,16 @@
  * Validates dry-run accuracy: what's previewed is exactly what executes.
  */
 
-import { vi, type Mock, type MockedClass } from 'vitest';
+// Jest/Vitest compat: use jest.* directly — vitest setup aliases jest → vi
 import { proposeChange, executeChange, ValidationError } from '../../src/api/propose';
 import { changeStore } from '../../src/lib/change-store';
 import ContextAPI from '../../src/api/context';
 import type { BoardContextSnapshot } from '../../src/api/context';
 import FavroHttpClient from '../../src/lib/http-client';
 
-vi.mock('../../src/api/context');
+jest.mock('../../src/api/context');
 
-const MockContextAPI = ContextAPI as MockedClass<typeof ContextAPI>;
+const MockContextAPI = ContextAPI as jest.MockedClass<typeof ContextAPI>;
 
 const FULL_SNAPSHOT: BoardContextSnapshot = {
   board: { id: 'boards-sprint-42', name: 'Sprint 42', members: ['alice@ex.com', 'bob@ex.com'] },
@@ -63,25 +63,25 @@ const FULL_SNAPSHOT: BoardContextSnapshot = {
 };
 
 function makeMockHttpClient(options?: {
-  patch?: Mock;
-  post?: Mock;
+  patch?: jest.Mock;
+  post?: jest.Mock;
 }) {
   return {
     client: {
-      patch: options?.patch ?? vi.fn().mockResolvedValue({}),
-      post: options?.post ?? vi.fn().mockResolvedValue({}),
-      get: vi.fn().mockResolvedValue({}),
-      delete: vi.fn().mockResolvedValue({}),
+      patch: options?.patch ?? jest.fn().mockResolvedValue({}),
+      post: options?.post ?? jest.fn().mockResolvedValue({}),
+      get: jest.fn().mockResolvedValue({}),
+      delete: jest.fn().mockResolvedValue({}),
     },
   } as unknown as FavroHttpClient;
 }
 
 beforeEach(() => {
   changeStore.clear();
-  vi.clearAllMocks();
+  jest.clearAllMocks();
   (MockContextAPI as any).mockImplementation(function(this: any) {
-    this.getSnapshot = vi.fn().mockResolvedValue(FULL_SNAPSHOT);
-    this.resolveBoard = vi.fn();
+    this.getSnapshot = jest.fn().mockResolvedValue(FULL_SNAPSHOT);
+    this.resolveBoard = jest.fn();
   });
 });
 
@@ -93,7 +93,7 @@ afterEach(() => {
 
 describe('Integration: propose → execute workflow', () => {
   it('W001: propose then execute a move — dry-run accuracy 100%', async () => {
-    const mockPatch = vi.fn().mockResolvedValue({});
+    const mockPatch = jest.fn().mockResolvedValue({});
     const client = makeMockHttpClient({ patch: mockPatch });
 
     // Step 1: Propose
@@ -129,7 +129,7 @@ describe('Integration: propose → execute workflow', () => {
   });
 
   it('W002: propose then execute an assign', async () => {
-    const mockPatch = vi.fn().mockResolvedValue({});
+    const mockPatch = jest.fn().mockResolvedValue({});
     const client = makeMockHttpClient({ patch: mockPatch });
 
     const proposal = await proposeChange('Sprint 42', 'assign "Add dark mode" to Alice', client);
@@ -144,7 +144,7 @@ describe('Integration: propose → execute workflow', () => {
   });
 
   it('W003: propose then execute a create', async () => {
-    const mockPost = vi.fn().mockResolvedValue({});
+    const mockPost = jest.fn().mockResolvedValue({});
     const client = makeMockHttpClient({ post: mockPost });
 
     const proposal = await proposeChange('Sprint 42', 'create card "Deploy to staging" in Backlog', client);
@@ -171,7 +171,7 @@ describe('Integration: propose → execute workflow', () => {
   });
 
   it('W005: cannot execute same change-id twice', async () => {
-    const mockPatch = vi.fn().mockResolvedValue({});
+    const mockPatch = jest.fn().mockResolvedValue({});
     const client = makeMockHttpClient({ patch: mockPatch });
 
     const proposal = await proposeChange('Sprint 42', 'move card "Fix login bug" to Review', client);
@@ -195,7 +195,7 @@ describe('Integration: propose → execute workflow', () => {
   });
 
   it('W007: close action targets the Done column', async () => {
-    const mockPatch = vi.fn().mockResolvedValue({});
+    const mockPatch = jest.fn().mockResolvedValue({});
     const client = makeMockHttpClient({ patch: mockPatch });
 
     const proposal = await proposeChange('Sprint 42', 'close "Fix login bug"', client);

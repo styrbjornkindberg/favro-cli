@@ -14,7 +14,7 @@
  * Run: pnpm test:integration --testPathPattern=performance
  */
 
-import { vi } from 'vitest';
+// Jest/Vitest compat: use jest.* directly — vitest setup aliases jest → vi
 import CardsAPI, { Card } from '../../src/lib/cards-api';
 import FavroHttpClient from '../../src/lib/http-client';
 import { CustomFieldsAPI } from '../../src/lib/custom-fields-api';
@@ -191,7 +191,7 @@ describe('BulkTransaction — performance with mock API', () => {
    */
   function makeMockCardsAPI(latencyMs = 5): CardsAPI {
     return {
-      updateCard: vi.fn(async (_id: string, _data: any) => {
+      updateCard: jest.fn(async (_id: string, _data: any) => {
         await new Promise((r) => setTimeout(r, latencyMs));
         return { cardId: _id, name: 'Mock Card', createdAt: new Date().toISOString() };
       }),
