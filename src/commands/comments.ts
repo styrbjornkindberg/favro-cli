@@ -118,6 +118,42 @@ export function registerCommentsCommand(program: Command): void {
         process.exit(1);
       }
     });
+
+  // ─── comments delete ───────────────────────────────────────────────────────
+  commentsCmd
+    .command('delete <commentId>')
+    .description(
+      'Delete a comment by its ID.\n\n' +
+      'Examples:\n' +
+      '  favro comments delete <commentId>\n' +
+      '  favro comments delete <commentId> --yes\n\n' +
+      'Tip: Use `favro comments list <cardId>` to find comment IDs.'
+    )
+    .option('--dry-run', 'Preview without making API calls')
+    .option('-y, --yes', 'Skip confirmation prompt')
+    .action(async (commentId: string, options) => {
+      const verbose = program.opts()?.verbose ?? false;
+      try {
+        if (options.dryRun) {
+          console.log(`[dry-run] Would delete comment ${commentId}`);
+          return;
+        }
+
+        const { confirmAction } = await import('../lib/safety');
+        if (!(await confirmAction(`Delete comment ${commentId}?`, { yes: options.yes }))) {
+          process.exit(0);
+        }
+
+        const client = await createFavroClient();
+        const api = new CommentsApiClient(client);
+        await api.deleteComment(commentId);
+
+        console.log(`✓ Comment deleted: ${commentId}`);
+      } catch (error) {
+        logError(error, verbose);
+        process.exit(1);
+      }
+    });
 }
 
 export default registerCommentsCommand;

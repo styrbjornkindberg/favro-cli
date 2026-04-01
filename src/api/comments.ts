@@ -132,6 +132,14 @@ export class CommentsApiClient {
 
     return cardIdOrCommonId;
   }
+
+  /**
+   * Delete a comment by its commentId.
+   * Favro: DELETE /comments/:commentId
+   */
+  async deleteComment(commentId: string): Promise<void> {
+    await this.client.delete(`/comments/${commentId}`);
+  }
 }
 
 export default CommentsApiClient;
