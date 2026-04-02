@@ -201,6 +201,28 @@ export function registerAuthCommand(program: Command): void {
       try {
         const existing = await readConfig();
         const updated = { ...existing, apiKey, email, ...(organizationId ? { organizationId } : {}) };
+
+        // Resolve userId by matching email against /users endpoint
+        if (organizationId) {
+          try {
+            process.stdout.write('Resolving user identity...');
+            const userClient = new FavroHttpClient({
+              auth: { token: apiKey!, email: email!, organizationId },
+            });
+            const usersResponse = await userClient.get<{ entities: Array<{ userId: string; email: string; name: string }> }>('/users');
+            const users = usersResponse.entities ?? [];
+            const me = users.find((u: { email: string }) => u.email.toLowerCase() === email!.toLowerCase());
+            if (me) {
+              updated.userId = me.userId;
+              process.stdout.write(` ✓ (${me.name})\n`);
+            } else {
+              process.stdout.write(' ⚠ (not found in org users)\n');
+            }
+          } catch {
+            process.stdout.write(' ⚠ (skipped)\n');
+          }
+        }
+
         await writeConfig(updated);
         console.log(`\n✓ Credentials saved to ${CONFIG_FILE}`);
         if (!organizationId) {

@@ -11,6 +11,8 @@ import BoardsAPI from '../lib/boards-api';
 import CardsAPI from '../lib/cards-api';
 import { ContextAPI, ContextCard } from '../api/context';
 import { renderBoard, renderStatusBar, RenderColumn, RenderCard } from '../lib/board-renderer';
+import { readConfig, resolveUserId } from '../lib/config';
+import { outputResult, resolveFormat } from '../lib/output';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { Select, AutoComplete } = require('enquirer');
@@ -305,7 +307,111 @@ async function showCardDetail(cardId: string): Promise<void> {
 
 // ─── Main Menu Loop ──────────────────────────────────────────────────────────
 
+async function showMyWork(): Promise<void> {
+  console.log(`\n  ${c.heading('My Work')}`);
+  console.log(`  ${c.muted('Loading your cards…')}`);
+  try {
+    const config = await readConfig();
+    const userId = await resolveUserId();
+    if (!userId) {
+      console.log(`  ${c.error('Could not resolve your userId. Run "favro auth login" to set up credentials.')}`);
+      await pause();
+      return;
+    }
+    const client = await createFavroClient();
+    const AggregateAPI = (await import('../api/aggregate')).default;
+    const agg = new AggregateAPI(client);
+
+    let snapshot;
+    if (config.scopeCollectionId) {
+      snapshot = await agg.getMultiBoardSnapshot({ collectionIds: [config.scopeCollectionId] }, 500);
+    } else {
+      snapshot = await agg.getMultiBoardSnapshot({}, 500);
+    }
+
+    const myCards = snapshot.allCards.filter(
+      (card: any) => card.assignees?.includes(userId)
+    );
+
+    if (myCards.length === 0) {
+      console.log(`  ${c.muted('No cards assigned to you.')}`);
+    } else {
+      const active = myCards.filter((ca: any) => ['active', 'review', 'testing'].includes(ca.stage ?? ''));
+      const blocked = myCards.filter((ca: any) => ca.blockedBy?.length > 0);
+      const other = myCards.filter((ca: any) => !['active', 'review', 'testing', 'done', 'approved', 'archived'].includes(ca.stage ?? '') && !(ca.blockedBy?.length > 0));
+
+      console.log(`  ${c.success(`${myCards.length} cards`)}  ${c.info(`${active.length} active`)}  ${blocked.length > 0 ? c.error(`${blocked.length} blocked`) : ''}  ${c.muted(`${other.length} queued`)}`);
+      console.log('');
+      for (const card of active.slice(0, 10)) {
+        const board = (card as any).boardName ? c.muted(` [${(card as any).boardName}]`) : '';
+        console.log(`  ${c.brand('▸')} ${c.info(card.title)}${board}`);
+      }
+      if (active.length > 10) console.log(`  ${c.muted(`  … +${active.length - 10} more active cards`)}`);
+      if (blocked.length > 0) {
+        console.log(`\n  ${c.error('Blocked:')}`);
+        for (const card of blocked.slice(0, 5)) {
+          console.log(`  ${c.error('✗')} ${card.title}`);
+        }
+      }
+    }
+  } catch (err: any) {
+    console.log(`  ${c.error(err.message ?? 'Failed to load your cards')}`);
+  }
+  await pause();
+}
+
+async function showTeamDashboard(): Promise<void> {
+  console.log(`\n  ${c.heading('Team Dashboard')}`);
+  console.log(`  ${c.muted('Loading team data…')}`);
+  try {
+    const config = await readConfig();
+    const client = await createFavroClient();
+    const AggregateAPI = (await import('../api/aggregate')).default;
+    const agg = new AggregateAPI(client);
+
+    let snapshot;
+    let scope: string;
+    if (config.scopeCollectionId) {
+      snapshot = await agg.getMultiBoardSnapshot({ collectionIds: [config.scopeCollectionId] }, 500);
+      scope = config.scopeCollectionName ?? config.scopeCollectionId;
+    } else {
+      snapshot = await agg.getMultiBoardSnapshot({}, 500);
+      scope = 'all collections';
+    }
+
+    // Per-member card counts
+    const memberCounts = new Map<string, { name: string; active: number; total: number; blocked: number }>();
+    for (const card of snapshot.allCards) {
+      for (const uid of (card.assignees ?? [])) {
+        if (!memberCounts.has(uid)) {
+          const m = snapshot.members.find((mem: any) => mem.id === uid);
+          memberCounts.set(uid, { name: m?.name ?? uid, active: 0, total: 0, blocked: 0 });
+        }
+        const mc = memberCounts.get(uid)!;
+        mc.total++;
+        if (['active', 'review', 'testing'].includes(card.stage ?? '')) mc.active++;
+        if (card.blockedBy?.length) mc.blocked++;
+      }
+    }
+
+    console.log(`  ${c.heading(scope)} — ${snapshot.allCards.length} cards, ${memberCounts.size} members\n`);
+
+    const sorted = Array.from(memberCounts.values()).sort((a, b) => b.active - a.active);
+    for (const m of sorted.slice(0, 15)) {
+      const overload = m.active > 8 ? c.error(' ⚠ overload') : '';
+      const blocked = m.blocked > 0 ? c.error(` ${m.blocked} blocked`) : '';
+      console.log(`  ${c.info(m.name.padEnd(20))} ${c.value(String(m.active).padStart(2))} active / ${c.muted(String(m.total))} total${blocked}${overload}`);
+    }
+    if (sorted.length > 15) console.log(`  ${c.muted(`  … +${sorted.length - 15} more members`)}`);
+  } catch (err: any) {
+    console.log(`  ${c.error(err.message ?? 'Failed to load team data')}`);
+  }
+  await pause();
+}
+
 const MENU_ITEMS = [
+  { label: 'My Work',          description: 'Your cards across all boards' },
+  { label: 'Team Dashboard',   description: 'Team workload & bottlenecks' },
   { label: 'Browse',           description: 'Collections → Boards → Cards' },
   { label: 'Auth / Configure', description: 'Check API credentials' },
   { label: 'Help',             description: 'Show all CLI commands' },
@@ -342,6 +448,8 @@ export async function runMainMenu(version: string, outputHelp: () => void): Prom
 
     try {
       switch (item.label) {
+        case 'My Work':          await showMyWork(); break;
+        case 'Team Dashboard':   await showTeamDashboard(); break;
         case 'Browse':           await showCollections(); break;
         case 'Auth / Configure': await showAuthCheck(); break;
         case 'Help':             outputHelp(); await pause(); break;

@@ -107,6 +107,13 @@ export interface MoveCardRequest {
     toBoardId: string;
     position?: 'top' | 'bottom';
 }
+export interface ListCardsOptions {
+    boardId?: string;
+    collectionId?: string;
+    limit?: number;
+    filter?: string;
+    unique?: boolean;
+}
 export declare class CardsAPI {
     private client;
     constructor(client: FavroHttpClient);
@@ -114,11 +121,11 @@ export declare class CardsAPI {
      * List cards with automatic cursor-based pagination.
      * Fetches all pages until the limit is reached or no more pages exist.
      *
-     * @param boardId  Optional board ID to filter cards
-     * @param limit    Maximum total cards to return (default 25)
-     * @param filter   Optional filter expression passed to API
+     * Accepts either an options object or legacy positional args:
+     *   listCards({ boardId, collectionId, limit, filter, unique })
+     *   listCards(boardId?, limit?, filter?)  // backward compat
      */
-    listCards(boardId?: string, limit?: number, filter?: string): Promise<Card[]>;
+    listCards(optsOrBoardId?: string | ListCardsOptions, limit?: number, filter?: string): Promise<Card[]>;
     /**
      * Get a single card with optional includes (board, collection, custom-fields, links, comments).
      */

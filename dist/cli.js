@@ -105,6 +105,15 @@ const shell_1 = require("./commands/shell");
 const board_tui_1 = require("./commands/board-tui");
 const diff_1 = require("./commands/diff");
 const browse_1 = require("./commands/browse");
+const my_cards_1 = require("./commands/my-cards");
+const my_standup_1 = require("./commands/my-standup");
+const next_1 = require("./commands/next");
+const workload_1 = require("./commands/workload");
+const stale_1 = require("./commands/stale");
+const overview_1 = require("./commands/overview");
+const health_1 = require("./commands/health");
+const team_1 = require("./commands/team");
+const init_1 = require("./commands/init");
 const main_menu_1 = require("./commands/main-menu");
 const error_handler_1 = require("./lib/error-handler");
 const progress_1 = require("./lib/progress");
@@ -128,7 +137,7 @@ function buildProgram() {
         'Authentication:\n' +
         '  Set FAVRO_API_KEY env var, or run `favro auth login` to save to ~/.favro/config.json\n\n' +
         'Full docs: https://github.com/square-moon/favro-cli#readme')
-        .version('1.4.0')
+        .version('2.0.0')
         .option('--verbose', 'Show stack traces for errors');
     // ─── auth commands ────────────────────────────────────────────────────────────
     (0, auth_1.registerAuthCommand)(program);
@@ -189,6 +198,17 @@ function buildProgram() {
     (0, board_tui_1.registerBoardTuiCommand)(program);
     (0, diff_1.registerDiffCommand)(program);
     (0, browse_1.registerBrowseCommand)(program);
+    // ─── v2 persona commands (LLM-first, JSON default) ─────────────────────────
+    (0, my_cards_1.registerMyCardsCommand)(program);
+    (0, my_standup_1.registerMyStandupCommand)(program);
+    (0, next_1.registerNextCommand)(program);
+    (0, workload_1.registerWorkloadCommand)(program);
+    (0, stale_1.registerStaleCommand)(program);
+    (0, overview_1.registerOverviewCommand)(program);
+    (0, health_1.registerHealthCommand)(program);
+    (0, team_1.registerTeamCommand)(program);
+    // ─── init command ───────────────────────────────────────────────────────────
+    (0, init_1.registerInitCommand)(program);
     // ─── cards parent ────────────────────────────────────────────────────────────
     const cards = program.command('cards').description('Card operations — get, list, create, update, export, link, unlink, and move cards.\n\n' +
         'Subcommands:\n' +

@@ -25,7 +25,7 @@ Before you begin, ensure you have:
 This CLI is designed for local source installation.
 
 ```bash
-git clone https://github.com/square-moon/favro-cli.git
+git clone https://github.com/styrbjornkindberg/favro-cli.git
 cd favro-cli
 npm install
 npm run build
@@ -43,7 +43,7 @@ favro --version
 You should see the CLI version number. Example:
 
 ```
-@square-moon/favro-cli/0.1.0
+@styrbjornkindberg/favro-cli/0.1.0
 ```
 
 ---
@@ -224,4 +224,4 @@ Once installed and authenticated:
 - **Command help:** `favro <command> --help`
 - **Full documentation:** [README.md](./README.md)
 - **Examples:** [EXAMPLES.md](./EXAMPLES.md)
-- **Issues:** [GitHub issues](https://github.com/square-moon/favro-cli/issues)
+- **Issues:** [GitHub issues](https://github.com/styrbjornkindberg/favro-cli/issues)

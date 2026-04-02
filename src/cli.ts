@@ -68,6 +68,15 @@ import { registerShellCommand } from './commands/shell';
 import { registerBoardTuiCommand } from './commands/board-tui';
 import { registerDiffCommand } from './commands/diff';
 import { registerBrowseCommand } from './commands/browse';
+import { registerMyCardsCommand } from './commands/my-cards';
+import { registerMyStandupCommand } from './commands/my-standup';
+import { registerNextCommand } from './commands/next';
+import { registerWorkloadCommand } from './commands/workload';
+import { registerStaleCommand } from './commands/stale';
+import { registerOverviewCommand } from './commands/overview';
+import { registerHealthCommand } from './commands/health';
+import { registerTeamCommand } from './commands/team';
+import { registerInitCommand } from './commands/init';
 import { runMainMenu } from './commands/main-menu';
 import { logError } from './lib/error-handler';
 import { ProgressBar } from './lib/progress';
@@ -96,7 +105,7 @@ program
     '  Set FAVRO_API_KEY env var, or run `favro auth login` to save to ~/.favro/config.json\n\n' +
     'Full docs: https://github.com/square-moon/favro-cli#readme'
   )
-  .version('1.4.0')
+  .version('2.0.0')
   .option('--verbose', 'Show stack traces for errors');
 
 // ─── auth commands ────────────────────────────────────────────────────────────
@@ -181,6 +190,19 @@ registerShellCommand(program);
 registerBoardTuiCommand(program);
 registerDiffCommand(program);
 registerBrowseCommand(program);
+
+// ─── v2 persona commands (LLM-first, JSON default) ─────────────────────────
+registerMyCardsCommand(program);
+registerMyStandupCommand(program);
+registerNextCommand(program);
+registerWorkloadCommand(program);
+registerStaleCommand(program);
+registerOverviewCommand(program);
+registerHealthCommand(program);
+registerTeamCommand(program);
+
+// ─── init command ───────────────────────────────────────────────────────────
+registerInitCommand(program);
 
 // ─── cards parent ────────────────────────────────────────────────────────────
 const cards = program.command('cards').description(

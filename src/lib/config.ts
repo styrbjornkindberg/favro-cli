@@ -21,6 +21,8 @@ export interface FavroConfig {
   scopeCollectionId?: string;
   /** Cached human-readable name of the locked collection */
   scopeCollectionName?: string;
+  /** Cached Favro userId — resolved during `auth login` by matching email against /users */
+  userId?: string;
   outputFormat?: 'table' | 'json' | 'csv';
   /** AI provider configuration for LLM-powered commands */
   ai?: {
@@ -129,4 +131,33 @@ export async function loadConfig(overrides: Partial<FavroConfig> = {}): Promise<
     ...(envApiKey ? { apiKey: envApiKey } : {}),
     ...overrides,
   };
+}
+
+/**
+ * Resolve the current user's Favro userId.
+ * Returns cached userId from config. If not cached, auto-resolves by
+ * fetching /users, matching by email, and persisting to config.
+ */
+export async function resolveUserId(): Promise<string | undefined> {
+  const config = await readConfig();
+  if (config.userId) return config.userId;
+
+  // Auto-resolve: need email + auth to call /users
+  const auth = await resolveAuth({});
+  if (!auth.token || !auth.email || !auth.organizationId) return undefined;
+
+  try {
+    const FavroHttpClient = (await import('./http-client')).default;
+    const client = new FavroHttpClient({ auth: { token: auth.token, email: auth.email, organizationId: auth.organizationId } });
+    const resp = await client.get<{ entities?: Array<{ userId: string; email: string }> }>('/users', { params: { limit: 100 } });
+    const users = resp.entities ?? [];
+    const me = users.find(u => u.email.toLowerCase() === auth.email!.toLowerCase());
+    if (me) {
+      await writeConfig({ ...config, userId: me.userId });
+      return me.userId;
+    }
+  } catch {
+    // Silent failure — userId is optional
+  }
+  return undefined;
 }

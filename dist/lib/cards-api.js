@@ -69,14 +69,20 @@ class CardsAPI {
      * List cards with automatic cursor-based pagination.
      * Fetches all pages until the limit is reached or no more pages exist.
      *
-     * @param boardId  Optional board ID to filter cards
-     * @param limit    Maximum total cards to return (default 25)
-     * @param filter   Optional filter expression passed to API
+     * Accepts either an options object or legacy positional args:
+     *   listCards({ boardId, collectionId, limit, filter, unique })
+     *   listCards(boardId?, limit?, filter?)  // backward compat
      */
-    async listCards(boardId, limit = 25, filter) {
-        // Default 25; use explicit NaN/range check (not ||) to avoid limit=0 falsy bug
-        const effectiveLimit = (isNaN(limit) || limit < 1) ? 25 : limit;
-        // Favro API: GET /cards with widgetCommonId query param (not /boards/:id/cards)
+    async listCards(optsOrBoardId, limit, filter) {
+        // Normalize args: support both options object and legacy positional params
+        let opts;
+        if (typeof optsOrBoardId === 'object' && optsOrBoardId !== null) {
+            opts = optsOrBoardId;
+        }
+        else {
+            opts = { boardId: optsOrBoardId ?? undefined, limit, filter };
+        }
+        const effectiveLimit = (isNaN(opts.limit) || !opts.limit || opts.limit < 1) ? 25 : opts.limit;
         const path = '/cards';
         const allCards = [];
         let page = 0;
@@ -84,14 +90,22 @@ class CardsAPI {
         let requestId;
         while (allCards.length < effectiveLimit && page < totalPages) {
             const params = {
-                limit: Math.min(effectiveLimit - allCards.length, 100), // request at most 100 per page
+                limit: Math.min(effectiveLimit - allCards.length, 100),
             };
             // Favro uses widgetCommonId to scope cards to a board
-            if (boardId) {
-                params.widgetCommonId = boardId;
+            if (opts.boardId) {
+                params.widgetCommonId = opts.boardId;
             }
-            if (filter) {
-                params.filter = filter;
+            // Collection-scoped cross-board queries
+            if (opts.collectionId) {
+                params.collectionId = opts.collectionId;
+            }
+            // Deduplicate cards that appear on multiple boards in the same collection
+            if (opts.unique) {
+                params.unique = true;
+            }
+            if (opts.filter) {
+                params.filter = opts.filter;
             }
             // On subsequent pages, use requestId to continue pagination
             if (requestId) {

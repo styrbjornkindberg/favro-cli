@@ -91,6 +91,11 @@ favro standup --board <board>            # Daily standup view
 favro sprint-plan --board <board>        # Sprint planning suggestions
 favro audit <board> --since 1d           # Recent changes audit
 
+# Repo context bootstrap
+favro init                               # Create .favro/context.json from scoped collection
+favro init --refresh                     # Update existing context after board changes
+favro init --collection <id>             # Bootstrap from a specific collection
+
 # Inspection
 favro custom-fields list <boardId>
 favro comments list <cardId>
@@ -391,12 +396,13 @@ Auth credentials and scope are stored in `~/.favro/config.json`:
   "apiKey": "...",
   "email": "user@example.com",
   "organizationId": "...",
+  "userId": "...",
   "scopeCollectionId": "...",
   "scopeCollectionName": "..."
 }
 ```
 
-To authenticate: `favro auth login <apiToken>`
+To authenticate: `favro auth login <apiToken>` (also resolves and caches your userId)
 To verify: `favro auth verify`
 
 ---
@@ -411,3 +417,160 @@ To verify: `favro auth verify`
 6. **Batch with care.** Bulk operations affect many cards. Always `--dry-run` first.
 7. **One collection at a time.** Work within the scoped collection. If you need to switch, tell the user and set the new scope explicitly.
 8. **Clean up test data.** If you create test cards, track their IDs and offer to clean them up.
+9. **Use v2 persona commands for cross-board queries.** `my-cards`, `workload`, `health` etc. work across collections — no board ID needed.
+
+---
+
+## 9. v2 Persona Commands (LLM-First, Cross-Board)
+
+v2 commands output JSON by default (use `--human` for formatted output). They work cross-board via `--collection <name>` or the scoped collection. No board IDs needed.
+
+### Developer Persona
+
+```bash
+# My cards across all boards — grouped by collection/board/stage
+favro my-cards [--collection <name>] [--status <filter>] [--limit <n>]
+# Returns: { scope, cards[], suggestedNext, stats, generatedAt }
+
+# Personal standup — completed/inProgress/blocked/dueSoon
+favro my-standup [--collection <name>] [--days <n>]
+# Returns: { scope, completed[], inProgress[], blocked[], dueSoon[], generatedAt }
+
+# "What should I work on next?" — AI-scored suggestions
+favro next [--collection <name>] [--top <n>]
+# Returns: { scope, suggestions[{ card, score, reasons[] }], generatedAt }
+# Scoring: priority×4 + due urgency×3 − blockers×5 + low effort bonus + active stage bonus
+```
+
+### PM/PO Persona
+
+```bash
+# Per-member card distribution with overload detection (>8 active = alert)
+favro workload [--collection <name>] [--board <boardId>]
+# Returns: { scope, members[{ name, activeCards, totalCards, blockedCards, overloaded }], generatedAt }
+
+# Find inactive cards (default: >14 days stale)
+favro stale [--collection <name>] [--days <n>]
+# Returns: { scope, assignedStale[], unassignedStale[], staleDays, generatedAt }
+
+# Collection-level dashboard
+favro overview [--collection <name>]
+# Returns: { scope, boards[], topBlockers[], dueSummary, stats, generatedAt }
+```
+
+### CTO Persona
+
+```bash
+# Per-board health scores (0-100) with traffic-light signals
+favro health [--collection <name>]
+# Returns: { scope, boards[{ name, score, signal, breakdown }], overallScore, generatedAt }
+# Score: flow 40% + stale 25% + blocked 20% + overdue 15%
+# Signal: green >75, yellow 50-75, red <50
+
+# Cross-board team utilization
+favro team [--collection <name>]
+# Returns: { scope, members[{ name, wipCount, doneCount, completionRate, bottleneck }], avgWip, generatedAt }
+```
+
+### v2 Output Flags
+
+| Flag | Effect |
+|------|--------|
+| `--json` | JSON output (default for v2 commands) |
+| `--human` | Human-readable formatted output |
+| `--collection <name>` | Filter to a specific collection |
+| `--limit <n>` | Max cards to fetch (default 1000) |
+
+### Interactive Menu Integration
+
+When `favro` is run with no arguments, the interactive menu now includes:
+- **My Work** — Personal card overview across all boards (first entry)
+- **Team Dashboard** — Team workload summary with overload detection
+
+---
+
+## 10. Repo Context: `.favro/context.json`
+
+A repo can have a `.favro/context.json` file that gives LLMs instant context about the Favro workspace associated with this codebase — no API calls needed to learn the board structure, workflow columns, team members, or custom fields.
+
+### Bootstrapping
+
+```bash
+# Create .favro/context.json from the scoped collection (auto-fetches everything)
+favro init
+
+# Specify a collection explicitly
+favro init --collection <collectionId>
+
+# Update an existing context.json after board changes
+favro init --refresh
+
+# Print to stdout instead of writing file
+favro init --json
+```
+
+`favro init` fetches boards, columns/workflow, custom fields, and team members from the Favro API and writes a complete context file. It also adds `.favro/` to `.gitignore` (the file may contain team emails and IDs).
+
+### File Structure
+
+```json
+{
+  "_description": "Favro context for my-repo. Used by AI agents to bootstrap Favro operations.",
+  "_updated": "2026-04-02",
+  "scope": {
+    "collectionId": "f37003d6b64b8f229de2fed8",
+    "collectionName": "_MKON Developer"
+  },
+  "boards": {
+    "kanban": {
+      "boardId": "4d9c710e9bb7d381b2a39060",
+      "name": "Kanban MKON",
+      "type": "board",
+      "workflow": [
+        { "columnId": "d3f046db31423f55fd58477b", "name": "Selected", "stage": "queued", "next": "Developing" },
+        { "columnId": "6c75246add8912b05c62ed97", "name": "Developing", "stage": "active", "next": "Done" }
+      ]
+    }
+  },
+  "customFields": {
+    "*Delsystem": {
+      "fieldId": "57gNTepfXQnzeE4Xm",
+      "type": "Single select",
+      "options": { "Hydra": "vgZJWFaDFz4WEn85E", "PageBuilder": "uJLxgwbyh7J358NMC" }
+    }
+  },
+  "team": {
+    "pk3qK36WHjnJt5jwr": { "name": "Styrbjörn Kindberg", "email": "styrbjorn@squaremoon.se", "role": "PO/PM" }
+  },
+  "notes": {
+    "cardIds": "Use cardCommonId for cross-board ops. Use board-specific cardId for column moves.",
+    "moveCards": "Use --column (not --status) to move cards between columns."
+  }
+}
+```
+
+### Rules for LLMs Using context.json
+
+**At the start of every session:**
+1. Check if `.favro/context.json` exists in the repo root
+2. If it does, **read it first** — use the IDs, board slugs, workflow steps, and team info directly instead of making discovery API calls
+3. Use `boards.<slug>.boardId` for `--board` flags
+4. Use `boards.<slug>.workflow` to know which columns exist and their flow order
+5. Use `customFields` to look up field IDs and valid option IDs for `--custom-field` operations
+6. Use `team` to resolve user IDs and names without calling `/users`
+
+**When making changes to boards:**
+- After creating/renaming/deleting boards, columns, or custom fields, update `.favro/context.json` to reflect the new state
+- Update `_updated` date when modifying the file
+- Use `favro init --refresh` for a full re-sync
+- Add `description` fields to boards and custom fields to explain their purpose
+
+**Updating the file:**
+- You MAY add `description` fields to boards, custom fields, or team members as you learn what they're for
+- You MAY add entries to `notes` with useful context you discover (e.g., "this repo maps to the 'hydra.mkon.se' subsystem")
+- You MUST NOT remove existing entries unless they are confirmed stale/deleted
+- You MUST keep `_updated` current when editing
+
+**Board slug conventions:**
+- Slugs are lowercase, ASCII-only, hyphenated (e.g., "kanban-mkon", "felrapporter", "backlog")
+- Use human-friendly slugs — the LLM uses them as shorthand (e.g., `context.boards.kanban` instead of remembering a hex ID)
