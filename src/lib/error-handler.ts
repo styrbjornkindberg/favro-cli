@@ -4,6 +4,7 @@
  *
  * Provides consistent error formatting, helpful suggestions, and verbose mode.
  */
+import { c } from './theme';
 
 /**
  * Format an error for display.
@@ -12,13 +13,13 @@
  */
 export function logError(error: unknown, verbose = false): void {
   if (error instanceof Error) {
-    console.error(`Error: ${error.message}`);
+    console.error(`${c.fail} ${c.error('Error:')} ${error.message}`);
     if (verbose && error.stack) {
-      console.error('\nStack trace:');
-      console.error(error.stack);
+      console.error(c.muted('\nStack trace:'));
+      console.error(c.muted(error.stack));
     }
   } else {
-    console.error(`Error: ${String(error)}`);
+    console.error(`${c.fail} ${c.error('Error:')} ${String(error)}`);
   }
 }
 
@@ -55,16 +56,16 @@ export function invalidDateError(_value?: string): string {
  */
 export function rateLimitMessage(retrySeconds?: number): string {
   if (retrySeconds !== undefined) {
-    return `Rate limited. Retrying in ${retrySeconds} seconds...`;
+    return `${c.warn('⏳')} Rate limited. Retrying in ${c.bold(String(retrySeconds))} seconds...`;
   }
-  return 'Rate limited. Please wait before retrying.';
+  return `${c.warn('⏳')} Rate limited. Please wait before retrying.`;
 }
 
 /**
  * Format a missing API key error.
  */
 export function missingApiKeyError(): string {
-  return 'API key not found. Run `favro auth login` first';
+  return `${c.fail} API key not found. Run ${c.info("'favro auth login'")} first`;
 }
 
 /**

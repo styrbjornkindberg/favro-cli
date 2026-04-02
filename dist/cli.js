@@ -101,6 +101,9 @@ const users_1 = require("./commands/users");
 const ai_1 = require("./commands/ai");
 const skill_1 = require("./commands/skill");
 const git_1 = require("./commands/git");
+const shell_1 = require("./commands/shell");
+const board_tui_1 = require("./commands/board-tui");
+const diff_1 = require("./commands/diff");
 const error_handler_1 = require("./lib/error-handler");
 const progress_1 = require("./lib/progress");
 const client_factory_1 = require("./lib/client-factory");
@@ -123,7 +126,7 @@ function buildProgram() {
         'Authentication:\n' +
         '  Set FAVRO_API_KEY env var, or run `favro auth login` to save to ~/.favro/config.json\n\n' +
         'Full docs: https://github.com/square-moon/favro-cli#readme')
-        .version('1.3.0')
+        .version('1.4.0')
         .option('--verbose', 'Show stack traces for errors');
     // ─── auth commands ────────────────────────────────────────────────────────────
     (0, auth_1.registerAuthCommand)(program);
@@ -179,6 +182,10 @@ function buildProgram() {
     (0, skill_1.registerSkillCommands)(program);
     // ─── git commands ───────────────────────────────────────────────────────────
     (0, git_1.registerGitCommands)(program);
+    // ─── shell, board TUI, diff ─────────────────────────────────────────────────
+    (0, shell_1.registerShellCommand)(program);
+    (0, board_tui_1.registerBoardTuiCommand)(program);
+    (0, diff_1.registerDiffCommand)(program);
     // ─── cards parent ────────────────────────────────────────────────────────────
     const cards = program.command('cards').description('Card operations — get, list, create, update, export, link, unlink, and move cards.\n\n' +
         'Subcommands:\n' +

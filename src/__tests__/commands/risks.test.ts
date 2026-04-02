@@ -71,9 +71,9 @@ const sampleCards: Card[] = [
     status: 'In Progress',
     assignees: ['dave'],
     tags: [],
-    dueDate: '2026-04-15',
+    dueDate: '2027-04-15',
     createdAt: '2026-03-05T00:00:00Z',
-    updatedAt: '2026-03-26T00:00:00Z',
+    updatedAt: new Date().toISOString(), // Always fresh — prevents stale detection
   },
 ];
 

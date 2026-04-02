@@ -64,6 +64,9 @@ import { registerUsersCommands } from './commands/users';
 import { registerAICommands } from './commands/ai';
 import { registerSkillCommands } from './commands/skill';
 import { registerGitCommands } from './commands/git';
+import { registerShellCommand } from './commands/shell';
+import { registerBoardTuiCommand } from './commands/board-tui';
+import { registerDiffCommand } from './commands/diff';
 import { logError } from './lib/error-handler';
 import { ProgressBar } from './lib/progress';
 import { createFavroClient } from './lib/client-factory';
@@ -91,7 +94,7 @@ program
     '  Set FAVRO_API_KEY env var, or run `favro auth login` to save to ~/.favro/config.json\n\n' +
     'Full docs: https://github.com/square-moon/favro-cli#readme'
   )
-  .version('1.3.0')
+  .version('1.4.0')
   .option('--verbose', 'Show stack traces for errors');
 
 // ─── auth commands ────────────────────────────────────────────────────────────
@@ -170,6 +173,11 @@ registerSkillCommands(program);
 
 // ─── git commands ───────────────────────────────────────────────────────────
 registerGitCommands(program);
+
+// ─── shell, board TUI, diff ─────────────────────────────────────────────────
+registerShellCommand(program);
+registerBoardTuiCommand(program);
+registerDiffCommand(program);
 
 // ─── cards parent ────────────────────────────────────────────────────────────
 const cards = program.command('cards').description(

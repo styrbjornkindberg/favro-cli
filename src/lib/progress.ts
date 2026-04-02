@@ -5,6 +5,7 @@
  * Simple progress reporting for bulk operations. Prints in real-time to stderr
  * so it doesn't interfere with stdout output (JSON, CSV, etc.).
  */
+import { c } from './theme';
 
 /**
  * ProgressBar — reports progress for bulk operations.
@@ -49,7 +50,7 @@ export class ProgressBar {
     const finalMsg = message ?? `${this.label}... done (${this.total})`;
     // Clear the progress line and print final message
     process.stderr.write(`\r${' '.repeat(this.lastLine.length)}\r`);
-    console.error(`✓ ${finalMsg}`);
+    console.error(`${c.ok} ${finalMsg}`);
     this.lastLine = '';
   }
 
@@ -63,8 +64,11 @@ export class ProgressBar {
   }
 
   private render(): void {
-    const line = `${this.label}... ${this.current}/${this.total}`;
-    // Clear previous line and overwrite
+    const pct = this.total > 0 ? Math.round((this.current / this.total) * 100) : 0;
+    const bar = this.total > 0
+      ? c.brand('█'.repeat(Math.floor(pct / 5))) + c.muted('░'.repeat(20 - Math.floor(pct / 5)))
+      : '';
+    const line = `${c.spinner(this.label)}... ${bar} ${c.progress(`${this.current}/${this.total}`)} ${c.muted(`${pct}%`)}`;
     process.stderr.write(`\r${' '.repeat(this.lastLine.length)}\r${line}`);
     this.lastLine = line;
   }
@@ -87,7 +91,7 @@ export class Spinner {
   start(): void {
     this.interval = setInterval(() => {
       const frame = this.frames[this.frameIndex % this.frames.length];
-      const line = `${frame} ${this.label}...`;
+      const line = `${c.spinner(frame)} ${c.spinner(this.label)}...`;
       process.stderr.write(`\r${' '.repeat(this.lastLine.length)}\r${line}`);
       this.lastLine = line;
       this.frameIndex++;
@@ -111,11 +115,11 @@ export class Spinner {
   }
 
   succeed(message?: string): void {
-    this.stop(message ? `✓ ${message}` : `✓ ${this.label}`);
+    this.stop(message ? `${c.ok} ${message}` : `${c.ok} ${this.label}`);
   }
 
   fail(message?: string): void {
-    this.stop(message ? `✗ ${message}` : `✗ ${this.label}`);
+    this.stop(message ? `${c.fail} ${message}` : `${c.fail} ${this.label}`);
   }
 }
 

@@ -24,6 +24,7 @@ Command-line interface for [Favro](https://favro.com) — manage boards and card
   - [Webhooks](#webhooks)
   - [Batch & AI Commands](#batch-operations)
   - [Git Integration](#git-integration)
+  - [Interactive Shell & TUI](#interactive-shell--tui)
 - [Configuration](#configuration)
 - [Examples](#examples)
   - [Bulk Create from CSV](#bulk-create-from-csv)
@@ -904,6 +905,55 @@ AI-generated card summary — fetches card + comments, produces structured analy
 |------|-------------|
 | `--json` | Output raw JSON |
 | `--board <boardId>` | Board context for richer analysis |
+
+---
+
+## Interactive Shell & TUI
+
+Full-color terminal experience with kanban views, interactive shell, and board diffs.
+
+### `shell` — Interactive REPL
+Start an interactive Favro shell with tab completion, command history, and board context.
+
+| Flag | Description |
+|------|-------------|
+| `--board <boardId>` | Pre-select a board context |
+
+Inside the shell:
+- Tab completion for all commands and subcommands
+- `use <boardId>` — set current board (auto-injected into commands)
+- `clear` — clear screen
+- `help` — show commands
+- `exit` / `quit` — leave shell
+- Command history saved to `~/.favro/history`
+
+### `board <boardRef>` 📖 READ
+Render a kanban board view in your terminal with color-coded status indicators.
+
+| Flag | Description |
+|------|-------------|
+| `--compact` | One line per card |
+| `--watch [seconds]` | Auto-refresh (default: 30s) |
+| `--ids` | Show card IDs |
+| `--limit <n>` | Max cards to fetch (default: 500) |
+| `--json` | Output as JSON |
+
+Status indicators: `●` done (green), `●` in progress (blue), `●` review (yellow), `◆` blocked (red), `○` todo (gray)
+
+### `diff <boardRef>` 📖 READ
+Color-coded board state comparison — shows what changed over time.
+
+| Flag | Description |
+|------|-------------|
+| `--since <period>` | **Required.** Time range: `1h`, `1d`, `1w`, `1m` |
+| `--json` | Output as JSON |
+| `--limit <n>` | Max cards to scan (default: 1000) |
+
+Output groups:
+- 🟢 **New cards** — created in the period
+- 🔵 **Completed** — moved to done
+- 🟡 **Updated** — status or field changes
+- 🔴 **Blocked** — newly blocked cards
 
 ---
 

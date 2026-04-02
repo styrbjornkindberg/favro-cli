@@ -3,6 +3,7 @@
  * CLA-1771 FAVRO-011: Error Handling & User Feedback
  */
 import { ProgressBar, Spinner } from '../lib/progress';
+import { stripAnsi } from '../lib/theme';
 
 describe('ProgressBar', () => {
   let stderrWrite: jest.SpyInstance;
@@ -21,7 +22,9 @@ describe('ProgressBar', () => {
     const bar = new ProgressBar('Creating cards', 50);
     bar.update(10);
     const written = stderrWrite.mock.calls.map((c: any[]) => c[0]).join('');
-    expect(written).toContain('Creating cards... 10/50');
+    const plain = stripAnsi(written);
+    expect(plain).toContain('Creating cards');
+    expect(plain).toContain('10/50');
   });
 
   test('tick() increments by 1', () => {
@@ -30,21 +33,28 @@ describe('ProgressBar', () => {
     bar.tick();
     bar.tick();
     const written = stderrWrite.mock.calls.map((c: any[]) => c[0]).join('');
-    expect(written).toContain('Updating cards... 3/20');
+    const plain = stripAnsi(written);
+    expect(plain).toContain('Updating cards');
+    expect(plain).toContain('3/20');
   });
 
   test('report() sets current and total', () => {
     const bar = new ProgressBar('Exporting cards', 100);
     bar.report(25, 100);
     const written = stderrWrite.mock.calls.map((c: any[]) => c[0]).join('');
-    expect(written).toContain('Exporting cards... 25/100');
+    const plain = stripAnsi(written);
+    expect(plain).toContain('Exporting cards');
+    expect(plain).toContain('25/100');
   });
 
   test('done() prints final message', () => {
     const bar = new ProgressBar('Creating cards', 5);
     bar.update(5);
     bar.done('All cards created');
-    expect(consoleErrorSpy).toHaveBeenCalledWith('✓ All cards created');
+    const output = consoleErrorSpy.mock.calls.map((c: any[]) => c[0]).join('');
+    const plain = stripAnsi(output);
+    expect(plain).toContain('✓');
+    expect(plain).toContain('All cards created');
   });
 
   test('done() without message uses default', () => {
@@ -82,7 +92,8 @@ describe('Spinner', () => {
     spinner.start();
     jest.advanceTimersByTime(200);
     const written = stderrWrite.mock.calls.map((c: any[]) => c[0]).join('');
-    expect(written).toContain('Loading...');
+    const plain = stripAnsi(written);
+    expect(plain).toContain('Loading...');
     spinner.stop();
   });
 
@@ -90,13 +101,19 @@ describe('Spinner', () => {
     const spinner = new Spinner('Fetching');
     spinner.start();
     spinner.succeed('Done fetching');
-    expect(consoleErrorSpy).toHaveBeenCalledWith('✓ Done fetching');
+    const output = consoleErrorSpy.mock.calls.map((c: any[]) => c[0]).join('');
+    const plain = stripAnsi(output);
+    expect(plain).toContain('✓');
+    expect(plain).toContain('Done fetching');
   });
 
   test('fail() prints failure message', () => {
     const spinner = new Spinner('Connecting');
     spinner.start();
     spinner.fail('Connection refused');
-    expect(consoleErrorSpy).toHaveBeenCalledWith('✗ Connection refused');
+    const output = consoleErrorSpy.mock.calls.map((c: any[]) => c[0]).join('');
+    const plain = stripAnsi(output);
+    expect(plain).toContain('✗');
+    expect(plain).toContain('Connection refused');
   });
 });

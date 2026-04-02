@@ -2,6 +2,7 @@ import * as readline from 'readline';
 import { FavroConfig } from './config';
 import FavroHttpClient from './http-client';
 import { logError } from './error-handler';
+import { c } from './theme';
 
 /**
  * Ask the user for confirmation via stdin.
@@ -19,7 +20,7 @@ export async function confirmAction(message: string, flags?: { yes?: boolean }):
   });
 
   return new Promise((resolve) => {
-    rl.question(`${message} [y/N] `, (answer) => {
+    rl.question(`${c.warn('?')} ${message} ${c.muted('[y/N]')} `, (answer) => {
       rl.close();
       resolve(answer.trim().toLowerCase() === 'y');
     });
@@ -47,18 +48,18 @@ export async function checkScope(
 
     if (!collectionIds.includes(config.scopeCollectionId)) {
       if (force) {
-        console.warn(`[!] Warning: Board ${boardId} is outside your locked scope (${config.scopeCollectionName ?? config.scopeCollectionId}), but proceeding because --force was used.`);
+        console.warn(`${c.warn('⚠')} ${c.warn('Warning:')} Board ${boardId} is outside your locked scope (${config.scopeCollectionName ?? config.scopeCollectionId}), but proceeding because --force was used.`);
         return;
       }
 
-      console.error(`✗ Scope violation: board "${raw.name ?? boardId}" is not in locked collection "${config.scopeCollectionName ?? config.scopeCollectionId}".`);
-      console.error(`  Run 'favro scope show' to see your current lock.`);
-      console.error(`  Run 'favro scope set <collectionId>' to change it, or pass --force to override.`);
+      console.error(`${c.fail} ${c.error('Scope violation:')} board "${raw.name ?? boardId}" is not in locked collection "${config.scopeCollectionName ?? config.scopeCollectionId}".`);
+      console.error(`  Run ${c.info("'favro scope show'")} to see your current lock.`);
+      console.error(`  Run ${c.info("'favro scope set <collectionId>'")} to change it, or pass ${c.bold('--force')} to override.`);
       process.exit(1);
     }
   } catch (error: any) {
     if (error?.response?.status === 404) {
-      console.error(`✗ Scope check failed: Board ${boardId} not found.`);
+      console.error(`${c.fail} Scope check failed: Board ${boardId} not found.`);
       process.exit(1);
     }
     logError(error, false);
@@ -80,13 +81,13 @@ export function checkCollectionScope(
 
   if (collectionId !== config.scopeCollectionId) {
     if (force) {
-      console.warn(`[!] Warning: Target collection ${collectionId} is outside your locked scope (${config.scopeCollectionName ?? config.scopeCollectionId}), but proceeding because --force was used.`);
+      console.warn(`${c.warn('⚠')} ${c.warn('Warning:')} Target collection ${collectionId} is outside your locked scope (${config.scopeCollectionName ?? config.scopeCollectionId}), but proceeding because --force was used.`);
       return;
     }
 
-    console.error(`✗ Scope violation: target collection "${collectionId}" is not the locked collection "${config.scopeCollectionName ?? config.scopeCollectionId}".`);
-    console.error(`  Run 'favro scope show' to see your current lock.`);
-    console.error(`  Run 'favro scope set <collectionId>' to change it, or pass --force to override.`);
+    console.error(`${c.fail} ${c.error('Scope violation:')} target collection "${collectionId}" is not the locked collection "${config.scopeCollectionName ?? config.scopeCollectionId}".`);
+    console.error(`  Run ${c.info("'favro scope show'")} to see your current lock.`);
+    console.error(`  Run ${c.info("'favro scope set <collectionId>'")} to change it, or pass ${c.bold('--force')} to override.`);
     process.exit(1);
   }
 }
@@ -95,8 +96,8 @@ export function checkCollectionScope(
  * Generates a standard dry-run preview message.
  */
 export function dryRunLog(verb: string, targetType: string, targetName: string, payload?: any): void {
-  console.log(`[dry-run] Would ${verb} ${targetType} "${targetName}"${payload ? ' with:' : ''}`);
+  console.log(`${c.dryRun('dry-run')} Would ${verb} ${targetType} "${c.bold(targetName)}"${payload ? ' with:' : ''}`);
   if (payload) {
-    console.log(JSON.stringify(payload, null, 2));
+    console.log(c.muted(JSON.stringify(payload, null, 2)));
   }
 }

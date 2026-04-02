@@ -222,6 +222,19 @@ favro git todos                                           # Scan codebase for TO
 favro git todos --create --board <boardId>                # Create Favro cards from TODOs
 favro git todos --json                                    # JSON output
 
+# Interactive Shell & TUI
+favro shell                                               # Start interactive shell with tab completion
+favro shell --board <boardId>                             # Start with board pre-selected
+favro board <boardRef>                                    # Render kanban board in terminal
+favro board <boardRef> --compact                          # One line per card
+favro board <boardRef> --watch                            # Auto-refresh every 30s
+favro board <boardRef> --watch 10                         # Custom refresh interval
+favro board <boardRef> --ids                              # Show card IDs
+favro board <boardRef> --json                             # JSON output
+favro diff <boardRef> --since 1d                          # Board changes in last 24h
+favro diff <boardRef> --since 1w                          # Board changes in last week
+favro diff <boardRef> --since 1h --json                   # JSON diff output
+
 # Batch from CSV
 favro batch update --from-csv cards.csv [--dry-run] [-y]
 favro batch move --board <srcId> --to-board <dstId> --filter "status:Done" [--dry-run] [-y]

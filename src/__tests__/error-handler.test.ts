@@ -11,6 +11,7 @@ import {
   missingApiKeyError,
   ErrorFormatter,
 } from '../lib/error-handler';
+import { stripAnsi } from '../lib/theme';
 
 describe('logError', () => {
   let stderrSpy: jest.SpyInstance;
@@ -24,23 +25,26 @@ describe('logError', () => {
 
   test('formats Error instance without stack trace in normal mode', () => {
     logError(new Error('something went wrong'));
-    expect(stderrSpy).toHaveBeenCalledWith('Error: something went wrong');
-    // Should only be called once (no stack trace)
+    const output = stripAnsi(stderrSpy.mock.calls.map((c: any[]) => c[0]).join(''));
+    expect(output).toContain('Error:');
+    expect(output).toContain('something went wrong');
     expect(stderrSpy).toHaveBeenCalledTimes(1);
   });
 
   test('formats string error', () => {
     logError('plain string error');
-    expect(stderrSpy).toHaveBeenCalledWith('Error: plain string error');
+    const output = stripAnsi(stderrSpy.mock.calls.map((c: any[]) => c[0]).join(''));
+    expect(output).toContain('Error:');
+    expect(output).toContain('plain string error');
   });
 
   test('shows stack trace in verbose mode', () => {
     const err = new Error('verbose error');
     logError(err, true);
-    expect(stderrSpy).toHaveBeenCalledWith('Error: verbose error');
-    // In verbose mode, stack trace should also be printed
-    const calls = stderrSpy.mock.calls.map((c: any[]) => c[0]);
-    expect(calls.some((c: any) => typeof c === 'string' && c.includes('Stack trace:'))).toBe(true);
+    const output = stderrSpy.mock.calls.map((c: any[]) => stripAnsi(String(c[0]))).join('\n');
+    expect(output).toContain('Error:');
+    expect(output).toContain('verbose error');
+    expect(output).toContain('Stack trace:');
   });
 
   test('does NOT show stack trace in normal mode', () => {
@@ -52,7 +56,9 @@ describe('logError', () => {
 
   test('handles non-Error objects', () => {
     logError({ code: 42 });
-    expect(stderrSpy).toHaveBeenCalledWith('Error: [object Object]');
+    const output = stripAnsi(stderrSpy.mock.calls.map((c: any[]) => c[0]).join(''));
+    expect(output).toContain('Error:');
+    expect(output).toContain('[object Object]');
   });
 });
 
@@ -91,21 +97,21 @@ describe('invalidDateError', () => {
 });
 
 describe('rateLimitMessage', () => {
-  test('includes retry seconds when provided', () => {
-    const msg = rateLimitMessage(30);
-    expect(msg).toContain('30 seconds');
+  test('rateLimitMessage includes retry seconds when provided', () => {
+    const msg = stripAnsi(rateLimitMessage(30));
+    expect(msg).toContain('30');
     expect(msg.toLowerCase()).toContain('rate limit');
   });
 
-  test('generic message without seconds', () => {
-    const msg = rateLimitMessage();
+  test('rateLimitMessage generic message without seconds', () => {
+    const msg = stripAnsi(rateLimitMessage());
     expect(msg.toLowerCase()).toContain('rate limit');
   });
 });
 
 describe('missingApiKeyError', () => {
   test('tells user to run auth login', () => {
-    const msg = missingApiKeyError();
+    const msg = stripAnsi(missingApiKeyError());
     expect(msg).toContain('favro auth login');
     expect(msg.toLowerCase()).toContain('api key');
   });
@@ -127,16 +133,17 @@ describe('ErrorFormatter', () => {
   test('log() in normal mode shows message without stack trace', () => {
     const fmt = new ErrorFormatter(false);
     fmt.log(new Error('test error'));
-    expect(stderrSpy).toHaveBeenCalledWith('Error: test error');
-    const calls = stderrSpy.mock.calls.map((c: any[]) => c[0]);
-    expect(calls.some((c: any) => typeof c === 'string' && c.includes('Stack trace:'))).toBe(false);
+    const output = stderrSpy.mock.calls.map((c: any[]) => stripAnsi(String(c[0]))).join('\n');
+    expect(output).toContain('Error:');
+    expect(output).toContain('test error');
+    expect(output).not.toContain('Stack trace:');
   });
 
   test('log() in verbose mode shows stack trace', () => {
     const fmt = new ErrorFormatter(true);
     fmt.log(new Error('verbose error'));
-    const calls = stderrSpy.mock.calls.map((c: any[]) => c[0]);
-    expect(calls.some((c: any) => typeof c === 'string' && c.includes('Stack trace:'))).toBe(true);
+    const output = stderrSpy.mock.calls.map((c: any[]) => stripAnsi(String(c[0]))).join('\n');
+    expect(output).toContain('Stack trace:');
   });
 
   test('fatal() logs error and calls process.exit(1)', () => {
