@@ -85,6 +85,7 @@ favro cards get <cardId> [--json] [--include board,collection]
 
 # Smart views
 favro context <board>                    # Full board snapshot for AI workflows
+                                         # Includes workflow stages + next-column for each card
 favro query <board> "status:done"        # Semantic card search
 favro standup --board <board>            # Daily standup view
 favro sprint-plan --board <board>        # Sprint planning suggestions
@@ -115,6 +116,7 @@ favro groups get <groupId>               # Get a single group by ID
 # Cards
 favro cards create "Title" --board <boardId> [--dry-run] [-y]
 favro cards update <cardId> --name "New Name" --board <boardId> [--dry-run] [-y]
+favro cards update <cardId> --column "Developing" --board <boardId> [-y]  # Move card to column
 
 # Card relationships
 favro cards link <cardId> <toCardId> --type <type> [-y]
@@ -235,6 +237,10 @@ favro diff <boardRef> --since 1d                          # Board changes in las
 favro diff <boardRef> --since 1w                          # Board changes in last week
 favro diff <boardRef> --since 1h --json                   # JSON diff output
 
+# Interactive Menu & Browse (no IDs needed)
+favro                                                     # Launch persistent interactive menu
+favro browse                                              # Browse: Collections → Boards → Board view → Cards
+
 # Batch from CSV
 favro batch update --from-csv cards.csv [--dry-run] [-y]
 favro batch move --board <srcId> --to-board <dstId> --filter "status:Done" [--dry-run] [-y]
@@ -310,6 +316,50 @@ Key relationships:
 - Cards have **assignees**, **tags**, **custom fields**, and **due dates**
 
 **IDs are hex strings** (e.g. `a82adb26b63df3bbaeb39e7c`). You'll get them from list/get commands.
+
+### Workflow Stages
+
+The `favro context` snapshot includes a `workflow` array that maps each column to a semantic stage:
+
+| Stage | Meaning | Example columns |
+|-------|---------|----------------|
+| `backlog` | Not yet prioritized | Backlog, Inbox, Ideas |
+| `queued` | Selected for work | Selected, Ready, Next, Sprint |
+| `active` | Being worked on | Developing, In Progress, Doing |
+| `review` | Awaiting review | Review, Feedback |
+| `testing` | Being tested/QA | Test, QA, Testbar |
+| `approved` | Passed testing | Approved, Godkänd, Verified |
+| `done` | Completed | Done, Closed, Released |
+| `archived` | Archived | Archived |
+
+Each card in the snapshot carries `column` (name), `stage`, and `nextColumn` — so you always know where a card is and where it should go next.
+
+**When starting work on a card:** check its `stage` and `nextColumn`. If `stage` is `queued` and `nextColumn` is `Developing`, move the card to `Developing`.
+
+**When finishing work on a card:** check its `nextColumn` and move it forward.
+
+### Moving Cards Through the Workflow
+
+Use `--column` to move a card to a named column (requires `--board`):
+
+```bash
+# Move a card to "Developing" on a specific board
+favro cards update <cardId> --column "Developing" --board <boardId> -y
+
+# Combined: rename + move in one command
+favro cards update <cardId> --name "New title" --column "Review" --board <boardId> -y
+```
+
+**⚠️ IMPORTANT: `--column` vs `--status` — these are DIFFERENT things.**
+- `--column "Developing"` → Moves the card to the "Developing" column on the kanban board. **This is what you want.**
+- `--status` → Sets the card's completion status (a metadata field). **Do NOT use --status to move cards between columns. It will NOT work.**
+
+**LLM workflow for moving a card:**
+1. Run `favro context "<boardName>"` to get the board snapshot
+2. Find the card — note its `cardId`, `stage`, and `nextColumn`
+3. Run `favro cards update <cardId> --column "<nextColumn>" --board <boardId> -y`
+
+The `--column` flag accepts the column name (case-insensitive). If the name doesn't match any column on the board, the command lists available columns and exits.
 
 ---
 

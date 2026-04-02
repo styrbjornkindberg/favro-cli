@@ -9,6 +9,7 @@
 import { Command } from 'commander';
 import { createFavroClient } from '../lib/client-factory';
 import { logError } from '../lib/error-handler';
+import { confirmAction } from '../lib/safety';
 import CommentsApiClient from '../api/comments';
 import { formatTimestamp } from '../lib/audit-api';
 
@@ -112,6 +113,7 @@ export function registerCommentsCommand(program: Command): void {
     .requiredOption('--text <comment>', 'Comment text to add')
     .option('--json', 'Output as JSON')
     .option('--dry-run', 'Print what would be added without making API calls')
+    .option('-y, --yes', 'Skip confirmation prompt')
     .option('--force', 'Bypass scope check')
     .action(async (cardId: string, options) => {
       const verbose = program.opts()?.verbose ?? false;
@@ -123,6 +125,11 @@ export function registerCommentsCommand(program: Command): void {
 
         if (options.dryRun) {
           console.log(`[dry-run] Would add comment to ${cardId}: "${options.text}"`);
+          return;
+        }
+
+        if (!(await confirmAction(`Add comment to card ${cardId}?`, { yes: options.yes }))) {
+          console.log('Aborted.');
           return;
         }
 

@@ -10,6 +10,7 @@ import BoardsAPI, { Board, BoardMember, BoardColumn, CustomField as BoardCustomF
 import CardsAPI, { Card } from '../lib/cards-api';
 import { FavroApiClient } from './members';
 import { CustomFieldsAPI, CustomFieldDefinition } from '../lib/custom-fields-api';
+import { ColumnsAPI } from '../lib/columns-api';
 
 // ─── Output Types ─────────────────────────────────────────────────────────────
 
@@ -28,6 +29,9 @@ export interface ContextCard {
   childIds?: string[];
   swimlaneId?: string;
   columnId?: string;
+  column?: string;
+  stage?: WorkflowStage;
+  nextColumn?: string;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -48,6 +52,7 @@ export interface BoardContextSnapshot {
     members: string[];
   };
   columns: Array<{ id: string; name: string; cardCount?: number }>;
+  workflow: WorkflowStep[];
   customFields: Array<{
     id: string;
     name: string;
@@ -66,7 +71,63 @@ export interface BoardContextSnapshot {
   generatedAt: string;
 }
 
+export type WorkflowStage = 'backlog' | 'queued' | 'active' | 'review' | 'testing' | 'approved' | 'done' | 'archived';
+
+export interface WorkflowStep {
+  columnId: string;
+  columnName: string;
+  position: number;
+  stage: WorkflowStage;
+  nextColumn?: string;
+}
+
 // ─── Helper Functions ─────────────────────────────────────────────────────────
+
+/**
+ * Auto-detect workflow stage from a column name using keyword matching.
+ * Covers common patterns across Swedish, English, and mixed-language boards.
+ */
+function detectStage(name: string): WorkflowStage {
+  const n = name.toLowerCase();
+
+  // Done / completed / archived
+  if (/done|klar|färdig|complete|closed|released|shipped|deploy|live|finished|avslut/i.test(n)) return 'done';
+  if (/archived?|arkiver/i.test(n)) return 'archived';
+
+  // Approved / accepted
+  if (/approv|godkän|accept|verified|sign.?off/i.test(n)) return 'approved';
+
+  // Active / in progress / developing — check BEFORE testing so "Developing" isn't caught by "test"
+  if (/progress|develop|pågå|aktiv|doing|working|implement|bygg|coding|current/i.test(n)) return 'active';
+
+  // Testing / QA
+  if (/test|qa|kvalit|verif/i.test(n)) return 'testing';
+
+  // Review / code review
+  if (/review|gransk|feedback|pending/i.test(n)) return 'review';
+
+  // Queued / selected / ready / next
+  if (/select|vald|ready|next|sprint|priorit|planned|schedul|redo/i.test(n)) return 'queued';
+
+  // Backlog / inbox / new / todo
+  if (/backlog|inbox|new|ny|todo|to.do|icke|idea|wish|önskelista|triage|incoming/i.test(n)) return 'backlog';
+
+  return 'queued';
+}
+
+/**
+ * Build workflow steps from ordered columns.
+ * Each step gets a position, auto-detected semantic stage, and a pointer to the next column.
+ */
+function buildWorkflow(columns: Array<{ id: string; name: string }>): WorkflowStep[] {
+  return columns.map((col, i) => ({
+    columnId: col.id,
+    columnName: col.name,
+    position: i + 1,
+    stage: detectStage(col.name),
+    nextColumn: i < columns.length - 1 ? columns[i + 1].name : undefined,
+  }));
+}
 
 /**
  * Normalize a raw card into the ContextCard format.
@@ -81,6 +142,7 @@ function normalizeCard(card: Card): ContextCard {
     owner: card.assignees?.[0],
     tags: card.tags,
     due: card.dueDate,
+    columnId: card.columnId,
     createdAt: card.createdAt,
     updatedAt: card.updatedAt,
   };
@@ -142,12 +204,14 @@ export class ContextAPI {
   private cardsApi: CardsAPI;
   private membersApi: FavroApiClient;
   private customFieldsApi: CustomFieldsAPI;
+  private columnsApi: ColumnsAPI;
 
   constructor(private client: FavroHttpClient) {
     this.boardsApi = new BoardsAPI(client);
     this.cardsApi = new CardsAPI(client);
     this.membersApi = new FavroApiClient(client);
     this.customFieldsApi = new CustomFieldsAPI(client);
+    this.columnsApi = new ColumnsAPI(client);
   }
 
   /**
@@ -192,19 +256,27 @@ export class ContextAPI {
     const boardId = board.boardId;
 
     // Step 2: Fetch all board data in parallel
-    const [extendedBoard, cards, members, customFieldDefs] = await Promise.all([
+    const [extendedBoard, cards, members, customFieldDefs, rawColumns] = await Promise.all([
       this.boardsApi.getBoardWithIncludes(boardId, ['custom-fields', 'members']).catch(() => board as any),
       this.cardsApi.listCards(boardId, cardLimit).catch(() => [] as Card[]),
       this.membersApi.getMembers({ boardId }).catch(() => []),
       this.customFieldsApi.listFields(boardId).catch(() => [] as CustomFieldDefinition[]),
+      this.columnsApi.listColumns(boardId).catch(() => []),
     ]);
 
-    // Extract columns from extended board response
-    const columns = (extendedBoard.boardColumns ?? []).map((col: BoardColumn) => ({
+    // Extract columns — prefer dedicated columns API, fall back to extended board
+    let columns = rawColumns.map(col => ({
       id: col.columnId,
       name: col.name,
-      cardCount: col.cardCount,
+      cardCount: undefined as number | undefined,
     }));
+    if (columns.length === 0) {
+      columns = (extendedBoard.boardColumns ?? []).map((col: BoardColumn) => ({
+        id: col.columnId,
+        name: col.name,
+        cardCount: col.cardCount,
+      }));
+    }
 
     // Normalize custom field definitions
     const customFields = customFieldDefs.map((f: CustomFieldDefinition) => ({
@@ -254,6 +326,20 @@ export class ContextAPI {
     // Normalize cards
     const normalizedCards = cards.map(normalizeCard);
 
+    // Enrich cards with workflow context
+    const workflow = buildWorkflow(columns);
+    const workflowByColumnId = new Map(workflow.map(w => [w.columnId, w]));
+    for (const card of normalizedCards) {
+      if (card.columnId) {
+        const step = workflowByColumnId.get(card.columnId);
+        if (step) {
+          card.column = step.columnName;
+          card.stage = step.stage;
+          card.nextColumn = step.nextColumn;
+        }
+      }
+    }
+
     // Build stats
     const stats = buildStats(normalizedCards);
 
@@ -267,6 +353,7 @@ export class ContextAPI {
         members: memberEmails.length > 0 ? memberEmails : normalizedMembers.map(m => m.email),
       },
       columns,
+      workflow,
       customFields,
       members: normalizedMembers,
       cards: normalizedCards,

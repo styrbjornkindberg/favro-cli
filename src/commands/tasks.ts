@@ -7,6 +7,7 @@
  */
 import { Command } from 'commander';
 import TasksAPI from '../lib/tasks-api';
+import TaskListsAPI from '../lib/tasklists-api';
 import { createFavroClient } from '../lib/client-factory';
 import { logError } from '../lib/error-handler';
 import { confirmAction, dryRunLog } from '../lib/safety';
@@ -45,6 +46,7 @@ export function registerTasksCommands(program: Command): void {
   tasksCommand
     .command('add <cardCommonId> <name>')
     .description('Create a new task on a card')
+    .option('--tasklist <taskListId>', 'Target task list ID (auto-selects first if omitted)')
     .option('--json', 'Output as JSON')
     .option('--dry-run', 'Preview without making API calls')
     .option('-y, --yes', 'Skip confirmation prompt')
@@ -62,7 +64,21 @@ export function registerTasksCommands(program: Command): void {
 
         const client = await createFavroClient();
         const api = new TasksAPI(client);
-        const task = await api.createTask(cardCommonId, name);
+        const taskListsApi = new TaskListsAPI(client);
+
+        let taskListId = options.tasklist;
+        if (!taskListId) {
+          // Auto-select first task list, or create a default one
+          const lists = await taskListsApi.listTaskLists(cardCommonId);
+          if (lists.length > 0) {
+            taskListId = lists[0].taskListId;
+          } else {
+            const newList = await taskListsApi.createTaskList(cardCommonId, 'Checklist');
+            taskListId = newList.taskListId;
+          }
+        }
+
+        const task = await api.createTask(cardCommonId, name, taskListId);
 
         if (options.json) {
           console.log(JSON.stringify(task, null, 2));

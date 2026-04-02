@@ -104,6 +104,8 @@ const git_1 = require("./commands/git");
 const shell_1 = require("./commands/shell");
 const board_tui_1 = require("./commands/board-tui");
 const diff_1 = require("./commands/diff");
+const browse_1 = require("./commands/browse");
+const main_menu_1 = require("./commands/main-menu");
 const error_handler_1 = require("./lib/error-handler");
 const progress_1 = require("./lib/progress");
 const client_factory_1 = require("./lib/client-factory");
@@ -182,10 +184,11 @@ function buildProgram() {
     (0, skill_1.registerSkillCommands)(program);
     // ─── git commands ───────────────────────────────────────────────────────────
     (0, git_1.registerGitCommands)(program);
-    // ─── shell, board TUI, diff ─────────────────────────────────────────────────
+    // ─── shell, board TUI, diff, browse ─────────────────────────────────────────
     (0, shell_1.registerShellCommand)(program);
     (0, board_tui_1.registerBoardTuiCommand)(program);
     (0, diff_1.registerDiffCommand)(program);
+    (0, browse_1.registerBrowseCommand)(program);
     // ─── cards parent ────────────────────────────────────────────────────────────
     const cards = program.command('cards').description('Card operations — get, list, create, update, export, link, unlink, and move cards.\n\n' +
         'Subcommands:\n' +
@@ -311,6 +314,7 @@ function buildProgram() {
         .option('--description <text>', 'Card description')
         .option('--status <status>', 'Card status')
         .option('--assignee <user>', 'Assignee username or user ID')
+        .option('--parent <cardId>', 'Parent card ID (makes this a child card)')
         .option('--bulk <file>', 'Bulk create from JSON file')
         .option('--csv <file>', 'Bulk import from CSV file (columns: name, description, status)')
         .option('--dry-run', 'Print what would be created without making API calls')
@@ -402,6 +406,7 @@ function buildProgram() {
                 status: options.status,
                 boardId: options.board,
                 assignees: options.assignee ? [options.assignee] : undefined,
+                parentCardId: options.parent,
             });
             console.log(`✓ Card created: ${card.cardId}`);
             if (options.json)
@@ -420,6 +425,7 @@ function buildProgram() {
         '  favro cards update <cardId> --status "Done"\n' +
         '  favro cards update <cardId> --name "New title" --status "In Progress"\n' +
         '  favro cards update <cardId> --assignees "alice,bob"\n' +
+        '  favro cards update <cardId> --column "Developing" --board <boardId>\n' +
         '  favro cards update <cardId> --status "Done" --dry-run\n\n' +
         'Batch update from CSV:\n' +
         '  favro cards update --from-csv bulk.csv --board Q2-Dev\n' +
@@ -435,6 +441,8 @@ function buildProgram() {
         .option('--assignees <list>', 'Assignees (comma-separated, single card update)')
         .option('--assignee <user>', 'Assignee for batch assign (use with --board)')
         .option('--tags <list>', 'Tags (comma-separated, single card update)')
+        .option('--column <column>', 'Move card to this column by name (use with --board)')
+        .option('--parent <cardId>', 'Parent card ID (makes this a child card)')
         .option('--label <label>', 'Label/tag filter for batch operations (use with --board)')
         .option('--board <id>', 'Board ID — required for batch operations, optional for single')
         .option('--from-csv <file>', 'CSV file with card updates (columns: cardId, status, assignee, dueDate)')
@@ -699,6 +707,36 @@ function buildProgram() {
                 updateData.assignees = options.assignees.split(',');
             if (options.tags)
                 updateData.tags = options.tags.split(',');
+            // Parent card
+            if (options.parent)
+                updateData.parentCardId = options.parent;
+            // Warn if --status looks like a column name (common mistake)
+            if (options.status && !options.column) {
+                const columnLike = /^(backlog|selected|ready|next|sprint|developing|in.?progress|doing|review|feedback|test|qa|testbar|approved|done|closed|released|archived|godkänd)/i;
+                if (columnLike.test(options.status)) {
+                    console.warn(`⚠  --status sets metadata, not column position. To move this card to the "${options.status}" column, use --column "${options.status}" --board <boardId> instead.`);
+                }
+            }
+            // Column move: resolve column name → columnId
+            if (options.column) {
+                if (!options.board) {
+                    console.error('✗ --board is required when using --column');
+                    process.exit(1);
+                    return;
+                }
+                const { ColumnsAPI } = await Promise.resolve().then(() => __importStar(require('./lib/columns-api')));
+                const columnsApi = new ColumnsAPI(client);
+                const columns = await columnsApi.listColumns(options.board);
+                const target = columns.find(c => c.name.toLowerCase() === options.column.toLowerCase());
+                if (!target) {
+                    const available = columns.map(c => c.name).join(', ');
+                    console.error(`✗ Column "${options.column}" not found. Available: ${available}`);
+                    process.exit(1);
+                    return;
+                }
+                updateData.columnId = target.columnId;
+                updateData.boardId = options.board;
+            }
             if (options.dryRun) {
                 console.log(`[dry-run] Would update card ${cardId} with:`, JSON.stringify(updateData));
                 return;
@@ -829,9 +867,21 @@ function buildProgram() {
 // Only run when executed directly (not when imported in tests)
 if (require.main === module) {
     const prog = buildProgram();
-    prog.parseAsync(process.argv).catch((err) => {
-        (0, error_handler_1.logError)(err, prog.opts().verbose);
-        process.exit(1);
-    });
+    // No subcommand given → run persistent interactive menu
+    const userArgs = process.argv.slice(2);
+    if (userArgs.length === 0) {
+        (0, main_menu_1.runMainMenu)(prog.version() ?? '', () => prog.outputHelp()).then(() => {
+            process.exit(0);
+        }).catch((err) => {
+            (0, error_handler_1.logError)(err, prog.opts().verbose);
+            process.exit(1);
+        });
+    }
+    else {
+        prog.parseAsync(process.argv).catch((err) => {
+            (0, error_handler_1.logError)(err, prog.opts().verbose);
+            process.exit(1);
+        });
+    }
 }
 //# sourceMappingURL=cli.js.map

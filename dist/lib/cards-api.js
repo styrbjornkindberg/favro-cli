@@ -57,6 +57,7 @@ function normalizeCard(raw) {
         columnId: raw.columnId,
         archived: raw.archived,
         sequentialId: raw.sequentialId,
+        parentCardId: raw.parentCardId,
         customFields: raw.customFields,
     };
 }

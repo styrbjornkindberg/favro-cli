@@ -42,6 +42,7 @@ exports.registerCardsUpdateCommand = registerCardsUpdateCommand;
 const client_factory_1 = require("../lib/client-factory");
 const readline = __importStar(require("readline"));
 const cards_api_1 = __importDefault(require("../lib/cards-api"));
+const columns_api_1 = require("../lib/columns-api");
 const error_handler_1 = require("../lib/error-handler");
 const query_parser_1 = require("../lib/query-parser");
 /**
@@ -72,6 +73,8 @@ function registerCardsUpdateCommand(program) {
         .option('--status <status>', 'Card status')
         .option('--assignees <list>', 'Assignees (comma-separated)')
         .option('--tags <list>', 'Tags (comma-separated)')
+        .option('--column <column>', 'Move card to this column (by name, requires --board)')
+        .option('--board <boardId>', 'Board ID (required when using --column)')
         .option('--filter <filter>', 'Filter expression for card selection')
         .option('--json', 'Output as JSON')
         .option('--dry-run', 'Show what would be updated without making changes')
@@ -103,6 +106,23 @@ function registerCardsUpdateCommand(program) {
                 updateData.assignees = options.assignees.split(',');
             if (options.tags)
                 updateData.tags = options.tags.split(',');
+            // Column move: resolve column name → columnId
+            if (options.column) {
+                if (!options.board) {
+                    console.error('✗ --board is required when using --column');
+                    process.exit(1);
+                }
+                const columnsApi = new columns_api_1.ColumnsAPI(client);
+                const columns = await columnsApi.listColumns(options.board);
+                const target = columns.find(c => c.name.toLowerCase() === options.column.toLowerCase());
+                if (!target) {
+                    const available = columns.map(c => c.name).join(', ');
+                    console.error(`✗ Column "${options.column}" not found. Available: ${available}`);
+                    process.exit(1);
+                }
+                updateData.columnId = target.columnId;
+                updateData.boardId = options.board;
+            }
             // Dry-run mode: show what would be updated without making changes
             if (options.dryRun) {
                 console.log(`[dry-run] Would update card: ${cardId}`);

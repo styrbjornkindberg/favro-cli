@@ -27,6 +27,11 @@ const SAMPLE_SNAPSHOT: contextApi.BoardContextSnapshot = {
     { id: 'col-b', name: 'In Progress', cardCount: 2 },
     { id: 'col-c', name: 'Done', cardCount: 1 },
   ],
+  workflow: [
+    { columnId: 'col-a', columnName: 'Backlog', position: 1, stage: 'backlog' as const, nextColumn: 'In Progress' },
+    { columnId: 'col-b', columnName: 'In Progress', position: 2, stage: 'active' as const, nextColumn: 'Done' },
+    { columnId: 'col-c', columnName: 'Done', position: 3, stage: 'done' as const },
+  ],
   customFields: [
     { id: 'cf1', name: 'Priority', type: 'select', values: ['High', 'Medium', 'Low'] },
   ],

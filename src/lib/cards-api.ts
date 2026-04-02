@@ -22,6 +22,7 @@ interface RawCard {
   dependencies?: unknown[];
   status?: string;
   // Allow passthrough of extra fields
+  parentCardId?: string;
   [key: string]: unknown;
 }
 
@@ -48,6 +49,7 @@ function normalizeCard(raw: RawCard): Card {
     columnId: raw.columnId,
     archived: raw.archived,
     sequentialId: raw.sequentialId,
+    parentCardId: raw.parentCardId,
     customFields: raw.customFields as Card['customFields'],
   };
 }
@@ -96,6 +98,8 @@ export interface Card {
   collectionId?: string;
   archived?: boolean;
   sequentialId?: number;
+  /** Parent card ID for hierarchical card relationships */
+  parentCardId?: string;
   // Populated via --include flags
   board?: { boardId: string; name: string; [key: string]: unknown };
   collection?: { collectionId: string; name: string; [key: string]: unknown };
@@ -115,6 +119,8 @@ export interface CreateCardRequest {
   boardId?: string;
   columnId?: string;
   assignees?: string[];
+  /** Parent card ID — makes this card a child of the specified card */
+  parentCardId?: string;
 }
 
 export interface UpdateCardRequest {
@@ -127,6 +133,10 @@ export interface UpdateCardRequest {
   dueDate?: string;
   /** Target board ID when moving a card between boards. Supported by Favro API updateCard endpoint. */
   boardId?: string;
+  /** Target column ID when moving a card between columns on a board. */
+  columnId?: string;
+  /** Parent card ID — sets or changes the parent card */
+  parentCardId?: string;
 }
 
 /**

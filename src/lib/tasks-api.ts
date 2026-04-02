@@ -51,8 +51,8 @@ export class TasksAPI {
   /**
    * Create a new task (checklist item) on a card.
    */
-  async createTask(cardCommonId: string, name: string): Promise<Task> {
-    const payload = { cardCommonId, name };
+  async createTask(cardCommonId: string, name: string, taskListId: string): Promise<Task> {
+    const payload = { cardCommonId, name, taskListId };
     return this.client.post<Task>('/tasks', payload);
   }
 

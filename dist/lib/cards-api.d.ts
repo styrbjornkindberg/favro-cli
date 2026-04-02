@@ -39,6 +39,8 @@ export interface Card {
     collectionId?: string;
     archived?: boolean;
     sequentialId?: number;
+    /** Parent card ID for hierarchical card relationships */
+    parentCardId?: string;
     board?: {
         boardId: string;
         name: string;
@@ -64,6 +66,8 @@ export interface CreateCardRequest {
     boardId?: string;
     columnId?: string;
     assignees?: string[];
+    /** Parent card ID — makes this card a child of the specified card */
+    parentCardId?: string;
 }
 export interface UpdateCardRequest {
     name?: string;
@@ -75,6 +79,10 @@ export interface UpdateCardRequest {
     dueDate?: string;
     /** Target board ID when moving a card between boards. Supported by Favro API updateCard endpoint. */
     boardId?: string;
+    /** Target column ID when moving a card between columns on a board. */
+    columnId?: string;
+    /** Parent card ID — sets or changes the parent card */
+    parentCardId?: string;
 }
 /**
  * Paginated response from Favro API.

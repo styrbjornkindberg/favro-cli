@@ -6,6 +6,7 @@ import { Command } from 'commander';
 import { createFavroClient } from '../lib/client-factory';
 import * as readline from 'readline';
 import CardsAPI, { UpdateCardRequest } from '../lib/cards-api';
+import { ColumnsAPI } from '../lib/columns-api';
 import { logError, missingApiKeyError } from '../lib/error-handler';
 import { parseQuery } from '../lib/query-parser';
 
@@ -39,6 +40,8 @@ export function registerCardsUpdateCommand(program: Command): void {
     .option('--status <status>', 'Card status')
     .option('--assignees <list>', 'Assignees (comma-separated)')
     .option('--tags <list>', 'Tags (comma-separated)')
+    .option('--column <column>', 'Move card to this column (by name, requires --board)')
+    .option('--board <boardId>', 'Board ID (required when using --column)')
     .option('--filter <filter>', 'Filter expression for card selection')
     .option('--json', 'Output as JSON')
     .option('--dry-run', 'Show what would be updated without making changes')
@@ -49,6 +52,8 @@ export function registerCardsUpdateCommand(program: Command): void {
       status?: string;
       assignees?: string;
       tags?: string;
+      column?: string;
+      board?: string;
       filter?: string;
       json?: boolean;
       dryRun?: boolean;
@@ -77,6 +82,26 @@ export function registerCardsUpdateCommand(program: Command): void {
         if (options.status) updateData.status = options.status;
         if (options.assignees) updateData.assignees = options.assignees.split(',');
         if (options.tags) updateData.tags = options.tags.split(',');
+
+        // Column move: resolve column name → columnId
+        if (options.column) {
+          if (!options.board) {
+            console.error('✗ --board is required when using --column');
+            process.exit(1);
+          }
+          const columnsApi = new ColumnsAPI(client);
+          const columns = await columnsApi.listColumns(options.board);
+          const target = columns.find(
+            c => c.name.toLowerCase() === options.column!.toLowerCase()
+          );
+          if (!target) {
+            const available = columns.map(c => c.name).join(', ');
+            console.error(`✗ Column "${options.column}" not found. Available: ${available}`);
+            process.exit(1);
+          }
+          updateData.columnId = target.columnId;
+          updateData.boardId = options.board;
+        }
 
         // Dry-run mode: show what would be updated without making changes
         if (options.dryRun) {

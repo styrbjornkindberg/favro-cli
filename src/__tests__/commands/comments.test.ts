@@ -53,6 +53,7 @@ beforeEach(() => {
   (config.resolveApiKey as jest.Mock).mockResolvedValue('test-token');
   (config.readConfig as jest.Mock).mockResolvedValue({});
   (safety.checkScope as jest.Mock).mockResolvedValue(undefined);
+  (safety.confirmAction as jest.Mock).mockResolvedValue(true);
   MockCardsAPI.prototype.getCard = jest.fn().mockResolvedValue({ cardId: 'card-abc', boardId: 'board-1' });
 });
 

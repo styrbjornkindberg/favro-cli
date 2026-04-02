@@ -29,6 +29,7 @@ function makeSnapshot(): BoardContextSnapshot {
       members: ['user-1'],
     },
     columns: [{ id: 'col-1', name: 'To Do' }],
+    workflow: [{ columnId: 'col-1', columnName: 'To Do', position: 1, stage: 'backlog' as const }],
     members: [{ id: 'user-1', name: 'Alice', email: 'alice@test.com' }],
     customFields: [],
     cards: [
@@ -102,6 +103,7 @@ jest.mock('../../api/context', () => {
       getSnapshot: jest.fn().mockResolvedValue({
         board: { id: 'board-1', name: 'Sprint 42', description: 'Test', members: ['user-1'] },
         columns: [{ id: 'col-1', name: 'To Do' }],
+        workflow: [{ columnId: 'col-1', columnName: 'To Do', position: 1, stage: 'backlog' }],
         members: [{ id: 'user-1', name: 'Alice', email: 'alice@test.com' }],
         customFields: [],
         cards: [{ id: 'card-1', title: 'Fix bug', status: 'To Do', owner: 'Alice' }],

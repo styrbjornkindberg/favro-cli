@@ -30,6 +30,11 @@ function makeSnapshot(overrides?: Partial<BoardContextSnapshot>): BoardContextSn
       { id: 'col-2', name: 'In Progress', cardCount: 2 },
       { id: 'col-3', name: 'Done', cardCount: 5 },
     ],
+    workflow: [
+      { columnId: 'col-1', columnName: 'To Do', position: 1, stage: 'backlog' as const, nextColumn: 'In Progress' },
+      { columnId: 'col-2', columnName: 'In Progress', position: 2, stage: 'active' as const, nextColumn: 'Done' },
+      { columnId: 'col-3', columnName: 'Done', position: 3, stage: 'done' as const },
+    ],
     members: [
       { id: 'user-1', name: 'Alice', email: 'alice@test.com', role: 'admin' },
       { id: 'user-2', name: 'Bob', email: 'bob@test.com' },
