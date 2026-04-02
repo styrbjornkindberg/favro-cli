@@ -43,7 +43,7 @@ This CLI is designed for local source installation.
 Requires **Node.js 18+**.
 
 ```bash
-git clone https://github.com/square-moon/favro-cli.git
+git clone https://github.com/styrbjornkindberg/favro-cli.git
 cd favro-cli
 npm install
 npm run build
@@ -1283,7 +1283,7 @@ favro boards list --collection "Sprint 42"
 
 **Can I use this without npm?**
 
-No. `@square-moon/favro-cli` is distributed as an npm package and requires Node.js 18+ and npm (or pnpm/yarn) to install.
+No. `@styrbjornkindberg/favro-cli` is distributed as an npm package and requires Node.js 18+ and npm (or pnpm/yarn) to install.
 
 ---
 
