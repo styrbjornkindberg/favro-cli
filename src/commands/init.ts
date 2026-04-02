@@ -205,12 +205,26 @@ export function registerInitCommand(program: Command): void {
           // Custom fields fetch may fail
         }
 
-        // Fetch team members
+        // Fetch team members — /users is org-scoped, so we filter by the
+        // collection's sharedToUsers to get only collection members.
         console.log('Fetching team members...');
         const membersApi = new FavroApiClient(client);
-        const members = await membersApi.getMembers({ collectionId }).catch(() => []);
+        const allUsers = await membersApi.getMembers().catch(() => []);
+
+        // Get collection member IDs from raw API response (sharedToUsers)
+        let collectionUserIds: Set<string> | undefined;
+        try {
+          const rawColl = await client.get<any>(`/collections/${collectionId}`);
+          if (rawColl?.sharedToUsers && Array.isArray(rawColl.sharedToUsers)) {
+            collectionUserIds = new Set(rawColl.sharedToUsers.map((u: any) => u.userId));
+          }
+        } catch {
+          // Fall back to no filtering
+        }
+
         const team: Record<string, ContextTeamMember> = {};
-        for (const m of members) {
+        for (const m of allUsers) {
+          if (collectionUserIds && !collectionUserIds.has(m.id)) continue;
           team[m.id] = { name: m.name, email: m.email, role: m.role };
         }
 
