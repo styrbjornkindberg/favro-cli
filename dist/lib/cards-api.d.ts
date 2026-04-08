@@ -127,6 +127,11 @@ export declare class CardsAPI {
      */
     listCards(optsOrBoardId?: string | ListCardsOptions, limit?: number, filter?: string): Promise<Card[]>;
     /**
+     * Get the raw detailedDescription for a card in markdown format,
+     * preserving formatting for safe round-trips.
+     */
+    getRawDescription(cardId: string): Promise<string>;
+    /**
      * Get a single card with optional includes (board, collection, custom-fields, links, comments).
      */
     getCard(cardId: string, options?: GetCardOptions): Promise<Card>;

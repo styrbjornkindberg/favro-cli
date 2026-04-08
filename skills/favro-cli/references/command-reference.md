@@ -135,7 +135,7 @@ Create a new card.
 | `--assignees <users>` | Comma-separated assignees |
 | `--tags <tags>` | Comma-separated tags |
 | `--due-date <date>` | Due date (ISO 8601) |
-| `--description <text>` | Card description |
+| `--description <text>` | Card description (literal `\n` converted to newlines) |
 | `--json` | Output raw JSON |
 | `--dry-run` | Preview only |
 | `-y, --yes` | Skip confirmation |
@@ -157,7 +157,8 @@ Update an existing card.
 | `--assignees <users>` | New assignees |
 | `--tags <tags>` | New tags |
 | `--due-date <date>` | New due date |
-| `--description <text>` | New description |
+| `--description <text>` | New description (literal `\n` converted to newlines) |
+| `--append-description <text>` | Append text to existing description (literal `\n` converted to newlines) |
 | `--json` | Output raw JSON |
 | `--dry-run` | Preview only |
 | `-y, --yes` | Skip confirmation |

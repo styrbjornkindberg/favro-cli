@@ -204,6 +204,7 @@ export class CardsAPI {
     while (allCards.length < effectiveLimit && page < totalPages) {
       const params: Record<string, unknown> = {
         limit: Math.min(effectiveLimit - allCards.length, 100),
+        descriptionFormat: 'markdown',
       };
 
       // Favro uses widgetCommonId to scope cards to a board
@@ -254,15 +255,26 @@ export class CardsAPI {
   }
 
   /**
+   * Get the raw detailedDescription for a card in markdown format,
+   * preserving formatting for safe round-trips.
+   */
+  async getRawDescription(cardId: string): Promise<string> {
+    const rawCard = await this.client.get<RawCard>(`/cards/${cardId}`, {
+      params: { descriptionFormat: 'markdown' },
+    });
+    return rawCard.detailedDescription ?? '';
+  }
+
+  /**
    * Get a single card with optional includes (board, collection, custom-fields, links, comments).
    */
   async getCard(cardId: string, options?: GetCardOptions): Promise<Card> {
-    const params: Record<string, unknown> = {};
+    const params: Record<string, unknown> = { descriptionFormat: 'markdown' };
     const includes = options?.include ?? [];
     if (includes.length > 0) {
       params.include = includes.join(',');
     }
-    const getConfig = Object.keys(params).length > 0 ? { params } : undefined;
+    const getConfig = { params };
     const rawCard = await this.client.get<RawCard>(`/cards/${cardId}`, getConfig);
     const card = normalizeCard(rawCard);
 
@@ -391,7 +403,7 @@ export class CardsAPI {
 
   async searchCards(query: string, limit: number = 50): Promise<Card[]> {
     const response = await this.client.get<PaginatedResponse<Card>>('/cards/search', {
-      params: { q: query, limit }
+      params: { q: query, limit, descriptionFormat: 'markdown' }
     });
     return response.entities ?? [];
   }

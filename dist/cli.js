@@ -137,7 +137,7 @@ function buildProgram() {
         'Authentication:\n' +
         '  Set FAVRO_API_KEY env var, or run `favro auth login` to save to ~/.favro/config.json\n\n' +
         'Full docs: https://github.com/square-moon/favro-cli#readme')
-        .version('2.0.0')
+        .version('2.0.1')
         .option('--verbose', 'Show stack traces for errors');
     // ─── auth commands ────────────────────────────────────────────────────────────
     (0, auth_1.registerAuthCommand)(program);
@@ -422,7 +422,7 @@ function buildProgram() {
             const api = new cards_api_1.default(client);
             const card = await api.createCard({
                 name: title ?? '',
-                description: options.description,
+                description: options.description ? options.description.replace(/\\n/g, '\n') : undefined,
                 status: options.status,
                 boardId: options.board,
                 assignees: options.assignee ? [options.assignee] : undefined,
@@ -457,6 +457,7 @@ function buildProgram() {
         'Tip: Use `favro cards list --json` to find card IDs.')
         .option('--name <name>', 'New card name (single card update)')
         .option('--description <desc>', 'Card description (single card update)')
+        .option('--append-description <text>', 'Append text to existing description')
         .option('--status <status>', 'Card status to set')
         .option('--assignees <list>', 'Assignees (comma-separated, single card update)')
         .option('--assignee <user>', 'Assignee for batch assign (use with --board)')
@@ -720,7 +721,7 @@ function buildProgram() {
             if (options.name)
                 updateData.name = options.name;
             if (options.description)
-                updateData.description = options.description;
+                updateData.description = options.description.replace(/\\n/g, '\n');
             if (options.status)
                 updateData.status = options.status;
             if (options.assignees)
@@ -763,6 +764,12 @@ function buildProgram() {
             }
             const api = new cards_api_1.default(client);
             const card = await api.getCard(cardId);
+            // --append-description: fetch raw description to preserve Favro's rich text format
+            if (options.appendDescription) {
+                const appendText = options.appendDescription.replace(/\\n/g, '\n');
+                const rawDescription = await api.getRawDescription(cardId);
+                updateData.description = rawDescription + appendText;
+            }
             const { readConfig } = await Promise.resolve().then(() => __importStar(require('./lib/config')));
             const { checkScope, confirmAction } = await Promise.resolve().then(() => __importStar(require('./lib/safety')));
             await checkScope(card.boardId ?? '', client, await readConfig(), options.force);

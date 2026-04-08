@@ -1,6 +1,6 @@
 {
   "name": "@square-moon/favro-cli",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Favro command-line interface",
   "main": "dist/index.js",
   "bin": {

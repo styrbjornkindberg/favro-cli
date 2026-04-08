@@ -91,6 +91,7 @@ class CardsAPI {
         while (allCards.length < effectiveLimit && page < totalPages) {
             const params = {
                 limit: Math.min(effectiveLimit - allCards.length, 100),
+                descriptionFormat: 'markdown',
             };
             // Favro uses widgetCommonId to scope cards to a board
             if (opts.boardId) {
@@ -132,15 +133,25 @@ class CardsAPI {
         return allCards.slice(0, effectiveLimit);
     }
     /**
+     * Get the raw detailedDescription for a card in markdown format,
+     * preserving formatting for safe round-trips.
+     */
+    async getRawDescription(cardId) {
+        const rawCard = await this.client.get(`/cards/${cardId}`, {
+            params: { descriptionFormat: 'markdown' },
+        });
+        return rawCard.detailedDescription ?? '';
+    }
+    /**
      * Get a single card with optional includes (board, collection, custom-fields, links, comments).
      */
     async getCard(cardId, options) {
-        const params = {};
+        const params = { descriptionFormat: 'markdown' };
         const includes = options?.include ?? [];
         if (includes.length > 0) {
             params.include = includes.join(',');
         }
-        const getConfig = Object.keys(params).length > 0 ? { params } : undefined;
+        const getConfig = { params };
         const rawCard = await this.client.get(`/cards/${cardId}`, getConfig);
         const card = normalizeCard(rawCard);
         // Hydrate board/collection if requested and not already present
@@ -262,7 +273,7 @@ class CardsAPI {
     }
     async searchCards(query, limit = 50) {
         const response = await this.client.get('/cards/search', {
-            params: { q: query, limit }
+            params: { q: query, limit, descriptionFormat: 'markdown' }
         });
         return response.entities ?? [];
     }

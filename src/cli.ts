@@ -105,7 +105,7 @@ program
     '  Set FAVRO_API_KEY env var, or run `favro auth login` to save to ~/.favro/config.json\n\n' +
     'Full docs: https://github.com/square-moon/favro-cli#readme'
   )
-  .version('2.0.0')
+  .version('2.0.1')
   .option('--verbose', 'Show stack traces for errors');
 
 // ─── auth commands ────────────────────────────────────────────────────────────
@@ -440,7 +440,7 @@ cards
       const api = new CardsAPI(client);
       const card = await api.createCard({
         name: title ?? '',
-        description: options.description,
+        description: options.description ? options.description.replace(/\\n/g, '\n') : undefined,
         status: options.status,
         boardId: options.board,
         assignees: options.assignee ? [options.assignee] : undefined,
@@ -476,6 +476,7 @@ cards
   )
   .option('--name <name>', 'New card name (single card update)')
   .option('--description <desc>', 'Card description (single card update)')
+  .option('--append-description <text>', 'Append text to existing description')
   .option('--status <status>', 'Card status to set')
   .option('--assignees <list>', 'Assignees (comma-separated, single card update)')
   .option('--assignee <user>', 'Assignee for batch assign (use with --board)')
@@ -758,7 +759,7 @@ cards
     try {
       const updateData: UpdateCardRequest = {};
       if (options.name) updateData.name = options.name;
-      if (options.description) updateData.description = options.description;
+      if (options.description) updateData.description = options.description.replace(/\\n/g, '\n');
       if (options.status) updateData.status = options.status;
       if (options.assignees) updateData.assignees = options.assignees.split(',');
       if (options.tags) updateData.tags = options.tags.split(',');
@@ -804,16 +805,23 @@ cards
 
       const api = new CardsAPI(client!);
       const card = await api.getCard(cardId);
-      
+
+      // --append-description: fetch raw description to preserve Favro's rich text format
+      if (options.appendDescription) {
+        const appendText = options.appendDescription.replace(/\\n/g, '\n');
+        const rawDescription = await api.getRawDescription(cardId);
+        updateData.description = rawDescription + appendText;
+      }
+
       const { readConfig } = await import('./lib/config');
       const { checkScope, confirmAction } = await import('./lib/safety');
       await checkScope(card.boardId ?? '', client, await readConfig(), options.force);
-      
+
       if (!(await confirmAction(`Update card "${card.name}" (${cardId})?`, { yes: options.yes }))) {
         console.log('Aborted.');
         process.exit(0);
       }
-      
+
       const updatedCard = await api.updateCard(cardId, updateData);
       console.log(`✓ Card updated: ${updatedCard.cardId}`);
       if (options.json) console.log(JSON.stringify(updatedCard));
