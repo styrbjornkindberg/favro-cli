@@ -158,7 +158,8 @@ Update an existing card.
 | `--tags <tags>` | New tags |
 | `--due-date <date>` | New due date |
 | `--description <text>` | New description (literal `\n` converted to newlines) |
-| `--append-description <text>` | Append text to existing description (literal `\n` converted to newlines) |
+| `--append-description <text>` | Append to description (literal `\n` → newlines). **⚠️ Lossy if card has checklists** |
+| `--comment <text>` | Add a comment to the card (non-destructive, literal `\n` → newlines) |
 | `--json` | Output raw JSON |
 | `--dry-run` | Preview only |
 | `-y, --yes` | Skip confirmation |

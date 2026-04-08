@@ -122,7 +122,8 @@ favro groups get <groupId>               # Get a single group by ID
 favro cards create "Title" --board <boardId> [--dry-run] [-y]
 favro cards update <cardId> --name "New Name" --board <boardId> [--dry-run] [-y]
 favro cards update <cardId> --description "text" --board <boardId> [-y]   # Literal \n → newlines
-favro cards update <cardId> --append-description "text" --board <boardId> [-y]  # Append to existing
+favro cards update <cardId> --append-description "text" --board <boardId> [-y]  # ⚠️ Lossy if card has checklists
+favro cards update <cardId> --comment "text" --board <boardId> [-y]       # Non-destructive comment
 favro cards update <cardId> --column "Developing" --board <boardId> [-y]  # Move card to column
 
 # Card relationships
