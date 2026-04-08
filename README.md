@@ -218,7 +218,29 @@ You have meeting notes, a spec doc, or a list of action items. Instead of manual
 
 ## Setup
 
-### 1. Install
+### Option A — Let your LLM do it
+
+Open your LLM coding tool (Claude Code, Cursor, Windsurf, Gemini CLI, etc.) and paste this:
+
+```
+I want to set up favro-cli so you can help me manage our Favro boards.
+
+Please:
+1. Clone https://github.com/styrbjornkindberg/favro-cli.git and install it
+   (requires Node.js 18+ — install that too if it's missing).
+2. Run `favro auth login` and walk me through getting my Favro API token.
+3. Install your own skill file from skills/favro-cli/ so you know how to
+   use the tool safely in future sessions.
+4. Help me set a scope so writes are locked to the right collection.
+```
+
+The LLM will handle Node, the install, and the skill — just follow along.
+
+---
+
+### Option B — Do it yourself
+
+#### 1. Install
 
 Requires **Node.js 18+**.
 
@@ -228,7 +250,7 @@ cd favro-cli
 npm install && npm run build && npm link
 ```
 
-### 2. Connect to Favro
+#### 2. Connect to Favro
 
 ```bash
 favro auth login
@@ -236,13 +258,11 @@ favro auth login
 
 This will ask for your Favro API token (find it in Favro → your avatar → Profile → API Tokens).
 
-### 3. Give your LLM the skill
+#### 3. Give your LLM the skill
 
-The LLM needs to know how to use the CLI safely. The skill file is the instruction set that teaches the LLM which commands to run, how to stay safe, and how to confirm changes with you before making them.
+See the **[LLM Tool Setup](#llm-tool-setup)** section below.
 
-See the **[LLM Tool Setup](#llm-tool-setup)** section below for instructions specific to your tool.
-
-### 4. Set a scope (recommended)
+#### 4. Set a scope (recommended)
 
 Tell the CLI which collection it's allowed to write to. This prevents accidental changes to other projects.
 
