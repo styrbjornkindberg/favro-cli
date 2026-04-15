@@ -20,6 +20,8 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import * as path from 'path';
 import { z } from 'zod';
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { version } = require('../package.json') as { version: string };
 
 const execFileAsync = promisify(execFile);
 
@@ -38,7 +40,7 @@ export type ToolResult = {
  * Returns the McpServer and a tools map (name → handler) for unit testing.
  */
 export function createMcpServer(): { server: McpServer; tools: Map<string, (args: Record<string, unknown>) => Promise<ToolResult>> } {
-  const server = new McpServer({ name: 'favro-mcp', version: '2.0.1' });
+  const server = new McpServer({ name: 'favro-mcp', version });
   const tools = new Map<string, (args: Record<string, unknown>) => Promise<ToolResult>>();
 
   // ─── favro_help ────────────────────────────────────────────────────────────
@@ -48,7 +50,7 @@ export function createMcpServer(): { server: McpServer; tools: Map<string, (args
     const execArgs = [...tokens, '--help'];
     try {
       const { stdout, stderr } = await execFileAsync('node', [favroBin, ...execArgs], { timeout: 15_000 });
-      return { content: [{ type: 'text', text: stdout || stderr }] };
+      return { content: [{ type: 'text', text: stdout || stderr || '(no output)' }] };
     } catch (err: unknown) {
       return { content: [{ type: 'text', text: err instanceof Error ? err.message : String(err) }] };
     }
@@ -88,7 +90,8 @@ export function createMcpServer(): { server: McpServer; tools: Map<string, (args
       description:
         'Execute any favro CLI command. Pass arguments after "favro", ' +
         'e.g. "cards list --board abc123 --json". The CLI\'s own --dry-run, ' +
-        'scope, and confirmation flags control safety.',
+        'scope, and confirmation flags control safety. ' +
+        'Note: arguments are split on whitespace — do not use shell quoting or escaping.',
       inputSchema: z.object({
         command: z.string().describe('Arguments to pass to favro, e.g. "cards list --board abc123 --json"'),
       }),
