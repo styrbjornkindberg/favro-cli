@@ -4,22 +4,26 @@
   "description": "Favro command-line interface",
   "main": "dist/index.js",
   "bin": {
-    "favro": "dist/cli.js"
+    "favro": "dist/cli.js",
+    "favro-mcp": "dist/mcp-server.js"
   },
   "scripts": {
     "build": "tsc",
     "test": "jest",
     "test:integration": "jest --config jest.integration.config.js",
-    "prepack": "npm run build"
+    "prepack": "npm run build",
+    "mcp": "node dist/mcp-server.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.81.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "axios": "^1.6.0",
     "chalk": "^4.1.2",
     "commander": "^12.0.0",
     "enquirer": "^2.4.1",
     "openai": "^6.33.0",
-    "yaml": "^2.8.3"
+    "yaml": "^2.8.3",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/jest": "^29.5.0",
