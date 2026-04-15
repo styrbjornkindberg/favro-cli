@@ -48,7 +48,7 @@ describe('Cards API', () => {
   test('listCards with custom limit passes it to API', async () => {
     mockClient.get.mockResolvedValue({ entities: [] });
     await api.listCards('board-1', 100);
-    expect(mockClient.get).toHaveBeenCalledWith('/cards', { params: { limit: 100, widgetCommonId: 'board-1' } });
+    expect(mockClient.get).toHaveBeenCalledWith('/cards', { params: { descriptionFormat: 'markdown', limit: 100, widgetCommonId: 'board-1' } });
   });
 
   test('listCards returns empty array when entities missing', async () => {
@@ -169,7 +169,7 @@ describe('Cards API', () => {
     mockClient.get.mockResolvedValue(card);
     const result = await api.getCard('card-1');
     expect(result.cardId).toBe('card-1');
-    expect(mockClient.get).toHaveBeenCalledWith('/cards/card-1', undefined);
+    expect(mockClient.get).toHaveBeenCalledWith('/cards/card-1', { params: { descriptionFormat: 'markdown' } });
   });
 
   test('getCard propagates 404 errors', async () => {
@@ -182,7 +182,7 @@ describe('Cards API', () => {
     mockClient.get.mockResolvedValue(card);
     await api.getCard('card-1', { include: ['links', 'comments'] });
     expect(mockClient.get).toHaveBeenCalledWith('/cards/card-1', {
-      params: { include: 'links,comments' },
+      params: { descriptionFormat: 'markdown', include: 'links,comments' },
     });
   });
 
@@ -368,13 +368,13 @@ describe('Cards API', () => {
     mockClient.get.mockResolvedValue({ entities: cards });
     const result = await api.searchCards('login bug');
     expect(result).toHaveLength(1);
-    expect(mockClient.get).toHaveBeenCalledWith('/cards/search', { params: { q: 'login bug', limit: 50 } });
+    expect(mockClient.get).toHaveBeenCalledWith('/cards/search', { params: { descriptionFormat: 'markdown', q: 'login bug', limit: 50 } });
   });
 
   test('searchCards with custom limit', async () => {
     mockClient.get.mockResolvedValue({ entities: [] });
     await api.searchCards('query', 10);
-    expect(mockClient.get).toHaveBeenCalledWith('/cards/search', { params: { q: 'query', limit: 10 } });
+    expect(mockClient.get).toHaveBeenCalledWith('/cards/search', { params: { descriptionFormat: 'markdown', q: 'query', limit: 10 } });
   });
 
   test('searchCards returns empty array on no matches', async () => {
