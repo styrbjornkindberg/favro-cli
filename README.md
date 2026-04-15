@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-2.0.0-blue" alt="version">
+  <img src="https://img.shields.io/badge/version-2.0.1-blue" alt="version">
   <img src="https://img.shields.io/badge/node-18%2B-brightgreen" alt="node">
   <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="license">
 </p>
@@ -277,7 +277,47 @@ favro scope set <id>          # Lock writes to that collection
 
 ## LLM Tool Setup
 
-Open the favro-cli folder in your favorite LLM coding tool (Claude Code, Cursor, Windsurf, Gemini CLI, etc.) and ask it:
+### Claude Desktop (MCP)
+
+favro-cli ships a built-in MCP server. Add it to Claude Desktop's config and every conversation gets direct access to your Favro boards — no terminal, no copy-pasting.
+
+**1. Build the binary** (if you haven't already):
+```bash
+npm install && npm run build && npm link
+```
+
+**2. Add to Claude Desktop config** (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
+
+```json
+{
+  "mcpServers": {
+    "favro": {
+      "command": "favro-mcp"
+    }
+  }
+}
+```
+
+**3. Restart Claude Desktop.** The tools `favro_help` and `favro_run` will appear automatically.
+
+Claude can now run any favro command on your behalf:
+
+```diff
++ you  What boards are in my scoped collection?
+
+  claude  [calls favro_run: "collections list --json"]
+
+          Found 3 boards: Sprint Backlog, Bug Tracker, Q3 Roadmap.
+          Want me to show the cards from any of them?
+```
+
+The MCP server shells out to the `favro` binary — it has no separate logic. Every command you can type in the terminal, Claude can call through the MCP tools.
+
+---
+
+### Claude Code / Cursor / Windsurf / Gemini CLI
+
+Open the favro-cli folder in your LLM coding tool and ask it:
 
 ```
 Install the favro-cli skill for yourself. The skill is at
