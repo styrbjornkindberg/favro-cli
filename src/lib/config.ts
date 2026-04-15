@@ -24,13 +24,6 @@ export interface FavroConfig {
   /** Cached Favro userId — resolved during `auth login` by matching email against /users */
   userId?: string;
   outputFormat?: 'table' | 'json' | 'csv';
-  /** AI provider configuration for LLM-powered commands */
-  ai?: {
-    provider: 'anthropic' | 'openai' | 'ollama';
-    model?: string;
-    apiKey?: string;
-    ollamaBaseUrl?: string;
-  };
 }
 
 export const CONFIG_DIR = path.join(os.homedir(), '.favro');

@@ -129,6 +129,8 @@ export declare class CardsAPI {
     /**
      * Get the raw detailedDescription for a card in markdown format,
      * preserving formatting for safe round-trips.
+     * Fetches task list items separately and strips them from the markdown,
+     * since Favro injects them into the GET response but they're separate objects.
      */
     getRawDescription(cardId: string): Promise<string>;
     /**

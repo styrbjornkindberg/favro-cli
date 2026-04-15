@@ -135,12 +135,45 @@ class CardsAPI {
     /**
      * Get the raw detailedDescription for a card in markdown format,
      * preserving formatting for safe round-trips.
+     * Fetches task list items separately and strips them from the markdown,
+     * since Favro injects them into the GET response but they're separate objects.
      */
     async getRawDescription(cardId) {
         const rawCard = await this.client.get(`/cards/${cardId}`, {
             params: { descriptionFormat: 'markdown' },
         });
-        return rawCard.detailedDescription ?? '';
+        const md = rawCard.detailedDescription ?? '';
+        const cardCommonId = rawCard.cardCommonId ?? rawCard.cardId;
+        try {
+            const tasks = await this.client.get(`/tasks`, { params: { cardCommonId } });
+            const taskItems = tasks.entities ?? [];
+            if (taskItems.length === 0)
+                return md;
+            // Build a set of task names for matching — Favro injects these as -[ ] or -[x] lines
+            const taskNames = new Set(taskItems.map(t => t.name));
+            // Only strip the TRAILING block of task items (Favro injects them at the end).
+            // Don't touch task-like lines in the middle — those are real description content.
+            const lines = md.split('\n');
+            let cutIndex = lines.length;
+            for (let i = lines.length - 1; i >= 0; i--) {
+                const trimmed = lines[i].trim();
+                if (trimmed === '') {
+                    cutIndex = i;
+                    continue;
+                }
+                const match = trimmed.match(/^\\?-\s*\\?\[[ x]\\?\]\s*(.+)$/);
+                if (match && taskNames.has(match[1])) {
+                    cutIndex = i;
+                    continue;
+                }
+                break;
+            }
+            if (cutIndex < lines.length) {
+                return lines.slice(0, cutIndex).join('\n').replace(/\n+$/, '');
+            }
+        }
+        catch { /* best effort — return full markdown if tasks API fails */ }
+        return md;
     }
     /**
      * Get a single card with optional includes (board, collection, custom-fields, links, comments).

@@ -98,7 +98,6 @@ const tasklists_1 = require("./commands/tasklists");
 const dependencies_1 = require("./commands/dependencies");
 const attachments_1 = require("./commands/attachments");
 const users_1 = require("./commands/users");
-const ai_1 = require("./commands/ai");
 const skill_1 = require("./commands/skill");
 const git_1 = require("./commands/git");
 const shell_1 = require("./commands/shell");
@@ -188,7 +187,6 @@ function buildProgram() {
     // ─── users & groups commands ───────────────────────────────────────────────────
     (0, users_1.registerUsersCommands)(program);
     // ─── AI commands ────────────────────────────────────────────────────────────
-    (0, ai_1.registerAICommands)(program);
     // ─── skill commands ─────────────────────────────────────────────────────────
     (0, skill_1.registerSkillCommands)(program);
     // ─── git commands ───────────────────────────────────────────────────────────
@@ -457,7 +455,8 @@ function buildProgram() {
         'Tip: Use `favro cards list --json` to find card IDs.')
         .option('--name <name>', 'New card name (single card update)')
         .option('--description <desc>', 'Card description (single card update)')
-        .option('--append-description <text>', 'Append text to existing description')
+        .option('--append-description <text>', 'Append text to existing description (⚠️ lossy if card has checklists)')
+        .option('--comment <text>', 'Add a comment to the card (non-destructive)')
         .option('--status <status>', 'Card status to set')
         .option('--assignees <list>', 'Assignees (comma-separated, single card update)')
         .option('--assignee <user>', 'Assignee for batch assign (use with --board)')
@@ -766,6 +765,18 @@ function buildProgram() {
             const card = await api.getCard(cardId);
             // --append-description: fetch raw description to preserve Favro's rich text format
             if (options.appendDescription) {
+                // Warn if card has task lists — round-trip will escape checklist syntax
+                const cardCommonId = card.cardCommonId ?? cardId;
+                try {
+                    const { TasksAPI } = await Promise.resolve().then(() => __importStar(require('./lib/tasks-api')));
+                    const tasksApi = new TasksAPI(client);
+                    const tasks = await tasksApi.listTasks(cardCommonId);
+                    if (tasks.length > 0) {
+                        console.warn('⚠  This card has checklists. Appending to the description will cause Favro to');
+                        console.warn('   escape checklist items in the description text. Consider using --comment instead.');
+                    }
+                }
+                catch { /* best effort */ }
                 const appendText = options.appendDescription.replace(/\\n/g, '\n');
                 const rawDescription = await api.getRawDescription(cardId);
                 updateData.description = rawDescription + appendText;
@@ -777,10 +788,25 @@ function buildProgram() {
                 console.log('Aborted.');
                 process.exit(0);
             }
-            const updatedCard = await api.updateCard(cardId, updateData);
-            console.log(`✓ Card updated: ${updatedCard.cardId}`);
-            if (options.json)
-                console.log(JSON.stringify(updatedCard));
+            // --comment: add a comment via the comments API (non-destructive)
+            if (options.comment) {
+                const commentText = options.comment.replace(/\\n/g, '\n');
+                const { CommentsAPI } = await Promise.resolve().then(() => __importStar(require('./lib/comments-api')));
+                const commentsApi = new CommentsAPI(client);
+                const cardCommonId = card.cardCommonId ?? cardId;
+                await commentsApi.add(cardCommonId, commentText);
+                console.log(`✓ Comment added to card "${card.name}"`);
+            }
+            // Only call updateCard if there are fields to update (not just a comment)
+            if (Object.keys(updateData).length > 0) {
+                const updatedCard = await api.updateCard(cardId, updateData);
+                console.log(`✓ Card updated: ${updatedCard.cardId}`);
+                if (options.json)
+                    console.log(JSON.stringify(updatedCard));
+            }
+            else if (!options.comment) {
+                console.log('Nothing to update.');
+            }
         }
         catch (error) {
             (0, error_handler_1.logError)(error, program.opts().verbose);

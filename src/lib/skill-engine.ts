@@ -5,19 +5,14 @@
  * that is dispatched to the underlying API layer.
  *
  * Supported commands in skill steps:
- *   ask, do, context, query, standup, sprint-plan, risks, audit,
- *   release-check, explain, batch-smart, propose, execute
+ *   context, query, standup, sprint-plan, audit
  */
 import FavroHttpClient from '../lib/http-client';
 import { createFavroClient } from './client-factory';
-import { readConfig } from './config';
-import { createAIProvider, collectCompletion, AIProvider } from './ai-provider';
 import { confirmAction } from './safety';
 import ContextAPI from '../api/context';
 import { StandupAPI } from '../api/standup';
 import { SprintPlanAPI } from '../api/sprint-plan';
-import { buildAskPrompt, buildExplainPrompt } from './ai-prompt';
-import { generatePlan } from '../api/ai-planner';
 import { SkillDefinition, SkillStep, SkillVariable } from './skill-store';
 import { parseSince } from './audit-api';
 
@@ -103,7 +98,6 @@ async function executeStep(
   step: SkillStep,
   vars: Record<string, string>,
   client: FavroHttpClient,
-  aiProvider: AIProvider | null,
   options: SkillRunOptions,
 ): Promise<string> {
   const args = interpolateArgs(step.args, vars);
@@ -115,50 +109,6 @@ async function executeStep(
       const contextApi = new ContextAPI(client);
       const snapshot = await contextApi.getSnapshot(board, parseInt(args.limit ?? '1000', 10));
       return JSON.stringify(snapshot, null, 2);
-    }
-
-    case 'ask': {
-      const board = args.board ?? vars.board;
-      const question = args.question;
-      if (!board || !question) throw new Error('Step requires "board" and "question" arguments');
-      if (!aiProvider) throw new Error('AI provider not configured — run `favro ai setup`');
-      const contextApi = new ContextAPI(client);
-      const snapshot = await contextApi.getSnapshot(board);
-      const { system, user } = buildAskPrompt(snapshot, question);
-      return collectCompletion(aiProvider.complete(system, [{ role: 'user', content: user }]));
-    }
-
-    case 'do': {
-      const board = args.board ?? vars.board;
-      const goal = args.goal;
-      if (!board || !goal) throw new Error('Step requires "board" and "goal" arguments');
-      if (!aiProvider) throw new Error('AI provider not configured — run `favro ai setup`');
-      const contextApi = new ContextAPI(client);
-      const snapshot = await contextApi.getSnapshot(board);
-      const { plan, rawResponse } = await generatePlan(snapshot, goal, aiProvider);
-
-      if (plan.length === 0) return 'No changes needed.';
-
-      if (options.dryRun) {
-        return `[dry-run] Plan (${plan.length} operations):\n` +
-          plan.map(op => `  ${op.method} ${op.path} — ${op.description}`).join('\n');
-      }
-
-      return `Plan generated (${plan.length} operations):\n` +
-        plan.map(op => `  ${op.method} ${op.path} — ${op.description}`).join('\n') +
-        '\n\n(Use `favro do` directly to execute plans)';
-    }
-
-    case 'explain': {
-      const cardId = args.cardId ?? args.card;
-      if (!cardId) throw new Error('Step requires "cardId" argument');
-      if (!aiProvider) throw new Error('AI provider not configured — run `favro ai setup`');
-      const CardsAPI = (await import('../lib/cards-api')).default;
-      const cardsApi = new CardsAPI(client);
-      const card = await cardsApi.getCard(cardId);
-      const cardData = `# Card: ${card.name}\nID: ${card.cardId}\nStatus: ${card.status ?? 'unknown'}\nAssignees: ${card.assignees?.join(', ') ?? 'none'}`;
-      const { system, user } = buildExplainPrompt(cardData);
-      return collectCompletion(aiProvider.complete(system, [{ role: 'user', content: user }]));
     }
 
     case 'standup': {
@@ -208,7 +158,7 @@ async function executeStep(
     }
 
     default:
-      throw new Error(`Unknown skill command: "${step.command}". Supported: context, ask, do, explain, standup, sprint-plan, query, audit`);
+      throw new Error(`Unknown skill command: "${step.command}". Supported: context, standup, sprint-plan, query, audit`);
   }
 }
 
@@ -223,17 +173,6 @@ export async function runSkill(
 ): Promise<SkillRunResult> {
   const vars = resolveVariables(skill.variables, options.variables ?? {});
   const client = await createFavroClient();
-
-  // Resolve AI provider (optional — not all steps need it)
-  let aiProvider: AIProvider | null = null;
-  try {
-    const config = await readConfig();
-    if (config.ai?.provider) {
-      aiProvider = createAIProvider(config.ai);
-    }
-  } catch {
-    // No AI provider available — that's okay for non-AI steps
-  }
 
   const results: StepResult[] = [];
   let hasFailure = false;
@@ -263,7 +202,7 @@ export async function runSkill(
     }
 
     try {
-      const output = await executeStep(step, vars, client, aiProvider, options);
+      const output = await executeStep(step, vars, client, options);
       const result: StepResult = { step: stepNum, command: step.command, status: 'success', output };
       results.push(result);
       options.onStepComplete?.(result);

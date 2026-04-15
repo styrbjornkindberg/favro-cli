@@ -26,7 +26,6 @@ This reference documents every command, flag, and option available in the favro-
 18. [Users & Groups](#users--groups)
 19. [Batch Operations](#batch-operations)
 20. [AI / Smart Commands](#ai-smart-commands)
-21. [LLM-Powered AI Commands](#llm-powered-ai-commands)
 22. [Skills — Reusable Workflows](#skills--reusable-workflows)
 
 ---
@@ -890,70 +889,6 @@ Board risk analysis — surfaces blocked, stale, unassigned, and incomplete card
 |------|-------------|
 | `--json` | Output raw JSON |
 | `--stale-days <n>` | Days without update to consider stale |
-
----
-
-## LLM-Powered AI Commands
-
-These commands require an AI provider configured via `favro ai setup` or environment variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`).
-
-### `ai setup` 🔧 CONFIG
-Configure the AI provider for LLM-powered commands.
-
-| Flag | Description |
-|------|-------------|
-| `--provider <provider>` | AI provider: `anthropic`, `openai`, `ollama` |
-| `--model <model>` | Model name (default depends on provider) |
-| `--api-key <key>` | API key for the provider |
-| `--ollama-url <url>` | Ollama base URL (default: `http://localhost:11434`) |
-
-Auto-detects provider from `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` env vars if `--provider` is omitted.
-
-### `ask <board> <question>` 📖 READ
-Ask an AI question about a board. Fetches board context and sends it to the LLM.
-
-| Flag | Description |
-|------|-------------|
-| `--json` | Output raw JSON response |
-| `--context-only` | Dump board context without calling the LLM (debugging) |
-| `--limit <n>` | Max cards in context (default: 1000, max: 5000) |
-
-Examples:
-```bash
-favro ask "Sprint 42" "What cards are blocked?"
-favro ask board-123 "Summarize alice workload" --json
-favro ask board-123 "What cards are overdue?" --context-only
-```
-
-### `do <board> <goal>` ⚠️ WRITE — HIGH BLAST RADIUS
-Execute a goal on a board using AI-generated planning. The LLM analyzes the board and generates an execution plan, previews it, and executes after confirmation.
-
-| Flag | Description |
-|------|-------------|
-| `--dry-run` | Show the plan without executing |
-| `-y, --yes` | Skip confirmation prompt |
-| `--json` | Output plan as JSON |
-
-Examples:
-```bash
-favro do "Sprint 42" "move all overdue cards to Review"
-favro do board-123 "assign all unassigned bugs to alice" --dry-run
-favro do board-123 "triage new cards" --yes
-```
-
-### `explain <cardId>` 📖 READ
-AI-generated summary of a card — fetches card details and comments, then produces a structured analysis.
-
-| Flag | Description |
-|------|-------------|
-| `--json` | Output raw JSON response |
-| `--board <boardId>` | Board context for richer analysis |
-
-Examples:
-```bash
-favro explain abc123
-favro explain abc123 --json
-```
 
 ---
 

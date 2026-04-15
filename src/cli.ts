@@ -61,7 +61,6 @@ import { registerTaskListsCommands } from './commands/tasklists';
 import { registerDependenciesCommands } from './commands/dependencies';
 import { registerAttachmentsCommands } from './commands/attachments';
 import { registerUsersCommands } from './commands/users';
-import { registerAICommands } from './commands/ai';
 import { registerSkillCommands } from './commands/skill';
 import { registerGitCommands } from './commands/git';
 import { registerShellCommand } from './commands/shell';
@@ -177,7 +176,6 @@ registerAttachmentsCommands(program);
 registerUsersCommands(program);
 
 // ─── AI commands ────────────────────────────────────────────────────────────
-registerAICommands(program);
 
 // ─── skill commands ─────────────────────────────────────────────────────────
 registerSkillCommands(program);

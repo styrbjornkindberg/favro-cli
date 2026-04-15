@@ -15,13 +15,11 @@
     "mcp": "node dist/mcp-server.js"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.81.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "axios": "^1.6.0",
     "chalk": "^4.1.2",
     "commander": "^12.0.0",
     "enquirer": "^2.4.1",
-    "openai": "^6.33.0",
     "yaml": "^2.8.3",
     "zod": "^4.3.6"
   },
