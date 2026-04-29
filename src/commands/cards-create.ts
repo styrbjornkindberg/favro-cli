@@ -16,6 +16,7 @@ export function registerCardsCreateCommand(program: Command): void {
     .option('--board <id>', 'Target board ID')
     .option('--description <text>', 'Card description')
     .option('--status <status>', 'Card status')
+    .option('--parent <cardId>', 'Parent card ID (creates as child card)')
     .option('--filter <filter>', 'Filter expression for card selection')
     .option('--bulk <file>', 'Bulk create from JSON file')
     .option('--json', 'Output as JSON')
@@ -23,6 +24,7 @@ export function registerCardsCreateCommand(program: Command): void {
       board?: string;
       description?: string;
       status?: string;
+      parent?: string;
       filter?: string;
       bulk?: string;
       json?: boolean;
@@ -62,6 +64,7 @@ export function registerCardsCreateCommand(program: Command): void {
             description: options.description,
             status: options.status,
             boardId: options.board,
+            parentCardId: options.parent,
           });
           console.log(`✓ Card created: ${card.cardId}`);
           if (options.json) console.log(JSON.stringify(card));
