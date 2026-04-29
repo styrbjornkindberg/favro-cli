@@ -275,6 +275,7 @@ class CardsAPI {
         }
         if (payload.description !== undefined) {
             payload.detailedDescription = payload.description;
+            payload.descriptionFormat = 'markdown';
             delete payload.description;
         }
         return this.client.post('/cards', payload);
@@ -287,6 +288,7 @@ class CardsAPI {
         const payload = { ...data };
         if (payload.description !== undefined) {
             payload.detailedDescription = payload.description;
+            payload.descriptionFormat = 'markdown';
             delete payload.description;
         }
         if (payload.boardId !== undefined) {

@@ -395,6 +395,7 @@ export class CardsAPI {
     }
     if (payload.description !== undefined) {
       payload.detailedDescription = payload.description;
+      payload.descriptionFormat = 'markdown';
       delete payload.description;
     }
     return this.client.post<Card>('/cards', payload);
@@ -409,6 +410,7 @@ export class CardsAPI {
     const payload: Record<string, unknown> = { ...data };
     if (payload.description !== undefined) {
       payload.detailedDescription = payload.description;
+      payload.descriptionFormat = 'markdown';
       delete payload.description;
     }
     if (payload.boardId !== undefined) {
