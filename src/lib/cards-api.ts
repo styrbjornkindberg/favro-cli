@@ -200,12 +200,19 @@ export class CardsAPI {
     let page = 0;
     let totalPages = 1;
     let requestId: string | undefined;
+    // Favro's API can 500 when descriptionFormat=markdown if any card on the
+    // board has a description that crashes their markdown converter. Once we
+    // detect this, drop the flag for the remainder of this call so we still
+    // return cards (plain-text descriptions instead of markdown).
+    let useMarkdownDescription = true;
 
     while (allCards.length < effectiveLimit && page < totalPages) {
       const params: Record<string, unknown> = {
         limit: Math.min(effectiveLimit - allCards.length, 100),
-        descriptionFormat: 'markdown',
       };
+      if (useMarkdownDescription) {
+        params.descriptionFormat = 'markdown';
+      }
 
       // Favro uses widgetCommonId to scope cards to a board
       if (opts.boardId) {
@@ -232,7 +239,21 @@ export class CardsAPI {
         params.page = page;
       }
 
-      const response = await this.client.get<PaginatedResponse<Card>>(path, { params });
+      let response: PaginatedResponse<Card>;
+      try {
+        response = await this.client.get<PaginatedResponse<Card>>(path, { params });
+      } catch (err) {
+        // Fall back to default (non-markdown) description format on 500 — works around
+        // a Favro server-side markdown-converter crash triggered by certain card content.
+        const status = (err as { response?: { status?: number } })?.response?.status;
+        if (status === 500 && useMarkdownDescription) {
+          useMarkdownDescription = false;
+          delete params.descriptionFormat;
+          response = await this.client.get<PaginatedResponse<Card>>(path, { params });
+        } else {
+          throw err;
+        }
+      }
 
       const entities = (response.entities as unknown as RawCard[] ?? []).map(normalizeCard);
       allCards.push(...entities);
@@ -261,9 +282,17 @@ export class CardsAPI {
    * since Favro injects them into the GET response but they're separate objects.
    */
   async getRawDescription(cardId: string): Promise<string> {
-    const rawCard = await this.client.get<RawCard>(`/cards/${cardId}`, {
-      params: { descriptionFormat: 'markdown' },
-    });
+    let rawCard: RawCard;
+    try {
+      rawCard = await this.client.get<RawCard>(`/cards/${cardId}`, {
+        params: { descriptionFormat: 'markdown' },
+      });
+    } catch (err) {
+      const status = (err as { response?: { status?: number } })?.response?.status;
+      if (status !== 500) throw err;
+      // Fall back to default format when markdown rendering crashes server-side
+      rawCard = await this.client.get<RawCard>(`/cards/${cardId}`);
+    }
     const md = rawCard.detailedDescription ?? '';
     const cardCommonId = rawCard.cardCommonId ?? rawCard.cardId;
     try {
@@ -301,8 +330,16 @@ export class CardsAPI {
     if (includes.length > 0) {
       params.include = includes.join(',');
     }
-    const getConfig = { params };
-    const rawCard = await this.client.get<RawCard>(`/cards/${cardId}`, getConfig);
+    let rawCard: RawCard;
+    try {
+      rawCard = await this.client.get<RawCard>(`/cards/${cardId}`, { params });
+    } catch (err) {
+      const status = (err as { response?: { status?: number } })?.response?.status;
+      if (status !== 500) throw err;
+      // Fall back to default format when markdown rendering crashes server-side
+      delete params.descriptionFormat;
+      rawCard = await this.client.get<RawCard>(`/cards/${cardId}`, { params });
+    }
     const card = normalizeCard(rawCard);
 
     // Hydrate board/collection if requested and not already present
@@ -431,9 +468,19 @@ export class CardsAPI {
   }
 
   async searchCards(query: string, limit: number = 50): Promise<Card[]> {
-    const response = await this.client.get<PaginatedResponse<Card>>('/cards/search', {
-      params: { q: query, limit, descriptionFormat: 'markdown' }
-    });
+    let response: PaginatedResponse<Card>;
+    try {
+      response = await this.client.get<PaginatedResponse<Card>>('/cards/search', {
+        params: { q: query, limit, descriptionFormat: 'markdown' }
+      });
+    } catch (err) {
+      const status = (err as { response?: { status?: number } })?.response?.status;
+      if (status !== 500) throw err;
+      // Fall back to default format when markdown rendering crashes server-side
+      response = await this.client.get<PaginatedResponse<Card>>('/cards/search', {
+        params: { q: query, limit }
+      });
+    }
     return response.entities ?? [];
   }
 }

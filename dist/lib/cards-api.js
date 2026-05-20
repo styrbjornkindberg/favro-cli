@@ -88,11 +88,18 @@ class CardsAPI {
         let page = 0;
         let totalPages = 1;
         let requestId;
+        // Favro's API can 500 when descriptionFormat=markdown if any card on the
+        // board has a description that crashes their markdown converter. Once we
+        // detect this, drop the flag for the remainder of this call so we still
+        // return cards (plain-text descriptions instead of markdown).
+        let useMarkdownDescription = true;
         while (allCards.length < effectiveLimit && page < totalPages) {
             const params = {
                 limit: Math.min(effectiveLimit - allCards.length, 100),
-                descriptionFormat: 'markdown',
             };
+            if (useMarkdownDescription) {
+                params.descriptionFormat = 'markdown';
+            }
             // Favro uses widgetCommonId to scope cards to a board
             if (opts.boardId) {
                 params.widgetCommonId = opts.boardId;
@@ -113,7 +120,23 @@ class CardsAPI {
                 params.requestId = requestId;
                 params.page = page;
             }
-            const response = await this.client.get(path, { params });
+            let response;
+            try {
+                response = await this.client.get(path, { params });
+            }
+            catch (err) {
+                // Fall back to default (non-markdown) description format on 500 — works around
+                // a Favro server-side markdown-converter crash triggered by certain card content.
+                const status = err?.response?.status;
+                if (status === 500 && useMarkdownDescription) {
+                    useMarkdownDescription = false;
+                    delete params.descriptionFormat;
+                    response = await this.client.get(path, { params });
+                }
+                else {
+                    throw err;
+                }
+            }
             const entities = (response.entities ?? []).map(normalizeCard);
             allCards.push(...entities);
             // Update pagination state from response
@@ -139,9 +162,19 @@ class CardsAPI {
      * since Favro injects them into the GET response but they're separate objects.
      */
     async getRawDescription(cardId) {
-        const rawCard = await this.client.get(`/cards/${cardId}`, {
-            params: { descriptionFormat: 'markdown' },
-        });
+        let rawCard;
+        try {
+            rawCard = await this.client.get(`/cards/${cardId}`, {
+                params: { descriptionFormat: 'markdown' },
+            });
+        }
+        catch (err) {
+            const status = err?.response?.status;
+            if (status !== 500)
+                throw err;
+            // Fall back to default format when markdown rendering crashes server-side
+            rawCard = await this.client.get(`/cards/${cardId}`);
+        }
         const md = rawCard.detailedDescription ?? '';
         const cardCommonId = rawCard.cardCommonId ?? rawCard.cardId;
         try {
@@ -184,8 +217,18 @@ class CardsAPI {
         if (includes.length > 0) {
             params.include = includes.join(',');
         }
-        const getConfig = { params };
-        const rawCard = await this.client.get(`/cards/${cardId}`, getConfig);
+        let rawCard;
+        try {
+            rawCard = await this.client.get(`/cards/${cardId}`, { params });
+        }
+        catch (err) {
+            const status = err?.response?.status;
+            if (status !== 500)
+                throw err;
+            // Fall back to default format when markdown rendering crashes server-side
+            delete params.descriptionFormat;
+            rawCard = await this.client.get(`/cards/${cardId}`, { params });
+        }
         const card = normalizeCard(rawCard);
         // Hydrate board/collection if requested and not already present
         if (includes.includes('board') && card.boardId && !card.board) {
@@ -307,9 +350,21 @@ class CardsAPI {
         await this.client.delete(`/cards/${cardId}`);
     }
     async searchCards(query, limit = 50) {
-        const response = await this.client.get('/cards/search', {
-            params: { q: query, limit, descriptionFormat: 'markdown' }
-        });
+        let response;
+        try {
+            response = await this.client.get('/cards/search', {
+                params: { q: query, limit, descriptionFormat: 'markdown' }
+            });
+        }
+        catch (err) {
+            const status = err?.response?.status;
+            if (status !== 500)
+                throw err;
+            // Fall back to default format when markdown rendering crashes server-side
+            response = await this.client.get('/cards/search', {
+                params: { q: query, limit }
+            });
+        }
         return response.entities ?? [];
     }
 }
