@@ -73,6 +73,7 @@ function registerCardsUpdateCommand(program) {
         .option('--status <status>', 'Card status')
         .option('--assignees <list>', 'Assignees (comma-separated)')
         .option('--tags <list>', 'Tags (comma-separated)')
+        .option('--parent <cardId>', 'Set or change parent card ID')
         .option('--column <column>', 'Move card to this column (by name, requires --board)')
         .option('--board <boardId>', 'Board ID (required when using --column)')
         .option('--filter <filter>', 'Filter expression for card selection')
@@ -106,6 +107,8 @@ function registerCardsUpdateCommand(program) {
                 updateData.assignees = options.assignees.split(',');
             if (options.tags)
                 updateData.tags = options.tags.split(',');
+            if (options.parent)
+                updateData.parentCardId = options.parent;
             // Column move: resolve column name → columnId
             if (options.column) {
                 if (!options.board) {
