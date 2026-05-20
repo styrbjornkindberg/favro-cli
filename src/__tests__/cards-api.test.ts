@@ -280,7 +280,7 @@ describe('Cards API', () => {
     const result = await api.createCard({ name: 'Full', description: 'desc', status: 'todo', boardId: 'board-1' });
     expect(result.description).toBe('desc');
     expect(mockClient.post).toHaveBeenCalledWith('/cards', {
-      name: 'Full', detailedDescription: 'desc', status: 'todo', widgetCommonId: 'board-1'
+      name: 'Full', detailedDescription: 'desc', descriptionFormat: 'markdown', status: 'todo', widgetCommonId: 'board-1'
     });
   });
 
