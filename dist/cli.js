@@ -78,6 +78,7 @@ const collections_create_1 = require("./commands/collections-create");
 const collections_update_1 = require("./commands/collections-update");
 const collections_delete_1 = require("./commands/collections-delete");
 const cards_get_1 = require("./commands/cards-get");
+const cards_find_1 = require("./commands/cards-find");
 const cards_link_1 = require("./commands/cards-link");
 const custom_fields_1 = require("./commands/custom-fields");
 const members_1 = require("./commands/members");
@@ -136,7 +137,7 @@ function buildProgram() {
         'Authentication:\n' +
         '  Set FAVRO_API_KEY env var, or run `favro auth login` to save to ~/.favro/config.json\n\n' +
         'Full docs: https://github.com/square-moon/favro-cli#readme')
-        .version('2.0.1')
+        .version('2.1.0')
         .option('--verbose', 'Show stack traces for errors');
     // ─── auth commands ────────────────────────────────────────────────────────────
     (0, auth_1.registerAuthCommand)(program);
@@ -228,6 +229,8 @@ function buildProgram() {
         '  favro cards export <id> --format csv --out cards.csv');
     // ─── cards get ───────────────────────────────────────────────────────────────
     (0, cards_get_1.registerCardsGetCommand)(cards);
+    // ─── cards find ──────────────────────────────────────────────────────────────
+    (0, cards_find_1.registerCardsFindCommand)(cards);
     // ─── cards list ──────────────────────────────────────────────────────────────
     cards
         .command('list [boardId]')

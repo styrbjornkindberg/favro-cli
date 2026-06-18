@@ -114,6 +114,27 @@ export interface ListCardsOptions {
     filter?: string;
     unique?: boolean;
 }
+/** Parsed components of a Favro card web URL. */
+export interface ParsedCardUrl {
+    /** Organization ID from the URL path */
+    organizationId?: string;
+    /** Board (widget) or collection ID from the URL path */
+    widgetCommonId?: string;
+    /** Raw `card=` query value, e.g. "Squ-8850" */
+    cardSequentialIdLabel: string;
+    /** Numeric sequential ID parsed from the label, e.g. 8850 */
+    sequentialId: number;
+}
+/**
+ * Parse a Favro card web URL into its components.
+ * Expected shape:
+ *   https://favro.com/organization/<orgId>/<widgetOrCollectionId>?card=<Prefix>-<number>
+ * The `card=` query value (e.g. "Squ-8850") encodes the card's human-readable
+ * sequential ID; the trailing number is the Favro API `cardSequentialId`.
+ *
+ * @throws if the URL is malformed or has no parseable card sequential ID.
+ */
+export declare function parseCardUrl(url: string): ParsedCardUrl;
 export declare class CardsAPI {
     private client;
     constructor(client: FavroHttpClient);
@@ -161,6 +182,22 @@ export declare class CardsAPI {
     createCards(cards: CreateCardRequest[]): Promise<Card[]>;
     updateCard(cardId: string, data: UpdateCardRequest): Promise<Card>;
     deleteCard(cardId: string): Promise<void>;
+    /**
+     * Find a card by its numeric sequential ID — the trailing number in a card's
+     * human-readable label (e.g. 8850 in "Squ-8850"). Searches org-wide and
+     * returns the first match, or null if none found.
+     * Pass `widgetCommonId` to scope the lookup to a single board.
+     */
+    findCardBySequentialId(sequentialId: number, options?: {
+        widgetCommonId?: string;
+    }): Promise<Card | null>;
+    /**
+     * Find a card from its Favro web URL, e.g.
+     *   https://favro.com/organization/<orgId>/<board>?card=Squ-8850
+     * Parses the URL and looks the card up via its sequential ID.
+     * Returns null if no matching card exists.
+     */
+    findCardByUrl(url: string): Promise<Card | null>;
     searchCards(query: string, limit?: number): Promise<Card[]>;
 }
 export default CardsAPI;

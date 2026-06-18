@@ -41,6 +41,7 @@ import { registerCollectionsCreateCommand } from './commands/collections-create'
 import { registerCollectionsUpdateCommand } from './commands/collections-update';
 import { registerCollectionsDeleteCommand } from './commands/collections-delete';
 import { registerCardsGetCommand } from './commands/cards-get';
+import { registerCardsFindCommand } from './commands/cards-find';
 import { registerCardsLinkCommands } from './commands/cards-link';
 import { registerCustomFieldsCommands } from './commands/custom-fields';
 import { registerMembersCommand } from './commands/members';
@@ -104,7 +105,7 @@ program
     '  Set FAVRO_API_KEY env var, or run `favro auth login` to save to ~/.favro/config.json\n\n' +
     'Full docs: https://github.com/square-moon/favro-cli#readme'
   )
-  .version('2.0.1')
+  .version('2.1.0')
   .option('--verbose', 'Show stack traces for errors');
 
 // ─── auth commands ────────────────────────────────────────────────────────────
@@ -226,6 +227,9 @@ const cards = program.command('cards').description(
 
 // ─── cards get ───────────────────────────────────────────────────────────────
 registerCardsGetCommand(cards);
+
+// ─── cards find ──────────────────────────────────────────────────────────────
+registerCardsFindCommand(cards);
 
 // ─── cards list ──────────────────────────────────────────────────────────────
 cards

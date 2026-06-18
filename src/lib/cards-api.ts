@@ -174,6 +174,56 @@ export interface ListCardsOptions {
   unique?: boolean;
 }
 
+/** Parsed components of a Favro card web URL. */
+export interface ParsedCardUrl {
+  /** Organization ID from the URL path */
+  organizationId?: string;
+  /** Board (widget) or collection ID from the URL path */
+  widgetCommonId?: string;
+  /** Raw `card=` query value, e.g. "Squ-8850" */
+  cardSequentialIdLabel: string;
+  /** Numeric sequential ID parsed from the label, e.g. 8850 */
+  sequentialId: number;
+}
+
+/**
+ * Parse a Favro card web URL into its components.
+ * Expected shape:
+ *   https://favro.com/organization/<orgId>/<widgetOrCollectionId>?card=<Prefix>-<number>
+ * The `card=` query value (e.g. "Squ-8850") encodes the card's human-readable
+ * sequential ID; the trailing number is the Favro API `cardSequentialId`.
+ *
+ * @throws if the URL is malformed or has no parseable card sequential ID.
+ */
+export function parseCardUrl(url: string): ParsedCardUrl {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error(`Invalid card URL: ${url}`);
+  }
+
+  const cardParam = parsed.searchParams.get('card');
+  if (!cardParam) {
+    throw new Error(`Card URL is missing the "card" query parameter: ${url}`);
+  }
+
+  // cardParam looks like "Squ-8850" — the trailing digits are the sequential ID.
+  const match = cardParam.match(/(\d+)\s*$/);
+  if (!match) {
+    throw new Error(`Could not parse a sequential ID from card="${cardParam}"`);
+  }
+  const sequentialId = parseInt(match[1], 10);
+
+  // Path: /organization/<orgId>/<widgetOrCollectionId>
+  const segments = parsed.pathname.split('/').filter(Boolean);
+  const orgIdx = segments.indexOf('organization');
+  const organizationId = orgIdx >= 0 ? segments[orgIdx + 1] : undefined;
+  const widgetCommonId = orgIdx >= 0 ? segments[orgIdx + 2] : undefined;
+
+  return { organizationId, widgetCommonId, cardSequentialIdLabel: cardParam, sequentialId };
+}
+
 export class CardsAPI {
   constructor(private client: FavroHttpClient) {}
 
@@ -465,6 +515,51 @@ export class CardsAPI {
 
   async deleteCard(cardId: string): Promise<void> {
     await this.client.delete(`/cards/${cardId}`);
+  }
+
+  /**
+   * Find a card by its numeric sequential ID — the trailing number in a card's
+   * human-readable label (e.g. 8850 in "Squ-8850"). Searches org-wide and
+   * returns the first match, or null if none found.
+   * Pass `widgetCommonId` to scope the lookup to a single board.
+   */
+  async findCardBySequentialId(
+    sequentialId: number,
+    options?: { widgetCommonId?: string },
+  ): Promise<Card | null> {
+    const params: Record<string, unknown> = {
+      cardSequentialId: sequentialId,
+      unique: true,
+      descriptionFormat: 'markdown',
+    };
+    if (options?.widgetCommonId) {
+      params.widgetCommonId = options.widgetCommonId;
+    }
+
+    let response: PaginatedResponse<Card>;
+    try {
+      response = await this.client.get<PaginatedResponse<Card>>('/cards', { params });
+    } catch (err) {
+      const status = (err as { response?: { status?: number } })?.response?.status;
+      if (status !== 500) throw err;
+      // Fall back to default format when markdown rendering crashes server-side
+      delete params.descriptionFormat;
+      response = await this.client.get<PaginatedResponse<Card>>('/cards', { params });
+    }
+
+    const entities = ((response.entities as unknown as RawCard[]) ?? []).map(normalizeCard);
+    return entities[0] ?? null;
+  }
+
+  /**
+   * Find a card from its Favro web URL, e.g.
+   *   https://favro.com/organization/<orgId>/<board>?card=Squ-8850
+   * Parses the URL and looks the card up via its sequential ID.
+   * Returns null if no matching card exists.
+   */
+  async findCardByUrl(url: string): Promise<Card | null> {
+    const { sequentialId } = parseCardUrl(url);
+    return this.findCardBySequentialId(sequentialId);
   }
 
   async searchCards(query: string, limit: number = 50): Promise<Card[]> {

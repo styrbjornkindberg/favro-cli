@@ -82,6 +82,7 @@ favro collections list [--json]
 favro boards list [collectionId] [--json]
 favro cards list --board <boardId> [--json] [--limit N]
 favro cards get <cardId> [--json] [--include board,collection]
+favro cards find <url> [--json]          # Find a card by its Favro web URL (?card=Squ-8850)
 
 # Smart views
 favro context <board>                    # Full board snapshot for AI workflows
@@ -303,6 +304,18 @@ favro who-changed "Fix login bug"
 favro audit <boardId> --since 1w
 favro comments list <cardId>
 ```
+
+### Finding a card from a shared URL
+
+When someone pastes a Favro card link, resolve it to a card (and its real `cardId`) directly:
+
+```bash
+favro cards find "https://favro.com/organization/<orgId>/<board>?card=Squ-8850"
+favro cards find "<url>" --json | jq -r .cardId   # Grab the cardId for follow-up commands
+```
+
+The `?card=Squ-8850` value is the card's human-readable sequential ID; `find` looks
+it up org-wide via the API and returns the first match.
 
 ---
 
