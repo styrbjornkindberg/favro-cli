@@ -38,6 +38,75 @@ beforeEach(() => {
   jest.clearAllMocks();
 });
 
+// ─── Test 0: splitCommand (via tool handlers) ─────────────────────────────────
+
+describe('quoted arguments in favro_run', () => {
+  test('passes multi-word double-quoted argument as single token', async () => {
+    mockExecSuccess('created');
+    const { tools } = createMcpServer();
+
+    await tools.get('favro_run')!({ command: 'cards create "Möjlighet att ändra betalsätt" --board abc123' });
+
+    const callArgs = mockExecFile.mock.calls[0];
+    expect(callArgs[1]).toEqual([
+      expect.stringContaining('cli.js'),
+      'cards',
+      'create',
+      'Möjlighet att ändra betalsätt',
+      '--board',
+      'abc123',
+    ]);
+  });
+
+  test('passes multi-word single-quoted argument as single token', async () => {
+    mockExecSuccess('created');
+    const { tools } = createMcpServer();
+
+    await tools.get('favro_run')!({ command: "cards create 'My Card Title' --board abc123" });
+
+    const callArgs = mockExecFile.mock.calls[0];
+    expect(callArgs[1]).toEqual([
+      expect.stringContaining('cli.js'),
+      'cards',
+      'create',
+      'My Card Title',
+      '--board',
+      'abc123',
+    ]);
+  });
+});
+
+// ─── credsEnv injection (HTTP transport) ─────────────────────────────────────
+
+describe('credsEnv injection', () => {
+  test('injects FAVRO_* creds into child env when credsEnv given', async () => {
+    mockExecSuccess('ok');
+    const credsEnv = {
+      FAVRO_EMAIL: 'a@b.com',
+      FAVRO_API_KEY: 'tok123',
+      FAVRO_ORGANIZATION_ID: 'org123',
+    };
+    const { tools } = createMcpServer({ credsEnv });
+
+    await tools.get('favro_run')!({ command: 'cards list' });
+
+    const options = mockExecFile.mock.calls[0][2] as { env?: NodeJS.ProcessEnv };
+    expect(options.env).toMatchObject(credsEnv);
+    // Ambient env is preserved (merged, not replaced)
+    expect(options.env).toMatchObject({ PATH: process.env.PATH });
+  });
+
+  test('passes ambient process.env when no credsEnv given', async () => {
+    mockExecSuccess('ok');
+    const { tools } = createMcpServer();
+
+    await tools.get('favro_help')!({ command: undefined });
+
+    const options = mockExecFile.mock.calls[0][2] as { env?: NodeJS.ProcessEnv };
+    expect(options.env).toBe(process.env);
+  });
+});
+
 // ─── Test 1: tool registration ────────────────────────────────────────────────
 
 describe('createMcpServer()', () => {

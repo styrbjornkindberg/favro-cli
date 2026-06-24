@@ -315,6 +315,57 @@ The MCP server shells out to the `favro` binary — it has no separate logic. Ev
 
 ---
 
+### Shared server (HTTP MCP)
+
+For a team deployment, host the server once and let each user connect with **their own** Favro credentials. The `favro-mcp-http` binary speaks the Streamable-HTTP MCP transport; no secrets are stored on the server — every request carries the caller's email + API token.
+
+**1. Build and run:**
+```bash
+npm install && npm run build
+FAVRO_MCP_PORT=3000 npx favro-mcp-http   # or: npm run mcp:http
+```
+Listens on `127.0.0.1:3000/mcp` by default.
+
+**2. Authentication** — each request sends HTTP Basic auth, exactly the credentials `favro auth login` asks for:
+```
+Authorization: Basic base64("you@example.com:YOUR_API_TOKEN")
+```
+The `organizationId` is auto-resolved from those credentials (cached in memory). If your account belongs to **several** organizations, also send:
+```
+X-Favro-Organization-Id: <orgId>
+```
+
+**3. Client config** (Claude Code / Cursor — HTTP MCP):
+```json
+{
+  "mcpServers": {
+    "favro": {
+      "type": "http",
+      "url": "https://favro-mcp.example.com/mcp",
+      "headers": {
+        "Authorization": "Basic <base64 of email:apiToken>"
+      }
+    }
+  }
+}
+```
+
+> **⚠ TLS is mandatory.** Basic credentials travel in a header. The server binds to localhost and does **not** terminate TLS itself — put it behind a reverse proxy (nginx/caddy) that handles HTTPS. Do not expose the raw HTTP port to the network.
+
+**Environment variables:**
+
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `FAVRO_MCP_PORT` | `3000` | Listen port |
+| `FAVRO_MCP_HOST` | `127.0.0.1` | Bind host |
+| `FAVRO_MCP_ALLOWED_HOSTS` | `127.0.0.1:<port>,localhost:<port>` | Host allowlist (DNS-rebind protection); set to your proxy's `Host` value |
+
+A fresh server instance is created per request, so credentials never cross request boundaries.
+
+**Full server deployment guide** (Linux, HTTPS on a subdomain, systemd): see [docs/DEPLOY-MCP-HTTP.md](docs/DEPLOY-MCP-HTTP.md).
+
+---
+
 ### Claude Code / Cursor / Windsurf / Gemini CLI
 
 Open the favro-cli folder in your LLM coding tool and ask it:

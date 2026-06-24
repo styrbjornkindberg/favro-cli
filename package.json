@@ -1,18 +1,20 @@
 {
   "name": "@square-moon/favro-cli",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Favro command-line interface",
   "main": "dist/index.js",
   "bin": {
     "favro": "dist/cli.js",
-    "favro-mcp": "dist/mcp-server.js"
+    "favro-mcp": "dist/mcp-server.js",
+    "favro-mcp-http": "dist/mcp-http-server.js"
   },
   "scripts": {
     "build": "tsc",
     "test": "jest",
     "test:integration": "jest --config jest.integration.config.js",
     "prepack": "npm run build",
-    "mcp": "node dist/mcp-server.js"
+    "mcp": "node dist/mcp-server.js",
+    "mcp:http": "node dist/mcp-http-server.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

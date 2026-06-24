@@ -1,0 +1,120 @@
+# Favro MCP HTTP Server — Deployment Spec
+
+What the `favro-mcp-http` server is, what it needs, and the app-specific constraints
+for fronting it with TLS. Assumes you already know how to run a Node process, write a
+unit file, and configure a reverse proxy.
+
+## What it is
+
+A Node HTTP service exposing the Favro CLI to AI clients (Claude, Cursor) over the
+MCP **Streamable-HTTP** transport. Ships in the `@square-moon/favro-cli` package as the
+`favro-mcp-http` bin (also `node dist/mcp-http-server.js`). Requires Node 20+.
+
+## Get the build
+
+Clone and build from GitHub:
+
+```bash
+git clone https://github.com/styrbjornkindberg/favro-cli.git
+cd favro-cli
+npm ci
+npm run build
+```
+
+This produces `dist/`. Run the server with `node dist/mcp-http-server.js` or
+`npm run mcp:http`. To put the `favro-mcp-http` command on PATH, `npm link` (or
+`npm install -g .`) from the repo root.
+
+## No secrets on the server
+
+The service stores **nothing**. Every request carries the caller's own Favro
+credentials as HTTP Basic auth, which pass straight through to Favro's API. There is no
+config file, no env-based API key, no per-user state to provision. Don't put Favro
+credentials in the environment or unit file.
+
+## Run target
+
+- Binds **HTTP only** to `FAVRO_MCP_HOST` (keep it `127.0.0.1`). TLS is terminated in front.
+- Single endpoint: **`POST /mcp`**. Everything else returns 404/405.
+- Stateless apart from a short in-memory cache of resolved org IDs → restart any time, safe.
+
+Environment variables (all optional):
+
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `FAVRO_MCP_PORT` | `3000` | Listen port |
+| `FAVRO_MCP_HOST` | `127.0.0.1` | Bind host — leave on localhost |
+| `FAVRO_MCP_ALLOWED_HOSTS` | `127.0.0.1:<port>,localhost:<port>` | `Host`-header allowlist (DNS-rebind protection) — **must include the public subdomain**, see below |
+
+No CLI args. Run the bin, point a reverse proxy at it.
+
+## TLS / reverse proxy — app-specific constraints
+
+1. **TLS is mandatory.** Basic credentials travel in the `Authorization` header on every
+   request. Never expose the plain HTTP port off-box.
+2. **Forward the original `Host` header.** The server has DNS-rebind protection on. It
+   rejects any request whose `Host` is not in `FAVRO_MCP_ALLOWED_HOSTS`. A proxy that
+   forwards the public host (`favro-mcp.company.com`) is the normal case — so set
+   `FAVRO_MCP_ALLOWED_HOSTS=favro-mcp.company.com`. (If your proxy instead rewrites Host
+   to `127.0.0.1:3000`, the default allowlist already covers it.)
+3. **Don't buffer the response.** Responses can stream (SSE). Disable proxy response
+   buffering and use a generous read timeout (nginx: `proxy_buffering off;`,
+   `proxy_read_timeout 300s;`). Caddy's `reverse_proxy` is fine as-is.
+4. Proxy only `POST /mcp` through; no other paths are used.
+
+## Verify
+
+```bash
+# Unauthenticated → 401 (service is up, auth enforced)
+curl -s -o /dev/null -w "%{http_code}\n" -X POST https://favro-mcp.company.com/mcp -d '{}'
+
+# Full check with real Favro creds → valid initialize response
+AUTH=$(printf 'you@company.com:YOUR_API_TOKEN' | base64)
+curl -s -X POST https://favro-mcp.company.com/mcp \
+  -H "Authorization: Basic $AUTH" \
+  -H "Accept: application/json, text/event-stream" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"curl","version":"0"}},"id":1}'
+```
+
+Note the `Accept: application/json, text/event-stream` header — the Streamable-HTTP
+transport requires it; omitting it returns 406.
+
+## Authentication detail (for debugging client issues)
+
+- Header: `Authorization: Basic base64("email:apiToken")` — the same email + token a user
+  enters in `favro auth login`.
+- `organizationId` is auto-resolved from those credentials and cached. If a user's
+  account belongs to **multiple** orgs, the server returns `400` listing the org IDs and
+  the client must add header `X-Favro-Organization-Id: <orgId>`.
+- Failure modes: missing/malformed auth → `401`; bad credentials → `401`; multi-org with
+  no header → `400`; Favro API unreachable → `502`. All as JSON-RPC error bodies.
+
+## End-user client config
+
+```json
+{
+  "mcpServers": {
+    "favro": {
+      "type": "http",
+      "url": "https://favro-mcp.company.com/mcp",
+      "headers": {
+        "Authorization": "Basic <base64 of email:apiToken>"
+      }
+    }
+  }
+}
+```
+
+Generate the value: `printf 'you@company.com:YOUR_API_TOKEN' | base64`
+
+## Updating
+
+```bash
+cd favro-cli
+git pull
+npm ci
+npm run build
+```
+
+Then restart the process. No migration, no state to preserve.
