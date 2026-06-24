@@ -110,11 +110,41 @@ Generate the value: `printf 'you@company.com:YOUR_API_TOKEN' | base64`
 
 ## Updating
 
+The server tracks **git release tags** (`vMAJOR.MINOR.PATCH`), not `main`. Manual bump
+to the latest release:
+
 ```bash
 cd favro-cli
-git pull
+git fetch --tags
+git checkout "$(git tag -l 'v*' --sort=-v:refname | head -n1)"
 npm ci
 npm run build
 ```
 
 Then restart the process. No migration, no state to preserve.
+
+### Auto-update
+
+`scripts/update.sh` does the above and restarts the service. It is a no-op when already
+on the latest tag, so schedule it however you like (cron, systemd timer — your call on
+cadence). Set `FAVRO_RESTART_CMD` to your restart command:
+
+```bash
+FAVRO_RESTART_CMD="sudo systemctl restart favro-mcp" /path/to/favro-cli/scripts/update.sh
+```
+
+It checks out the highest `v*` tag, runs `npm ci && npm run build`, then runs your
+restart command. Without `FAVRO_RESTART_CMD` it builds but leaves the running process on
+the old code (logs a warning).
+
+### Cutting a release (maintainer)
+
+A new release only reaches servers once it is **tagged**:
+
+```bash
+# bump "version" in package.json, commit, then:
+git tag vX.Y.Z
+git push origin main --tags
+```
+
+Servers pick it up on their next `update.sh` run.
