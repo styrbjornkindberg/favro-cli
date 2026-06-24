@@ -77,8 +77,9 @@ function makeMockClient() {
     get: jest.fn(),
     post: jest.fn(),
     patch: jest.fn(),
+    put: jest.fn(),
     delete: jest.fn(),
-  } as unknown as jest.Mocked<Pick<FavroHttpClient, 'get' | 'post' | 'patch' | 'delete'>>;
+  } as unknown as jest.Mocked<Pick<FavroHttpClient, 'get' | 'post' | 'patch' | 'put' | 'delete'>>;
 }
 
 // ─── validateSelectValue ─────────────────────────────────────────────────────
@@ -261,24 +262,40 @@ describe('CustomFieldsAPI', () => {
   describe('setFieldValue', () => {
     test('sets text field value directly', async () => {
       mockClient.get.mockResolvedValue(sampleTextField);
-      mockClient.patch.mockResolvedValue({ fieldId: 'field-text-1', value: 'hello' });
+      mockClient.put.mockResolvedValue({ customFields: [{ customFieldId: 'field-text-1', value: 'hello' }] });
 
       const result = await api.setFieldValue('card-1', 'field-text-1', 'hello');
       expect(result.value).toBe('hello');
-      expect(mockClient.patch).toHaveBeenCalledWith(
-        '/cards/card-1/custom-fields/field-text-1',
-        { value: 'hello' }
+      expect(mockClient.put).toHaveBeenCalledWith(
+        '/cards/card-1',
+        { customFields: [{ customFieldId: 'field-text-1', value: 'hello' }] }
       );
     });
 
-    test('sets select field value using optionId', async () => {
+    test('sets select field value using optionId array', async () => {
       mockClient.get.mockResolvedValue(sampleSelectField);
-      mockClient.patch.mockResolvedValue({ fieldId: 'field-select-1', value: 'opt-high' });
+      mockClient.put.mockResolvedValue({ customFields: [{ customFieldId: 'field-select-1', value: ['opt-high'] }] });
 
       await api.setFieldValue('card-1', 'field-select-1', 'High');
-      expect(mockClient.patch).toHaveBeenCalledWith(
-        '/cards/card-1/custom-fields/field-select-1',
-        { value: 'opt-high' }
+      expect(mockClient.put).toHaveBeenCalledWith(
+        '/cards/card-1',
+        { customFields: [{ customFieldId: 'field-select-1', value: ['opt-high'] }] }
+      );
+    });
+
+    test('resolves select value for Favro "Status" type field (not "select")', async () => {
+      const statusField: CustomFieldDefinition = {
+        ...sampleSelectField,
+        fieldId: 'field-status-1',
+        type: 'Status', // Favro returns this instead of 'select'
+      };
+      mockClient.get.mockResolvedValue(statusField);
+      mockClient.put.mockResolvedValue({ customFields: [{ customFieldId: 'field-status-1', value: ['opt-high'] }] });
+
+      await api.setFieldValue('card-1', 'field-status-1', 'High');
+      expect(mockClient.put).toHaveBeenCalledWith(
+        '/cards/card-1',
+        { customFields: [{ customFieldId: 'field-status-1', value: ['opt-high'] }] }
       );
     });
 
@@ -332,23 +349,23 @@ describe('CustomFieldsAPI', () => {
 
     test('accepts valid ISO 8601 date', async () => {
       mockClient.get.mockResolvedValue(sampleDateField);
-      mockClient.patch.mockResolvedValue({ fieldId: 'field-date-1', value: '2024-12-31' });
+      mockClient.put.mockResolvedValue({ customFields: [{ customFieldId: 'field-date-1', value: '2024-12-31' }] });
 
       const result = await api.setFieldValue('card-1', 'field-date-1', '2024-12-31');
-      expect(mockClient.patch).toHaveBeenCalledWith(
-        '/cards/card-1/custom-fields/field-date-1',
-        { value: '2024-12-31' }
+      expect(mockClient.put).toHaveBeenCalledWith(
+        '/cards/card-1',
+        { customFields: [{ customFieldId: 'field-date-1', value: '2024-12-31' }] }
       );
     });
 
     test('accepts valid ISO 8601 datetime with timezone', async () => {
       mockClient.get.mockResolvedValue(sampleDateField);
-      mockClient.patch.mockResolvedValue({ fieldId: 'field-date-1', value: '2024-12-31T00:00:00Z' });
+      mockClient.put.mockResolvedValue({ customFields: [{ customFieldId: 'field-date-1', value: '2024-12-31T00:00:00Z' }] });
 
       await api.setFieldValue('card-1', 'field-date-1', '2024-12-31T00:00:00Z');
-      expect(mockClient.patch).toHaveBeenCalledWith(
-        '/cards/card-1/custom-fields/field-date-1',
-        { value: '2024-12-31T00:00:00Z' }
+      expect(mockClient.put).toHaveBeenCalledWith(
+        '/cards/card-1',
+        { customFields: [{ customFieldId: 'field-date-1', value: '2024-12-31T00:00:00Z' }] }
       );
     });
 
@@ -360,25 +377,25 @@ describe('CustomFieldsAPI', () => {
       ).rejects.toThrow(/Network error/);
     });
 
-    test('sets user field value', async () => {
+    test('sets user/members field value using members array', async () => {
       mockClient.get.mockResolvedValue(sampleUserField);
-      mockClient.patch.mockResolvedValue({ fieldId: 'field-user-1', value: 'user-123' });
+      mockClient.put.mockResolvedValue({ customFields: [{ customFieldId: 'field-user-1', members: ['user-123'] }] });
 
       await api.setFieldValue('card-1', 'field-user-1', 'user-123');
-      expect(mockClient.patch).toHaveBeenCalledWith(
-        '/cards/card-1/custom-fields/field-user-1',
-        { value: 'user-123' }
+      expect(mockClient.put).toHaveBeenCalledWith(
+        '/cards/card-1',
+        { customFields: [{ customFieldId: 'field-user-1', members: ['user-123'] }] }
       );
     });
 
-    test('sets link field value', async () => {
+    test('sets link field value using link object', async () => {
       mockClient.get.mockResolvedValue(sampleLinkField);
-      mockClient.patch.mockResolvedValue({ fieldId: 'field-link-1', value: 'card-999' });
+      mockClient.put.mockResolvedValue({ customFields: [{ customFieldId: 'field-link-1', link: { url: 'https://example.com' } }] });
 
-      await api.setFieldValue('card-1', 'field-link-1', 'card-999');
-      expect(mockClient.patch).toHaveBeenCalledWith(
-        '/cards/card-1/custom-fields/field-link-1',
-        { value: 'card-999' }
+      await api.setFieldValue('card-1', 'field-link-1', 'https://example.com');
+      expect(mockClient.put).toHaveBeenCalledWith(
+        '/cards/card-1',
+        { customFields: [{ customFieldId: 'field-link-1', link: { url: 'https://example.com' } }] }
       );
     });
   });

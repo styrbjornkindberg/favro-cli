@@ -265,36 +265,57 @@ export class CustomFieldsAPI {
    *
    * @param cardId  The card to update
    * @param fieldId The field to set
-   * @param value   The value to set (string for text/date/user/link; option name for select)
+   * @param value   The value to set (string; for select pass option name; for members pass userId; for link pass URL)
    */
   async setFieldValue(
     cardId: string,
     fieldId: string,
     value: string
   ): Promise<CustomFieldValue> {
-    // Fetch field definition to validate type
-    // Errors are propagated — field lookup failure is not silently bypassed
     const field = await this.getField(fieldId);
+    const payload = this.buildFieldPayload(field, value);
+    return this.putCardCustomField(cardId, fieldId, payload, value);
+  }
 
-    // Type-specific validation
-    if (field.type === 'select') {
+  /**
+   * Build the correct API payload object for a custom field value.
+   *
+   * Favro returns many different type strings for option-based fields
+   * ('Status', 'Dropdown', 'select', etc.) — all require the same
+   * `value: [optionId]` shape. We detect them by the presence of options
+   * rather than relying on the type string.
+   */
+  private buildFieldPayload(field: CustomFieldDefinition, value: string): Record<string, unknown> {
+    const hasOptions = (field.options ?? []).length > 0;
+
+    // Any field with defined options is a select-type regardless of type string
+    if (hasOptions) {
       const option = validateSelectValue(field, value);
-      // Use optionId as the value to send to the API
-      return this.client.patch<CustomFieldValue>(
-        // Favro: update card with customFields array via PUT /cards/:cardId
-        `/cards/${cardId}/custom-fields/${fieldId}`,
-        { value: option.optionId }
-      );
+      return { value: [option.optionId] };
     }
 
-    if (field.type === 'date') {
-      // Reject empty/blank strings explicitly before format check
-      if (!value || !value.trim()) {
-        throw new Error(
-          `Date field "${field.name}" requires a value. Use ISO 8601, e.g. "2024-12-31".`
-        );
+    const type = field.type.toLowerCase();
+
+    if (type === 'members' || type === 'user') {
+      return { members: [value] };
+    }
+
+    if (type === 'link') {
+      return { link: { url: value } };
+    }
+
+    if (type === 'number') {
+      const num = Number(value);
+      if (isNaN(num)) {
+        throw new Error(`Number field "${field.name}" requires a numeric value, got "${value}".`);
       }
-      // Strict ISO 8601 regex — rejects non-ISO formats and invalid dates like "2024-02-30"
+      return { total: num };
+    }
+
+    if (type === 'date') {
+      if (!value || !value.trim()) {
+        throw new Error(`Date field "${field.name}" requires a value. Use ISO 8601, e.g. "2024-12-31".`);
+      }
       const iso8601 = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})?)?$/;
       if (!iso8601.test(value)) {
         throw new Error(
@@ -302,7 +323,6 @@ export class CustomFieldsAPI {
           `Please use ISO 8601 format, e.g. "2024-12-31" or "2024-12-31T00:00:00Z".`
         );
       }
-      // Reject invalid calendar dates (e.g. 2024-02-30 would normalize in Date.parse)
       const parsed = new Date(value);
       const [year, month, day] = value.split('T')[0].split('-').map(Number);
       if (
@@ -316,12 +336,36 @@ export class CustomFieldsAPI {
           `Please use ISO 8601 format, e.g. "2024-12-31" or "2024-12-31T00:00:00Z".`
         );
       }
+      return { value };
     }
 
-    return this.client.patch<CustomFieldValue>(
-      `/cards/${cardId}/custom-fields/${fieldId}`,
-      { value }
+    // text and any unknown types
+    return { value };
+  }
+
+  /**
+   * Update a single custom field on a card via PUT /cards/:cardId.
+   * Favro has no sub-resource endpoint — the only supported path is the full card update.
+   */
+  private async putCardCustomField(
+    cardId: string,
+    fieldId: string,
+    fieldPayload: Record<string, unknown>,
+    originalValue: string
+  ): Promise<CustomFieldValue> {
+    type RawField = { customFieldId?: string; fieldId?: string; value?: unknown; members?: unknown[]; link?: unknown; total?: unknown };
+    const updated = await this.client.put<{ customFields?: RawField[] }>(
+      `/cards/${cardId}`,
+      { customFields: [{ customFieldId: fieldId, ...fieldPayload }] }
     );
+    const match = updated.customFields?.find(
+      f => (f.customFieldId ?? f.fieldId) === fieldId
+    );
+    const raw = match?.value ?? match?.members ?? match?.link ?? match?.total;
+    const displayValue = raw != null
+      ? (typeof raw === 'object' ? JSON.stringify(raw) : String(raw))
+      : originalValue;
+    return { fieldId, value: displayValue, displayValue };
   }
 
   /**
