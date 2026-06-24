@@ -32,6 +32,8 @@
 
 import { createServer, IncomingMessage, ServerResponse } from 'http';
 import { createHash } from 'crypto';
+import * as os from 'os';
+import * as path from 'path';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import FavroHttpClient from './lib/http-client';
 import { createMcpServer } from './mcp-server';
@@ -89,6 +91,20 @@ const orgCache = new Map<string, OrgCacheEntry>();
 
 function credKey(creds: Creds): string {
   return createHash('sha256').update(`${creds.email}:${creds.token}`).digest('hex');
+}
+
+/**
+ * Per-user config directory, isolated by credential. The CLI reads/writes its
+ * config (scope lock, cached userId, defaults) here via FAVRO_CONFIG_DIR, so
+ * one user's `scope set` or userId cache never leaks into another's requests.
+ * Path is derived from a hash — no credentials appear in it.
+ *
+ * Base dir defaults to the OS temp dir (cleared on reboot — scope locks reset).
+ * Set FAVRO_MCP_STATE_DIR to a persistent path to keep them across restarts.
+ */
+export function configDirFor(creds: Creds): string {
+  const base = process.env.FAVRO_MCP_STATE_DIR || path.join(os.tmpdir(), 'favro-mcp');
+  return path.join(base, credKey(creds));
 }
 
 type OrgResult =
@@ -178,6 +194,7 @@ export async function handleMcpRequest(req: IncomingMessage, res: ServerResponse
     FAVRO_EMAIL: creds.email,
     FAVRO_API_KEY: creds.token,
     FAVRO_ORGANIZATION_ID: org.orgId,
+    FAVRO_CONFIG_DIR: configDirFor(creds),
   };
 
   const { server } = createMcpServer({ credsEnv });

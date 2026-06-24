@@ -26,7 +26,13 @@ export interface FavroConfig {
   outputFormat?: 'table' | 'json' | 'csv';
 }
 
-export const CONFIG_DIR = path.join(os.homedir(), '.favro');
+/**
+ * Config directory. Defaults to ~/.favro, but can be overridden via
+ * FAVRO_CONFIG_DIR. The HTTP MCP server uses this to give each user their own
+ * isolated config (scope, cached userId, defaults) on a shared server, since
+ * every CLI invocation is a fresh process whose env is set before it starts.
+ */
+export const CONFIG_DIR = process.env.FAVRO_CONFIG_DIR || path.join(os.homedir(), '.favro');
 export const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 
 /**

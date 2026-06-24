@@ -240,3 +240,31 @@ describe('loadConfig', () => {
     expect(config).toEqual({});
   });
 });
+
+describe('FAVRO_CONFIG_DIR override', () => {
+  const orig = process.env.FAVRO_CONFIG_DIR;
+  afterEach(() => {
+    if (orig === undefined) delete process.env.FAVRO_CONFIG_DIR;
+    else process.env.FAVRO_CONFIG_DIR = orig;
+    jest.resetModules();
+  });
+
+  test('CONFIG_DIR/CONFIG_FILE honor FAVRO_CONFIG_DIR when set', () => {
+    process.env.FAVRO_CONFIG_DIR = '/tmp/custom-favro';
+    jest.resetModules();
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const cfg = require('../lib/config');
+    expect(cfg.CONFIG_DIR).toBe('/tmp/custom-favro');
+    expect(cfg.CONFIG_FILE).toBe(path.join('/tmp/custom-favro', 'config.json'));
+  });
+
+  test('defaults to ~/.favro when FAVRO_CONFIG_DIR is unset', () => {
+    delete process.env.FAVRO_CONFIG_DIR;
+    jest.resetModules();
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const cfg = require('../lib/config');
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const os = require('os');
+    expect(cfg.CONFIG_DIR).toBe(path.join(os.homedir(), '.favro'));
+  });
+});

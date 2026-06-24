@@ -45,8 +45,26 @@ Environment variables (all optional):
 | `FAVRO_MCP_PORT` | `3000` | Listen port |
 | `FAVRO_MCP_HOST` | `127.0.0.1` | Bind host — leave on localhost |
 | `FAVRO_MCP_ALLOWED_HOSTS` | `127.0.0.1:<port>,localhost:<port>` | `Host`-header allowlist (DNS-rebind protection) — **must include the public subdomain**, see below |
+| `FAVRO_MCP_STATE_DIR` | OS temp dir (`$TMPDIR/favro-mcp`) | Where per-user CLI config is stored (see Per-user isolation). Point at a persistent path to keep scope locks across reboots. |
 
 No CLI args. Run the bin, point a reverse proxy at it.
+
+## Per-user isolation
+
+The MCP server spawns the CLI once per request with the caller's credentials. Each user
+also gets an **isolated CLI config directory** (`FAVRO_MCP_STATE_DIR/<hash-of-credentials>`),
+so per-user state never crosses between users:
+
+- **Scope lock** (`favro scope set`) — each user's collection lock is private to them.
+- **Cached `userId`** — `my-cards`, `my-standup`, etc. resolve to the requesting user, not
+  whoever connected first.
+- **Defaults** (`defaultBoard`, `defaultCollection`).
+
+The server's own `~/.favro/config.json` (if any) is never read or written by MCP requests.
+The default base is the OS temp dir, so scope locks reset on reboot — set
+`FAVRO_MCP_STATE_DIR` to a persistent path if you want them to survive restarts. The
+directory only holds non-secret preferences (no API tokens), named by a salt-free hash of
+the credentials.
 
 ## TLS / reverse proxy — app-specific constraints
 

@@ -12,7 +12,8 @@ import { IncomingMessage, ServerResponse } from 'http';
 jest.mock('../lib/http-client');
 
 import FavroHttpClient from '../lib/http-client';
-import { resolveOrg, handleMcpRequest, parseCreds } from '../mcp-http-server';
+import { resolveOrg, handleMcpRequest, parseCreds, configDirFor } from '../mcp-http-server';
+import * as os from 'os';
 
 const MockClient = FavroHttpClient as unknown as jest.Mock;
 
@@ -69,6 +70,35 @@ function basic(email: string, token: string): string {
 
 beforeEach(() => {
   jest.clearAllMocks();
+});
+
+// ─── Per-user config isolation (configDirFor) ────────────────────────────────
+
+describe('configDirFor', () => {
+  const a = { email: 'a@x.com', token: 'tok-a' };
+  const b = { email: 'b@x.com', token: 'tok-b' };
+
+  test('same credentials → same dir (stable per user)', () => {
+    expect(configDirFor(a)).toBe(configDirFor(a));
+  });
+
+  test('different credentials → different dirs (isolation)', () => {
+    expect(configDirFor(a)).not.toBe(configDirFor(b));
+  });
+
+  test('lives under the OS temp dir', () => {
+    expect(configDirFor(a).startsWith(os.tmpdir())).toBe(true);
+  });
+
+  test('contains no raw email or token (hashed)', () => {
+    const dir = configDirFor(a);
+    expect(dir).not.toContain('a@x.com');
+    expect(dir).not.toContain('tok-a');
+  });
+
+  test('a different token for the same email yields a different dir', () => {
+    expect(configDirFor(a)).not.toBe(configDirFor({ email: a.email, token: 'other' }));
+  });
 });
 
 // ─── Credential parsing (parseCreds) ─────────────────────────────────────────
