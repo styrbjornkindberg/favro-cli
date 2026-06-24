@@ -44,6 +44,25 @@ interface Creds {
   token: string;
 }
 
+/** Collapse a possibly-array header to a trimmed string. */
+function headerStr(value: string | string[] | undefined): string {
+  const v = Array.isArray(value) ? value[0] : value;
+  return (v ?? '').trim();
+}
+
+/**
+ * Resolve credentials from a request. Two equivalent forms are accepted:
+ *   1. X-Favro-Email + X-Favro-Token headers (simplest to distribute)
+ *   2. Authorization: Basic base64(email:apiToken)  (standard HTTP Basic)
+ * Returns null when neither yields a complete email + token pair.
+ */
+export function parseCreds(req: IncomingMessage): Creds | null {
+  const email = headerStr(req.headers['x-favro-email']);
+  const token = headerStr(req.headers['x-favro-token']);
+  if (email && token) return { email, token };
+  return parseBasicAuth(req);
+}
+
 /** Parsed Basic-auth credentials, or null when the header is missing/malformed. */
 function parseBasicAuth(req: IncomingMessage): Creds | null {
   const header = req.headers['authorization'];
@@ -133,11 +152,14 @@ function sendError(res: ServerResponse, status: number, message: string, extraHe
 
 /** Handle a single MCP request: authenticate, resolve org, dispatch to a fresh server. */
 export async function handleMcpRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const creds = parseBasicAuth(req);
+  const creds = parseCreds(req);
   if (!creds) {
-    sendError(res, 401, 'Missing or malformed Basic credentials (Authorization: Basic base64(email:apiToken)).', {
-      'WWW-Authenticate': 'Basic realm="favro-mcp"',
-    });
+    sendError(
+      res,
+      401,
+      'Missing credentials. Send X-Favro-Email and X-Favro-Token headers, or Authorization: Basic base64(email:apiToken).',
+      { 'WWW-Authenticate': 'Basic realm="favro-mcp"' }
+    );
     return;
   }
 

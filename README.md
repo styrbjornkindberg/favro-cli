@@ -326,14 +326,16 @@ FAVRO_MCP_PORT=3000 npx favro-mcp-http   # or: npm run mcp:http
 ```
 Listens on `127.0.0.1:3000/mcp` by default.
 
-**2. Authentication** — each request sends HTTP Basic auth, exactly the credentials `favro auth login` asks for:
+**2. Authentication** — each request carries the credentials `favro auth login` asks for, as two plaintext headers:
 ```
-Authorization: Basic base64("you@example.com:YOUR_API_TOKEN")
+X-Favro-Email: you@example.com
+X-Favro-Token: YOUR_API_TOKEN
 ```
 The `organizationId` is auto-resolved from those credentials (cached in memory). If your account belongs to **several** organizations, also send:
 ```
 X-Favro-Organization-Id: <orgId>
 ```
+(Standard `Authorization: Basic base64(email:apiToken)` is also accepted if you prefer it.)
 
 **3. Client config** (Claude Code / Cursor — HTTP MCP):
 ```json
@@ -343,7 +345,8 @@ X-Favro-Organization-Id: <orgId>
       "type": "http",
       "url": "https://favro-mcp.example.com/mcp",
       "headers": {
-        "Authorization": "Basic <base64 of email:apiToken>"
+        "X-Favro-Email": "<YOUR_EMAIL>",
+        "X-Favro-Token": "<YOUR_API_TOKEN>"
       }
     }
   }

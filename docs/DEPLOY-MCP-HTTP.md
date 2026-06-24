@@ -50,8 +50,8 @@ No CLI args. Run the bin, point a reverse proxy at it.
 
 ## TLS / reverse proxy — app-specific constraints
 
-1. **TLS is mandatory.** Basic credentials travel in the `Authorization` header on every
-   request. Never expose the plain HTTP port off-box.
+1. **TLS is mandatory.** Credentials (email + API token) travel in request headers on
+   every call. Never expose the plain HTTP port off-box.
 2. **Forward the original `Host` header.** The server has DNS-rebind protection on. It
    rejects any request whose `Host` is not in `FAVRO_MCP_ALLOWED_HOSTS`. A proxy that
    forwards the public host (`favro-mcp.company.com`) is the normal case — so set
@@ -69,9 +69,9 @@ No CLI args. Run the bin, point a reverse proxy at it.
 curl -s -o /dev/null -w "%{http_code}\n" -X POST https://favro-mcp.company.com/mcp -d '{}'
 
 # Full check with real Favro creds → valid initialize response
-AUTH=$(printf 'you@company.com:YOUR_API_TOKEN' | base64)
 curl -s -X POST https://favro-mcp.company.com/mcp \
-  -H "Authorization: Basic $AUTH" \
+  -H "X-Favro-Email: you@company.com" \
+  -H "X-Favro-Token: YOUR_API_TOKEN" \
   -H "Accept: application/json, text/event-stream" \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"curl","version":"0"}},"id":1}'
@@ -82,8 +82,9 @@ transport requires it; omitting it returns 406.
 
 ## Authentication detail (for debugging client issues)
 
-- Header: `Authorization: Basic base64("email:apiToken")` — the same email + token a user
-  enters in `favro auth login`.
+- Credentials: `X-Favro-Email` + `X-Favro-Token` headers (the same email + token a user
+  enters in `favro auth login`), or equivalently `Authorization: Basic base64(email:apiToken)`.
+  If both are present, the `X-Favro-*` headers win.
 - `organizationId` is auto-resolved from those credentials and cached. If a user's
   account belongs to **multiple** orgs, the server returns `400` listing the org IDs and
   the client must add header `X-Favro-Organization-Id: <orgId>`.
@@ -92,6 +93,8 @@ transport requires it; omitting it returns 406.
 
 ## End-user client config
 
+Distribute this; each user fills in their own email and API token — no encoding step:
+
 ```json
 {
   "mcpServers": {
@@ -99,14 +102,16 @@ transport requires it; omitting it returns 406.
       "type": "http",
       "url": "https://favro-mcp.company.com/mcp",
       "headers": {
-        "Authorization": "Basic <base64 of email:apiToken>"
+        "X-Favro-Email": "<YOUR_EMAIL>",
+        "X-Favro-Token": "<YOUR_API_TOKEN>"
       }
     }
   }
 }
 ```
 
-Generate the value: `printf 'you@company.com:YOUR_API_TOKEN' | base64`
+Users in multiple Favro organizations also add `"X-Favro-Organization-Id": "<orgId>"`.
+(`Authorization: Basic base64(email:apiToken)` is accepted as an alternative.)
 
 ## Updating
 

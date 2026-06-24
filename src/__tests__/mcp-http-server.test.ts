@@ -12,7 +12,7 @@ import { IncomingMessage, ServerResponse } from 'http';
 jest.mock('../lib/http-client');
 
 import FavroHttpClient from '../lib/http-client';
-import { resolveOrg, handleMcpRequest } from '../mcp-http-server';
+import { resolveOrg, handleMcpRequest, parseCreds } from '../mcp-http-server';
 
 const MockClient = FavroHttpClient as unknown as jest.Mock;
 
@@ -69,6 +69,41 @@ function basic(email: string, token: string): string {
 
 beforeEach(() => {
   jest.clearAllMocks();
+});
+
+// ─── Credential parsing (parseCreds) ─────────────────────────────────────────
+
+describe('parseCreds', () => {
+  test('accepts X-Favro-Email + X-Favro-Token headers', () => {
+    const creds = parseCreds(fakeReq({ 'x-favro-email': 'a@b.com', 'x-favro-token': 'tok' }));
+    expect(creds).toEqual({ email: 'a@b.com', token: 'tok' });
+  });
+
+  test('accepts Basic auth', () => {
+    const creds = parseCreds(fakeReq({ authorization: basic('a@b.com', 'tok') }));
+    expect(creds).toEqual({ email: 'a@b.com', token: 'tok' });
+  });
+
+  test('header credentials take precedence over Basic', () => {
+    const creds = parseCreds(
+      fakeReq({ 'x-favro-email': 'header@b.com', 'x-favro-token': 'htok', authorization: basic('basic@b.com', 'btok') })
+    );
+    expect(creds).toEqual({ email: 'header@b.com', token: 'htok' });
+  });
+
+  test('falls back to Basic when only one custom header is present', () => {
+    const creds = parseCreds(fakeReq({ 'x-favro-email': 'a@b.com', authorization: basic('basic@b.com', 'btok') }));
+    expect(creds).toEqual({ email: 'basic@b.com', token: 'btok' });
+  });
+
+  test('null when neither method present', () => {
+    expect(parseCreds(fakeReq({}))).toBeNull();
+  });
+
+  test('trims whitespace from header values', () => {
+    const creds = parseCreds(fakeReq({ 'x-favro-email': '  a@b.com ', 'x-favro-token': ' tok ' }));
+    expect(creds).toEqual({ email: 'a@b.com', token: 'tok' });
+  });
 });
 
 // ─── Basic-auth parsing (via handleMcpRequest) ───────────────────────────────
