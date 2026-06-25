@@ -14,6 +14,12 @@ export async function confirmAction(message: string, flags?: { yes?: boolean }):
     return true;
   }
 
+  if (!process.stdin.isTTY) {
+    throw new Error(
+      'Non-interactive environment detected (no TTY). Pass -y / --yes to confirm without a prompt.'
+    );
+  }
+
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,

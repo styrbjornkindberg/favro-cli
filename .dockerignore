@@ -1,0 +1,26 @@
+# Keep the build context small and reproducible. dist/ is rebuilt inside the
+# image, so the host's compiled output (and everything below) is excluded.
+node_modules
+dist
+coverage
+.git
+.github
+.claude
+.serena
+tests
+src/__tests__
+src/__integration__
+examples
+specs
+assets
+docs
+self-improving
+scripts
+tasks
+*.tgz
+*.md
+*.map
+.env
+.env.local
+.DS_Store
+pnpm-lock.yaml
