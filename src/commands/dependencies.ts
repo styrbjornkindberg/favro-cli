@@ -7,6 +7,7 @@
  */
 import { Command } from 'commander';
 import CardsAPI from '../lib/cards-api';
+import { linkTypeToIsBefore } from '../lib/dependency-direction';
 import { createFavroClient } from '../lib/client-factory';
 import { logError } from '../lib/error-handler';
 import { checkScope, confirmAction, dryRunLog } from '../lib/safety';
@@ -31,7 +32,7 @@ export function registerDependenciesCommands(program: Command): void {
         } else {
           console.log(`Found ${links.length} dependencies for card ${cardId}:`);
           const rows = links.map(lnk => ({
-            Type: lnk.type,
+            Direction: lnk.isBefore ? 'before (blocks this card)' : 'after (blocked by this card)',
             Target: lnk.cardId,
             Name: lnk.cardName || '—',
           }));
@@ -46,7 +47,7 @@ export function registerDependenciesCommands(program: Command): void {
   depsCommand
     .command('add <sourceId> <targetId>')
     .description('Add a dependency link between two cards')
-    .requiredOption('--type <type>', 'Link type: depends-on, blocks, related, duplicates')
+    .requiredOption('--type <type>', 'Link type: depends-on, blocks')
     .option('--json', 'Output as JSON')
     .option('--dry-run', 'Preview without making API calls')
     .option('-y, --yes', 'Skip confirmation prompt')
@@ -73,7 +74,7 @@ export function registerDependenciesCommands(program: Command): void {
           process.exit(0);
         }
 
-        const link = await api.linkCard(sourceId, { toCardId: targetId, type: options.type });
+        const link = await api.linkCard(sourceId, { toCardId: targetId, isBefore: linkTypeToIsBefore(options.type) });
 
         if (options.json) {
           console.log(JSON.stringify(link, null, 2));

@@ -61,10 +61,20 @@ export interface CustomField {
   type?: string;
 }
 
+/**
+ * A single dependency edge, as Favro actually returns it. Favro has no link
+ * "types" — an edge carries one direction flag, `isBefore`, describing the
+ * dependency card (`cardId`) relative to the card you queried. Reading an edge
+ * from the far end returns it with `isBefore` inverted.
+ */
 export interface CardLink {
-  linkId: string;
-  type: 'depends-on' | 'blocks' | 'related' | 'duplicates';
+  /** cardId of the dependency card (the other end of the edge). */
   cardId: string;
+  /** True when the dependency card comes before the card you queried. */
+  isBefore: boolean;
+  cardCommonId?: string;
+  /** cardId of the card you queried — the near end of the edge. */
+  reverseCardId?: string;
   cardName?: string;
 }
 
@@ -158,7 +168,8 @@ export interface GetCardOptions {
 
 export interface LinkCardRequest {
   toCardId: string;
-  type: 'depends-on' | 'blocks' | 'related' | 'duplicates';
+  /** True when `toCardId` comes before `cardId` (i.e. `cardId` depends on it). */
+  isBefore: boolean;
 }
 
 export interface MoveCardRequest {
@@ -412,8 +423,8 @@ export class CardsAPI {
     if (includes.includes('links') && !card.links) {
       try {
         // Favro: GET /cards/:cardId/dependencies
-        const lnk = await this.client.get<{ entities: CardLink[] }>(`/cards/${cardId}/dependencies`);
-        card.links = lnk.entities ?? [];
+        const lnk = await this.client.get<{ dependencies: CardLink[] }>(`/cards/${cardId}/dependencies`);
+        card.links = lnk.dependencies ?? [];
       } catch { /* best effort */ }
     }
     if ((includes.includes('comments') || includes.includes('relations')) && !card.comments) {
@@ -432,24 +443,33 @@ export class CardsAPI {
    * Get all links for a card.
    */
   async getCardLinks(cardId: string): Promise<CardLink[]> {
-    // Favro: GET /cards/:cardId/dependencies
-    const res = await this.client.get<{ entities: CardLink[] }>(`/cards/${cardId}/dependencies`);
-    return res.entities ?? [];
+    // Favro: GET /cards/:cardId/dependencies → { cardId, cardCommonId, dependencies: [...] }
+    const res = await this.client.get<{ dependencies: CardLink[] }>(`/cards/${cardId}/dependencies`);
+    return res.dependencies ?? [];
   }
 
   /**
-   * Link two cards together.
+   * Add a dependency edge. Favro creates the mirror edge on the target card
+   * automatically (with `isBefore` inverted) — no second call needed.
+   * Re-adding an existing edge is rejected with 403 "Dependency already exists".
    */
-  async linkCard(cardId: string, req: LinkCardRequest): Promise<CardLink> {
-    // Favro: POST /cards/:cardId/dependencies
-    return this.client.post<CardLink>(`/cards/${cardId}/dependencies`, {
-      toCardId: req.toCardId,
-      type: req.type,
-    });
+  async linkCard(cardId: string, req: LinkCardRequest): Promise<CardLink[]> {
+    // Favro: POST /cards/:cardId/dependencies, body { dependencies: [{ cardId, isBefore }] }.
+    // POST merges into the existing edge set; PUT would replace it.
+    const res = await this.client.post<{ dependencies: CardLink[] }>(
+      `/cards/${cardId}/dependencies`,
+      { dependencies: [{ cardId: req.toCardId, isBefore: req.isBefore }] },
+    );
+    return res.dependencies ?? [];
   }
 
   /**
    * Remove a link between two cards.
+   */
+  /**
+   * Remove a dependency edge. Verified live: 204 on success, 404 "Dependency
+   * not found" when the edge is already gone. Either end of the edge works —
+   * deleting via the mirror card removes the same edge.
    */
   async unlinkCard(cardId: string, fromCardId: string): Promise<void> {
     await this.client.delete(`/cards/${cardId}/dependencies/${fromCardId}`);
@@ -488,9 +508,28 @@ export class CardsAPI {
     return this.client.post<Card>('/cards', payload);
   }
 
+  /**
+   * Create several cards. Favro has **no bulk-create route** — `POST /cards/bulk`
+   * was verified live and does not exist (it falls through to Favro's web app
+   * and answers 200 with an HTML page, so the old `response.cards` read silently
+   * yielded zero cards created). So this loops `createCard` one call per card.
+   *
+   * Fails fast: on the first error it throws, attaching the cards created so far
+   * as `.created` so the caller can report or undo them.
+   */
   async createCards(cards: CreateCardRequest[]): Promise<Card[]> {
-    const response = await this.client.post<{ cards: Card[] }>('/cards/bulk', { cards });
-    return response.cards || [];
+    const created: Card[] = [];
+    for (const card of cards) {
+      try {
+        created.push(await this.createCard(card));
+      } catch (err: any) {
+        throw Object.assign(
+          new Error(`Failed creating card "${card.name}" (${created.length}/${cards.length} created): ${err.message}`),
+          { created, cause: err },
+        );
+      }
+    }
+    return created;
   }
 
   async updateCard(cardId: string, data: UpdateCardRequest): Promise<Card> {

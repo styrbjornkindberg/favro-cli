@@ -155,13 +155,14 @@ function normalizeCard(card: Card): ContextCard {
     }
   }
 
-  // Relationship links (depends-on → blockedBy, blocks → blocking)
+  // Relationship links. Favro edges carry one direction flag: isBefore === true
+  // means the linked card comes before this one, so it blocks this one.
   if (card.links && card.links.length > 0) {
     ctx.blockedBy = card.links
-      .filter(l => l.type === 'depends-on')
+      .filter(l => l.isBefore)
       .map(l => l.cardId);
     ctx.blocking = card.links
-      .filter(l => l.type === 'blocks')
+      .filter(l => !l.isBefore)
       .map(l => l.cardId);
   } else {
     ctx.blockedBy = [];

@@ -4,10 +4,13 @@
  */
 import { Command } from 'commander';
 import CardsAPI from '../lib/cards-api';
+import { LINK_TYPES, linkTypeToIsBefore } from '../lib/dependency-direction';
 import { logError } from '../lib/error-handler';
 import { createFavroClient } from '../lib/client-factory';
 
-export const VALID_LINK_TYPES = ['depends-on', 'blocks', 'related', 'duplicates'];
+// 'related' and 'duplicates' are gone — Favro has no API representation for them,
+// so they were being silently discarded. See lib/dependency-direction.ts.
+export const VALID_LINK_TYPES = [...LINK_TYPES];
 const VALID_POSITIONS = ['top', 'bottom'];
 
 /**
@@ -27,8 +30,10 @@ async function wouldCreateCycle(
     visited.add(current);
     try {
       const links = await api.getCardLinks(current);
+      // isBefore === true: the linked card comes before `current`, i.e. `current`
+      // depends on it. Those are the edges a cycle would travel along.
       for (const link of links) {
-        if (link.type === 'depends-on') {
+        if (link.isBefore) {
           if (link.cardId === cardId) return true;
           if (!visited.has(link.cardId)) queue.push(link.cardId);
         }
@@ -99,7 +104,7 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
           }
         }
 
-        const link = await api.linkCard(cardId, { toCardId, type: type as any });
+        const link = await api.linkCard(cardId, { toCardId, isBefore: linkTypeToIsBefore(type) });
 
         console.log(`✓ Linked card ${cardId} → ${toCardId} (${type})`);
         if (options.json) {
@@ -284,7 +289,7 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
         const api = new CardsAPI(client);
 
         const links = await api.getCardLinks(cardId);
-        const deps = links.filter(l => l.type === 'depends-on');
+        const deps = links.filter(l => l.isBefore);
 
         if (options.json) {
           console.log(JSON.stringify(deps, null, 2));
@@ -326,7 +331,8 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
         const api = new CardsAPI(client);
 
         const links = await api.getCardLinks(cardId);
-        const blockers = links.filter(l => l.type === 'blocks');
+        // Cards this card blocks come after it: isBefore === false.
+        const blockers = links.filter(l => !l.isBefore);
 
         if (options.json) {
           console.log(JSON.stringify(blockers, null, 2));
@@ -367,13 +373,10 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
         const client = await createFavroClient();
         const api = new CardsAPI(client);
 
-        // blocked-by = links where other cards block this card.
-        // We look at this card's links of type 'blocks' pointed inward,
-        // which in Favro's model means this card has incoming 'blocks' links.
-        // We use getCardLinks which returns outgoing links, so we look at
-        // 'depends-on' links from this card (this card depends on cards that block it).
+        // blocked-by = cards that come before this one, i.e. edges with
+        // isBefore === true. Same edge set as `cards dependencies`.
         const links = await api.getCardLinks(cardId);
-        const blockedBy = links.filter(l => l.type === 'depends-on');
+        const blockedBy = links.filter(l => l.isBefore);
 
         if (options.json) {
           console.log(JSON.stringify(blockedBy, null, 2));

@@ -186,38 +186,14 @@ describe('Cards API', () => {
     });
   });
 
-  // --- linkCard ---
-
-  test('linkCard posts to /cards/:id/links', async () => {
-    const link = { linkId: 'lnk-1', type: 'depends-on', cardId: 'card-2' };
-    mockClient.post.mockResolvedValue(link);
-    const result = await api.linkCard('card-1', { toCardId: 'card-2', type: 'depends-on' });
-    expect(result.linkId).toBe('lnk-1');
-    expect(mockClient.post).toHaveBeenCalledWith('/cards/card-1/dependencies', {
-      toCardId: 'card-2',
-      type: 'depends-on',
-    });
-  });
+  // --- linkCard / getCardLinks ---
+  // Wire-level coverage lives in cards-api-dependencies-wire.test.ts. Client-mock
+  // tests here asserted the request/response shapes the mock was given, so they
+  // could not detect that both were wrong against the real API (issue #12).
 
   test('linkCard propagates errors', async () => {
     mockClient.post.mockRejectedValue(new Error('Card not found'));
-    await expect(api.linkCard('bad-id', { toCardId: 'other', type: 'related' })).rejects.toThrow('Card not found');
-  });
-
-  // --- getCardLinks ---
-
-  test('getCardLinks fetches /cards/:id/links', async () => {
-    const links = [{ linkId: 'lnk-1', type: 'depends-on', cardId: 'card-2' }];
-    mockClient.get.mockResolvedValue({ entities: links });
-    const result = await api.getCardLinks('card-1');
-    expect(result).toEqual(links);
-    expect(mockClient.get).toHaveBeenCalledWith('/cards/card-1/dependencies');
-  });
-
-  test('getCardLinks returns empty array when entities missing', async () => {
-    mockClient.get.mockResolvedValue({});
-    const result = await api.getCardLinks('card-1');
-    expect(result).toEqual([]);
+    await expect(api.linkCard('bad-id', { toCardId: 'other', isBefore: true })).rejects.toThrow('Card not found');
   });
 
   // --- unlinkCard ---
@@ -289,36 +265,10 @@ describe('Cards API', () => {
     await expect(api.createCard({ name: 'Bad' })).rejects.toThrow('Validation error');
   });
 
-  // --- createCards (bulk) ---
-
-  test('createCards posts bulk data to /cards/bulk', async () => {
-    const cards = [
-      { cardId: 'b1', name: 'Bulk 1', createdAt: '2026-01-01', updatedAt: '2026-01-01' },
-      { cardId: 'b2', name: 'Bulk 2', createdAt: '2026-01-01', updatedAt: '2026-01-01' },
-    ];
-    mockClient.post.mockResolvedValue({ cards });
-    const result = await api.createCards([{ name: 'Bulk 1' }, { name: 'Bulk 2' }]);
-    expect(result).toHaveLength(2);
-    expect(mockClient.post).toHaveBeenCalledWith('/cards/bulk', {
-      cards: [{ name: 'Bulk 1' }, { name: 'Bulk 2' }]
-    });
-  });
-
-  test('createCards returns empty array when response.cards missing', async () => {
-    mockClient.post.mockResolvedValue({});
-    const result = await api.createCards([{ name: 'X' }]);
-    expect(result).toEqual([]);
-  });
-
-  test('createCards handles 100+ items', async () => {
-    const inputCards = Array.from({ length: 150 }, (_, i) => ({ name: `Card ${i}` }));
-    const outputCards = inputCards.map((c, i) => ({
-      cardId: `bulk-${i}`, name: c.name, createdAt: '2026-01-01', updatedAt: '2026-01-01'
-    }));
-    mockClient.post.mockResolvedValue({ cards: outputCards });
-    const result = await api.createCards(inputCards);
-    expect(result).toHaveLength(150);
-  });
+  // --- createCards ---
+  // Favro has no bulk-create route (verified live, issue #12), so createCards
+  // loops POST /cards. Per-call wiring is covered in
+  // cards-api-dependencies-wire.test.ts.
 
   test('createCards propagates rate limit errors', async () => {
     const rateLimitError = Object.assign(new Error('Too Many Requests'), { response: { status: 429 } });

@@ -14,9 +14,8 @@ jest.mock('../lib/http-client');
 jest.mock('../lib/config');
 
 const sampleLink: CardLink = {
-  linkId: 'lnk-001',
-  type: 'depends-on',
   cardId: 'card-target',
+  isBefore: true,
 };
 
 const sampleCard: Card = {
@@ -128,10 +127,12 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
 
   // ─── VALID_LINK_TYPES ──────────────────────────────────────────────────────
 
-  test('VALID_LINK_TYPES matches spec (depends-on, blocks, related, duplicates)', () => {
-    expect(VALID_LINK_TYPES).toEqual(expect.arrayContaining(['depends-on', 'blocks', 'related', 'duplicates']));
+  test('VALID_LINK_TYPES is the two directions Favro can store', () => {
+    expect(VALID_LINK_TYPES).toEqual(['depends-on', 'blocks']);
     expect(VALID_LINK_TYPES).not.toContain('depends');
-    expect(VALID_LINK_TYPES).not.toContain('relates');
+    // 'related' and 'duplicates' have no Favro representation (issue #12).
+    expect(VALID_LINK_TYPES).not.toContain('related');
+    expect(VALID_LINK_TYPES).not.toContain('duplicates');
   });
 
   // ─── cards link ─────────────────────────────────────────────────────────────
@@ -142,18 +143,22 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
     registerCardsLinkCommands(cardsCmd);
     await cardsCmd.parseAsync(['node', 'cards', 'link', 'card-src', 'card-target', '--type', 'depends-on']);
 
-    expect(mockLinkCard).toHaveBeenCalledWith('card-src', { toCardId: 'card-target', type: 'depends-on' });
+    expect(mockLinkCard).toHaveBeenCalledWith('card-src', { toCardId: 'card-target', isBefore: true });
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('✓ Linked'));
   });
 
   test('all valid link types are accepted (spec names)', async () => {
-    const validTypes = ['depends-on', 'blocks', 'related', 'duplicates'];
+    // 'related' and 'duplicates' are gone: Favro cannot store them (issue #12).
+    const validTypes = ['depends-on', 'blocks'];
     for (const type of validTypes) {
       const { mockLinkCard } = buildMockApi();
       const cardsCmd = new Command('cards');
       registerCardsLinkCommands(cardsCmd);
       await cardsCmd.parseAsync(['node', 'cards', 'link', 'card-src', 'card-target', '--type', type]);
-      expect(mockLinkCard).toHaveBeenCalledWith('card-src', { toCardId: 'card-target', type });
+      expect(mockLinkCard).toHaveBeenCalledWith('card-src', {
+        toCardId: 'card-target',
+        isBefore: type === 'depends-on',
+      });
       jest.clearAllMocks();
       (config.resolveApiKey as jest.Mock).mockResolvedValue('test-key');
     }
@@ -228,7 +233,7 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
     // A depends-on B, and B depends-on A would be a cycle
     // We're linking B → A (depends-on), and A already depends-on B
     const mockLinks: CardLink[] = [
-      { linkId: 'lnk-1', type: 'depends-on', cardId: 'card-b' }  // A depends-on B
+      { cardId: 'card-b', isBefore: true }  // A depends-on B
     ];
     const mockGetCardLinks = jest.fn().mockResolvedValue(mockLinks);
     buildMockApi({ getCardLinks: mockGetCardLinks });
@@ -261,10 +266,10 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
     buildMockApi();
     const cardsCmd = new Command('cards');
     registerCardsLinkCommands(cardsCmd);
-    await cardsCmd.parseAsync(['node', 'cards', 'link', 'card-src', 'card-target', '--type', 'related', '--json']);
+    await cardsCmd.parseAsync(['node', 'cards', 'link', 'card-src', 'card-target', '--type', 'depends-on', '--json']);
 
     const calls = consoleSpy.mock.calls.map(c => c[0]);
-    const jsonCall = calls.find(c => typeof c === 'string' && c.includes('"linkId"'));
+    const jsonCall = calls.find(c => typeof c === 'string' && c.includes('"isBefore"'));
     expect(jsonCall).toBeDefined();
   });
 
@@ -277,7 +282,7 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
     registerCardsLinkCommands(cardsCmd);
 
     await expect(
-      cardsCmd.parseAsync(['node', 'cards', 'link', 'bad-card', 'bad-target', '--type', 'related'])
+      cardsCmd.parseAsync(['node', 'cards', 'link', 'bad-card', 'bad-target', '--type', 'depends-on'])
     ).rejects.toThrow('process.exit');
 
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining("not found"));
@@ -419,8 +424,8 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
 
   test('lists dependencies (depends-on links)', async () => {
     const links: CardLink[] = [
-      { linkId: 'lnk-1', type: 'depends-on', cardId: 'dep-card-1' },
-      { linkId: 'lnk-2', type: 'blocks', cardId: 'blocks-card-1' },
+      { cardId: 'dep-card-1', isBefore: true },
+      { cardId: 'blocks-card-1', isBefore: false },
     ];
     buildMockApi({ getCardLinks: jest.fn().mockResolvedValue(links) });
     const cardsCmd = new Command('cards');
@@ -443,7 +448,7 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
 
   test('outputs dependencies as JSON with --json', async () => {
     const links: CardLink[] = [
-      { linkId: 'lnk-1', type: 'depends-on', cardId: 'dep-card-1' },
+      { cardId: 'dep-card-1', isBefore: true },
     ];
     buildMockApi({ getCardLinks: jest.fn().mockResolvedValue(links) });
     const cardsCmd = new Command('cards');
@@ -451,7 +456,7 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
     await cardsCmd.parseAsync(['node', 'cards', 'dependencies', 'card-src', '--json']);
 
     const calls = consoleSpy.mock.calls.map(c => c[0] as string);
-    const jsonCall = calls.find(c => c?.includes('"depends-on"'));
+    const jsonCall = calls.find(c => c?.includes('"isBefore"'));
     expect(jsonCall).toBeDefined();
   });
 
@@ -459,8 +464,8 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
 
   test('lists cards blocked by this card (blocks links)', async () => {
     const links: CardLink[] = [
-      { linkId: 'lnk-1', type: 'blocks', cardId: 'blocked-card-1' },
-      { linkId: 'lnk-2', type: 'depends-on', cardId: 'dep-card' },
+      { cardId: 'blocked-card-1', isBefore: false },
+      { cardId: 'dep-card', isBefore: true },
     ];
     buildMockApi({ getCardLinks: jest.fn().mockResolvedValue(links) });
     const cardsCmd = new Command('cards');
@@ -485,7 +490,7 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
 
   test('lists cards that are blocking this card (depends-on as blocked-by)', async () => {
     const links: CardLink[] = [
-      { linkId: 'lnk-1', type: 'depends-on', cardId: 'blocker-card-1' },
+      { cardId: 'blocker-card-1', isBefore: true },
     ];
     buildMockApi({ getCardLinks: jest.fn().mockResolvedValue(links) });
     const cardsCmd = new Command('cards');
@@ -513,7 +518,7 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
     registerCardsLinkCommands(cardsCmd);
 
     await expect(
-      cardsCmd.parseAsync(['node', 'cards', 'link', 'card-src', 'target', '--type', 'related'])
+      cardsCmd.parseAsync(['node', 'cards', 'link', 'card-src', 'target', '--type', 'depends-on'])
     ).rejects.toThrow('process.exit');
 
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('API key not found'));

@@ -75,7 +75,7 @@ const SAMPLE_CARDS = [
     createdAt: '2026-01-10T00:00:00Z',
     updatedAt: '2026-03-10T00:00:00Z',
     links: [
-      { linkId: 'lnk-1', type: 'depends-on' as const, cardId: 'card-002' },
+      { cardId: 'card-002', isBefore: true },
     ],
     customFields: [
       { fieldId: 'cf1', name: 'Priority', value: 'High' },
