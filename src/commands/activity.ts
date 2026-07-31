@@ -3,55 +3,74 @@
  * CLA-1789 FAVRO-027: Comments & Activity API
  *
  * Commands:
- *   favro activity log <board-id> [--since 2h|1d|7d] [--limit N] [--offset N] [--format json|table]
+ *   favro activity <cardId> [--since 2h] [--until 1d] [--limit N] [--format json|table]
+ *
+ * Card-scoped only — Favro has no board-level activity feed (#18).
  */
 import { Command } from 'commander';
 import { createFavroClient } from '../lib/client-factory';
 import { logError } from '../lib/error-handler';
 import ActivityApiClient, { parseSince, formatTimestamp } from '../api/activity';
 
-export function registerActivityCommand(program: Command): void {
-  const activityCmd = program
-    .command('activity')
-    .description('Board and card activity logs');
+/** Parse a relative time window, reporting errors against the flag it came from. */
+function parseWindow(value: string | undefined, flag: string): Date | undefined {
+  try {
+    return parseSince(value);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(message.replace('--since', flag));
+  }
+}
 
-  // ─── activity log ──────────────────────────────────────────────────────────
-  activityCmd
-    .command('log <boardId>')
+export function registerActivityCommand(program: Command): void {
+  program
+    .command('activity <cardId>')
     .description(
-      'Show activity log for a board.\n\n' +
+      'Show the activity log for a card.\n\n' +
       'Examples:\n' +
-      '  favro activity log <boardId>              Show all recent activity\n' +
-      '  favro activity log <boardId> --since 2h   Activity in the last 2 hours\n' +
-      '  favro activity log <boardId> --since 1d   Activity in the last day\n' +
-      '  favro activity log <boardId> --since 7d   Activity in the last 7 days\n' +
-      '  favro activity log <boardId> --format json\n' +
-      '  favro activity log <boardId> --limit 50 --offset 10\n\n' +
-      'Time units: h (hours), d (days), w (weeks)\n' +
-      'Tip: Use `favro boards list` to find board IDs.'
+      '  favro activity <cardId>              All activity on the card\n' +
+      '  favro activity <cardId> --since 2h   Activity in the last 2 hours\n' +
+      '  favro activity <cardId> --until 1d   Activity older than 1 day\n' +
+      '  favro activity <cardId> --format json\n\n' +
+      'Time units: h (hours), d (days), w (weeks)\n\n' +
+      'Favro has no board-level activity feed, so activity is per card. The feed is\n' +
+      'also scoped to what the API-key user follows or has news for, so it is card\n' +
+      'history for humans — never a source of truth for a card\'s state.\n' +
+      'Tip: use `favro cards find` to get a cardId.'
     )
     .option('--since <time>', 'Only show activity after: 2h, 1d, 7d, 1w, etc.')
+    .option('--until <time>', 'Only show activity before: 2h, 1d, 7d, 1w, etc.')
     .option('--limit <n>', 'Maximum number of activity entries (default: 200)', '200')
-    .option('--offset <n>', 'Number of entries to skip — for pagination (default: 0)', '0')
     .option('--format <format>', 'Output format: table or json (default: table)', 'table')
     .option('--json', 'Shorthand for --format json')
-    .action(async (boardId: string, options) => {
+    .action(async (cardId: string, options) => {
       const verbose = program.opts()?.verbose ?? false;
       try {
+        // `favro activity log <boardId>` was the old form. Without this it would
+        // be read as a cardId of "log" and fail with an opaque 403.
+        if (cardId === 'log') {
+          console.error(
+            'Error: `favro activity log <boardId>` is gone — Favro has no board-level\n' +
+            'activity feed (the endpoint it used answers 404). Activity is per card:\n' +
+            '  favro activity <cardId>'
+          );
+          process.exit(1);
+          return;
+        }
 
+        // Parse the window client-side — Favro answers 400 on an unparseable value.
         let since: Date | undefined;
+        let until: Date | undefined;
         try {
-          since = parseSince(options.since);
-        } catch (err: any) {
-          console.error(`Error: ${err.message}`);
+          since = parseWindow(options.since, '--since');
+          until = parseWindow(options.until, '--until');
+        } catch (err: unknown) {
+          console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
           process.exit(1);
         }
 
         const limitRaw = parseInt(options.limit, 10);
         const limit = !isNaN(limitRaw) && limitRaw >= 1 ? limitRaw : 200;
-
-        const offsetRaw = parseInt(options.offset, 10);
-        const offset = !isNaN(offsetRaw) && offsetRaw >= 0 ? offsetRaw : 0;
 
         const format = options.json ? 'json' : (options.format ?? 'table').toLowerCase();
         if (format !== 'json' && format !== 'table') {
@@ -62,35 +81,33 @@ export function registerActivityCommand(program: Command): void {
         const client = await createFavroClient();
         const api = new ActivityApiClient(client);
 
-        const entries = await api.getBoardActivity(boardId, since, limit, offset);
+        const entries = await api.getCardActivity(cardId, { since, until, limit });
 
         if (format === 'json') {
           console.log(JSON.stringify(entries, null, 2));
           return;
         }
 
-        // Table format
         if (entries.length === 0) {
-          const sinceMsg = since ? ` since ${since.toISOString()}` : '';
-          console.log(`No activity found for board "${boardId}"${sinceMsg}.`);
+          const window = since ? ` since ${since.toISOString()}` : '';
+          console.log(
+            `No activity found for card "${cardId}"${window}.\n` +
+            'Note: the feed only carries activity the API-key user follows or has news for.'
+          );
           return;
         }
 
+        const cardName = entries[0].cardName;
+        const label = cardName ? `${cardName} (${cardId})` : cardId;
         const sinceLabel = options.since ? ` (last ${options.since})` : '';
-        const offsetLabel = offset > 0 ? ` [offset: ${offset}]` : '';
-        console.log(`\n📋 Activity log for board "${boardId}"${sinceLabel}${offsetLabel} — ${entries.length} entry/entries:\n`);
+        console.log(`\n📋 Activity for ${label}${sinceLabel} — ${entries.length} entry/entries:\n`);
 
         for (const entry of entries) {
-          const ts = formatTimestamp(entry.createdAt);
-          const author = entry.author ? ` by ${entry.author}` : '';
-          const cardRef = entry.cardId ? ` (card: ${entry.cardId})` : '';
-          console.log(`  [${(entry.type ?? 'activity').toUpperCase()}]${author} — ${ts}`);
-          if (entry.cardName) {
-            console.log(`    Card: ${entry.cardName}${cardRef}`);
-          } else if (entry.cardId) {
-            console.log(`    Card: ${entry.cardId}`);
-          }
-          console.log(`    ${entry.description}`);
+          const ts = formatTimestamp(entry.time);
+          const who = entry.byUserId ? ` by ${entry.byUserId}` : '';
+          console.log(`  [${(entry.type ?? 'activity').toUpperCase()}]${who} — ${ts}`);
+          const where = [entry.widgetName, entry.columnName].filter(Boolean).join(' / ');
+          if (where) console.log(`    ${where}`);
           console.log();
         }
 

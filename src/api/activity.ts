@@ -1,14 +1,20 @@
 /**
- * Activity API — Board Activity Log
+ * Activity API — card activity log
  * CLA-1789 FAVRO-027: Comments & Activity API
  *
- * Fetches activity/audit log for a board with pagination and --since filter support.
- * Re-uses parseSince and formatTimestamp from the existing audit-api.
+ * Favro exposes exactly one activity endpoint: `GET /cards/:cardId/activities`.
+ * `/boards/:id/activity`, `/widgets/:id/activity`, `/activities` and the singular
+ * `/cards/:cardId/activity` are all 404-with-an-HTML-page (probed in #15/#18), so
+ * there is no board-level feed to aggregate and no per-card sweep is attempted —
+ * that would be derived-N fan-out, which this CLI does not do.
+ *
+ * The feed is notification-scoped per viewer (`source`), so a card the API-key
+ * user neither follows nor has news for can read thin. It is history for humans,
+ * never a source of truth for a card's state.
  */
 import FavroHttpClient from '../lib/http-client';
 import { ActivityEntry } from '../types/comments';
 import { parseSince, formatTimestamp } from '../lib/audit-api';
-import CardsAPI from '../lib/cards-api';
 
 export { ActivityEntry, parseSince, formatTimestamp };
 
@@ -18,161 +24,42 @@ interface PaginatedResponse<T> {
   pages?: number;
 }
 
-interface RawActivity {
-  activityId?: string;
-  id?: string;
-  cardId?: string;
-  type?: string;
-  action?: string;
-  description?: string;
-  message?: string;
-  author?: string;
-  user?: string;
-  createdAt?: string;
-  timestamp?: string;
-}
-
-function normalizeActivity(raw: RawActivity, boardId?: string): ActivityEntry {
-  return {
-    activityId: raw.activityId ?? raw.id ?? '',
-    boardId: boardId,
-    cardId: raw.cardId,
-    type: raw.type ?? raw.action ?? 'activity',
-    description: raw.description ?? raw.message ?? '',
-    author: raw.author ?? raw.user,
-    createdAt: raw.createdAt ?? raw.timestamp ?? '',
-  };
+export interface CardActivityOptions {
+  /** Only return activity at or after this time. */
+  since?: Date;
+  /** Only return activity at or before this time. */
+  until?: Date;
+  /** Max entries to return. Applied client-side — Favro ignores a `limit` param. */
+  limit?: number;
 }
 
 export class ActivityApiClient {
-  private cardsApi: CardsAPI;
-
-  constructor(private client: FavroHttpClient) {
-    this.cardsApi = new CardsAPI(client);
-  }
+  constructor(private client: FavroHttpClient) {}
 
   /**
-   * Get activity log for a board.
+   * Get the activity log for a single card, newest first.
    *
-   * Favro doesn't expose a direct board-level activity endpoint, so we fetch
-   * cards on the board and aggregate their card-level activity.
+   * `since` / `until` are pushed to Favro as ISO 8601 strings and filter
+   * server-side; an unparseable value is a 400, so callers must pass real Dates.
    *
-   * @param boardId  Board ID
-   * @param since    Optional cutoff — only return entries after this date
-   * @param limit    Max total entries to return (default 200)
-   * @param offset   Number of entries to skip from the start (default 0)
+   * @param cardId   Card ID — the board instance whose activity is wanted
+   * @param options  Time window and result cap
    */
-  async getBoardActivity(
-    boardId: string,
-    since?: Date,
-    limit: number = 200,
-    offset: number = 0
-  ): Promise<ActivityEntry[]> {
-    // Fetch cards on the board
-    const cards = await this.cardsApi.listCards(boardId, 1000);
+  async getCardActivity(cardId: string, options: CardActivityOptions = {}): Promise<ActivityEntry[]> {
+    const params: Record<string, unknown> = {};
+    if (options.since) params.since = options.since.toISOString();
+    if (options.until) params.until = options.until.toISOString();
 
-    // Filter to cards updated since cutoff (early optimisation)
-    const relevant = since
-      ? cards.filter(c => {
-          const ts = c.updatedAt || c.createdAt;
-          if (!ts) return false;
-          return new Date(ts) >= since;
-        })
-      : cards;
+    // ponytail: one call, no pagination loop. Favro ignores `limit`, `page` and
+    // `requestId` on this endpoint (probed: limit=2 still returns all 22 rows),
+    // so a paging loop would refetch the same page and duplicate every row.
+    const response = await this.client.get<PaginatedResponse<ActivityEntry>>(
+      `/cards/${cardId}/activities`,
+      { params }
+    );
 
-    const all: ActivityEntry[] = [];
-
-    for (const card of relevant) {
-      if (all.length >= offset + limit) break;
-
-      const cardActivity = await this.getCardActivity(card.cardId, 50, boardId);
-
-      if (cardActivity.length > 0) {
-        for (const entry of cardActivity) {
-          if (since && new Date(entry.createdAt) < since) continue;
-          // Attach card name from card metadata
-          if (!entry.cardName) {
-            (entry as any).cardName = card.name;
-          }
-          all.push(entry);
-        }
-      } else {
-        // Fallback: synthesize from card metadata
-        const updatedAt = card.updatedAt || card.createdAt;
-        if (updatedAt && (!since || new Date(updatedAt) >= since)) {
-          all.push({
-            activityId: `${card.cardId}-updated`,
-            boardId,
-            cardId: card.cardId,
-            cardName: card.name,
-            type: 'updated',
-            description: `Card "${card.name}" was updated`,
-            createdAt: updatedAt,
-          });
-        }
-        if (card.createdAt && card.createdAt !== card.updatedAt &&
-            (!since || new Date(card.createdAt) >= since)) {
-          all.push({
-            activityId: `${card.cardId}-created`,
-            boardId,
-            cardId: card.cardId,
-            cardName: card.name,
-            type: 'created',
-            description: `Card "${card.name}" was created`,
-            createdAt: card.createdAt,
-          });
-        }
-      }
-    }
-
-    // Sort by timestamp descending (newest first)
-    all.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-
-    return all.slice(offset, offset + limit);
-  }
-
-  /**
-   * Get activity entries for a single card with pagination.
-   */
-  async getCardActivity(cardId: string, limit: number = 100, boardId?: string): Promise<ActivityEntry[]> {
-    const entries: ActivityEntry[] = [];
-    let page = 0;
-    let totalPages = 1;
-    let requestId: string | undefined;
-
-    while (entries.length < limit && page < totalPages) {
-      const params: Record<string, unknown> = {
-        limit: Math.min(limit - entries.length, 100),
-      };
-      if (requestId) {
-        params.requestId = requestId;
-        params.page = page;
-      }
-
-      try {
-        const response = await this.client.get<PaginatedResponse<RawActivity>>(
-          // Favro: /cards/:cardId/activities (plural)
-          `/cards/${cardId}/activities`,
-          { params }
-        );
-        const batch = (response.entities ?? []).map(raw => normalizeActivity(raw, boardId));
-        entries.push(...batch);
-
-        if (response.requestId) {
-          requestId = response.requestId;
-          totalPages = response.pages ?? 1;
-          page += 1;
-        } else {
-          break;
-        }
-        if (batch.length === 0) break;
-      } catch {
-        // Activity endpoint not available — return what we have
-        break;
-      }
-    }
-
-    return entries.slice(0, limit);
+    const entries = response.entities ?? [];
+    return options.limit !== undefined ? entries.slice(0, options.limit) : entries;
   }
 }
 
