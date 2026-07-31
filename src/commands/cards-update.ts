@@ -83,7 +83,10 @@ export function registerCardsUpdateCommand(program: Command): void {
         if (options.description) updateData.description = options.description;
         if (options.status) updateData.status = options.status;
         if (options.assignees) updateData.assignees = options.assignees.split(',');
-        if (options.tags) updateData.tags = options.tags.split(',');
+        // `--tags ""` clears every tag, so test for presence, not truthiness.
+        if (options.tags !== undefined) {
+          updateData.tags = options.tags.split(',').map(t => t.trim()).filter(Boolean);
+        }
         if (options.parent) updateData.parentCardId = options.parent;
 
         // Column move: resolve column name → columnId

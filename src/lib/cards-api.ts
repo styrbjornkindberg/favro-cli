@@ -1,4 +1,5 @@
 import FavroHttpClient from './http-client';
+import TagsAPI from './tags-api';
 
 /** Raw card shape returned directly by the Favro REST API */
 interface RawCard {
@@ -138,7 +139,17 @@ export interface UpdateCardRequest {
   description?: string;
   status?: string;
   assignees?: string[];
+  /**
+   * Whole-array tag replacement, by tag name or tagId. Favro has no such field —
+   * `updateCard` diffs it into `addTags`/`addTagIds`/`removeTagIds` (see
+   * `tagReplacement`), which costs one extra card read and one tag list.
+   * Pass `addTags`/`removeTags` instead to hit the wire shape directly.
+   */
   tags?: string[];
+  /** Tag names to add. Favro creates a name it does not know — or 403s if the key may not. */
+  addTags?: string[];
+  /** Tag names to remove. */
+  removeTags?: string[];
   /** Due date in YYYY-MM-DD format. Supported by Favro API updateCard endpoint. */
   dueDate?: string;
   /** Target board ID when moving a card between boards. Supported by Favro API updateCard endpoint. */
@@ -548,8 +559,61 @@ export class CardsAPI {
       payload.addAssignmentIds = payload.assignees;
       delete payload.assignees;
     }
+    // Favro ignores a whole-array `tags` on update (200, no change) — it only
+    // honours add/remove. Translate the replacement into that shape.
+    if (payload.tags !== undefined) {
+      const desired = (payload.tags ?? []) as string[];
+      delete payload.tags;
+      Object.assign(payload, await this.tagReplacement(cardId, desired));
+    }
     // Favro uses PUT for card updates, not PATCH
     return this.client.put<Card>(`/cards/${cardId}`, payload);
+  }
+
+  /**
+   * Translate a whole-array `tags` replacement into Favro's card-update wire shape.
+   *
+   * `PUT /cards/:cardId {tags:[…]}` answers **200 and changes nothing** — probed
+   * live (#14, #16). The endpoint only honours `addTags`/`removeTags` (tag
+   * **names**) and `addTagIds`/`removeTagIds` (tag **ids**); cards read their tags
+   * back as ids, so the diff is done on ids and removals are always by id.
+   *
+   * Each desired entry may be a tag name or a tagId — `Card.tags` is ids, so a
+   * round-trip (read a card, write its tags back, as the batch undo path does)
+   * hands us ids, while a human types names.
+   *
+   * A desired name unknown to the org goes out as `addTags`, letting Favro create
+   * it — or refuse with "User does not have correct permission level in
+   * workspace". Either way it is a loud outcome, not a silent no-op.
+   */
+  private async tagReplacement(
+    cardId: string,
+    desired: string[],
+  ): Promise<{ addTags?: string[]; addTagIds?: string[]; removeTagIds?: string[] }> {
+    const [card, orgTags] = await Promise.all([
+      this.getCard(cardId),
+      new TagsAPI(this.client).listTags(),
+    ]);
+
+    const byName = new Map(orgTags.map((t) => [t.name.toLowerCase(), t.tagId]));
+    const knownIds = new Set(orgTags.map((t) => t.tagId));
+
+    const desiredIds = new Set<string>();
+    const newNames: string[] = [];
+    for (const entry of desired) {
+      const asId = knownIds.has(entry) ? entry : byName.get(entry.toLowerCase());
+      if (asId) desiredIds.add(asId);
+      else newNames.push(entry);
+    }
+
+    const currentIds = card.tags ?? [];
+    const out: { addTags?: string[]; addTagIds?: string[]; removeTagIds?: string[] } = {};
+    const addTagIds = [...desiredIds].filter((id) => !currentIds.includes(id));
+    const removeTagIds = currentIds.filter((id) => !desiredIds.has(id));
+    if (newNames.length > 0) out.addTags = newNames;
+    if (addTagIds.length > 0) out.addTagIds = addTagIds;
+    if (removeTagIds.length > 0) out.removeTagIds = removeTagIds;
+    return out;
   }
 
   async deleteCard(cardId: string): Promise<void> {

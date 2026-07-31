@@ -286,12 +286,10 @@ describe('Cards API', () => {
     expect(mockClient.put).toHaveBeenCalledWith('/cards/card-1', { name: 'Updated' });
   });
 
-  test('updateCard with tags parsed as array', async () => {
-    const updated = { cardId: 'card-1', name: 'Task', tags: ['bug', 'urgent'], createdAt: '2026-01-01', updatedAt: '2026-01-02' };
-    mockClient.put.mockResolvedValue(updated);
-    const result = await api.updateCard('card-1', { tags: ['bug', 'urgent'] });
-    expect(result.tags).toEqual(['bug', 'urgent']);
-  });
+  // `updateCard with tags parsed as array` lived here and asserted that `tags`
+  // reached the client untouched — which is the bug (#16): Favro 200s on `tags`
+  // and changes nothing. The tag path is covered by cards-api-tags-wire.test.ts,
+  // against a real http server rather than a mock that echoes its own input.
 
   test('updateCard propagates errors', async () => {
     mockClient.put.mockRejectedValue(new Error('Card not found'));
