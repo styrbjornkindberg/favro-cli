@@ -22,7 +22,6 @@ import {
   filterCards,
   evaluateNode,
   ParseError,
-  VALID_STATUS_VALUES,
   VALID_RELATIONSHIP_TYPES,
   DATE_KEYWORDS,
   type Query,
@@ -543,12 +542,6 @@ describe('parseQuery — enum validation and warnings', () => {
     expect(q.warnings).toHaveLength(0);
   });
 
-  test('warns on unknown status value', () => {
-    const q = parseQuery('status:unknown-status');
-    expect(q.warnings.length).toBeGreaterThan(0);
-    expect(q.warnings[0]).toContain('Unknown status value');
-  });
-
   test('warns on unknown field name', () => {
     const q = parseQuery('invalidfield:value');
     expect(q.warnings.length).toBeGreaterThan(0);
@@ -560,11 +553,10 @@ describe('parseQuery — enum validation and warnings', () => {
     expect(q.warnings).toHaveLength(0);
   });
 
-  test('VALID_STATUS_VALUES includes standard statuses', () => {
-    expect(VALID_STATUS_VALUES).toContain('done');
-    expect(VALID_STATUS_VALUES).toContain('todo');
-    expect(VALID_STATUS_VALUES).toContain('in-progress');
-    expect(VALID_STATUS_VALUES).toContain('blocked');
+  test('a status value is not validated against a global vocabulary', () => {
+    // `status` is a column name and columns are board-specific — there is no
+    // org-wide list to check against, so no value warns here.
+    expect(parseQuery('status:whatever-this-board-calls-it').warnings).toHaveLength(0);
   });
 
   test('DATE_KEYWORDS exports correct keywords', () => {
@@ -891,13 +883,6 @@ describe('parseQuery — edge cases', () => {
   test('all DATE_KEYWORDS parse successfully', () => {
     for (const kw of DATE_KEYWORDS) {
       expect(() => parseQuery(`due_date:${kw}`)).not.toThrow();
-    }
-  });
-
-  test('all VALID_STATUS_VALUES produce no warnings', () => {
-    for (const s of VALID_STATUS_VALUES) {
-      const q = parseQuery(`status:${s}`);
-      expect(q.warnings).toHaveLength(0);
     }
   });
 

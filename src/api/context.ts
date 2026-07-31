@@ -33,7 +33,6 @@ export interface ContextCard {
   stage?: WorkflowStage;
   nextColumn?: string;
   createdAt?: string;
-  updatedAt?: string;
 }
 
 export interface ContextStats {
@@ -144,7 +143,6 @@ function normalizeCard(card: Card): ContextCard {
     due: card.dueDate,
     columnId: card.columnId,
     createdAt: card.createdAt,
-    updatedAt: card.updatedAt,
   };
 
   // Custom fields — build a key→value map
@@ -158,12 +156,17 @@ function normalizeCard(card: Card): ContextCard {
   // Relationship links. Favro edges carry one direction flag: isBefore === true
   // means the linked card comes before this one, so it blocks this one.
   if (card.links && card.links.length > 0) {
+    // An edge inlined by `GET /cards` carries only `cardCommonId`; one read
+    // from `/cards/:id/dependencies` carries `cardId`. Take whichever is there.
+    const farId = (l: { cardId?: string; cardCommonId?: string }) => l.cardId ?? l.cardCommonId;
     ctx.blockedBy = card.links
       .filter(l => l.isBefore)
-      .map(l => l.cardId);
+      .map(farId)
+      .filter((id): id is string => Boolean(id));
     ctx.blocking = card.links
       .filter(l => !l.isBefore)
-      .map(l => l.cardId);
+      .map(farId)
+      .filter((id): id is string => Boolean(id));
   } else {
     ctx.blockedBy = [];
     ctx.blocking = [];

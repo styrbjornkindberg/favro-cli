@@ -1,5 +1,7 @@
 import FavroHttpClient from './http-client';
 import TagsAPI from './tags-api';
+import ColumnDirectory from './column-directory';
+import { cachedTags } from './name-cache';
 
 /** Raw card shape returned directly by the Favro REST API */
 interface RawCard {
@@ -18,40 +20,76 @@ interface RawCard {
   sequentialId?: number;
   createdByUserId?: string;
   createdAt?: string;
-  updatedAt?: string;
   customFields?: unknown[];
-  dependencies?: unknown[];
-  status?: string;
+  dependencies?: RawDependency[];
   // Allow passthrough of extra fields
   parentCardId?: string;
   [key: string]: unknown;
 }
 
 /**
+ * A dependency edge as `GET /cards` inlines it. The wire key `cardCommonId`
+ * carries the **far** card's value; there is no `cardId` on an inlined edge.
+ */
+interface RawDependency {
+  cardCommonId?: string;
+  isBefore?: boolean;
+  unique?: string;
+  cardSequentialId?: string;
+  [key: string]: unknown;
+}
+
+/**
  * Normalize a raw Favro API card response to our internal Card interface.
- * Maps Favro's field names (widgetCommonId, assignments, detailedDescription)
- * to the CLI's expected format (boardId, assignees, description).
+ *
+ * This **passes fields through** rather than enumerating them: every field
+ * Favro sends reaches the caller (`position`, `tasksDone`/`tasksTotal`,
+ * `completed`, `timeOnColumns`/`timeOnBoard`, …), and a field Favro adds later
+ * can never go invisible. Only aliases are computed on top — `description`,
+ * `assignees`, `boardId`, `tagIds` and `links`.
+ *
+ * `status` is deliberately NOT read off the raw card: Favro sends no such
+ * field. It is the column name, filled in by the caller from `columnId`.
  */
 function normalizeCard(raw: RawCard): Card {
-  return {
+  const { detailedDescription, widgetCommonId, assignments, tags, dependencies, ...rest } = raw;
+  const card: Card = {
+    ...rest,
     cardId: raw.cardId,
     cardCommonId: raw.cardCommonId,
     name: raw.name,
-    description: raw.detailedDescription ?? raw.description as string | undefined,
-    status: raw.status,
-    // Map assignments[].userId → assignees[]
-    assignees: (raw.assignments ?? []).map((a) => a.userId),
-    tags: raw.tags ?? [],
-    dueDate: raw.dueDate,
+    description: detailedDescription ?? (raw.description as string | undefined),
+    // Map assignments[].userId → assignees[]; `assignments` itself passes through.
+    assignees: (assignments ?? []).map((a) => a.userId),
+    assignments,
+    // Favro's `tags` on a card are tag **ids**. Keep them under `tagIds` — the
+    // rollback path reads ids off a card and writes them back, and an unknown
+    // *name* on a write is a tag creation, not a match.
+    tagIds: tags ?? [],
+    tags: tags ?? [],
     createdAt: raw.createdAt ?? '',
-    updatedAt: raw.updatedAt,
-    // Map widgetCommonId → boardId for internal consistency
-    boardId: raw.widgetCommonId ?? raw.boardId as string | undefined,
-    columnId: raw.columnId,
-    archived: raw.archived,
-    sequentialId: raw.sequentialId,
-    parentCardId: raw.parentCardId,
+    // Map widgetCommonId → boardId for internal consistency; both are present.
+    boardId: widgetCommonId ?? (raw.boardId as string | undefined),
+    widgetCommonId,
     customFields: raw.customFields as Card['customFields'],
+  };
+  if (dependencies !== undefined) {
+    card.links = dependencies.map(normalizeInlinedDependency);
+    card.dependencies = dependencies;
+  }
+  return card;
+}
+
+/**
+ * Map an inlined dependency onto a `CardLink`, keyed by `cardCommonId` with
+ * `cardId` left undefined. The reverse lookup (cardCommonId → cardId) costs a
+ * call and is ambiguous across board instances, so it is not faked here.
+ */
+function normalizeInlinedDependency(dep: RawDependency): CardLink {
+  return {
+    cardCommonId: dep.cardCommonId,
+    isBefore: dep.isBefore === true,
+    cardSequentialId: dep.cardSequentialId,
   };
 }
 
@@ -69,11 +107,17 @@ export interface CustomField {
  * from the far end returns it with `isBefore` inverted.
  */
 export interface CardLink {
-  /** cardId of the dependency card (the other end of the edge). */
-  cardId: string;
+  /**
+   * cardId of the dependency card (the other end of the edge).
+   * Undefined on an edge inlined by `GET /cards`, which carries only
+   * `cardCommonId` — the reverse lookup is the expensive, ambiguous
+   * direction and is not faked.
+   */
+  cardId?: string;
   /** True when the dependency card comes before the card you queried. */
   isBefore: boolean;
   cardCommonId?: string;
+  cardSequentialId?: string;
   /** cardId of the card you queried — the near end of the edge. */
   reverseCardId?: string;
   cardName?: string;
@@ -97,14 +141,19 @@ export interface Card {
   cardCommonId?: string;
   name: string;
   description?: string;
+  /** The column name. Favro has no `status` field — the column IS the status. */
   status?: string;
   assignees?: string[];
+  /** Tag names. */
   tags?: string[];
+  /** Tag ids, exactly as Favro sends them on the card. */
+  tagIds?: string[];
   dueDate?: string;
   createdAt: string;
-  updatedAt?: string;
   /** boardId — our alias for widgetCommonId */
   boardId?: string;
+  widgetCommonId?: string;
+  assignments?: Array<{ userId: string; completed?: boolean }>;
   columnId?: string;
   collectionId?: string;
   archived?: boolean;
@@ -118,6 +167,12 @@ export interface Card {
   links?: CardLink[];
   comments?: CardComment[];
   relations?: CardRelation[];
+  /**
+   * Every other field Favro sends passes through untouched — `position`,
+   * `tasksDone`/`tasksTotal`, `completed`, `timeOnBoard`/`timeOnColumns`,
+   * `dependencies`, and anything Favro adds after this was written.
+   */
+  [key: string]: unknown;
 }
 
 export interface CreateCardRequest {
@@ -283,7 +338,42 @@ function mapDescription(payload: Record<string, unknown>): void {
 }
 
 export class CardsAPI {
+  private columnDirectory?: ColumnDirectory;
+
   constructor(private client: FavroHttpClient) {}
+
+  private get columns(): ColumnDirectory {
+    this.columnDirectory ??= new ColumnDirectory(this.client, this.client.organizationId);
+    return this.columnDirectory;
+  }
+
+  /**
+   * Fill in the two name-valued fields on a read card: `status` (the column
+   * name — Favro has no status field, the column IS the status) and `tags`
+   * (names; the ids stay on `tagIds`).
+   *
+   * Both sides come from the shared 15-minute cache, so this costs one fetch
+   * per kind per TTL window regardless of how many cards were read.
+   */
+  private async hydrateNames(cards: Card[]): Promise<void> {
+    if (cards.length === 0) return;
+
+    const columnIds = new Set(cards.map((c) => c.columnId).filter((id): id is string => Boolean(id)));
+    for (const columnId of columnIds) {
+      const name = await this.columns.nameOf(columnId);
+      if (!name) continue;
+      for (const card of cards) {
+        if (card.columnId === columnId) card.status = name;
+      }
+    }
+
+    if (!cards.some((c) => (c.tagIds ?? []).length > 0)) return;
+    const tags = await cachedTags(this.client, this.client.organizationId);
+    const nameById = new Map(tags.map((t) => [t.tagId, t.name]));
+    for (const card of cards) {
+      card.tags = (card.tagIds ?? []).map((id) => nameById.get(id) ?? id);
+    }
+  }
 
   /**
    * List cards with automatic cursor-based pagination.
@@ -380,7 +470,9 @@ export class CardsAPI {
       if (entities.length === 0) break;
     }
 
-    return allCards.slice(0, effectiveLimit);
+    const cards = allCards.slice(0, effectiveLimit);
+    await this.hydrateNames(cards);
+    return cards;
   }
 
   /**
@@ -449,6 +541,7 @@ export class CardsAPI {
       rawCard = await this.client.get<RawCard>(`/cards/${cardId}`, { params });
     }
     const card = normalizeCard(rawCard);
+    await this.hydrateNames([card]);
 
     // Hydrate board/collection if requested and not already present
     if (includes.includes('board') && card.boardId && !card.board) {
@@ -634,7 +727,8 @@ export class CardsAPI {
       else newNames.push(entry);
     }
 
-    const currentIds = card.tags ?? [];
+    // `card.tags` renders names; the ids the wire wants are on `tagIds`.
+    const currentIds = card.tagIds ?? [];
     const out: { addTags?: string[]; addTagIds?: string[]; removeTagIds?: string[] } = {};
     const addTagIds = [...desiredIds].filter((id) => !currentIds.includes(id));
     const removeTagIds = currentIds.filter((id) => !desiredIds.has(id));

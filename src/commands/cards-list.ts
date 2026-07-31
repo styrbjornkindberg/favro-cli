@@ -28,7 +28,7 @@ function formatCardsTable(cards: Card[]): void {
 }
 
 function formatCardsCSV(cards: Card[]): void {
-  const header = ['ID', 'Title', 'Status', 'Assignees', 'Tags', 'DueDate', 'Created', 'Updated'];
+  const header = ['ID', 'Title', 'Status', 'Assignees', 'Tags', 'DueDate', 'Created'];
   const rows = cards.map(card => [
     card.cardId,
     card.name,
@@ -37,7 +37,6 @@ function formatCardsCSV(cards: Card[]): void {
     (card.tags || []).join(';'),
     card.dueDate || '',
     card.createdAt ? card.createdAt.slice(0, 10) : '',
-    card.updatedAt ? card.updatedAt.slice(0, 10) : '',
   ]);
 
   const escape = (v: string) => `"${String(v).replace(/"/g, '""')}"`;

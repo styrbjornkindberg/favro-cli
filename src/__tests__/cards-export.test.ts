@@ -169,7 +169,6 @@ describe('cardsToCSV', () => {
     expect(firstRow).toContain('"labels"');
     expect(firstRow).toContain('"dueDate"');
     expect(firstRow).toContain('"createdAt"');
-    expect(firstRow).toContain('"updatedAt"');
   });
 
   test('produces correct number of data rows', () => {

@@ -29,6 +29,8 @@ export interface RiskReport {
     missingFields: number;
     total: number;
   };
+  /** Checks this report could not perform. Empty is not the same as unavailable. */
+  unreachable?: string[];
 }
 
 export interface RiskCard {
@@ -53,15 +55,12 @@ function isOverdue(card: Card): boolean {
 }
 
 /**
- * Check if a card is stale (not updated in > N days).
+ * Staleness is unavailable, not empty. Favro sends no last-modified field on a
+ * card — no `updatedAt`, no `ETag`, no `Last-Modified` — so there is nothing to
+ * measure days-since-update against. Rather than flag every card (which is what
+ * a missing timestamp used to do) the report marks the check unreachable.
  */
-function isStale(card: Card, staleDays: number): boolean {
-  if (!card.updatedAt) return true; // No update date = consider it stale
-  const lastUpdate = new Date(card.updatedAt);
-  const now = new Date();
-  const daysSinceUpdate = (now.getTime() - lastUpdate.getTime()) / (1000 * 60 * 60 * 24);
-  return daysSinceUpdate > staleDays;
-}
+const STALE_UNAVAILABLE = 'Favro sends no last-modified field on a card, so staleness cannot be computed';
 
 /**
  * Check if a card is missing required fields.
@@ -87,26 +86,21 @@ export function registerRisksCommand(program: Command): void {
   program
     .command('risks <board>')
     .description(
-      'Identify at-risk cards: overdue, blocked, stale, unassigned, or with missing fields.\n\n' +
+      'Identify at-risk cards: overdue, blocked, unassigned, or with missing fields.\n\n' +
       'Examples:\n' +
       '  favro risks <board-id>\n' +
-      '  favro risks <board-id> --stale-days 14\n' +
       '  favro risks <board-id> --json\n\n' +
       'Risk categories:\n' +
       '  - Overdue: Due date is in the past\n' +
       '  - Blocked: Has "blocked" tag or status\n' +
-      '  - Stale: No updates for >7 days (configurable)\n' +
       '  - Unassigned: No assignees\n' +
-      '  - Missing Fields: Missing name, status, assignees, or due date'
+      '  - Missing Fields: Missing name, status, assignees, or due date\n\n' +
+      'Staleness is reported as unreachable: Favro sends no last-modified field on a card.'
     )
-    .option('--stale-days <number>', 'Days without update to consider stale', '7')
     .option('--json', 'Output as JSON')
     .action(async (board: string, options) => {
       const verbose = program.parent?.opts()?.verbose ?? program.opts()?.verbose ?? false;
       try {
-
-        const staleDaysParsed = parseInt(options.staleDays, 10);
-        const staleDays = isNaN(staleDaysParsed) || staleDaysParsed < 1 ? 7 : staleDaysParsed;
 
         const client = await createFavroClient();
         const api = new CardsAPI(client);
@@ -143,17 +137,6 @@ export function registerRisksCommand(program: Command): void {
               status: card.status,
               assignees: card.assignees,
               reason: 'Has "blocked" tag or status',
-            });
-            uniqueAtRiskCardIds.add(card.cardId);
-          }
-
-          if (isStale(card, staleDays)) {
-            stale.push({
-              cardId: card.cardId,
-              name: card.name,
-              status: card.status,
-              updatedAt: card.updatedAt,
-              reason: `No updates for >${staleDays} days`,
             });
             uniqueAtRiskCardIds.add(card.cardId);
           }
@@ -204,6 +187,7 @@ export function registerRisksCommand(program: Command): void {
             missingFields: missingFields.length,
             total: uniqueAtRiskCardIds.size,
           },
+          unreachable: [STALE_UNAVAILABLE],
         };
 
         if (options.json) {
@@ -217,13 +201,11 @@ export function registerRisksCommand(program: Command): void {
           console.log(`Board:        ${board}`);
           console.log(`Total cards:  ${report.totalCards}`);
           console.log(`At-risk:      ${report.summary.total}`);
-          console.log(`Stale days:   ${staleDays}+`);
           console.log('');
 
           console.log('Summary:');
           console.log(`  🔴 Overdue:          ${report.summary.overdue}`);
           console.log(`  🚫 Blocked:          ${report.summary.blocked}`);
-          console.log(`  ⏳ Stale:            ${report.summary.stale}`);
           console.log(`  👤 Unassigned:       ${report.summary.unassigned}`);
           console.log(`  ⚠️  Missing Fields:   ${report.summary.missingFields}`);
           console.log('');
@@ -254,17 +236,8 @@ export function registerRisksCommand(program: Command): void {
               console.log('');
             }
 
-            if (report.risks.stale.length > 0) {
-              console.log(`⏳ STALE (>${staleDays} days no update):`);
-              report.risks.stale.slice(0, 5).forEach(card => {
-                console.log(`  ${card.cardId}: ${card.name}`);
-                console.log(`    Last update: ${card.updatedAt}`);
-              });
-              if (report.risks.stale.length > 5) {
-                console.log(`  ... and ${report.risks.stale.length - 5} more`);
-              }
-              console.log('');
-            }
+            console.log(`⏳ STALE: unreachable — ${STALE_UNAVAILABLE}`);
+            console.log('');
 
             if (report.risks.unassigned.length > 0) {
               console.log('👤 UNASSIGNED:');

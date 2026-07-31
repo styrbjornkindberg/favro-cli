@@ -22,7 +22,6 @@ export const EXPORT_FIELDS = [
   'labels',
   'dueDate',
   'createdAt',
-  'updatedAt',
 ] as const;
 
 export type ExportField = (typeof EXPORT_FIELDS)[number];
@@ -40,7 +39,6 @@ export interface ExportCard {
   labels: string;
   dueDate: string;
   createdAt: string;
-  updatedAt: string;
 }
 
 export function normalizeCard(card: Card): ExportCard {
@@ -53,7 +51,6 @@ export function normalizeCard(card: Card): ExportCard {
     labels: (card.tags ?? []).join(';'),
     dueDate: card.dueDate ?? '',
     createdAt: card.createdAt ?? '',
-    updatedAt: card.updatedAt ?? '',
   };
 }
 

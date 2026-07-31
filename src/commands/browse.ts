@@ -65,9 +65,6 @@ function renderCardDetail(card: Card): string {
   if (card.createdAt) {
     lines.push(`  ${c.label('Created')}     ${c.muted(card.createdAt.slice(0, 10))}`);
   }
-  if (card.updatedAt) {
-    lines.push(`  ${c.label('Updated')}     ${c.muted(card.updatedAt.slice(0, 10))}`);
-  }
   if (card.description) {
     lines.push('');
     lines.push(`  ${c.label('Description')}`);

@@ -33,7 +33,9 @@ async function wouldCreateCycle(
       // isBefore === true: the linked card comes before `current`, i.e. `current`
       // depends on it. Those are the edges a cycle would travel along.
       for (const link of links) {
-        if (link.isBefore) {
+        // `/cards/:id/dependencies` carries `cardId`; an inlined edge does not,
+        // and a cycle can only be walked along an edge whose far end has one.
+        if (link.isBefore && link.cardId) {
           if (link.cardId === cardId) return true;
           if (!visited.has(link.cardId)) queue.push(link.cardId);
         }

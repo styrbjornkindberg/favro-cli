@@ -46,7 +46,6 @@ export function registerCardsFindCommand(cardsCmd: Command): void {
           Tags: (card.tags ?? []).join(', ') || '—',
           'Due Date': card.dueDate ?? '—',
           Created: card.createdAt ? card.createdAt.slice(0, 10) : '—',
-          Updated: card.updatedAt ? card.updatedAt.slice(0, 10) : '—',
         };
         console.table([row]);
       } catch (error: any) {

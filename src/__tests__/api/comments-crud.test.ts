@@ -38,7 +38,7 @@ describe('CommentsApiClient.getComment', () => {
     client.get.mockResolvedValue({
       id: 'c-alt',
       text: 'Alt text',
-      user: 'bob',
+      userId: 'bob',
       createdAt: '2026-01-01T00:00:00Z',
     });
 
@@ -47,6 +47,8 @@ describe('CommentsApiClient.getComment', () => {
 
     expect(comment.commentId).toBe('c-alt');
     expect(comment.text).toBe('Alt text');
+    // `userId` is the only identity Favro sends on a comment — `author`/`user`
+    // were never on the wire.
     expect(comment.author).toBe('bob');
   });
 });

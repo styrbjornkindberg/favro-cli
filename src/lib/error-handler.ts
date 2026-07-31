@@ -5,15 +5,22 @@
  * Provides consistent error formatting, helpful suggestions, and verbose mode.
  */
 import { c } from './theme';
+import { classifyThrownError } from './favro-error';
 
 /**
  * Format an error for display.
  * - Normal mode: "Error: [message]" (no stack trace)
  * - Verbose mode: Full stack trace
+ *
+ * When the error came off the wire, Favro's own `response.data.message` is what
+ * the user needs to see — axios' `Request failed with status code 403` says
+ * nothing. The classifier turns the pair (status, message) into the line.
  */
 export function logError(error: unknown, verbose = false): void {
   if (error instanceof Error) {
-    console.error(`${c.fail} ${c.error('Error:')} ${error.message}`);
+    const classified = classifyThrownError(error);
+    const message = classified?.isFailure ? classified.message : error.message;
+    console.error(`${c.fail} ${c.error('Error:')} ${message}`);
     if (verbose && error.stack) {
       console.error(c.muted('\nStack trace:'));
       console.error(c.muted(error.stack));

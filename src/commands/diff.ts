@@ -43,7 +43,6 @@ function analyzeDiff(cards: ContextCard[], since: Date): DiffEntry[] {
 
   for (const card of cards) {
     const created = card.createdAt ? new Date(card.createdAt) : null;
-    const updated = card.updatedAt ? new Date(card.updatedAt) : null;
 
     // New cards (created after since)
     if (created && created >= since) {
@@ -53,38 +52,9 @@ function analyzeDiff(cards: ContextCard[], since: Date): DiffEntry[] {
         title: card.title,
         detail: `Created ${formatRelative(created)}`,
       });
-      continue; // Don't double-report
     }
-
-    // Updated cards
-    if (updated && updated >= since) {
-      // Classify the change type based on available signals
-      const status = card.status ?? '';
-      const s = status.toLowerCase();
-
-      if (s.includes('done') || s.includes('complete') || s.includes('closed')) {
-        entries.push({
-          type: 'moved',
-          cardId: card.id,
-          title: card.title,
-          detail: `Moved to ${status}`,
-        });
-      } else if ((card.blockedBy?.length ?? 0) > 0) {
-        entries.push({
-          type: 'removed', // "removed" from progress — blocked
-          cardId: card.id,
-          title: card.title,
-          detail: `Blocked (${card.blockedBy!.length} blocker${card.blockedBy!.length > 1 ? 's' : ''})`,
-        });
-      } else {
-        entries.push({
-          type: 'updated',
-          cardId: card.id,
-          title: card.title,
-          detail: `Updated ${formatRelative(updated)} — status: ${status || 'unknown'}`,
-        });
-      }
-    }
+    // Favro sends no last-modified field on a card, so there is no honest
+    // signal for "changed since": only creation can be dated.
   }
 
   return entries;

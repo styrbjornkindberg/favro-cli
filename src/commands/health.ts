@@ -58,7 +58,8 @@ function scoreBoard(cards: AggregateCard[]): BoardHealth['breakdown'] {
 
   // Stale ratio: % of non-done cards NOT inactive >14 days
   const staleCount = nonDone.filter(c => {
-    const days = Math.min(daysSince(c.updatedAt), daysSince(c.createdAt));
+    // Favro sends no last-modified field; age is measured from creation.
+    const days = daysSince(c.createdAt);
     return days > 14;
   }).length;
   const staleScore = nonDone.length > 0

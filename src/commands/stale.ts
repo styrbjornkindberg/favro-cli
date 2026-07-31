@@ -114,10 +114,8 @@ export function registerStaleCommand(program: Command): void {
           // Skip done/archived cards
           if (DONE_STAGES.includes(card.stage ?? '')) continue;
 
-          const days = Math.min(
-            daysSince(card.updatedAt),
-            daysSince(card.createdAt),
-          );
+          // Favro sends no last-modified field; age is measured from creation.
+          const days = daysSince(card.createdAt);
 
           if (days >= staleDays) {
             const staleCard: StaleCard = {

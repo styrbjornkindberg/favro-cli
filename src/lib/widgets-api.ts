@@ -8,6 +8,8 @@ export interface Widget {
   boardId?: string;
   columnId?: string;
   collectionIds?: string[];
+  /** Board widgets inline their columns; `GET /columns` 400s without widgetCommonId */
+  columns?: Array<{ columnId: string; name: string; position?: number; color?: string }>;
 }
 
 export interface PaginatedResponse<T> {
@@ -50,6 +52,38 @@ export class WidgetsAPI {
 
     // Filter to ensure we only return card widgets (not boards/lists)
     return allWidgets.filter(w => w.type === 'card');
+  }
+
+  /**
+   * List every widget (board) in the organization. Each entry inlines its
+   * `columns`, so this is one call for the whole org's columns.
+   */
+  async listWidgets(): Promise<Widget[]> {
+    const all: Widget[] = [];
+    let requestId: string | undefined;
+    let page = 0;
+
+    while (true) {
+      const params: Record<string, any> = {};
+      if (requestId) {
+        params.requestId = requestId;
+        params.page = page;
+      }
+
+      const response = await this.client.get<PaginatedResponse<Widget>>('/widgets', { params });
+
+      if (response && response.entities) {
+        all.push(...response.entities);
+      }
+
+      requestId = response.requestId;
+      if (!requestId || !response.pages || page >= response.pages - 1 || !response.entities || response.entities.length === 0) {
+        break;
+      }
+      page++;
+    }
+
+    return all;
   }
 
   /**

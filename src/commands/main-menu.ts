@@ -281,7 +281,6 @@ async function showCardDetail(cardId: string): Promise<void> {
       console.log(`  ${c.label('Due')}         ${overdue ? c.error(`${card.dueDate} (overdue)`) : c.value(card.dueDate)}`);
     }
     if (card.createdAt) console.log(`  ${c.label('Created')}     ${c.muted(card.createdAt.slice(0, 10))}`);
-    if (card.updatedAt) console.log(`  ${c.label('Updated')}     ${c.muted(card.updatedAt.slice(0, 10))}`);
     if (card.description) {
       console.log('');
       console.log(`  ${c.label('Description')}`);

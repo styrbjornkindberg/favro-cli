@@ -14,6 +14,11 @@ export class FavroHttpClient {
   /** Backend routing identifier — must be forwarded on paginated requests */
   private backendId?: string;
 
+  /** The organization this client is authenticated against, if configured. */
+  get organizationId(): string | undefined {
+    return this.auth?.organizationId;
+  }
+
   constructor(config: { baseURL?: string; auth?: AuthConfig } = {}) {
     this.auth = config.auth;
     this.client = axios.create({

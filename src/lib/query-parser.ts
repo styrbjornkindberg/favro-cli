@@ -113,11 +113,6 @@ export const VALID_FIELDS = [
   'due_before', 'due_after', 'due_in', 'relationship', 'customField',
 ];
 
-export const VALID_STATUS_VALUES = [
-  'todo', 'in-progress', 'done', 'done-for-review', 'backlog', 'blocked',
-  'in-review', 'cancelled', 'archived',
-];
-
 export const DATE_KEYWORDS = [
   'today', 'tomorrow', 'yesterday', 'next-week', 'next-month',
   'last-month', 'last-week', 'this-week', 'this-month', 'overdue',
@@ -431,15 +426,9 @@ class Parser {
     // --- Validate field name ---
     this.validateField(fieldRaw.toLowerCase(), pos);
 
-    // --- Validate enum values for status ---
-    if (fieldRaw.toLowerCase() === 'status') {
-      const v = valuePart.toLowerCase();
-      if (!VALID_STATUS_VALUES.includes(v)) {
-        this.warnings.push(
-          `Unknown status value '${valuePart}'. Valid values: ${VALID_STATUS_VALUES.join(', ')}`
-        );
-      }
-    }
+    // `status` is a column name, which is board-specific — there is no global
+    // vocabulary to validate against here. #46 validates it against the board's
+    // real columns, where the board is known.
 
     return {
       kind: 'field',

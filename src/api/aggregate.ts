@@ -111,7 +111,6 @@ function normalizeToAggregateCard(
     due: card.dueDate,
     columnId: card.columnId,
     createdAt: card.createdAt,
-    updatedAt: card.updatedAt,
     boardId,
     boardName,
     collectionId,

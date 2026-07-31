@@ -179,19 +179,15 @@ describe('risks command', () => {
     expect(logCalls.some(call => call[0].includes('"overdue"'))).toBe(true);
   });
 
-  it('should respect custom --stale-days flag', async () => {
-    const notStaleDate = new Date();
-    notStaleDate.setDate(notStaleDate.getDate() - 25); // 25 days ago
-    const mockListCards = jest.fn().mockResolvedValue([{
-      ...sampleCards[2],
-      updatedAt: notStaleDate.toISOString()
-    }]);
+  it('reports staleness as unreachable rather than flagging cards', async () => {
+    // Favro sends no last-modified field on a card, so days-since-update cannot
+    // be computed. The report says so instead of listing every card as stale.
+    const mockListCards = jest.fn().mockResolvedValue([sampleCards[2]]);
     const program = buildProgram(mockListCards);
 
-    await program.parseAsync(['node', 'favro', 'risks', 'board-1', '--stale-days', '30']);
+    await program.parseAsync(['node', 'favro', 'risks', 'board-1']);
 
-    // Card should NOT be stale with 30-day threshold (it's 25 days old)
-    expect(consoleLogSpy).not.toHaveBeenCalledWith(expect.stringContaining('⏳ STALE'));
+    expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('⏳ STALE: unreachable'));
   });
 
   it('should report risk levels correctly', async () => {

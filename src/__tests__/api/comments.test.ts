@@ -47,10 +47,10 @@ describe('CommentsApiClient.listComments', () => {
     expect(comments[0].cardId).toBe('card-1');
   });
 
-  it('normalizes alternate field names (id, comment, user)', async () => {
+  it('normalizes alternate field names (id, comment, userId)', async () => {
     const client = makeMockClient([{
       entities: [
-        { id: 'c-alt', comment: 'Alt text', user: 'alice', createdAt: '2024-01-01T00:00:00Z' },
+        { id: 'c-alt', comment: 'Alt text', userId: 'alice', createdAt: '2024-01-01T00:00:00Z' },
       ],
     }]);
     const api = new CommentsApiClient(client as any);
