@@ -14,13 +14,13 @@ const VALID_INCLUDES = ['board', 'collection', 'custom-fields', 'links', 'commen
  */
 export function registerCardsGetCommand(cardsCmd: Command): void {
   cardsCmd
-    .command('get <cardId>')
+    .command('get <card>')
     .description(
       'Retrieve a card by ID with optional metadata.\n\n' +
       'Examples:\n' +
-      '  favro cards get <cardId>\n' +
-      '  favro cards get <cardId> --include board,collection\n' +
-      '  favro cards get <cardId> --include board,collection,custom-fields,links,comments\n\n' +
+      '  favro cards get <card>\n' +
+      '  favro cards get <card> --include board,collection\n' +
+      '  favro cards get <card> --include board,collection,custom-fields,links,comments\n\n' +
       `Valid includes: ${VALID_INCLUDES.join(', ')}`
     )
     .option(

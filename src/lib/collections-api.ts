@@ -6,6 +6,8 @@
  */
 import FavroHttpClient from './http-client';
 import { Board } from './boards-api';
+import { classifyThrownError } from './favro-error';
+import { looksLikeName, resolveNameToId } from './name-resolve';
 
 export interface Collection {
   collectionId: string;
@@ -55,15 +57,43 @@ export class CollectionsAPI {
   }
 
   /**
-   * Get a single collection by ID.
-   * Optionally include boards or stats.
+   * Resolve a collection name to its `collectionId`. An exact id passes
+   * straight through. Refuses an unknown or a duplicated name — never picks one.
    */
-  async getCollection(collectionId: string, include?: string[]): Promise<Collection> {
+  async resolveCollectionId(collection: string, useIdWith = 'favro collections get <collectionId>'): Promise<string> {
+    return resolveNameToId({
+      organizationId: this.client.organizationId,
+      kind: 'collections',
+      fetch: async () => (await this.listCollections(100)).map(c => ({ id: c.collectionId, name: c.name })),
+      value: collection,
+      label: 'collection',
+      listCommand: 'favro collections list',
+      useIdWith,
+    });
+  }
+
+  /**
+   * Get a single collection by id or by exact name.
+   * Optionally include boards or stats.
+   *
+   * A one-word collection name is not distinguishable from an id by shape, so
+   * the direct read goes first and only a classified not-found (Favro answers
+   * 403 "Page not found" here) escalates to the name lookup.
+   */
+  async getCollection(collection: string, include?: string[]): Promise<Collection> {
     const params: Record<string, any> = {};
     if (include && include.length > 0) {
       params.include = include.join(',');
     }
-    return this.client.get<Collection>(`/collections/${collectionId}`, { params });
+    const read = (id: string) => this.client.get<Collection>(`/collections/${id}`, { params });
+
+    if (looksLikeName(collection)) return read(await this.resolveCollectionId(collection));
+    try {
+      return await read(collection);
+    } catch (error) {
+      if (!classifyThrownError(error)?.escalatableOnRead) throw error;
+      return read(await this.resolveCollectionId(collection));
+    }
   }
 
   /**

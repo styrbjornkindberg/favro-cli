@@ -2,8 +2,8 @@
  * Tasks Commands
  * CLA-1803 FAVRO-XXX: Tasks Endpoints
  *
- * favro tasks list <cardId>
- * favro tasks add <cardId> "Create new DB schema"
+ * favro tasks list <card>
+ * favro tasks add <card> "Create new DB schema"
  */
 import { Command } from 'commander';
 import TasksAPI from '../lib/tasks-api';
@@ -16,7 +16,7 @@ export function registerTasksCommands(program: Command): void {
   const tasksCommand = program.command('tasks').description('Manage granular checklists inside a single card');
 
   tasksCommand
-    .command('list <cardCommonId>')
+    .command('list <card>')
     .description('List all tasks (checklist items) on a card')
     .option('--json', 'Output as JSON')
     .action(async (cardCommonId: string, options) => {
@@ -44,7 +44,7 @@ export function registerTasksCommands(program: Command): void {
     });
 
   tasksCommand
-    .command('add <cardCommonId> <name>')
+    .command('add <card> <name>')
     .description('Create a new task on a card')
     .option('--tasklist <taskListId>', 'Target task list ID (auto-selects first if omitted)')
     .option('--json', 'Output as JSON')

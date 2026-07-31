@@ -18,7 +18,7 @@ import UsersAPI, { User } from './users-api';
 /** The one knob. */
 export const CACHE_TTL_MS = 15 * 60 * 1000;
 
-export type CacheKind = 'columns' | 'tags' | 'users';
+export type CacheKind = 'columns' | 'tags' | 'users' | 'boards' | 'collections';
 
 export interface CacheRecord<T> {
   fetchedAt: number;

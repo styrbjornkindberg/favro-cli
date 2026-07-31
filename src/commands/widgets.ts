@@ -2,8 +2,8 @@
  * Widgets Commands
  * CLA-1801 FAVRO-XXX: Widgets Endpoints
  *
- * favro widgets list --card <cardCommonId>
- * favro widgets add <boardId> <cardCommonId>
+ * favro widgets list --card <card>
+ * favro widgets add <boardId> <card>
  */
 import { Command } from 'commander';
 import WidgetsAPI from '../lib/widgets-api';
@@ -18,7 +18,7 @@ export function registerWidgetsCommands(program: Command): void {
   widgetsCommand
     .command('list')
     .description('List all board widgets/instances of a specific card')
-    .requiredOption('--card <cardCommonId>', 'The central cardCommonId to trace')
+    .requiredOption('--card <card>', 'The central cardCommonId to trace')
     .option('--json', 'Output as JSON')
     .action(async (options) => {
       const verbose = widgetsCommand.opts()?.verbose ?? false;
@@ -46,7 +46,7 @@ export function registerWidgetsCommands(program: Command): void {
     });
 
   widgetsCommand
-    .command('add <boardId> <cardCommonId>')
+    .command('add <boardId> <card>')
     .description('Add an existing card to a new board (creates a new linked widget)')
     .option('--column <columnId>', 'Specific column ID to place the widget in')
     .option('--json', 'Output as JSON')

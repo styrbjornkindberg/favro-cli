@@ -2,7 +2,7 @@
  * Dependencies Commands
  * CLA-1804 FAVRO-XXX: Dependencies Endpoints
  *
- * favro dependencies list <cardId>
+ * favro dependencies list <card>
  * favro dependencies add <sourceId> <targetId> --type blocks
  */
 import { Command } from 'commander';
@@ -17,7 +17,7 @@ export function registerDependenciesCommands(program: Command): void {
   const depsCommand = program.command('dependencies').description('Manage card dependencies (blockers/related)');
 
   depsCommand
-    .command('list <cardId>')
+    .command('list <card>')
     .description('List dependencies for a card')
     .option('--json', 'Output as JSON')
     .action(async (cardId: string, options) => {
@@ -88,7 +88,7 @@ export function registerDependenciesCommands(program: Command): void {
     });
 
   depsCommand
-    .command('delete <cardId> <targetId>')
+    .command('delete <card> <targetId>')
     .description('Remove a single dependency link between two cards')
     .option('--dry-run', 'Preview without making API calls')
     .option('-y, --yes', 'Skip confirmation prompt')
@@ -123,7 +123,7 @@ export function registerDependenciesCommands(program: Command): void {
     });
 
   depsCommand
-    .command('delete-all <cardId>')
+    .command('delete-all <card>')
     .description('Remove all dependencies from a card')
     .option('--dry-run', 'Preview without making API calls')
     .option('-y, --yes', 'Skip confirmation prompt')

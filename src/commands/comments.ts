@@ -3,8 +3,8 @@
  * CLA-1789 FAVRO-027: Comments & Activity API
  *
  * Commands:
- *   favro comments list <card-id>
- *   favro comments add <card-id> --text "COMMENT"
+ *   favro comments list <card>
+ *   favro comments add <card> --text "COMMENT"
  */
 import { Command } from 'commander';
 import { createFavroClient } from '../lib/client-factory';
@@ -26,7 +26,7 @@ export function registerCommentsCommand(program: Command): void {
       'Examples:\n' +
       '  favro comments get <commentId>\n' +
       '  favro comments get <commentId> --json\n\n' +
-      'Tip: Use `favro comments list <cardId>` to find comment IDs.'
+      'Tip: Use `favro comments list <card>` to find comment IDs.'
     )
     .option('--json', 'Output as JSON')
     .action(async (commentId: string, options) => {
@@ -53,13 +53,13 @@ export function registerCommentsCommand(program: Command): void {
 
   // ─── comments list ─────────────────────────────────────────────────────────
   commentsCmd
-    .command('list <cardId>')
+    .command('list <card>')
     .description(
       'List all comments on a card.\n\n' +
       'Examples:\n' +
-      '  favro comments list <cardId>\n' +
-      '  favro comments list <cardId> --json\n' +
-      '  favro comments list <cardId> --limit 50\n\n' +
+      '  favro comments list <card>\n' +
+      '  favro comments list <card> --json\n' +
+      '  favro comments list <card> --limit 50\n\n' +
       'Tip: Use `favro cards list --board <id>` to find card IDs.'
     )
     .option('--limit <number>', 'Maximum number of comments to fetch (default: 100)', '100')
@@ -102,12 +102,12 @@ export function registerCommentsCommand(program: Command): void {
 
   // ─── comments add ──────────────────────────────────────────────────────────
   commentsCmd
-    .command('add <cardId>')
+    .command('add <card>')
     .description(
       'Add a comment to a card.\n\n' +
       'Examples:\n' +
-      '  favro comments add <cardId> --text "Looks good to me"\n' +
-      '  favro comments add <cardId> --text "Blocked by API issue" --json\n\n' +
+      '  favro comments add <card> --text "Looks good to me"\n' +
+      '  favro comments add <card> --text "Blocked by API issue" --json\n\n' +
       'Tip: Use `favro cards list --board <id>` to find card IDs.'
     )
     .requiredOption('--text <comment>', 'Comment text to add')
@@ -167,7 +167,7 @@ export function registerCommentsCommand(program: Command): void {
       'Examples:\n' +
       '  favro comments update <commentId> --text "Updated text"\n' +
       '  favro comments update <commentId> --text "Fixed typo" --json\n\n' +
-      'Tip: Use `favro comments list <cardId>` to find comment IDs.'
+      'Tip: Use `favro comments list <card>` to find comment IDs.'
     )
     .requiredOption('--text <comment>', 'New comment text')
     .option('--json', 'Output as JSON')
@@ -215,7 +215,7 @@ export function registerCommentsCommand(program: Command): void {
       'Examples:\n' +
       '  favro comments delete <commentId>\n' +
       '  favro comments delete <commentId> --yes\n\n' +
-      'Tip: Use `favro comments list <cardId>` to find comment IDs.'
+      'Tip: Use `favro comments list <card>` to find comment IDs.'
     )
     .option('--dry-run', 'Preview without making API calls')
     .option('-y, --yes', 'Skip confirmation prompt')

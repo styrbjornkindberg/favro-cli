@@ -1,4 +1,6 @@
 import FavroHttpClient from './http-client';
+import { classifyThrownError } from './favro-error';
+import { looksLikeName, resolveNameToId } from './name-resolve';
 
 export type BoardType = 'board' | 'list' | 'kanban' | 'backlog';
 
@@ -196,21 +198,74 @@ export class BoardsAPI {
     return allBoards;
   }
 
-  async getBoard(boardId: string): Promise<Board> {
-    const raw = await this.client.get<RawWidget>(`/widgets/${boardId}`);
+  /**
+   * Resolve a board name to its `widgetCommonId`. An exact id passes straight
+   * through. Refuses an unknown or a duplicated name — never picks one.
+   */
+  async resolveBoardId(board: string): Promise<string> {
+    return resolveNameToId({
+      organizationId: this.client.organizationId,
+      kind: 'boards',
+      fetch: async () => (await this.listBoards(100)).map(b => ({ id: b.boardId, name: b.name })),
+      value: board,
+      label: 'board',
+      listCommand: 'favro boards list',
+      useIdWith: 'favro boards get <boardId>',
+    });
+  }
+
+  /**
+   * Resolve a collection name to its `collectionId`.
+   * `useIdWith` names the caller's own flag so the refusal points at a command
+   * that exists today.
+   */
+  async resolveCollectionId(collection: string, useIdWith = 'favro collections get <collectionId>'): Promise<string> {
+    return resolveNameToId({
+      organizationId: this.client.organizationId,
+      kind: 'collections',
+      fetch: async () => (await this.listCollections(100)).map(c => ({ id: c.collectionId, name: c.name })),
+      value: collection,
+      label: 'collection',
+      listCommand: 'favro collections list',
+      useIdWith,
+    });
+  }
+
+  /**
+   * Read one board by id, escalating to a name lookup when the wire classifies
+   * the direct read as missing.
+   *
+   * A one-word board name is not distinguishable from an id by shape, so shape
+   * alone cannot decide — only an obvious name (one carrying a space or any
+   * other non-id character) skips the round trip. Escalation is read-only, per
+   * #36: a mutation never re-fires against a second identifier.
+   */
+  private async byBoard<T>(board: string, read: (boardId: string) => Promise<T>): Promise<T> {
+    if (looksLikeName(board)) return read(await this.resolveBoardId(board));
+    try {
+      return await read(board);
+    } catch (error) {
+      if (!classifyThrownError(error)?.escalatableOnRead) throw error;
+      return read(await this.resolveBoardId(board));
+    }
+  }
+
+  /** Get a board by id or by exact name. */
+  async getBoard(board: string): Promise<Board> {
+    const raw = await this.byBoard(board, id => this.client.get<RawWidget>(`/widgets/${id}`));
     return normalizeWidget(raw);
   }
 
   /**
-   * Get a board with optional extended data.
+   * Get a board (by id or by exact name) with optional extended data.
    * --include: custom-fields, cards, members, stats, velocity
    */
-  async getBoardWithIncludes(boardId: string, include?: string[]): Promise<ExtendedBoard> {
+  async getBoardWithIncludes(boardOrName: string, include?: string[]): Promise<ExtendedBoard> {
     const params: Record<string, any> = {};
     if (include && include.length > 0) {
       params.include = include.join(',');
     }
-    const raw = await this.client.get<any>(`/widgets/${boardId}`, { params });
+    const raw = await this.byBoard(boardOrName, id => this.client.get<any>(`/widgets/${id}`, { params }));
     const board: ExtendedBoard = { ...raw, ...normalizeWidget(raw) };
 
     // Stats and velocity are computed client-side if requested
@@ -231,9 +286,20 @@ export class BoardsAPI {
   }
 
   /**
-   * List boards in a specific collection with optional includes.
+   * List boards in one collection (by id or by exact name), filtered ON THE
+   * WIRE — one resolve call plus one `/widgets?collectionId=…`, never the whole
+   * org followed by a client-side sweep.
+   *
+   * The collection is resolved against the real listing rather than passed
+   * through: `/widgets` answers 200 with an empty page for a collectionId that
+   * does not exist, so an unvalidated argument would read as "no boards" when
+   * the truth is "no such collection".
    */
-  async listBoardsByCollection(collectionId: string, include?: string[]): Promise<ExtendedBoard[]> {
+  async listBoardsByCollection(collection: string, include?: string[]): Promise<ExtendedBoard[]> {
+    const collectionId = await this.resolveCollectionId(
+      collection,
+      'favro boards list --collection <collectionId>'
+    );
     const params: Record<string, any> = { collectionId };
     if (include && include.length > 0) {
       params.include = include.join(',');

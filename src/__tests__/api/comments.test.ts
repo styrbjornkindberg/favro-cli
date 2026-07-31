@@ -5,10 +5,13 @@
 import { CommentsApiClient } from '../../api/comments';
 
 function makeMockClient(responses: any[]): any {
+  // Resolving a card reference to the cardCommonId these endpoints require
+  // reads the card first (#40), so that read leads every response sequence.
+  const sequence = [{ cardId: 'card-1', cardCommonId: 'card-1' }, ...responses];
   let callIndex = 0;
   return {
     get: jest.fn().mockImplementation(() => {
-      const r = responses[callIndex] || responses[responses.length - 1];
+      const r = sequence[callIndex] || sequence[sequence.length - 1];
       callIndex++;
       return Promise.resolve(r);
     }),
@@ -109,7 +112,8 @@ describe('CommentsApiClient.addComment', () => {
       text: 'Test comment',
       createdAt: '2024-01-01T00:00:00Z',
     });
-    const client = { post: mockPost };
+    // The cardCommonId pre-read (#40) makes this a get-then-post client.
+    const client = { get: jest.fn().mockResolvedValue({ cardId: 'card-1', cardCommonId: 'card-1' }), post: mockPost };
     const api = new CommentsApiClient(client as any);
     const result = await api.addComment('card-1', 'Test comment');
     expect(mockPost).toHaveBeenCalledWith('/comments', { cardCommonId: 'card-1', comment: 'Test comment' });
@@ -123,7 +127,8 @@ describe('CommentsApiClient.addComment', () => {
       text: 'Trimmed',
       createdAt: '2024-01-01T00:00:00Z',
     });
-    const client = { post: mockPost };
+    // The cardCommonId pre-read (#40) makes this a get-then-post client.
+    const client = { get: jest.fn().mockResolvedValue({ cardId: 'card-1', cardCommonId: 'card-1' }), post: mockPost };
     const api = new CommentsApiClient(client as any);
     await api.addComment('card-1', '  Trimmed  ');
     expect(mockPost).toHaveBeenCalledWith('/comments', { cardCommonId: 'card-1', comment: 'Trimmed' });

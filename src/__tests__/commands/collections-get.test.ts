@@ -72,16 +72,33 @@ describe('collections get command', () => {
     expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify(sampleCollection, null, 2));
   });
 
-  test('shows 404 error message for non-existent collection', async () => {
-    const err = Object.assign(new Error('Not Found'), { response: { status: 404 } });
+  // #41: the command no longer invents a "not found" line. CollectionsAPI
+  // classified the failure (and, for a name, already listed the candidates), so
+  // the command just surfaces it — never a bare "not found" for something the
+  // API may merely have withheld.
+  test("surfaces the API's refusal for an unreachable collection", async () => {
+    const mockGet = jest.fn().mockRejectedValue(
+      new Error('No collection named "bad-id" — it is missing or not visible to your key.\nRun \'favro collections list\' to see what your key can reach.')
+    );
+    const program = buildProgram(mockGet);
+    await expect(
+      program.parseAsync(['node', 'test', 'collections', 'get', 'bad-id'])
+    ).rejects.toThrow('process.exit');
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('missing or not visible to your key'));
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('bad-id'));
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('favro collections list'));
+  });
+
+  test("surfaces Favro's own 403 message rather than dressing it as absence", async () => {
+    const err = Object.assign(new Error('Request failed with status code 403'), {
+      response: { status: 403, data: { message: 'Page not found' } },
+    });
     const mockGet = jest.fn().mockRejectedValue(err);
     const program = buildProgram(mockGet);
     await expect(
       program.parseAsync(['node', 'test', 'collections', 'get', 'bad-id'])
     ).rejects.toThrow('process.exit');
-    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('not found'));
-    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('bad-id'));
-    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('favro collections list'));
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('missing or not visible to your key'));
   });
 
   test('exits with error for invalid --include values', async () => {

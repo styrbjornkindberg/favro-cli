@@ -170,9 +170,20 @@ describe('Boards API', () => {
   });
 
   // --- listBoardsByCollection ---
+  //
+  // The collection argument is resolved against `/collections` before the
+  // widgets call, so these mocks answer both endpoints. Resolution is what makes
+  // an unknown collection a refusal instead of a plausible empty page.
+
+  function mockCollectionAnd(widgets: unknown[]) {
+    mockClient.get.mockImplementation(async (url: string) => {
+      if (url === '/collections') return { entities: [sampleCollection] };
+      return { entities: widgets };
+    });
+  }
 
   test('listBoardsByCollection queries with collectionId', async () => {
-    mockClient.get.mockResolvedValue({ entities: [sampleBoard] });
+    mockCollectionAnd([sampleBoard]);
     const result = await api.listBoardsByCollection('coll-1');
     expect(result).toHaveLength(1);
     expect(mockClient.get).toHaveBeenCalledWith('/widgets', expect.objectContaining({
@@ -180,29 +191,45 @@ describe('Boards API', () => {
     }));
   });
 
+  test('listBoardsByCollection resolves an exact collection name to its id', async () => {
+    mockCollectionAnd([sampleBoard]);
+    await api.listBoardsByCollection('  collection 1  ');
+    expect(mockClient.get).toHaveBeenCalledWith('/widgets', expect.objectContaining({
+      params: expect.objectContaining({ collectionId: 'coll-1' }),
+    }));
+  });
+
+  test('listBoardsByCollection refuses an unknown collection before calling /widgets', async () => {
+    mockCollectionAnd([sampleBoard]);
+    await expect(api.listBoardsByCollection('Ghost')).rejects.toThrow(
+      /missing or not visible to your key/
+    );
+    expect(mockClient.get).not.toHaveBeenCalledWith('/widgets', expect.anything());
+  });
+
   test('listBoardsByCollection with include stats adds stats to each board', async () => {
-    mockClient.get.mockResolvedValue({ entities: [sampleBoard] });
+    mockCollectionAnd([sampleBoard]);
     const result = await api.listBoardsByCollection('coll-1', ['stats']);
     expect(result[0].stats).toBeDefined();
     expect(result[0].stats!.totalCards).toBeDefined();
   });
 
   test('listBoardsByCollection with include velocity adds velocity to each board', async () => {
-    mockClient.get.mockResolvedValue({ entities: [sampleBoard] });
+    mockCollectionAnd([sampleBoard]);
     const result = await api.listBoardsByCollection('coll-1', ['velocity']);
     expect(result[0].velocity).toBeDefined();
     expect(result[0].velocity!.length).toBe(4);
   });
 
   test('listBoardsByCollection with include stats,velocity adds both', async () => {
-    mockClient.get.mockResolvedValue({ entities: [sampleBoard] });
+    mockCollectionAnd([sampleBoard]);
     const result = await api.listBoardsByCollection('coll-1', ['stats', 'velocity']);
     expect(result[0].stats).toBeDefined();
     expect(result[0].velocity).toBeDefined();
   });
 
-  test('listBoardsByCollection returns empty array for empty collection', async () => {
-    mockClient.get.mockResolvedValue({ entities: [] });
+  test('listBoardsByCollection returns empty array for a collection with no boards', async () => {
+    mockCollectionAnd([]);
     const result = await api.listBoardsByCollection('coll-1');
     expect(result).toEqual([]);
   });

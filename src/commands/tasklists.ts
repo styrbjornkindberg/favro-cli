@@ -1,9 +1,9 @@
 /**
  * Tasklists Commands
  *
- * favro tasklists list <cardCommonId>
+ * favro tasklists list <card>
  * favro tasklists get <taskListId>
- * favro tasklists create <cardCommonId> --name "Checklist"
+ * favro tasklists create <card> --name "Checklist"
  * favro tasklists update <taskListId> --name "New name"
  * favro tasklists delete <taskListId>
  */
@@ -17,7 +17,7 @@ export function registerTaskListsCommands(program: Command): void {
   const cmd = program.command('tasklists').description('Manage checklist groups (task lists) on cards');
 
   cmd
-    .command('list <cardCommonId>')
+    .command('list <card>')
     .description('List all task lists on a card')
     .option('--json', 'Output as JSON')
     .action(async (cardCommonId: string, options) => {
@@ -69,7 +69,7 @@ export function registerTaskListsCommands(program: Command): void {
     });
 
   cmd
-    .command('create <cardCommonId>')
+    .command('create <card>')
     .description('Create a new task list on a card')
     .requiredOption('--name <name>', 'Task list name')
     .option('--position <number>', 'Position (0-based)')

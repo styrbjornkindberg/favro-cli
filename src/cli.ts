@@ -8,7 +8,7 @@
  *   favro cards list [--board <id>] [--status <s>] [--assignee <a>] [--limit <n>]
  *   favro cards create <title> [--description <d>] [--status <s>] [--board <id>] [--dry-run]
  *   favro cards create --csv <file> --board <id> [--dry-run]
- *   favro cards update <cardId> [--name <n>] [--status <s>] [--assignees <a>] [--dry-run]
+ *   favro cards update <card> [--name <n>] [--status <s>] [--assignees <a>] [--dry-run]
  *   favro cards export <board> --format json|csv [--out <file>] [--filter <expr>]
  *
  * Config (priority: --api-key flag > FAVRO_API_KEY env > ~/.favro/config.json):
@@ -208,11 +208,11 @@ const cards = program.command('cards').description(
   '  unlink  Remove a link between two cards\n' +
   '  move    Move a card to a different board\n\n' +
   'Examples:\n' +
-  '  favro cards get <cardId> --include board,collection\n' +
+  '  favro cards get <card> --include board,collection\n' +
   '  favro cards list <board-id> --filter "customField:value"\n' +
-  '  favro cards link <cardId> --to <targetId> --type depends\n' +
-  '  favro cards unlink <cardId> --from <linkedCardId>\n' +
-  '  favro cards move <cardId> --to-board <boardId> --position top\n' +
+  '  favro cards link <card> --to <targetId> --type depends\n' +
+  '  favro cards unlink <card> --from <linkedCardId>\n' +
+  '  favro cards move <card> --to-board <boardId> --position top\n' +
   '  favro cards create "My card" --board <id>\n' +
   '  favro cards export <id> --format csv --out cards.csv'
 );
@@ -340,7 +340,7 @@ cards
   .option('--description <text>', 'Card description')
   .option('--status <status>', 'Card status')
   .option('--assignee <user>', 'Assignee username or user ID')
-  .option('--parent <cardId>', 'Parent card ID (makes this a child card)')
+  .option('--parent <card>', 'Parent card ID (makes this a child card)')
   .option('--bulk <file>', 'Bulk create from JSON file')
   .option('--csv <file>', 'Bulk import from CSV file (columns: name, description, status)')
   .option('--dry-run', 'Print what would be created without making API calls')
@@ -450,15 +450,15 @@ cards
 
 // ─── cards update ─────────────────────────────────────────────────────────────
 cards
-  .command('update [cardId]')
+  .command('update [card]')
   .description(
     'Update a card (single) or batch-update/move/assign cards.\n\n' +
     'Single card update:\n' +
-    '  favro cards update <cardId> --status "Done"\n' +
-    '  favro cards update <cardId> --name "New title" --status "In Progress"\n' +
-    '  favro cards update <cardId> --assignees "alice,bob"\n' +
-    '  favro cards update <cardId> --column "Developing" --board <boardId>\n' +
-    '  favro cards update <cardId> --status "Done" --dry-run\n\n' +
+    '  favro cards update <card> --status "Done"\n' +
+    '  favro cards update <card> --name "New title" --status "In Progress"\n' +
+    '  favro cards update <card> --assignees "alice,bob"\n' +
+    '  favro cards update <card> --column "Developing" --board <boardId>\n' +
+    '  favro cards update <card> --status "Done" --dry-run\n\n' +
     'Batch update from CSV:\n' +
     '  favro cards update --from-csv bulk.csv --board Q2-Dev\n' +
     '  favro cards update --from-csv bulk.csv --board Q2-Dev --dry-run\n\n' +
@@ -477,7 +477,7 @@ cards
   .option('--assignee <user>', 'Assignee for batch assign (use with --board)')
   .option('--tags <list>', 'Tags (comma-separated, single card update)')
   .option('--column <column>', 'Move card to this column by name (use with --board)')
-  .option('--parent <cardId>', 'Parent card ID (makes this a child card)')
+  .option('--parent <card>', 'Parent card ID (makes this a child card)')
   .option('--label <label>', 'Label/tag filter for batch operations (use with --board)')
   .option('--board <id>', 'Board ID — required for batch operations, optional for single')
   .option('--from-csv <file>', 'CSV file with card updates (columns: cardId, status, assignee, dueDate)')

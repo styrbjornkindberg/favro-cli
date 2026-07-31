@@ -1,6 +1,7 @@
 import FavroHttpClient from './http-client';
 import TagsAPI from './tags-api';
 import ColumnDirectory from './column-directory';
+import CardReferenceResolver, { CardResolutionError, isSequentialReference } from './card-reference';
 import { cachedTags } from './name-cache';
 
 /** Raw card shape returned directly by the Favro REST API */
@@ -230,6 +231,12 @@ export interface PaginatedResponse<T> {
 export interface GetCardOptions {
   /** List of include keys: board, collection, custom-fields, links, comments, relations */
   include?: string[];
+  /**
+   * Board (widgetCommonId) to resolve the card against. Only needed when a
+   * card lives on more than one board — resolution refuses rather than
+   * picking an instance, and names this as the disambiguating flag.
+   */
+  board?: string;
 }
 
 export interface LinkCardRequest {
@@ -339,8 +346,29 @@ function mapDescription(payload: Record<string, unknown>): void {
 
 export class CardsAPI {
   private columnDirectory?: ColumnDirectory;
+  private referenceResolver?: CardReferenceResolver;
 
   constructor(private client: FavroHttpClient) {}
+
+  /**
+   * Every card-shaped argument on this class goes through here, so `CLA-1804`,
+   * a `cardId` and a `cardCommonId` are interchangeable at every entry point —
+   * and the MCP passthrough and the skill engine inherit that for free.
+   */
+  private get references(): CardReferenceResolver {
+    this.referenceResolver ??= new CardReferenceResolver(this.client);
+    return this.referenceResolver;
+  }
+
+  /** Translate a card reference to the `cardId` a path segment wants. */
+  async resolveCardId(reference: string, options?: { widgetCommonId?: string }): Promise<string> {
+    return this.references.toCardId(reference, options);
+  }
+
+  /** Translate a card reference to the `cardCommonId` comments/tasks/tasklists want. */
+  async resolveCardCommonId(reference: string, options?: { widgetCommonId?: string }): Promise<string> {
+    return this.references.toCardCommonId(reference, options);
+  }
 
   private get columns(): ColumnDirectory {
     this.columnDirectory ??= new ColumnDirectory(this.client, this.client.organizationId);
@@ -481,7 +509,8 @@ export class CardsAPI {
    * Fetches task list items separately and strips them from the markdown,
    * since Favro injects them into the GET response but they're separate objects.
    */
-  async getRawDescription(cardId: string): Promise<string> {
+  async getRawDescription(cardRef: string): Promise<string> {
+    const cardId = await this.references.toCardId(cardRef);
     let rawCard: RawCard;
     try {
       rawCard = await this.client.get<RawCard>(`/cards/${cardId}`, {
@@ -524,7 +553,12 @@ export class CardsAPI {
   /**
    * Get a single card with optional includes (board, collection, custom-fields, links, comments).
    */
-  async getCard(cardId: string, options?: GetCardOptions): Promise<Card> {
+  async getCard(cardRef: string, options?: GetCardOptions): Promise<Card> {
+    const scope = options?.board ? { widgetCommonId: options.board } : undefined;
+    return this.references.escalateOnNotFound(cardRef, (cardId) => this.getCardById(cardId, options), scope);
+  }
+
+  private async getCardById(cardId: string, options?: GetCardOptions): Promise<Card> {
     const params: Record<string, unknown> = { descriptionFormat: 'markdown' };
     const includes = options?.include ?? [];
     if (includes.length > 0) {
@@ -582,10 +616,12 @@ export class CardsAPI {
   /**
    * Get all links for a card.
    */
-  async getCardLinks(cardId: string): Promise<CardLink[]> {
-    // Favro: GET /cards/:cardId/dependencies → { cardId, cardCommonId, dependencies: [...] }
-    const res = await this.client.get<{ dependencies: CardLink[] }>(`/cards/${cardId}/dependencies`);
-    return res.dependencies ?? [];
+  async getCardLinks(cardRef: string): Promise<CardLink[]> {
+    return this.references.escalateOnNotFound(cardRef, async (cardId) => {
+      // Favro: GET /cards/:cardId/dependencies → { cardId, cardCommonId, dependencies: [...] }
+      const res = await this.client.get<{ dependencies: CardLink[] }>(`/cards/${cardId}/dependencies`);
+      return res.dependencies ?? [];
+    });
   }
 
   /**
@@ -593,7 +629,11 @@ export class CardsAPI {
    * automatically (with `isBefore` inverted) — no second call needed.
    * Re-adding an existing edge is rejected with 403 "Dependency already exists".
    */
-  async linkCard(cardId: string, req: LinkCardRequest): Promise<CardLink[]> {
+  async linkCard(cardRef: string, req: LinkCardRequest): Promise<CardLink[]> {
+    const cardId = await this.references.toCardId(cardRef);
+    // A mutation fires once against a settled id — a 403 on a write never
+    // escalates, because a refused write is not distinguishable from an
+    // absent target.
     // Favro: POST /cards/:cardId/dependencies, body { dependencies: [{ cardId, isBefore }] }.
     // POST merges into the existing edge set; PUT would replace it.
     const res = await this.client.post<{ dependencies: CardLink[] }>(
@@ -611,21 +651,28 @@ export class CardsAPI {
    * not found" when the edge is already gone. Either end of the edge works —
    * deleting via the mirror card removes the same edge.
    */
-  async unlinkCard(cardId: string, fromCardId: string): Promise<void> {
+  async unlinkCard(cardRef: string, fromCardRef: string): Promise<void> {
+    const [cardId, fromCardId] = await Promise.all([
+      this.references.toCardId(cardRef),
+      this.references.toCardId(fromCardRef),
+    ]);
     await this.client.delete(`/cards/${cardId}/dependencies/${fromCardId}`);
   }
 
   /**
    * Remove all dependencies from a card.
    */
-  async deleteAllDependencies(cardId: string): Promise<void> {
+  async deleteAllDependencies(cardRef: string): Promise<void> {
+    const cardId = await this.references.toCardId(cardRef);
+    // Mutation: settled id, one attempt, no escalation.
     await this.client.delete(`/cards/${cardId}/dependencies`);
   }
 
   /**
    * Move a card to a different board.
    */
-  async moveCard(cardId: string, req: MoveCardRequest): Promise<Card> {
+  async moveCard(cardRef: string, req: MoveCardRequest): Promise<Card> {
+    const cardId = await this.references.toCardId(cardRef);
     // Favro uses PUT /cards/:cardId with widgetCommonId to move cards
     return this.client.put<Card>(`/cards/${cardId}`, {
       widgetCommonId: req.toBoardId,
@@ -668,7 +715,8 @@ export class CardsAPI {
     return created;
   }
 
-  async updateCard(cardId: string, data: UpdateCardRequest): Promise<Card> {
+  async updateCard(cardRef: string, data: UpdateCardRequest): Promise<Card> {
+    const cardId = await this.references.toCardId(cardRef);
     const payload: Record<string, unknown> = { ...data };
     mapDescription(payload);
     if (payload.boardId !== undefined) {
@@ -738,7 +786,8 @@ export class CardsAPI {
     return out;
   }
 
-  async deleteCard(cardId: string): Promise<void> {
+  async deleteCard(cardRef: string): Promise<void> {
+    const cardId = await this.references.toCardId(cardRef);
     await this.client.delete(`/cards/${cardId}`);
   }
 
@@ -773,7 +822,22 @@ export class CardsAPI {
     }
 
     const entities = ((response.entities as unknown as RawCard[]) ?? []).map(normalizeCard);
-    return entities[0] ?? null;
+    // A forked card — an assignment entity with no `widgetCommonId` — has no
+    // column and is unactionable, so it never takes part in resolution.
+    const instances = entities.filter((c) => Boolean(c.widgetCommonId));
+    if (instances.length === 0) return null;
+    if (instances.length > 1) {
+      const listed = instances.map((c) => `  ${c.cardId} (board ${c.boardId}, "${c.name}")`).join('\n');
+      throw new CardResolutionError(
+        `Card ${sequentialId} exists on ${instances.length} boards — pass --board <board> to say which:\n${listed}`,
+        String(sequentialId),
+        instances as never[],
+        '--board <board>',
+      );
+    }
+    const [card] = instances;
+    await this.hydrateNames([card]);
+    return card;
   }
 
   /**

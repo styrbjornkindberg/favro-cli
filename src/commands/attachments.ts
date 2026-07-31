@@ -2,7 +2,7 @@
  * Attachments Commands
  * CLA-1805 FAVRO-XXX: Attachments Endpoints
  *
- * favro attachments upload <cardId> --file ./error.log
+ * favro attachments upload <card> --file ./error.log
  */
 import { Command } from 'commander';
 import AttachmentsAPI from '../lib/attachments-api';
@@ -16,7 +16,7 @@ export function registerAttachmentsCommands(program: Command): void {
   const attachmentsCmd = program.command('attachments').description('Manage card attachments');
 
   attachmentsCmd
-    .command('upload <cardCommonId>')
+    .command('upload <card>')
     .description('Upload an attachment to a card')
     .requiredOption('--file <path>', 'Path to file to upload')
     .option('--json', 'Output as JSON')

@@ -54,7 +54,7 @@ async function wouldCreateCycle(
 export function registerCardsLinkCommands(cardsCmd: Command): void {
   // ─── cards link ─────────────────────────────────────────────────────────────
   cardsCmd
-    .command('link <cardId> <toCardId>')
+    .command('link <card> <toCardId>')
     .description(
       'Link a card to another card.\n\n' +
       'Examples:\n' +
@@ -125,7 +125,7 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
 
   // ─── cards unlink ───────────────────────────────────────────────────────────
   cardsCmd
-    .command('unlink <cardId> <fromCardId>')
+    .command('unlink <card> <fromCardId>')
     .description(
       'Remove a link between two cards.\n\n' +
       'Examples:\n' +
@@ -166,13 +166,13 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
 
   // ─── cards move ─────────────────────────────────────────────────────────────
   cardsCmd
-    .command('move <cardId>')
+    .command('move <card>')
     .description(
       'Move a card to a different board.\n\n' +
       'Examples:\n' +
-      '  favro cards move <cardId> --to-board <boardId>\n' +
-      '  favro cards move <cardId> --to-board <boardId> --position top\n' +
-      '  favro cards move <cardId> --to-board <boardId> --position bottom\n\n' +
+      '  favro cards move <card> --to-board <boardId>\n' +
+      '  favro cards move <card> --to-board <boardId> --position top\n' +
+      '  favro cards move <card> --to-board <boardId> --position bottom\n\n' +
       `Valid positions: ${VALID_POSITIONS.join(', ')}`
     )
     .requiredOption('--to-board <boardId>', 'Destination board ID')
@@ -229,7 +229,7 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
 
   // ─── cards show --relationships ─────────────────────────────────────────────
   cardsCmd
-    .command('show <cardId>')
+    .command('show <card>')
     .description(
       'Show card details with optional relationship info.\n\n' +
       'Examples:\n' +
@@ -276,7 +276,7 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
 
   // ─── cards dependencies ─────────────────────────────────────────────────────
   cardsCmd
-    .command('dependencies <cardId>')
+    .command('dependencies <card>')
     .description(
       'List all cards this card depends on.\n\n' +
       'Examples:\n' +
@@ -318,7 +318,7 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
 
   // ─── cards blockers ─────────────────────────────────────────────────────────
   cardsCmd
-    .command('blockers <cardId>')
+    .command('blockers <card>')
     .description(
       'List all cards blocked by this card.\n\n' +
       'Examples:\n' +
@@ -361,7 +361,7 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
 
   // ─── cards blocked-by ───────────────────────────────────────────────────────
   cardsCmd
-    .command('blocked-by <cardId>')
+    .command('blocked-by <card>')
     .description(
       'List all cards that are blocking this card.\n\n' +
       'Examples:\n' +

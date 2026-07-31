@@ -33,14 +33,14 @@ export async function confirmPrompt(question: string): Promise<boolean> {
 
 export function registerCardsUpdateCommand(program: Command): void {
   program
-    .command('cards update <cardId>')
+    .command('cards update <card>')
     .description('Update a card')
     .option('--name <name>', 'New card name')
     .option('--description <desc>', 'Card description')
     .option('--status <status>', 'Card status')
     .option('--assignees <list>', 'Assignees (comma-separated)')
     .option('--tags <list>', 'Tags (comma-separated)')
-    .option('--parent <cardId>', 'Set or change parent card ID')
+    .option('--parent <card>', 'Set or change parent card ID')
     .option('--column <column>', 'Move card to this column (by name, requires --board)')
     .option('--board <boardId>', 'Board ID (required when using --column)')
     .option('--filter <filter>', 'Filter expression for card selection')

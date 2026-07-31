@@ -74,8 +74,8 @@ function formatBoardDetails(board: ExtendedBoard): void {
 
 export function registerBoardsGetCommand(boardsParent: Command): void {
   boardsParent
-    .command('get <id>')
-    .description('Get a board by ID with optional extended data')
+    .command('get <board>')
+    .description('Get a board by id or exact name (trimmed, case-insensitive) with optional extended data')
     .option(
       '--include <options>',
       `Comma-separated data to include: ${VALID_INCLUDES.join(', ')}`,
@@ -109,10 +109,8 @@ export function registerBoardsGetCommand(boardsParent: Command): void {
           formatBoardDetails(board);
         }
       } catch (error: any) {
-        if (error?.response?.status === 404) {
-          console.error(`✗ Board not found: ${id}`);
-          process.exit(1);
-        }
+        // No bare "not found" here: BoardsAPI already classified the failure and
+        // resolution refusals carry their own candidate list.
         logError(error, verbose);
         process.exit(1);
       }

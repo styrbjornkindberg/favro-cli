@@ -3,7 +3,7 @@
  * CLA-1789 FAVRO-027: Comments & Activity API
  *
  * Commands:
- *   favro activity <cardId> [--since 2h] [--until 1d] [--limit N] [--format json|table]
+ *   favro activity <card> [--since 2h] [--until 1d] [--limit N] [--format json|table]
  *
  * Card-scoped only — Favro has no board-level activity feed (#18).
  */
@@ -24,14 +24,14 @@ function parseWindow(value: string | undefined, flag: string): Date | undefined 
 
 export function registerActivityCommand(program: Command): void {
   program
-    .command('activity <cardId>')
+    .command('activity <card>')
     .description(
       'Show the activity log for a card.\n\n' +
       'Examples:\n' +
-      '  favro activity <cardId>              All activity on the card\n' +
-      '  favro activity <cardId> --since 2h   Activity in the last 2 hours\n' +
-      '  favro activity <cardId> --until 1d   Activity older than 1 day\n' +
-      '  favro activity <cardId> --format json\n\n' +
+      '  favro activity <card>              All activity on the card\n' +
+      '  favro activity <card> --since 2h   Activity in the last 2 hours\n' +
+      '  favro activity <card> --until 1d   Activity older than 1 day\n' +
+      '  favro activity <card> --format json\n\n' +
       'Time units: h (hours), d (days), w (weeks)\n\n' +
       'Favro has no board-level activity feed, so activity is per card. The feed is\n' +
       'also scoped to what the API-key user follows or has news for, so it is card\n' +
@@ -52,7 +52,7 @@ export function registerActivityCommand(program: Command): void {
           console.error(
             'Error: `favro activity log <boardId>` is gone — Favro has no board-level\n' +
             'activity feed (the endpoint it used answers 404). Activity is per card:\n' +
-            '  favro activity <cardId>'
+            '  favro activity <card>'
           );
           process.exit(1);
           return;

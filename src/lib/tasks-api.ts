@@ -1,4 +1,5 @@
 import FavroHttpClient from './http-client';
+import CardReferenceResolver from './card-reference';
 
 export interface Task {
   taskId: string;
@@ -20,7 +21,9 @@ export class TasksAPI {
   /**
    * List all checklist tasks on a specific card.
    */
-  async listTasks(cardCommonId: string): Promise<Task[]> {
+  async listTasks(cardRef: string): Promise<Task[]> {
+    // Accepts CLA-1804, a cardId or a cardCommonId (#40).
+    const cardCommonId = await new CardReferenceResolver(this.client).toCardCommonId(cardRef);
     const allTasks: Task[] = [];
     let requestId: string | undefined;
     let page = 0;
@@ -51,7 +54,9 @@ export class TasksAPI {
   /**
    * Create a new task (checklist item) on a card.
    */
-  async createTask(cardCommonId: string, name: string, taskListId: string): Promise<Task> {
+  async createTask(cardRef: string, name: string, taskListId: string): Promise<Task> {
+    // Accepts CLA-1804, a cardId or a cardCommonId (#40).
+    const cardCommonId = await new CardReferenceResolver(this.client).toCardCommonId(cardRef);
     const payload = { cardCommonId, name, taskListId };
     return this.client.post<Task>('/tasks', payload);
   }

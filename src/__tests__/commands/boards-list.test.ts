@@ -6,7 +6,6 @@ import { Command } from 'commander';
 import {
   registerBoardsListCommand,
   formatBoardsTable,
-  filterBoardsByCollection,
 } from '../../commands/boards-list';
 import BoardsAPI, { Board, Collection } from '../../lib/boards-api';
 import FavroHttpClient from '../../lib/http-client';
@@ -178,33 +177,38 @@ describe('boards list command', () => {
     expect(names).toContain('Engineering Board');
   });
 
-  // --- collection filter ---
+  // --- collection filter (resolved and narrowed inside BoardsAPI) ---
 
-  test('--collection filters boards by collection name', async () => {
+  test('--collection hands the collection straight to the wire-filtered listing', async () => {
     const mockListBoards = jest.fn().mockResolvedValue(sampleBoards);
-    const mockListCollections = jest.fn().mockResolvedValue(sampleCollections);
-    const program = buildProgram(mockListBoards, mockListCollections);
+    const mockByCollection = jest.fn().mockResolvedValue([sampleBoards[0], sampleBoards[2]]);
+    const program = buildProgram(mockListBoards, undefined, mockByCollection);
 
     await program.parseAsync(['node', 'cli', 'boards', 'list', '--collection', 'Marketing']);
 
-    expect(mockListCollections).toHaveBeenCalled();
+    // No org-wide sweep and no client-side filter: one narrowed call.
+    expect(mockListBoards).not.toHaveBeenCalled();
+    expect(mockByCollection).toHaveBeenCalledWith('Marketing', undefined);
     expect(consoleLogSpy).toHaveBeenCalledWith('Found 2 board(s):');
   });
 
-  test('--collection filter is case-insensitive', async () => {
+  test('the positional collection takes the same wire-filtered path', async () => {
     const mockListBoards = jest.fn().mockResolvedValue(sampleBoards);
-    const mockListCollections = jest.fn().mockResolvedValue(sampleCollections);
-    const program = buildProgram(mockListBoards, mockListCollections);
+    const mockByCollection = jest.fn().mockResolvedValue([sampleBoards[1]]);
+    const program = buildProgram(mockListBoards, undefined, mockByCollection);
 
-    await program.parseAsync(['node', 'cli', 'boards', 'list', '--collection', 'marketing']);
+    await program.parseAsync(['node', 'cli', 'boards', 'list', 'coll-2']);
 
-    expect(consoleLogSpy).toHaveBeenCalledWith('Found 2 board(s):');
+    expect(mockByCollection).toHaveBeenCalledWith('coll-2', undefined);
+    expect(consoleLogSpy).toHaveBeenCalledWith('Found 1 board(s):');
   });
 
-  test('--collection filter with unknown name exits 1', async () => {
+  test("--collection with an unresolvable name surfaces the API's refusal and exits 1", async () => {
     const mockListBoards = jest.fn().mockResolvedValue(sampleBoards);
-    const mockListCollections = jest.fn().mockResolvedValue(sampleCollections);
-    const program = buildProgram(mockListBoards, mockListCollections);
+    const mockByCollection = jest.fn().mockRejectedValue(
+      new Error('No collection named "NonExistent" — it is missing or not visible to your key.')
+    );
+    const program = buildProgram(mockListBoards, undefined, mockByCollection);
 
     await expect(
       program.parseAsync(['node', 'cli', 'boards', 'list', '--collection', 'NonExistent'])
@@ -212,12 +216,15 @@ describe('boards list command', () => {
 
     expect(exitSpy).toHaveBeenCalledWith(1);
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('NonExistent'));
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('missing or not visible to your key')
+    );
   });
 
-  test('--collection --json outputs filtered boards as JSON', async () => {
+  test('--collection --json outputs the narrowed boards as JSON', async () => {
     const mockListBoards = jest.fn().mockResolvedValue(sampleBoards);
-    const mockListCollections = jest.fn().mockResolvedValue(sampleCollections);
-    const program = buildProgram(mockListBoards, mockListCollections);
+    const mockByCollection = jest.fn().mockResolvedValue([sampleBoards[1]]);
+    const program = buildProgram(mockListBoards, undefined, mockByCollection);
 
     await program.parseAsync(['node', 'cli', 'boards', 'list', '--collection', 'Engineering', '--json']);
 
@@ -362,97 +369,5 @@ describe('formatBoardsTable', () => {
     const rows = consoleTableSpy.mock.calls[0][0];
     expect(rows[0].Cards).toBe('—');
     expect(rows[0].Columns).toBe('—');
-  });
-});
-
-// --- filterBoardsByCollection unit tests ---
-
-describe('filterBoardsByCollection', () => {
-  let consoleWarnSpy: jest.SpyInstance;
-  let consoleLogSpy: jest.SpyInstance;
-
-  beforeEach(() => {
-    consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
-    consoleLogSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
-  });
-
-  afterEach(() => {
-    consoleWarnSpy.mockRestore();
-    consoleLogSpy.mockRestore();
-  });
-
-  test('filters boards by matching collection name', () => {
-    const result = filterBoardsByCollection(sampleBoards, sampleCollections, 'Marketing');
-    expect(result).toHaveLength(2);
-    expect(result.map(b => b.boardId)).toEqual(['board-1', 'board-3']);
-  });
-
-  test('case-insensitive matching', () => {
-    const result = filterBoardsByCollection(sampleBoards, sampleCollections, 'engineering');
-    expect(result).toHaveLength(1);
-    expect(result[0].boardId).toBe('board-2');
-  });
-
-  test('partial name matching', () => {
-    const result = filterBoardsByCollection(sampleBoards, sampleCollections, 'market');
-    expect(result).toHaveLength(2);
-  });
-
-  test('returns empty array for unknown collection', () => {
-    const result = filterBoardsByCollection(sampleBoards, sampleCollections, 'UnknownCollection');
-    expect(result).toHaveLength(0);
-  });
-
-  test('returns empty array when no collections', () => {
-    const result = filterBoardsByCollection(sampleBoards, [], 'Marketing');
-    expect(result).toHaveLength(0);
-  });
-
-  test('warns when multiple collections match', () => {
-    const collectionsWithOverlap: Collection[] = [
-      {
-        collectionId: 'coll-1',
-        name: 'Marketing',
-        createdAt: '2026-01-01T00:00:00Z',
-        updatedAt: '2026-01-01T00:00:00Z',
-      },
-      {
-        collectionId: 'coll-3',
-        name: 'Marketing EMEA',
-        createdAt: '2026-01-01T00:00:00Z',
-        updatedAt: '2026-01-01T00:00:00Z',
-      },
-    ];
-
-    const result = filterBoardsByCollection(sampleBoards, collectionsWithOverlap, 'marketing');
-    expect(consoleWarnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('Multiple collections match')
-    );
-    expect(consoleLogSpy).toHaveBeenCalledWith(
-      expect.stringContaining('Using first match')
-    );
-    // Uses first match (coll-1)
-    expect(result.map(b => b.boardId)).toEqual(['board-1', 'board-3']);
-  });
-
-  test('trims whitespace from collection name', () => {
-    const result = filterBoardsByCollection(sampleBoards, sampleCollections, '  marketing  ');
-    expect(result).toHaveLength(2);
-  });
-
-  test('handles null collection name without crashing', () => {
-    const collectionsWithNull: Collection[] = [
-      ...sampleCollections,
-      {
-        collectionId: 'coll-null',
-        name: null as any,  // ← Edge case: API returns null name
-        createdAt: '2026-01-01T00:00:00Z',
-        updatedAt: '2026-01-01T00:00:00Z',
-      },
-    ];
-    // Should not throw — null name should be treated as empty string
-    expect(() => filterBoardsByCollection(sampleBoards, collectionsWithNull, 'marketing')).not.toThrow();
-    const result = filterBoardsByCollection(sampleBoards, collectionsWithNull, 'marketing');
-    expect(result).toHaveLength(2);  // Only boards from Marketing collection
   });
 });

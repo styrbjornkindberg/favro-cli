@@ -2,8 +2,8 @@
  * Git Commands
  *
  * favro git link --board <boardId>          — Connect repo to a Favro board
- * favro git branch <cardId>                 — Create branch from card
- * favro git commit [--card <cardId>] [-m]   — Smart commit with card reference
+ * favro git branch <card>                 — Create branch from card
+ * favro git commit [--card <card>] [-m]   — Smart commit with card reference
  * favro git sync                            — Sync branch state to cards
  * favro git todos [--board <boardId>]       — Scan TODOs and create cards
  */
@@ -75,7 +75,7 @@ export function registerGitCommands(program: Command): void {
         console.log(`✓ Linked to board: ${board.name} (${options.board})`);
         console.log(`  Config saved: ${configPath}`);
         console.log('\n  Next steps:');
-        console.log('    favro git branch <cardId>     Create a branch from a card');
+        console.log('    favro git branch <card>     Create a branch from a card');
         console.log('    favro git commit -m "msg"     Commit with auto card reference');
         console.log('    favro git sync                Sync branch state to cards');
       } catch (error) {
@@ -84,10 +84,10 @@ export function registerGitCommands(program: Command): void {
       }
     });
 
-  // ─── git branch <cardId> ───────────────────────────────────────────
+  // ─── git branch <card> ───────────────────────────────────────────
 
   gitCmd
-    .command('branch <cardId>')
+    .command('branch <card>')
     .description('Create a git branch from a Favro card')
     .option('--no-move', 'Do not move the card to In Progress')
     .option('-y, --yes', 'Skip confirmation')
@@ -146,7 +146,7 @@ export function registerGitCommands(program: Command): void {
     .command('commit')
     .description('Smart commit with auto card reference in message')
     .requiredOption('-m, --message <message>', 'Commit message')
-    .option('--card <cardId>', 'Card ID to reference (auto-detected from branch if omitted)')
+    .option('--card <card>', 'Card ID to reference (auto-detected from branch if omitted)')
     .option('--comment', 'Add a comment to the Favro card with commit details')
     .option('--no-prefix', 'Do not add card ID prefix to commit message')
     .action(async (options) => {
@@ -230,7 +230,7 @@ export function registerGitCommands(program: Command): void {
 
         if (withCards.length === 0) {
           console.log('No branches with card references found.');
-          console.log('  Link branches by running: favro git branch <cardId>');
+          console.log('  Link branches by running: favro git branch <card>');
           return;
         }
 

@@ -51,7 +51,7 @@ describe('CardsAPI.findCardByUrl', () => {
 
   it('queries by cardSequentialId parsed from the URL and returns the first match', async () => {
     mockClient.get.mockResolvedValue({
-      entities: [{ cardId: 'card-1', name: 'Found card', sequentialId: 8850 }],
+      entities: [{ cardId: 'card-1', name: 'Found card', sequentialId: 8850, widgetCommonId: 'board-1' }],
     });
 
     const card = await api.findCardByUrl(
@@ -77,7 +77,7 @@ describe('CardsAPI.findCardByUrl', () => {
     mockClient.get
       .mockRejectedValueOnce({ response: { status: 500 } })
       .mockResolvedValueOnce({
-        entities: [{ cardId: 'card-2', name: 'Recovered', sequentialId: 42 }],
+        entities: [{ cardId: 'card-2', name: 'Recovered', sequentialId: 42, widgetCommonId: 'board-1' }],
       });
 
     const card = await api.findCardBySequentialId(42);

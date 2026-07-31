@@ -11,8 +11,8 @@ import { logError } from '../lib/error-handler';
 
 export function registerCollectionsGetCommand(collectionsParent: Command): void {
   collectionsParent
-    .command('get <id>')
-    .description('Get a collection by ID')
+    .command('get <collection>')
+    .description('Get a collection by id or exact name (trimmed, case-insensitive)')
     .option(
       '--include <options>',
       'Comma-separated list of related data to include: boards, stats',
@@ -67,11 +67,8 @@ export function registerCollectionsGetCommand(collectionsParent: Command): void 
           }
         }
       } catch (error: any) {
-        // Surface 404 with clear message
-        if (error?.response?.status === 404) {
-          console.error(`✗ Collection not found: ${id}. Use 'favro collections list' to see available collections.`);
-          process.exit(1);
-        }
+        // No bare "not found" here: CollectionsAPI already classified the failure
+        // and resolution refusals carry their own candidate list.
         logError(error, verbose);
         process.exit(1);
       }

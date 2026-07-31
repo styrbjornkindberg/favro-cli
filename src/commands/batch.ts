@@ -13,6 +13,7 @@ import * as fsPromises from 'fs/promises';
 import CardsAPI, { Card } from '../lib/cards-api';
 import { createFavroClient } from '../lib/client-factory';
 import { logError } from '../lib/error-handler';
+import { resolveAssignee } from '../lib/assignee';
 import {
   BulkTransaction,
   BulkOperation,
@@ -60,16 +61,10 @@ export function buildFilterFn(filters: string[]): (card: Card) => boolean {
   return (card) => fns.every(fn => fn(card));
 }
 
-/**
- * Resolve "@me" to the current user's username.
- * This is a placeholder — in a real implementation would call auth API.
- * Falls back to the literal string if it's not "@me".
- */
-export function resolveAssignee(assignee: string, _token?: string): string {
-  // @me is handled as literal for now; in production would resolve via API
-  if (assignee === '@me') return '@me';
-  return assignee;
-}
+// Assignee resolution lives in `src/lib/assignee.ts` — one home for every call
+// site. The local placeholder that used to sit here returned the flag text
+// verbatim, so the dedupe below compared a display name against `userId`s and
+// never matched, and composed that name into the id array the write sends.
 
 // ---------------------------------------------------------------------------
 // Command Registration
@@ -415,10 +410,13 @@ export function registerBatchAssignCommand(batch: Command): void {
       force?: boolean;
     }) => {
       try {
-        const assignee = resolveAssignee(options.to);
-
         const client = await createFavroClient();
-        
+
+        // Resolve first: an unknown or ambiguous assignee refuses before any
+        // card is read or written. `assigneeId` is what `card.assignees` holds
+        // (userIds), so the dedupe below can actually match.
+        const assigneeId = await resolveAssignee(client, options.to);
+
         const { readConfig } = await import('../lib/config');
         const { checkScope, confirmAction } = await import('../lib/safety');
         await checkScope(options.board, client, await readConfig(), options.force);
@@ -449,7 +447,7 @@ export function registerBatchAssignCommand(batch: Command): void {
         const filterFn = buildFilterFn(options.filter);
         const baseMatchingCards = allCards.filter(filterFn);
         const matchingCards = baseMatchingCards.filter(
-          (card) => !(card.assignees ?? []).includes(assignee)
+          (card) => !(card.assignees ?? []).includes(assigneeId)
         );
 
         const alreadyAssigned = baseMatchingCards.length - matchingCards.length;
@@ -458,7 +456,7 @@ export function registerBatchAssignCommand(batch: Command): void {
           if (!options.json) {
             console.log(`\n⚠  No cards match the filter(s) (${allCards.length} total on board).`);
             if (alreadyAssigned > 0) {
-              console.log(`   ${alreadyAssigned} card(s) already assigned to "${assignee}" — skipped.`);
+              console.log(`   ${alreadyAssigned} card(s) already assigned to "${options.to}" — skipped.`);
             }
           } else {
             console.log(JSON.stringify({ total: 0, success: 0, failure: 0, skipped: alreadyAssigned, errors: [] }));
@@ -472,7 +470,7 @@ export function registerBatchAssignCommand(batch: Command): void {
           cardId: card.cardId,
           cardName: card.name,
           changes: {
-            assignees: [...(card.assignees ?? []), assignee],
+            assignees: [...(card.assignees ?? []), assigneeId],
           },
           previousState: {
             assignees: card.assignees ?? [],
@@ -482,7 +480,7 @@ export function registerBatchAssignCommand(batch: Command): void {
 
         // Dry-run
         if (options.dryRun) {
-          const title = `Dry-run preview — assign ${ops.length} card(s) to "${assignee}"`;
+          const title = `Dry-run preview — assign ${ops.length} card(s) to "${options.to}"`;
           if (!options.json) {
             console.log(formatBulkPreview(ops, title));
             if (alreadyAssigned > 0) {
@@ -502,7 +500,7 @@ export function registerBatchAssignCommand(batch: Command): void {
         tx.addAll(ops);
 
         if (!options.json) {
-          console.log(`⚙  Assigning ${ops.length} card(s) to "${assignee}"...`);
+          console.log(`⚙  Assigning ${ops.length} card(s) to "${options.to}"...`);
         }
         const result = await tx.execute({ verbose: options.verbose });
         result.skipped = alreadyAssigned;

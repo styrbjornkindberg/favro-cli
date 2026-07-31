@@ -83,14 +83,26 @@ describe('boards get command', () => {
     expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify(sampleBoard, null, 2));
   });
 
-  test('shows 404 error message for non-existent board', async () => {
-    const err = Object.assign(new Error('Not Found'), { response: { status: 404 } });
-    const mockGet = jest.fn().mockRejectedValue(err);
+  // #41: the command no longer invents "Board not found". BoardsAPI resolves the
+  // argument (id or exact name) and classifies the failure, so a withheld board
+  // is never reported as an absent one.
+  test("surfaces the API's refusal for an unreachable board", async () => {
+    const mockGet = jest.fn().mockRejectedValue(
+      new Error('No board named "bad-id" — it is missing or not visible to your key.')
+    );
     const program = buildProgram(mockGet);
     await expect(
       program.parseAsync(['node', 'test', 'boards', 'get', 'bad-id'])
     ).rejects.toThrow('process.exit');
-    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Board not found'));
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('missing or not visible to your key'));
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('bad-id'));
+  });
+
+  test('passes a name through to the API untouched, so resolution stays server-side', async () => {
+    const mockGet = jest.fn().mockResolvedValue(sampleBoard);
+    const program = buildProgram(mockGet);
+    await program.parseAsync(['node', 'test', 'boards', 'get', 'Backlog - Web Hub']);
+    expect(mockGet).toHaveBeenCalledWith('Backlog - Web Hub', undefined);
   });
 
   test('exits with error for invalid include option', async () => {

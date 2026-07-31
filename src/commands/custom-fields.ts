@@ -5,7 +5,7 @@
  * Commands:
  *   favro custom-fields list <board-id>              — List all custom fields for a board
  *   favro custom-fields get <field-id>               — Get custom field details
- *   favro custom-fields set <card-id> <field-id> <value> — Set custom field value on card
+ *   favro custom-fields set <card> <field-id> <value> — Set custom field value on card
  *   favro custom-fields values <field-id>            — List all possible values for a field
  */
 import { Command } from 'commander';
@@ -90,12 +90,12 @@ export function registerCustomFieldsCommands(program: Command): void {
       'Subcommands:\n' +
       '  list <board-id>                  List all custom fields for a board\n' +
       '  get <field-id>                   Get custom field definition and options\n' +
-      '  set <card-id> <field-id> <value> Set a custom field value on a card\n' +
+      '  set <card> <field-id> <value> Set a custom field value on a card\n' +
       '  values <field-id>                List all allowed values for a select field\n\n' +
       'Examples:\n' +
       '  favro custom-fields list <board-id>\n' +
       '  favro custom-fields get <field-id>\n' +
-      '  favro custom-fields set <card-id> <field-id> "In Progress"\n' +
+      '  favro custom-fields set <card> <field-id> "In Progress"\n' +
       '  favro custom-fields values <field-id>'
     );
 
@@ -150,9 +150,9 @@ export function registerCustomFieldsCommands(program: Command): void {
       }
     });
 
-  // ─── custom-fields set <card-id> <field-id> <value> ────────────────────────
+  // ─── custom-fields set <card> <field-id> <value> ────────────────────────
   cfCmd
-    .command('set <card-id> <field-id> <value>')
+    .command('set <card> <field-id> <value>')
     .description(
       'Set a custom field value on a card.\n\n' +
       'For select fields, value must match one of the allowed option names.\n' +

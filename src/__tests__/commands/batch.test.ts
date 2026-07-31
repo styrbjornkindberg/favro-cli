@@ -6,7 +6,6 @@ import { Command } from 'commander';
 import {
   parseFilterExpression,
   buildFilterFn,
-  resolveAssignee,
   registerBatchCommand,
   registerBatchUpdateCommand,
   registerBatchMoveCommand,
@@ -17,6 +16,20 @@ import CardsAPI from '../../lib/cards-api';
 import FavroHttpClient from '../../lib/http-client';
 import * as config from '../../lib/config';
 import * as fsPromises from 'fs/promises';
+
+/**
+ * `--to` is resolved to a `userId` before any card is touched — that resolution
+ * has its own wire suite, so here it is stubbed with the mapping the fixtures
+ * below use. `card.assignees` holds userIds, so ALICE (not "alice") is what the
+ * dedupe compares and what the write composes.
+ */
+const ALICE = 'aB3dE5gH7jK9mN1pQ';
+const BOB = 'zY8xW6vU4tS2rQ0oP';
+jest.mock('../../lib/assignee', () => ({
+  resolveAssignee: jest.fn(async (_client: unknown, value: string) =>
+    value === 'alice' ? 'aB3dE5gH7jK9mN1pQ' : value
+  ),
+}));
 
 jest.mock('../../lib/cards-api');
 jest.mock('../../lib/http-client');
@@ -104,20 +117,10 @@ describe('buildFilterFn', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// resolveAssignee
-// ---------------------------------------------------------------------------
-
-describe('resolveAssignee', () => {
-  it('returns @me as literal', () => {
-    expect(resolveAssignee('@me')).toBe('@me');
-  });
-
-  it('returns other usernames as-is', () => {
-    expect(resolveAssignee('alice')).toBe('alice');
-    expect(resolveAssignee('bob.jones')).toBe('bob.jones');
-  });
-});
+// `resolveAssignee` no longer lives here. It was a placeholder that echoed the
+// flag text back, which is what made the dedupe below compare a display name
+// against userIds. It now lives in src/lib/assignee.ts and is covered by
+// tags-users-assignee-wire.test.ts against a real Favro stand-in.
 
 // ---------------------------------------------------------------------------
 // batch update command
@@ -524,12 +527,12 @@ describe('batch assign command', () => {
 
     // Only card-1 (Backlog) should be assigned
     expect(mockApi.updateCard).toHaveBeenCalledTimes(1);
-    expect(mockApi.updateCard).toHaveBeenCalledWith('card-1', expect.objectContaining({ assignees: ['alice'] }));
+    expect(mockApi.updateCard).toHaveBeenCalledWith('card-1', expect.objectContaining({ assignees: [ALICE] }));
   });
 
   it('skips cards already assigned to the target user', async () => {
     mockApi.listCards.mockResolvedValue([
-      makeCard({ cardId: 'card-1', status: 'Backlog', assignees: ['alice'] }),
+      makeCard({ cardId: 'card-1', status: 'Backlog', assignees: [ALICE] }),
       makeCard({ cardId: 'card-2', status: 'Backlog', assignees: [] }),
     ]);
     mockApi.updateCard.mockResolvedValue(makeCard());
@@ -544,12 +547,12 @@ describe('batch assign command', () => {
     // card-1 already assigned → skipped; card-2 gets assigned
     expect(mockApi.updateCard).toHaveBeenCalledTimes(1);
     expect(mockApi.updateCard).not.toHaveBeenCalledWith('card-1', expect.anything());
-    expect(mockApi.updateCard).toHaveBeenCalledWith('card-2', expect.objectContaining({ assignees: ['alice'] }));
+    expect(mockApi.updateCard).toHaveBeenCalledWith('card-2', expect.objectContaining({ assignees: [ALICE] }));
   });
 
   it('preserves existing assignees when assigning new user', async () => {
     mockApi.listCards.mockResolvedValue([
-      makeCard({ cardId: 'card-1', status: 'Backlog', assignees: ['bob'] }),
+      makeCard({ cardId: 'card-1', status: 'Backlog', assignees: [BOB] }),
     ]);
     mockApi.updateCard.mockResolvedValue(makeCard());
 
@@ -563,7 +566,7 @@ describe('batch assign command', () => {
     // Should include both bob AND alice
     expect(mockApi.updateCard).toHaveBeenCalledWith(
       'card-1',
-      expect.objectContaining({ assignees: expect.arrayContaining(['bob', 'alice']) })
+      expect.objectContaining({ assignees: expect.arrayContaining([BOB, ALICE]) })
     );
   });
 

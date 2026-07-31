@@ -4,7 +4,7 @@
  * CLA-1784 FAVRO-022: Enhanced with collection-id arg and --include stats,velocity
  */
 import { Command } from 'commander';
-import BoardsAPI, { Board, Collection, ExtendedBoard, aggregateBoardStats, calculateVelocity } from '../lib/boards-api';
+import BoardsAPI, { Board, ExtendedBoard, aggregateBoardStats, calculateVelocity } from '../lib/boards-api';
 import { createFavroClient } from '../lib/client-factory';
 import { logError } from '../lib/error-handler';
 
@@ -52,48 +52,13 @@ export function formatBoardsExtendedTable(boards: ExtendedBoard[]): void {
   console.table(rows);
 }
 
-/**
- * Filter boards by collection name (case-insensitive substring match).
- * Warns if multiple collections match.
- * Returns empty array if no match found.
- */
-export function filterBoardsByCollection(boards: Board[], collections: Collection[], collectionNameOrId: string): Board[] {
-  const trimmed = collectionNameOrId.trim();
-  const lc = trimmed.toLowerCase();
-
-  // If the arg looks like a collection ID (24-char hex), try exact ID match first
-  if (/^[0-9a-f]{24}$/i.test(trimmed)) {
-    const idMatch = collections.find(c => c.collectionId === trimmed);
-    if (idMatch) {
-      return boards.filter(b => b.collectionId === idMatch.collectionId);
-    }
-    // Also filter boards directly by collectionId even if collection is not listed
-    const direct = boards.filter(b => b.collectionId === trimmed);
-    if (direct.length > 0) return direct;
-  }
-
-  const matches = collections.filter(c => (c.name ?? '').toLowerCase().includes(lc));
-
-  if (matches.length === 0) {
-    return [];
-  }
-
-  if (matches.length > 1) {
-    console.warn(`⚠️ Multiple collections match "${collectionNameOrId}": ${matches.map(c => c.name).join(', ')}`);
-    console.log(`Using first match: "${matches[0].name}"\n`);
-  }
-
-  const matched = matches[0];
-  return boards.filter(b => b.collectionId === matched.collectionId);
-}
-
 const VALID_LIST_INCLUDES = ['stats', 'velocity'];
 
 export function registerBoardsListCommand(boardsParent: Command): void {
   boardsParent
-    .command('list [collection-id]')
-    .description('List all boards, optionally filtered by collection ID')
-    .option('--collection <name>', 'Filter boards by collection name (use instead of collection-id arg)')
+    .command('list [collection]')
+    .description('List all boards, optionally filtered by collection (id or exact name)')
+    .option('--collection <collection>', 'Filter boards by collection id or exact name (filtered on the wire)')
     .option(
       '--include <options>',
       'Comma-separated data to include: stats, velocity',
@@ -119,38 +84,21 @@ export function registerBoardsListCommand(boardsParent: Command): void {
         const client = await createFavroClient();
         const api = new BoardsAPI(client);
 
+        // Positional and --collection are the same filter; both take an id or an
+        // exact name and both narrow on the wire.
+        const collection: string | undefined = collectionId ?? options.collection;
+
         let boards: ExtendedBoard[];
 
-        if (collectionId) {
-          // Use collection-id positional argument for advanced listing
-          boards = await api.listBoardsByCollection(collectionId, include);
+        if (collection) {
+          boards = await api.listBoardsByCollection(collection, include);
         } else {
-          // Legacy path: list all boards, optionally filter by collection name
-          const rawBoards = await api.listBoards(100);
-
-          if (options.collection) {
-            const collections = await api.listCollections(100);
-            const filtered = filterBoardsByCollection(rawBoards, collections, options.collection);
-            if (filtered.length === 0) {
-              const names = collections.map(c => `"${c.name}"`).join(', ');
-              console.error(`✗ No boards found in collection "${options.collection}".`);
-              if (names) console.error(`  Available collections: ${names}`);
-              process.exit(1);
-            }
-            boards = filtered.map(b => {
-              const ext: ExtendedBoard = { ...b };
-              if (include?.includes('stats')) ext.stats = aggregateBoardStats(ext);
-              if (include?.includes('velocity')) ext.velocity = calculateVelocity();
-              return ext;
-            });
-          } else {
-            boards = rawBoards.map(b => {
-              const ext: ExtendedBoard = { ...b };
-              if (include?.includes('stats')) ext.stats = aggregateBoardStats(ext);
-              if (include?.includes('velocity')) ext.velocity = calculateVelocity();
-              return ext;
-            });
-          }
+          boards = (await api.listBoards(100)).map(b => {
+            const ext: ExtendedBoard = { ...b };
+            if (include?.includes('stats')) ext.stats = aggregateBoardStats(ext);
+            if (include?.includes('velocity')) ext.velocity = calculateVelocity();
+            return ext;
+          });
         }
 
         if (options.json) {

@@ -16,7 +16,7 @@ export function registerCardsCreateCommand(program: Command): void {
     .option('--board <id>', 'Target board ID')
     .option('--description <text>', 'Card description')
     .option('--status <status>', 'Card status')
-    .option('--parent <cardId>', 'Parent card ID (creates as child card)')
+    .option('--parent <card>', 'Parent card ID (creates as child card)')
     .option('--filter <filter>', 'Filter expression for card selection')
     .option('--bulk <file>', 'Bulk create from JSON file')
     .option('--json', 'Output as JSON')

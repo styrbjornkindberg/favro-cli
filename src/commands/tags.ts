@@ -43,6 +43,30 @@ export function registerTagsCommands(program: Command): void {
     });
 
   tagsCommand
+    .command('get <tag>')
+    .description('Get one tag by name or tagId (~200 bytes, not the whole tag list)')
+    .option('--json', 'Output as JSON')
+    .action(async (tag: string, options) => {
+      const verbose = tagsCommand.opts()?.verbose ?? false;
+      try {
+        const client = await createFavroClient();
+        const api = new TagsAPI(client);
+        const found = await api.getTag(tag);
+
+        if (options.json) {
+          console.log(JSON.stringify(found, null, 2));
+        } else {
+          console.log(`Tag: ${found.name}`);
+          console.log(`ID: ${found.tagId}`);
+          console.log(`Color: ${found.color || 'none'}`);
+        }
+      } catch (error: any) {
+        logError(error, verbose);
+        process.exit(1);
+      }
+    });
+
+  tagsCommand
     .command('create')
     .description('Create a new global tag')
     .requiredOption('--name <name>', 'Tag name')

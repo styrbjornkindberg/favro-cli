@@ -7,6 +7,7 @@
  * This client accepts cardId and resolves cardCommonId automatically.
  */
 import FavroHttpClient from '../lib/http-client';
+import CardReferenceResolver from '../lib/card-reference';
 import { Comment } from '../types/comments';
 
 export { Comment };
@@ -102,35 +103,15 @@ export class CommentsApiClient {
   }
 
   /**
-   * Resolve cardCommonId from either a cardId or a cardCommonId.
-   * Favro cardIds are 24-char hex; cardCommonIds are also 24-char hex.
-   * We can't tell them apart by format, so we try cardCommonId directly first,
-   * and fall back to looking up by cardId.
+   * Resolve the `cardCommonId` this endpoint requires from any card reference —
+   * `CLA-1804`, a `cardId` or a `cardCommonId` (#40).
+   *
+   * The old probe-first shape could not work: `GET /comments` answers an empty
+   * list rather than an error for a `cardId`, so "it returned entities" proved
+   * nothing and a wrong shape read as a card with no comments.
    */
-  private async resolveCardCommonId(cardIdOrCommonId: string): Promise<string> {
-    // Try using as-is first — Favro will 404 if it's a per-widget cardId
-    try {
-      const response = await this.client.get<PaginatedResponse<RawComment>>(
-        '/comments',
-        { params: { cardCommonId: cardIdOrCommonId, limit: 1 } }
-      );
-      if (response.entities !== undefined) {
-        // It worked as-is — it's already a cardCommonId (or returned results)
-        return cardIdOrCommonId;
-      }
-    } catch {
-      // Fall through to lookup
-    }
-
-    // Look up the card to get its cardCommonId
-    try {
-      const card = await this.client.get<{ cardCommonId?: string }>(`/cards/${cardIdOrCommonId}`);
-      if (card.cardCommonId) return card.cardCommonId;
-    } catch {
-      // Last resort: use as-is
-    }
-
-    return cardIdOrCommonId;
+  private async resolveCardCommonId(reference: string): Promise<string> {
+    return new CardReferenceResolver(this.client).toCardCommonId(reference);
   }
 
   /**

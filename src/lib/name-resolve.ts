@@ -1,0 +1,107 @@
+/**
+ * Name→id resolution for boards and collections (#41).
+ *
+ * Matching is trimmed, case-insensitive and EXACT — never a substring, never a
+ * "closest match". A name that lands on two ids is refused with every colliding
+ * id listed, because picking one silently puts two resources behind one visible
+ * name. An unresolvable name is refused with the ambiguous wording from #38:
+ * the API withholds and deletes with the same answer, so "not found" would be a
+ * claim we cannot make.
+ *
+ * Refusals are structured — candidate list plus the exact flag that
+ * disambiguates, naming a command that exists today.
+ *
+ * Accepted risk (same as #39's column directory): names are not stable
+ * identifiers, so a rename inside the cache TTL still mis-matches. Every lookup
+ * that finds nothing refetches before answering "no", so a cache miss is never
+ * evidence on its own.
+ */
+import { CacheKind, readCache, writeCache } from './name-cache';
+import { MISSING_WORDING } from './favro-error';
+
+/** One resolvable thing: an id and the name a human types for it. */
+export interface NamedRef {
+  id: string;
+  name: string;
+}
+
+const norm = (s: string | undefined): string => (s ?? '').trim().toLowerCase();
+
+/** How many candidates a refusal spells out before it defers to the list command. */
+const MAX_LISTED = 10;
+
+/**
+ * True when the value cannot be a Favro id — it carries a character no id does.
+ *
+ * This is deliberately weak: a one-word board name ("Backlog") is not
+ * distinguishable from an id by shape, so shape alone never decides. Callers
+ * that read a single resource use this only to skip a pointless round trip, and
+ * otherwise let the wire's own classified not-found trigger the name lookup.
+ */
+export function looksLikeName(value: string): boolean {
+  // Not trimmed on purpose: surrounding whitespace is itself proof it is not an id.
+  return /[^A-Za-z0-9_-]/.test(value);
+}
+
+export interface ResolveOptions {
+  /** Cache partition key. Undefined disables the cache, never the lookup. */
+  organizationId?: string;
+  kind: CacheKind;
+  /** Full listing for this kind. Called at most once per resolution. */
+  fetch: () => Promise<NamedRef[]>;
+  /** What the caller typed — a name or an id. */
+  value: string;
+  /** Singular, lowercase: 'board', 'collection'. */
+  label: string;
+  /** The command that lists this kind, e.g. 'favro boards list'. */
+  listCommand: string;
+  /** The exact invocation that takes an id, e.g. 'favro boards get <boardId>'. */
+  useIdWith: string;
+}
+
+function describe(refs: NamedRef[]): string {
+  const shown = refs.slice(0, MAX_LISTED).map(r => `  ${r.id}  ${r.name}`);
+  if (refs.length > MAX_LISTED) shown.push(`  … and ${refs.length - MAX_LISTED} more`);
+  return shown.join('\n');
+}
+
+/**
+ * Resolve a name or an id to an id against one listing.
+ *
+ * An exact id match wins outright; otherwise the name must match exactly one
+ * entry. Zero and many both throw — this never returns a guess.
+ */
+export async function resolveNameToId(options: ResolveOptions): Promise<string> {
+  const wanted = norm(options.value);
+  const match = (refs: NamedRef[]): NamedRef[] => {
+    const byId = refs.filter(r => r.id === options.value.trim());
+    return byId.length > 0 ? byId : refs.filter(r => norm(r.name) === wanted);
+  };
+
+  const cached = await readCache<NamedRef>(options.organizationId, options.kind);
+  let entries = cached ?? [];
+  let found = match(entries);
+
+  if (found.length === 0) {
+    // A cache miss is never the answer on its own — refetch, then decide.
+    entries = await options.fetch();
+    await writeCache(options.organizationId, options.kind, entries);
+    found = match(entries);
+  }
+
+  if (found.length === 1) return found[0].id;
+
+  if (found.length === 0) {
+    throw new Error(
+      `No ${options.label} named "${options.value}" — it is ${MISSING_WORDING}.\n` +
+        `Matching is exact (trimmed, case-insensitive). Run '${options.listCommand}' to see what your key can reach.` +
+        (entries.length > 0 ? `\nVisible ${options.label}s:\n${describe(entries)}` : '')
+    );
+  }
+
+  throw new Error(
+    `${found.length} ${options.label}s are named "${options.value}" — refusing to pick one.\n` +
+      `${describe(found)}\n` +
+      `Pass the id instead: ${options.useIdWith}`
+  );
+}

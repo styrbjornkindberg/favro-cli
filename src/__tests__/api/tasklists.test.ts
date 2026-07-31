@@ -5,7 +5,8 @@ import TaskListsAPI from '../../lib/tasklists-api';
 
 function makeMockClient() {
   return {
-    get: jest.fn(),
+    // Resolving a card reference to a cardCommonId reads the card first (#40).
+    get: jest.fn().mockResolvedValue({ cardId: 'card-1', cardCommonId: 'card-1' }),
     post: jest.fn(),
     put: jest.fn(),
     delete: jest.fn(),

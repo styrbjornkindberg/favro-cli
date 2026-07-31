@@ -1,4 +1,5 @@
 import FavroHttpClient from './http-client';
+import CardReferenceResolver from './card-reference';
 
 export interface TaskList {
   taskListId: string;
@@ -16,7 +17,9 @@ interface PaginatedResponse<T> {
 export class TaskListsAPI {
   constructor(private client: FavroHttpClient) {}
 
-  async listTaskLists(cardCommonId: string): Promise<TaskList[]> {
+  async listTaskLists(cardRef: string): Promise<TaskList[]> {
+    // Accepts CLA-1804, a cardId or a cardCommonId (#40).
+    const cardCommonId = await new CardReferenceResolver(this.client).toCardCommonId(cardRef);
     const all: TaskList[] = [];
     let requestId: string | undefined;
     let page = 0;
@@ -48,7 +51,9 @@ export class TaskListsAPI {
     return this.client.get<TaskList>(`/tasklists/${taskListId}`);
   }
 
-  async createTaskList(cardCommonId: string, name: string, position?: number): Promise<TaskList> {
+  async createTaskList(cardRef: string, name: string, position?: number): Promise<TaskList> {
+    // Accepts CLA-1804, a cardId or a cardCommonId (#40).
+    const cardCommonId = await new CardReferenceResolver(this.client).toCardCommonId(cardRef);
     const payload: Record<string, any> = { cardCommonId, name };
     if (position !== undefined) payload.position = position;
     return this.client.post<TaskList>('/tasklists', payload);

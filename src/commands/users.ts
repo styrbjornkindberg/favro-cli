@@ -43,6 +43,31 @@ export function registerUsersCommands(program: Command): void {
       }
     });
 
+  usersCommand
+    .command('get <user>')
+    .description('Get one user by name, email or userId')
+    .option('--json', 'Output as JSON')
+    .action(async (user: string, options) => {
+      const verbose = usersCommand.opts()?.verbose ?? false;
+      try {
+        const client = await createFavroClient();
+        const api = new UsersAPI(client);
+        const found = await api.getUser(user);
+
+        if (options.json) {
+          console.log(JSON.stringify(found, null, 2));
+        } else {
+          console.log(`User: ${found.name}`);
+          console.log(`ID: ${found.userId}`);
+          console.log(`Email: ${found.email}`);
+          console.log(`Role: ${found.organizationRole || 'member'}`);
+        }
+      } catch (error: any) {
+        logError(error, verbose);
+        process.exit(1);
+      }
+    });
+
   const groupsCommand = program.command('groups').description('Manage organization user groups');
 
   groupsCommand
