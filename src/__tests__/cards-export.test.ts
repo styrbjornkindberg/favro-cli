@@ -610,10 +610,12 @@ describe('registerCardsExportCommand', () => {
     exitSpy.mockRestore();
   });
 
-  // Fix #1: --limit 0 should NOT silently become 10000 (uses safeLimit = 10000 as fallback for <1)
-  test('--limit 0 falls back to default 10000 (not silently coerced by ||)', async () => {
+  // #44 replaced three `--limit` tests here. `cards export` no longer has the
+  // flag at all: it fetched a cap and called the result "the export", which is
+  // the same silent-partial-answer defect as `cards list --limit`.
+  test('the export fetch is uncapped — no limit reaches the API', async () => {
     mockApi(sampleCards);
-    const outFile = path.join(tmpDir, 'limit0.json');
+    const outFile = path.join(tmpDir, 'uncapped.json');
 
     const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
     const listCardsSpy = jest.fn().mockResolvedValue(sampleCards);
@@ -628,40 +630,10 @@ describe('registerCardsExportCommand', () => {
       'node', 'test',
       'cards', 'export', 'board-123',
       '--format', 'json',
-      '--limit', '0',
       '--out', outFile,
     ]);
 
-    // With safeLimit: 0 < 1 → falls back to 10000
-    expect(listCardsSpy).toHaveBeenCalledWith('board-123', 10000);
-
-    consoleSpy.mockRestore();
-  });
-
-  // Fix #5: --limit -5 should be rejected, falls back to 10000
-  test('--limit -5 falls back to default 10000 (negative values rejected)', async () => {
-    mockApi(sampleCards);
-    const outFile = path.join(tmpDir, 'limit-neg.json');
-
-    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
-    const listCardsSpy = jest.fn().mockResolvedValue(sampleCards);
-    (CardsAPI as jest.MockedClass<typeof CardsAPI>).mockImplementation(() => ({
-      listCards: listCardsSpy,
-    } as any));
-
-    const program = new Command();
-    registerCardsExportCommand(program);
-
-    await program.parseAsync([
-      'node', 'test',
-      'cards', 'export', 'board-123',
-      '--format', 'json',
-      '--limit', '-5',
-      '--out', outFile,
-    ]);
-
-    // With safeLimit: -5 < 1 → falls back to 10000
-    expect(listCardsSpy).toHaveBeenCalledWith('board-123', 10000);
+    expect(listCardsSpy).toHaveBeenCalledWith('board-123');
 
     consoleSpy.mockRestore();
   });
@@ -691,30 +663,6 @@ describe('registerCardsExportCommand', () => {
     exitSpy.mockRestore();
   });
 
-  // Fix #1: --limit 5 (valid positive value) passes correctly
-  test('--limit 5 passes valid value to API', async () => {
-    const outFile = path.join(tmpDir, 'limit5.json');
-    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
-    const listCardsSpy = jest.fn().mockResolvedValue(sampleCards);
-    (CardsAPI as jest.MockedClass<typeof CardsAPI>).mockImplementation(() => ({
-      listCards: listCardsSpy,
-    } as any));
-
-    const program = new Command();
-    registerCardsExportCommand(program);
-
-    await program.parseAsync([
-      'node', 'test',
-      'cards', 'export', 'board-123',
-      '--format', 'json',
-      '--limit', '5',
-      '--out', outFile,
-    ]);
-
-    expect(listCardsSpy).toHaveBeenCalledWith('board-123', 5);
-
-    consoleSpy.mockRestore();
-  });
 });
 
 // ----------------------------

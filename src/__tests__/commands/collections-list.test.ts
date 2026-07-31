@@ -73,14 +73,16 @@ describe('collections list command', () => {
     const mockList = jest.fn().mockResolvedValue(sampleCollections);
     const program = buildProgram(mockList);
     await program.parseAsync(['node', 'test', 'collections', 'list', '--format', 'json']);
-    expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify(sampleCollections, null, 2));
+    // #44: a list read emits the `{rows}` envelope, compact, with the bulk
+    // fields omitted from the RENDERING only.
+    expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify({ rows: sampleCollections }));
   });
 
   test('lists collections in json format with --json flag', async () => {
     const mockList = jest.fn().mockResolvedValue(sampleCollections);
     const program = buildProgram(mockList);
     await program.parseAsync(['node', 'test', 'collections', 'list', '--json']);
-    expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify(sampleCollections, null, 2));
+    expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify({ rows: sampleCollections }));
   });
 
   test('shows message for empty collections', async () => {

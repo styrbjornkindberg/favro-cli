@@ -56,12 +56,12 @@ export function registerCardsExportCommand(program: Command): void {
     .option('--format <format>', 'Export format: json or csv', 'json')
     .option('--out <file>', 'Output file path (defaults to stdout)')
     .option('--filter <expression>', 'Filter cards (repeatable, e.g. "assignee:alice"). All conditions must match (AND logic)', (val, prev: string[]) => prev.concat([val]), [] as string[])
-    .option('--limit <number>', 'Maximum cards to fetch', '10000')
+    // #44: no --limit. The board is fetched to completion; a cap here could only
+    // silently export part of a board and call it the export.
     .action(async (_exportArg: string, board: string, options: {
       format?: string;
       out?: string;
       filter: string[];
-      limit?: string;
     }) => {
       const verbose = program.parent?.opts()?.verbose ?? program.opts()?.verbose ?? false;
       // Check FAVRO_API_TOKEN early
@@ -84,10 +84,6 @@ export function registerCardsExportCommand(program: Command): void {
         }
       }
 
-      // Validate --limit: treat <= 0 as fallback to 10000
-      const parsedLimit = parseInt(options.limit ?? '10000', 10);
-      const limit = !isNaN(parsedLimit) && parsedLimit >= 1 ? parsedLimit : 10000;
-
       try {
         const client = await createFavroClient();
         const api = new CardsAPI(client);
@@ -95,7 +91,7 @@ export function registerCardsExportCommand(program: Command): void {
         // Fetch cards (pagination handled in CardsAPI)
         const spinner = new Spinner('Fetching cards');
         spinner.start();
-        let cards = await api.listCards(board, limit);
+        let cards = await api.listCards(board);
         spinner.stop();
 
         // Apply optional filters (AND logic — all must match)

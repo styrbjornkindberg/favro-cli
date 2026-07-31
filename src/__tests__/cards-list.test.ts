@@ -108,7 +108,8 @@ describe('Cards List Command', () => {
 
   // --- Happy path ---
 
-  test('calls listCards with board id and limit', async () => {
+  // #44: `--limit` is a pure OUTPUT cap; it never reaches the fetch.
+  test('calls listCards with the board id, and no limit', async () => {
     const mockListCards = buildMockApi();
 
     const program = new Command();
@@ -116,12 +117,13 @@ describe('Cards List Command', () => {
     await program.parseAsync(['node', 'test', 'cards', 'list', '--board', 'board-123', '--limit', '10']);
 
     expect(mockListCards).toHaveBeenCalledWith(
-      expect.objectContaining({ boardId: 'board-123', limit: 10 })
+      expect.objectContaining({ boardId: 'board-123', archived: 'false' })
     );
+    expect(mockListCards.mock.calls[0][0]).not.toHaveProperty('limit');
     expect(consoleSpy).toHaveBeenCalledWith('Found 3 card(s):');
   });
 
-  test('uses default limit of 50 when not specified', async () => {
+  test('reads live cards only when --archived is not given', async () => {
     const mockListCards = buildMockApi();
 
     const program = new Command();
@@ -129,7 +131,7 @@ describe('Cards List Command', () => {
     await program.parseAsync(['node', 'test', 'cards', 'list', '--board', 'board-123']);
 
     expect(mockListCards).toHaveBeenCalledWith(
-      expect.objectContaining({ boardId: 'board-123', limit: 50 })
+      expect.objectContaining({ boardId: 'board-123', archived: 'false' })
     );
   });
 
@@ -153,11 +155,12 @@ describe('Cards List Command', () => {
     await program.parseAsync(['node', 'test', 'cards', 'list', '--board', 'board-123', '--json']);
 
     const calls = consoleSpy.mock.calls.map(c => c[0]);
-    const jsonCall = calls.find(c => typeof c === 'string' && c.startsWith('['));
+    const jsonCall = calls.find(c => typeof c === 'string' && c.startsWith('{"rows":'));
     expect(jsonCall).toBeDefined();
+    // #44: a list read emits `{rows, truncated?, unreachable?}`, always.
     const parsed = JSON.parse(jsonCall!);
-    expect(Array.isArray(parsed)).toBe(true);
-    expect(parsed).toHaveLength(sampleCards.length);
+    expect(Array.isArray(parsed.rows)).toBe(true);
+    expect(parsed.rows).toHaveLength(sampleCards.length);
     expect(tableSpy).not.toHaveBeenCalled();
   });
 
@@ -169,8 +172,8 @@ describe('Cards List Command', () => {
     await program.parseAsync(['node', 'test', 'cards', 'list', '--board', 'board-123', '--json']);
 
     const calls = consoleSpy.mock.calls.map(c => c[0]);
-    const jsonCall = calls.find(c => typeof c === 'string' && c.startsWith('['));
-    const parsed = JSON.parse(jsonCall!);
+    const jsonCall = calls.find(c => typeof c === 'string' && c.startsWith('{"rows":'));
+    const parsed = JSON.parse(jsonCall!).rows;
     expect(parsed[0]).toHaveProperty('cardId', 'card-1');
     expect(parsed[0]).toHaveProperty('name', 'Fix login bug');
     expect(parsed[0]).toHaveProperty('status', 'in-progress');
@@ -219,7 +222,7 @@ describe('Cards List Command', () => {
 
     expect(tableSpy).not.toHaveBeenCalled();
     const calls = consoleSpy.mock.calls.map(c => c[0]);
-    const jsonCall = calls.find(c => typeof c === 'string' && c.startsWith('['));
+    const jsonCall = calls.find(c => typeof c === 'string' && c.startsWith('{"rows":'));
     expect(jsonCall).toBeUndefined();
   });
 
@@ -240,8 +243,8 @@ describe('Cards List Command', () => {
       expect.objectContaining({ boardId: 'board-123', status: 'todo' })
     );
     const calls = consoleSpy.mock.calls.map(c => c[0]);
-    const jsonCall = calls.find(c => typeof c === 'string' && c.startsWith('['));
-    expect(JSON.parse(jsonCall!)).toHaveLength(3);
+    const jsonCall = calls.find(c => typeof c === 'string' && c.startsWith('{"rows":'));
+    expect(JSON.parse(jsonCall!).rows).toHaveLength(3);
   });
 
   test('--collection is passed through as the scope', async () => {
@@ -264,8 +267,8 @@ describe('Cards List Command', () => {
     await program.parseAsync(['node', 'test', 'cards', 'list', '--board', 'board-123', '--assignee', 'alice', '--json']);
 
     const calls = consoleSpy.mock.calls.map(c => c[0]);
-    const jsonCall = calls.find(c => typeof c === 'string' && c.startsWith('['));
-    const parsed = JSON.parse(jsonCall!);
+    const jsonCall = calls.find(c => typeof c === 'string' && c.startsWith('{"rows":'));
+    const parsed = JSON.parse(jsonCall!).rows;
     expect(parsed).toHaveLength(2); // alice@example.com appears in card-1 and card-3
     parsed.forEach((c: Card) => expect(c.assignees!.some(a => a.includes('alice'))).toBe(true));
   });
@@ -278,8 +281,8 @@ describe('Cards List Command', () => {
     await program.parseAsync(['node', 'test', 'cards', 'list', '--board', 'board-123', '--tag', 'bug', '--json']);
 
     const calls = consoleSpy.mock.calls.map(c => c[0]);
-    const jsonCall = calls.find(c => typeof c === 'string' && c.startsWith('['));
-    const parsed = JSON.parse(jsonCall!);
+    const jsonCall = calls.find(c => typeof c === 'string' && c.startsWith('{"rows":'));
+    const parsed = JSON.parse(jsonCall!).rows;
     expect(parsed).toHaveLength(1);
     expect(parsed[0].cardId).toBe('card-1');
   });
@@ -305,49 +308,50 @@ describe('Cards List Command', () => {
     await program.parseAsync(['node', 'test', 'cards', 'list', '--board', 'board-123', '--assignee', 'nobody', '--json']);
 
     const calls = consoleSpy.mock.calls.map(c => c[0]);
-    const jsonCall = calls.find(c => typeof c === 'string' && c.startsWith('['));
-    const parsed = JSON.parse(jsonCall!);
+    const jsonCall = calls.find(c => typeof c === 'string' && c.startsWith('{"rows":'));
+    const parsed = JSON.parse(jsonCall!).rows;
     expect(parsed).toHaveLength(0);
   });
 
   // --- Pagination ---
 
-  test('passes limit to API', async () => {
+  // #44 rewrote these three. `--limit` used to truncate the FETCH — so every
+  // client-side filter downstream filtered a partial set. It is now an OUTPUT
+  // cap and never reaches the API at all.
+  test('--limit never reaches the fetch', async () => {
     const mockListCards = buildMockApi([]);
 
     const program = new Command();
     registerCardsListCommand(program);
     await program.parseAsync(['node', 'test', 'cards', 'list', '--limit', '100']);
 
-    expect(mockListCards).toHaveBeenCalledWith(
-      expect.objectContaining({ boardId: undefined, limit: 100 })
-    );
+    expect(mockListCards.mock.calls[0][0]).not.toHaveProperty('limit');
   });
 
-  test('--limit 0 falls back to default 50 (no falsy coercion bug)', async () => {
-    const mockListCards = buildMockApi([]);
+  test('the output cap trims the rows and marks them truncated', async () => {
+    buildMockApi(sampleCards);
 
     const program = new Command();
     registerCardsListCommand(program);
-    await program.parseAsync(['node', 'test', 'cards', 'list', '--limit', '0']);
+    await program.parseAsync(['node', 'test', 'cards', 'list', '--board', 'b', '--limit', '2', '--json']);
 
-    // 0 is invalid (< 1), so should fall back to default 50
-    expect(mockListCards).toHaveBeenCalledWith(
-      expect.objectContaining({ boardId: undefined, limit: 50 })
-    );
+    const calls = consoleSpy.mock.calls.map(c => c[0]);
+    const jsonCall = calls.find(c => typeof c === 'string' && c.startsWith('{"rows":'));
+    const parsed = JSON.parse(jsonCall!);
+    expect(parsed.rows).toHaveLength(2);
+    expect(parsed.truncated).toBe(true);
   });
 
-  test('--limit -1 falls back to default 50 (negative values invalid)', async () => {
-    const mockListCards = buildMockApi([]);
+  test('an uncut list carries no truncated marker', async () => {
+    buildMockApi(sampleCards);
 
     const program = new Command();
     registerCardsListCommand(program);
-    await program.parseAsync(['node', 'test', 'cards', 'list', '--limit', '-1']);
+    await program.parseAsync(['node', 'test', 'cards', 'list', '--board', 'b', '--limit', '50', '--json']);
 
-    // Negative values are invalid, should fall back to 50
-    expect(mockListCards).toHaveBeenCalledWith(
-      expect.objectContaining({ boardId: undefined, limit: 50 })
-    );
+    const calls = consoleSpy.mock.calls.map(c => c[0]);
+    const jsonCall = calls.find(c => typeof c === 'string' && c.startsWith('{"rows":'));
+    expect(JSON.parse(jsonCall!).truncated).toBeUndefined();
   });
 
   test('handles large result sets (100+ cards)', async () => {
@@ -367,9 +371,9 @@ describe('Cards List Command', () => {
     await program.parseAsync(['node', 'test', 'cards', 'list', '--board', 'board-123', '--limit', '120', '--json']);
 
     const calls = consoleSpy.mock.calls.map(c => c[0]);
-    const jsonCall = calls.find(c => typeof c === 'string' && c.startsWith('['));
+    const jsonCall = calls.find(c => typeof c === 'string' && c.startsWith('{"rows":'));
     const parsed = JSON.parse(jsonCall!);
-    expect(parsed).toHaveLength(120);
+    expect(parsed.rows).toHaveLength(120);
   });
 
   // --- Table format details ---

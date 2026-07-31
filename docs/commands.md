@@ -6,6 +6,79 @@ Complete reference for every `favro` CLI command, flag, and option.
 
 ---
 
+## Breaking changes
+
+Three changes to how reads answer. Each is visible; none is silent.
+
+### `--json` on a list read is an object, not an array
+
+Every **list** read now prints one envelope:
+
+```json
+{"rows":[…],"truncated":true,"unreachable":[{"id":"…","reason":"…"}]}
+```
+
+`rows` is always present. `truncated` appears only when `--limit` cut rows off
+the end; `unreachable` only when a composite read could not reach part of its
+input. **Single** reads (`cards get`, `tags get`, `boards get`, …) are unchanged
+and stay bare.
+
+The envelope is always an envelope, marker or not: a shape that varied with the
+data would make the branch that matters most the one an agent exercises least.
+
+Anything piping `jq '.[]'` must become `jq '.rows[]'`.
+
+The JSON is also **compact** now, not indented. Pipe through `jq .` for eyes.
+
+### `cards list` reads live cards only by default
+
+`archived` is a Favro **selector**, not an exclusion — Favro's own default list
+INCLUDES archived cards, so they used to arrive silently mixed into every read.
+`--archived false` is now the default. Pass `--archived all` for the old mixed
+behaviour, or `--archived true` to read the archive alone. It filters on the
+wire.
+
+### `--limit` caps output, not the fetch
+
+`--limit` used to truncate the *fetch*, so every filter after it filtered a
+partial set and answered a plausible wrong number (Favro ignores `limit` on
+`GET /cards` anyway — always clamped to 100 per page). The order is now: fetch
+to completion, filter, cap last, and say `"truncated": true` when the cap bit.
+
+`cards export` lost `--limit` entirely: a cap there could only export part of a
+board and still call itself the export.
+
+### Card bodies and custom fields are omitted from list output
+
+`cards list` omits `description` / `detailedDescription` and `customFields` from
+what it *prints*; `collections list` omits `sharedToUsers` and `boards`. This is
+a **rendering** decision — the read still returns every field, so
+`--filter "description:foo"` is real grammar and costs no extra call.
+
+Bring them back with `--body` and `--include custom-fields`. There is no
+`--full`. `cards export` is carved out and always carries bodies.
+
+---
+
+## Honest failure: unavailable is not empty
+
+`0 blockers` and `couldn't check blockers` demand opposite next moves, so the CLI
+never conflates them. Where the line falls depends on how many calls a read makes:
+
+- A **single-call** read **throws**. Unavailability never reaches stdout dressed
+  as emptiness, so an empty answer unambiguously means true-empty.
+- A **composite** read returns the rows it reached **plus** an `unreachable`
+  marker naming each id it could not, and why — a capped sweep can hold 17 real
+  rows *and* a hole, and collapsing that into either "17 rows" or an error loses
+  the part that matters.
+
+Composite reads go through one shared `boundedSweep`, which caps a sweep at 20
+per-item calls. Ids past the cap come back as `unreachable` with a reason of
+"not attempted", so "we stopped counting" is never printed as "there was nothing
+there".
+
+---
+
 ## Global Options
 
 | Flag | Description |
@@ -145,12 +218,22 @@ Get board details including columns, members, and stats.
 | Flag | Description |
 |------|-------------|
 | `--board <boardId>` | **Required.** Board to list from |
-| `--json` | Output raw JSON |
-| `--limit <n>` | Max cards (default: 25, max: 100) |
-| `--filter <expr>` | Filter expression |
-| `--status <status>` | Filter by status |
+| `--json` | Output the `{rows, truncated?, unreachable?}` envelope, compact |
+| `--limit <n>` | Cap how many cards are **printed** (default: 25); sets `truncated` |
+| `--filter <expr>` | Query expression, parsed and value-checked **before** the fetch |
+| `--status <column>` | Narrow to one column, by name or `columnId`. On the wire. |
+| `--archived <mode>` | `true`, `false` (default) or `all`. On the wire. |
+| `--body` | Keep card descriptions in the output |
+| `--include custom-fields` | Keep `customFields` in the output |
 | `--assignee <user>` | Filter by assignee |
 | `--tag <tag>` | Filter by tag |
+
+The board is always fetched to completion, so `--filter`, `--assignee` and
+`--tag` filter the whole board rather than one truncated page.
+
+`--filter` values that come from a list Favro owns (`tag:`, `status:`,
+`assignee:`) are checked against that list before any query runs, so a typo
+refuses instead of answering a plausible `0 rows`. `status:` needs `--board`.
 
 ### `cards create <title>` ⚠️ WRITE
 
@@ -202,7 +285,9 @@ a parent can be set at create time only and can never be cleared.
 | `--format <fmt>` | `json` or `csv` |
 | `--out <file>` | Output file path |
 | `--filter <expr>` | Filter expression (repeatable) |
-| `--limit <n>` | Max cards (default: 10000) |
+
+Export is carved out of the default output omission: it always carries card
+bodies, whole. It has no `--limit` — the board is fetched to completion.
 
 ### `cards link <cardId> <toCardId>` ⚠️ WRITE
 

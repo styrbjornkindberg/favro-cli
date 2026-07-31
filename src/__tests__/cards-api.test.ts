@@ -48,10 +48,15 @@ describe('Cards API', () => {
     expect(mockClient.get).toHaveBeenCalledWith('/cards', expect.any(Object));
   });
 
-  test('listCards with custom limit passes it to API', async () => {
+  // #44: `limit` is no longer a caller-shaped fetch cap — Favro clamps it to 100
+  // per page regardless, so the loop always asks for the page maximum. #45: the
+  // live-card selector rides every list read.
+  test('listCards asks for the page maximum and selects live cards', async () => {
     mockClient.get.mockResolvedValue({ entities: [] });
-    await api.listCards('board-1', 100);
-    expect(mockClient.get).toHaveBeenCalledWith('/cards', { params: { descriptionFormat: 'markdown', limit: 100, widgetCommonId: 'board-1' } });
+    await api.listCards('board-1');
+    expect(mockClient.get).toHaveBeenCalledWith('/cards', {
+      params: { descriptionFormat: 'markdown', limit: 100, archived: false, widgetCommonId: 'board-1' },
+    });
   });
 
   test('listCards returns empty array when entities missing', async () => {
@@ -65,7 +70,7 @@ describe('Cards API', () => {
       cardId: `card-${i}`, name: `Card ${i}`, createdAt: '2026-01-01', updatedAt: '2026-01-01'
     }));
     mockClient.get.mockResolvedValue({ entities: bigList });
-    const result = await api.listCards('board-1', 120);
+    const result = await api.listCards('board-1');
     expect(result).toHaveLength(120);
   });
 
@@ -97,7 +102,7 @@ describe('Cards API', () => {
         page: 1,
       });
 
-    const result = await api.listCards('board-1', 50);
+    const result = await api.listCards('board-1');
 
     expect(result).toHaveLength(3);
     expect(result[0].cardId).toBe('p0-1');
@@ -124,32 +129,35 @@ describe('Cards API', () => {
         page: 1,
       });
 
-    const result = await api.listCards('board-1', 50);
+    const result = await api.listCards('board-1');
 
     // Should stop after empty page
     expect(mockClient.get).toHaveBeenCalledTimes(2);
     expect(result).toHaveLength(1);
   });
 
-  test('listCards stops at limit even with more pages available', async () => {
-    const page0Cards = Array.from({ length: 5 }, (_, i) => ({
-      cardId: `c${i}`, name: `Card ${i}`, createdAt: '2026-01-01', updatedAt: '2026-01-01'
-    }));
+  // #44 inverted this: truncating the FETCH was the defect, because every
+  // client-side filter downstream then filtered a partial set. The read now runs
+  // to completion and the caller caps its own OUTPUT.
+  test('listCards keeps paging past any caller-sized number of cards', async () => {
+    const page = (p: number) => ({
+      entities: Array.from({ length: 5 }, (_, i) => ({
+        cardId: `c${p}-${i}`, name: `Card ${p}-${i}`, createdAt: '2026-01-01', updatedAt: '2026-01-01'
+      })),
+      requestId: 'req-limit',
+      pages: 3,
+      page: p,
+    });
 
     mockClient.get
-      .mockResolvedValueOnce({
-        entities: page0Cards,
-        requestId: 'req-limit',
-        pages: 10,
-        page: 0,
-      });
+      .mockResolvedValueOnce(page(0))
+      .mockResolvedValueOnce(page(1))
+      .mockResolvedValueOnce(page(2));
 
-    // Request only 5 cards
-    const result = await api.listCards('board-1', 5);
+    const result = await api.listCards('board-1');
 
-    // Should only make one request since we've hit the limit
-    expect(mockClient.get).toHaveBeenCalledTimes(1);
-    expect(result).toHaveLength(5);
+    expect(mockClient.get).toHaveBeenCalledTimes(3);
+    expect(result).toHaveLength(15);
   });
 
   test('listCards handles single-page response without requestId', async () => {
@@ -159,7 +167,7 @@ describe('Cards API', () => {
     // Response without requestId = single page
     mockClient.get.mockResolvedValue({ entities: cards });
 
-    const result = await api.listCards('board-1', 50);
+    const result = await api.listCards('board-1');
 
     expect(mockClient.get).toHaveBeenCalledTimes(1);
     expect(result).toHaveLength(1);

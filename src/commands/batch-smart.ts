@@ -458,7 +458,7 @@ export function registerBatchSmartCommand(program: Command): void {
 
         let allCards: Card[];
         try {
-          allCards = await api.listCards(board, 10000);
+          allCards = await api.listCards(board);
         } catch (err: any) {
           if (err?.response?.status === 404) {
             console.error(`✗ Board not found: "${board}"`);

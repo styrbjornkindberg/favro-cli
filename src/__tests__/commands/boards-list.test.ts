@@ -147,6 +147,11 @@ describe('boards list command', () => {
     expect(consoleLogSpy).toHaveBeenCalledWith('No boards found. Check your API key or collection permissions.');
   });
 
+/** The one `console.log` carrying the list-read envelope. */
+function envelopeCall(spy: jest.SpyInstance): string {
+  return String(spy.mock.calls.find(c => String(c[0]).startsWith('{"rows":'))![0]);
+}
+
   // --- json output ---
 
   test('--json outputs valid JSON', async () => {
@@ -155,13 +160,13 @@ describe('boards list command', () => {
 
     await program.parseAsync(['node', 'cli', 'boards', 'list', '--json']);
 
+    // #44: a list read emits the `{rows}` envelope, not a bare array.
     expect(consoleLogSpy).toHaveBeenCalledWith(
-      expect.stringMatching(/^\[/)
+      expect.stringMatching(/^\{"rows":/)
     );
-    const jsonCall = consoleLogSpy.mock.calls.find(c => String(c[0]).startsWith('['));
-    const parsed = JSON.parse(jsonCall![0]);
-    expect(parsed).toHaveLength(3);
-    expect(parsed[0].boardId).toBe('board-1');
+    const parsed = JSON.parse(envelopeCall(consoleLogSpy));
+    expect(parsed.rows).toHaveLength(3);
+    expect(parsed.rows[0].boardId).toBe('board-1');
   });
 
   test('--json output contains board IDs and names', async () => {
@@ -170,9 +175,8 @@ describe('boards list command', () => {
 
     await program.parseAsync(['node', 'cli', 'boards', 'list', '--json']);
 
-    const jsonCall = consoleLogSpy.mock.calls.find(c => String(c[0]).startsWith('['));
-    const parsed = JSON.parse(jsonCall![0]);
-    const names = parsed.map((b: Board) => b.name);
+    const parsed = JSON.parse(envelopeCall(consoleLogSpy));
+    const names = parsed.rows.map((b: Board) => b.name);
     expect(names).toContain('Marketing Board');
     expect(names).toContain('Engineering Board');
   });
@@ -228,10 +232,9 @@ describe('boards list command', () => {
 
     await program.parseAsync(['node', 'cli', 'boards', 'list', '--collection', 'Engineering', '--json']);
 
-    const jsonCall = consoleLogSpy.mock.calls.find(c => String(c[0]).startsWith('['));
-    const parsed = JSON.parse(jsonCall![0]);
-    expect(parsed).toHaveLength(1);
-    expect(parsed[0].boardId).toBe('board-2');
+    const parsed = JSON.parse(envelopeCall(consoleLogSpy));
+    expect(parsed.rows).toHaveLength(1);
+    expect(parsed.rows[0].boardId).toBe('board-2');
   });
 
   // --- error handling ---

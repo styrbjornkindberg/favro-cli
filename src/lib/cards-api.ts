@@ -268,12 +268,22 @@ export interface MoveCardRequest {
   position?: 'top' | 'bottom';
 }
 
+/** `--archived`: which side of the archive line to read. */
+export type ArchivedSelector = 'true' | 'false' | 'all';
+
 export interface ListCardsOptions {
   boardId?: string;
   collectionId?: string;
-  limit?: number;
-  filter?: string;
   unique?: boolean;
+  /**
+   * Which cards to select, defaulting to `'false'` — live cards only.
+   *
+   * `archived` is a Favro **selector**, not an exclusion: Favro's own default
+   * list INCLUDES archived cards, so they used to arrive silently mixed in and
+   * every caller paid a client-side filtering tax. `'all'` sends nothing and
+   * restores Favro's mixed default; `'true'` reads the archive alone.
+   */
+  archived?: ArchivedSelector;
   /**
    * Column name or `columnId` to narrow to, filtered on the wire. A name
    * requires `boardId`; an id is validated against `boardId` when both are
@@ -430,23 +440,24 @@ export class CardsAPI {
   }
 
   /**
-   * List cards with automatic cursor-based pagination.
-   * Fetches all pages until the limit is reached or no more pages exist.
+   * List cards, paginating to **completion**.
    *
-   * Accepts either an options object or legacy positional args:
-   *   listCards({ boardId, collectionId, limit, filter, unique })
-   *   listCards(boardId?, limit?, filter?)  // backward compat
+   * There is deliberately no `limit`: it used to truncate the *fetch*, so every
+   * client-side filter downstream filtered a partial set and answered a
+   * plausible wrong number (`limit` is ignored by `GET /cards` anyway — always
+   * clamped to 100 per page). Capping output is the caller's last step, via
+   * `capRows` in `read-shape`.
+   *
+   * Accepts an options object, or a bare boardId as shorthand:
+   *   listCards({ boardId, collectionId, status, archived, unique })
+   *   listCards(boardId?)
    */
-  async listCards(optsOrBoardId?: string | ListCardsOptions, limit?: number, filter?: string): Promise<Card[]> {
-    // Normalize args: support both options object and legacy positional params
-    let opts: ListCardsOptions;
-    if (typeof optsOrBoardId === 'object' && optsOrBoardId !== null) {
-      opts = optsOrBoardId;
-    } else {
-      opts = { boardId: optsOrBoardId ?? undefined, limit, filter };
-    }
+  async listCards(optsOrBoardId?: string | ListCardsOptions): Promise<Card[]> {
+    const opts: ListCardsOptions =
+      typeof optsOrBoardId === 'object' && optsOrBoardId !== null
+        ? optsOrBoardId
+        : { boardId: optsOrBoardId ?? undefined };
 
-    const effectiveLimit = (isNaN(opts.limit!) || !opts.limit || opts.limit < 1) ? 25 : opts.limit;
     // Refused before any call: a column and a collection cannot both scope one
     // read, and the wire would silently answer about the column's own board.
     if (opts.status && opts.collectionId) {
@@ -469,10 +480,10 @@ export class CardsAPI {
     // return cards (plain-text descriptions instead of markdown).
     let useMarkdownDescription = true;
 
-    while (allCards.length < effectiveLimit && page < totalPages) {
-      const params: Record<string, unknown> = {
-        limit: Math.min(effectiveLimit - allCards.length, 100),
-      };
+    while (page < totalPages) {
+      // Favro clamps this to 100 regardless; asking for the page maximum is the
+      // only thing it affects.
+      const params: Record<string, unknown> = { limit: 100 };
       if (useMarkdownDescription) {
         params.descriptionFormat = 'markdown';
       }
@@ -497,8 +508,11 @@ export class CardsAPI {
         params.unique = true;
       }
 
-      if (opts.filter) {
-        params.filter = opts.filter;
+      // `archived` rides the wire. Favro's default includes archived cards, so
+      // omitting it is what 'all' means — the live-only default is the ask.
+      const archived = opts.archived ?? 'false';
+      if (archived !== 'all') {
+        params.archived = archived === 'true';
       }
 
       // On subsequent pages, use requestId to continue pagination
@@ -540,9 +554,8 @@ export class CardsAPI {
       if (entities.length === 0) break;
     }
 
-    const cards = allCards.slice(0, effectiveLimit);
-    await this.hydrateNames(cards);
-    return cards;
+    await this.hydrateNames(allCards);
+    return allCards;
   }
 
   /**

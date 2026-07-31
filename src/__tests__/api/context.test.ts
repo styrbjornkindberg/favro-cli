@@ -265,16 +265,12 @@ describe('ContextAPI.getSnapshot()', () => {
     expect(snapshot.stats.by_owner['unassigned']).toBe(1);
   });
 
-  it('calls listCards with the provided card limit', async () => {
+  // #44: `listCards` no longer takes a limit — it used to truncate the FETCH, so
+  // the snapshot was assembled from a partial board and reported as the board.
+  it('reads the whole board, with no limit on the fetch', async () => {
     const api = buildAPI();
     await api.getSnapshot('boards-1234', 500);
-    expect(MockCardsAPI.prototype.listCards).toHaveBeenCalledWith('boards-1234', 500);
-  });
-
-  it('uses default card limit of 1000', async () => {
-    const api = buildAPI();
-    await api.getSnapshot('boards-1234');
-    expect(MockCardsAPI.prototype.listCards).toHaveBeenCalledWith('boards-1234', 1000);
+    expect(MockCardsAPI.prototype.listCards).toHaveBeenCalledWith('boards-1234');
   });
 
   it('fetches board data in parallel (Promise.all)', async () => {

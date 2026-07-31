@@ -106,7 +106,7 @@ export function registerRisksCommand(program: Command): void {
         const api = new CardsAPI(client);
 
         // Fetch all cards from board
-        const allCards = await api.listCards(board, 10000);
+        const allCards = await api.listCards(board);
 
         // Categorize risks (cards can appear in multiple categories)
         const overdue: RiskCard[] = [];

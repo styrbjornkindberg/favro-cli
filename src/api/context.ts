@@ -231,7 +231,7 @@ export class ContextAPI {
     // Step 2: Fetch all board data in parallel
     const [extendedBoard, cards, members, customFieldDefs, rawColumns] = await Promise.all([
       this.boardsApi.getBoardWithIncludes(boardId, ['custom-fields', 'members']).catch(() => board as any),
-      this.cardsApi.listCards(boardId, cardLimit).catch(() => [] as Card[]),
+      this.cardsApi.listCards(boardId).catch(() => [] as Card[]),
       this.membersApi.getMembers({ boardId }).catch(() => []),
       this.customFieldsApi.listFields(boardId).catch(() => [] as CustomFieldDefinition[]),
       this.columnsApi.listColumns(boardId).catch(() => []),

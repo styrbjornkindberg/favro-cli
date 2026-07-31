@@ -109,7 +109,8 @@ describe('release-check command', () => {
 
     await program.parseAsync(['node', 'favro', 'release-check', 'board-1']);
 
-    expect(mockListCards).toHaveBeenCalledWith('board-1', 10000);
+    // #44: the fetch is uncapped — 10000 was a fetch cap, not a real bound.
+    expect(mockListCards).toHaveBeenCalledWith('board-1');
     expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('RELEASE CHECK REPORT'));
     expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('Valid for release:  2'));
   });

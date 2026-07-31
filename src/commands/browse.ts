@@ -123,7 +123,7 @@ async function browseCards(
     console.log(`\n  ${c.heading(boardName)}`);
     console.log(`  ${c.muted('Loading cards…')}`);
 
-    const cards = await cardsApi.listCards(boardId, 100);
+    const cards = await cardsApi.listCards(boardId);
 
     if (cards.length === 0) {
       console.log(`  ${c.muted('No cards on this board.')}`);

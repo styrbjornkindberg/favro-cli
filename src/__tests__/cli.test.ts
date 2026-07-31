@@ -115,13 +115,25 @@ describe('cli.ts — cards list options', () => {
     expect(optNames).toContain('--json');
   });
 
-  // CLA-1785 critic fix: --include removed from cards list (was silently ignored)
-  test('cards list does NOT have --include option (removed per critic feedback CLA-1785)', () => {
+  // #44 reinstated --include on `cards list`, on the opposite grounds to CLA-1785:
+  // it was removed as a flag that did nothing, and now it does exactly one thing
+  // — restore the `customFields` the denylist omits — using `cards get`'s own
+  // vocabulary rather than a new `--full`.
+  test('cards list has --include and --body, the two flags that restore omitted fields', () => {
     const program = buildProgram();
     const cardsCmd = program.commands.find(c => c.name() === 'cards')!;
     const listCmd = cardsCmd.commands.find(c => c.name() === 'list')!;
     const optNames = listCmd.options.map(o => o.long);
-    expect(optNames).not.toContain('--include');
+    expect(optNames).toContain('--include');
+    expect(optNames).toContain('--body');
+    expect(optNames).not.toContain('--full');
+  });
+
+  test('cards list has --archived', () => {
+    const program = buildProgram();
+    const cardsCmd = program.commands.find(c => c.name() === 'cards')!;
+    const listCmd = cardsCmd.commands.find(c => c.name() === 'list')!;
+    expect(listCmd.options.map(o => o.long)).toContain('--archived');
   });
 });
 
@@ -151,23 +163,10 @@ describe('cli.ts — CLA-1785 critic fixes: limit cap and null guard', () => {
     (resolveApiKey as jest.Mock).mockResolvedValue(undefined);
   });
 
-  // Issue #1: --limit 101 must be capped at 100
-  test('--limit 101 is capped to 100 (DoS prevention)', async () => {
-    const mockListCards = jest.fn().mockResolvedValue([]);
-    (CardsAPI as jest.MockedClass<typeof CardsAPI>).mockImplementation(() => ({
-      listCards: mockListCards,
-    } as any));
-
-    const program = buildProgram();
-    await program.parseAsync(['node', 'cli', 'cards', 'list', 'board-123', '--limit', '101']);
-
-    // Should be capped to 100, not 101
-    expect(mockListCards).toHaveBeenCalledWith(
-      expect.objectContaining({ boardId: 'board-123', limit: 100, filter: undefined })
-    );
-  });
-
-  test('--limit 9999 is capped to 100 (DoS prevention)', async () => {
+  // #44 replaced four `--limit` cap tests here. The 100 clamp existed because
+  // `--limit` sized the FETCH; it is now a pure OUTPUT cap, so there is nothing
+  // to clamp and nothing about it reaches the API.
+  test('--limit never reaches the fetch, at any size', async () => {
     const mockListCards = jest.fn().mockResolvedValue([]);
     (CardsAPI as jest.MockedClass<typeof CardsAPI>).mockImplementation(() => ({
       listCards: mockListCards,
@@ -176,39 +175,78 @@ describe('cli.ts — CLA-1785 critic fixes: limit cap and null guard', () => {
     const program = buildProgram();
     await program.parseAsync(['node', 'cli', 'cards', 'list', 'board-123', '--limit', '9999']);
 
-    // Should be capped to 100
     expect(mockListCards).toHaveBeenCalledWith(
-      expect.objectContaining({ boardId: 'board-123', limit: 100, filter: undefined })
+      expect.objectContaining({ boardId: 'board-123', archived: 'false' })
     );
+    expect(mockListCards.mock.calls[0][0]).not.toHaveProperty('limit');
+    expect(mockListCards.mock.calls[0][0]).not.toHaveProperty('filter');
   });
 
-  test('--limit 50 passes through uncapped', async () => {
+  test('the output cap trims the rows and marks them truncated', async () => {
+    const cards = Array.from({ length: 5 }, (_, i) => ({ cardId: `c${i}`, name: `Card ${i}` }));
+    (CardsAPI as jest.MockedClass<typeof CardsAPI>).mockImplementation(() => ({
+      listCards: jest.fn().mockResolvedValue(cards),
+    } as any));
+
+    const program = buildProgram();
+    await program.parseAsync(['node', 'cli', 'cards', 'list', 'board-123', '--limit', '2', '--json']);
+
+    const line = consoleSpy.mock.calls.map(c => String(c[0])).find(c => c.startsWith('{"rows":'))!;
+    const parsed = JSON.parse(line);
+    expect(parsed.rows).toHaveLength(2);
+    expect(parsed.truncated).toBe(true);
+  });
+
+  test('the card body and custom fields are omitted from output, and --body/--include restore them', async () => {
+    const cards = [{ cardId: 'c1', name: 'Card', description: 'body text', customFields: [{ f: 1 }] }];
+    (CardsAPI as jest.MockedClass<typeof CardsAPI>).mockImplementation(() => ({
+      listCards: jest.fn().mockResolvedValue(cards),
+    } as any));
+    const envelope = () =>
+      JSON.parse(consoleSpy.mock.calls.map(c => String(c[0])).filter(c => c.startsWith('{"rows":')).pop()!);
+
+    const program = buildProgram();
+    await program.parseAsync(['node', 'cli', 'cards', 'list', 'board-123', '--json']);
+    expect(envelope().rows[0].description).toBeUndefined();
+    expect(envelope().rows[0].customFields).toBeUndefined();
+
+    await program.parseAsync([
+      'node', 'cli', 'cards', 'list', 'board-123', '--json', '--body', '--include', 'custom-fields',
+    ]);
+    expect(envelope().rows[0].description).toBe('body text');
+    expect(envelope().rows[0].customFields).toEqual([{ f: 1 }]);
+  });
+
+  // #46 handoff: `--filter` is parsed and its values settled BEFORE the fetch,
+  // so no query runs on a bad filter and a typo never costs a whole board read.
+  test('a bad filter refuses before listCards is ever called', async () => {
     const mockListCards = jest.fn().mockResolvedValue([]);
     (CardsAPI as jest.MockedClass<typeof CardsAPI>).mockImplementation(() => ({
       listCards: mockListCards,
     } as any));
 
     const program = buildProgram();
-    await program.parseAsync(['node', 'cli', 'cards', 'list', 'board-123', '--limit', '50']);
+    await expect(
+      program.parseAsync(['node', 'cli', 'cards', 'list', 'board-123', '--filter', 'nosuchfield:x']),
+    ).rejects.toThrow('process.exit');
 
-    expect(mockListCards).toHaveBeenCalledWith(
-      expect.objectContaining({ boardId: 'board-123', limit: 50, filter: undefined })
-    );
+    expect(mockListCards).not.toHaveBeenCalled();
   });
 
-  test('--limit 0 falls back to default 25', async () => {
+  test('--archived rides the wire, and a bad value is refused', async () => {
     const mockListCards = jest.fn().mockResolvedValue([]);
     (CardsAPI as jest.MockedClass<typeof CardsAPI>).mockImplementation(() => ({
       listCards: mockListCards,
     } as any));
 
     const program = buildProgram();
-    await program.parseAsync(['node', 'cli', 'cards', 'list', 'board-123', '--limit', '0']);
+    await program.parseAsync(['node', 'cli', 'cards', 'list', 'board-123', '--archived', 'all']);
+    expect(mockListCards).toHaveBeenCalledWith(expect.objectContaining({ archived: 'all' }));
 
-    // 0 is invalid (< 1), falls back to default 25
-    expect(mockListCards).toHaveBeenCalledWith(
-      expect.objectContaining({ boardId: 'board-123', limit: 25, filter: undefined })
-    );
+    await expect(
+      program.parseAsync(['node', 'cli', 'cards', 'list', 'board-123', '--archived', 'maybe']),
+    ).rejects.toThrow('process.exit');
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('--archived'));
   });
 });
 
@@ -237,12 +275,14 @@ describe('cli.ts — cards export options', () => {
     expect(optNames).toContain('--filter');
   });
 
-  test('cards export has --limit option', () => {
+  // #44 removed `cards export --limit`: it capped the FETCH, so an export could
+  // silently be part of a board and still call itself the export.
+  test('cards export has NO --limit option', () => {
     const program = buildProgram();
     const cardsCmd = program.commands.find(c => c.name() === 'cards')!;
     const exportCmd = cardsCmd.commands.find(c => c.name() === 'export')!;
     const optNames = exportCmd.options.map(o => o.long);
-    expect(optNames).toContain('--limit');
+    expect(optNames).not.toContain('--limit');
   });
 });
 

@@ -8,6 +8,7 @@ import CardsAPI, { Card } from '../lib/cards-api';
 import { logError, missingApiKeyError, suggestBoard } from '../lib/error-handler';
 import BoardsAPI from '../lib/boards-api';
 import { parseQuery, filterCards } from '../lib/query-parser';
+import { capRows, omitBulk, writeEnvelope } from '../lib/read-shape';
 
 function formatCardsTable(cards: Card[]): void {
   if (cards.length === 0) {
@@ -54,7 +55,8 @@ export function registerCardsListCommand(program: Command): void {
     .option('--assignee <user>', 'Filter by assignee (legacy, use --filter instead)')
     .option('--tag <tag>', 'Filter by tag (legacy, use --filter instead)')
     .option('--filter <expression>', 'Filter cards using enhanced query syntax (e.g. "status:done OR status:in-progress")', (val, prev: string[]) => prev.concat([val]), [] as string[])
-    .option('--limit <number>', 'Maximum number of cards to return', '50')
+    .option('--archived <mode>', 'Which cards to read: true, false or all. Filtered on the wire.', 'false')
+    .option('--limit <number>', 'Cap how many cards are printed; sets "truncated"', '50')
     .option('--json', 'Output as JSON')
     .option('--csv', 'Output as CSV')
     .action(async (_listArg, options) => {
@@ -65,12 +67,13 @@ export function registerCardsListCommand(program: Command): void {
         const api = new CardsAPI(client);
 
         const parsedLimit = parseInt(options.limit, 10);
+        // Output cap only — the fetch below always runs to completion.
         const limit = isNaN(parsedLimit) || parsedLimit < 1 ? 50 : parsedLimit;
         let cards = await api.listCards({
           boardId: options.board,
           collectionId: options.collection,
           status: options.status,
-          limit,
+          archived: options.archived,
         });
 
         // Apply enhanced query filters (if provided)
@@ -97,13 +100,17 @@ export function registerCardsListCommand(program: Command): void {
           }
         }
 
+        // Cap last: fetch to completion, filter, then cap what is printed.
+        const capped = capRows(cards, limit);
+
         if (options.json) {
-          console.log(JSON.stringify(cards, null, 2));
+          // Omission is rendering only — `cards` still holds every field.
+          writeEnvelope({ ...capped, rows: omitBulk('card', capped.rows) });
         } else if (options.csv) {
-          formatCardsCSV(cards);
+          formatCardsCSV(capped.rows);
         } else {
-          console.log(`Found ${cards.length} card(s):`);
-          formatCardsTable(cards);
+          console.log(`Found ${capped.rows.length} card(s):`);
+          formatCardsTable(capped.rows);
         }
       } catch (error: any) {
         if (options.board && error?.response?.status === 404) {

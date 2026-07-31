@@ -8,6 +8,7 @@ import { Command } from 'commander';
 import CollectionsAPI, { Collection } from '../lib/collections-api';
 import { createFavroClient } from '../lib/client-factory';
 import { logError } from '../lib/error-handler';
+import { omitBulk, writeEnvelope } from '../lib/read-shape';
 
 export function formatCollectionsTable(collections: Collection[]): void {
   if (collections.length === 0) {
@@ -51,7 +52,10 @@ export function registerCollectionsListCommand(collectionsParent: Command): void
         const collections = await api.listCollections(100);
 
         if (format === 'json') {
-          console.log(JSON.stringify(collections, null, 2));
+          // A list read: envelope, compact, with the two bulk fields omitted —
+          // `sharedToUsers` alone was 47% of this payload. Omission is rendering
+          // only; `collections` still holds every field Favro sent.
+          writeEnvelope({ rows: omitBulk('collection', collections) });
         } else {
           console.log(`Found ${collections.length} collection(s):`);
           formatCollectionsTable(collections);

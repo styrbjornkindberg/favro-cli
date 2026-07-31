@@ -289,7 +289,7 @@ export function registerBatchMoveCommand(batch: Command): void {
         // Fetch cards from source board
         let allCards: Card[];
         try {
-          allCards = await api.listCards(options.board, 10000);
+          allCards = await api.listCards(options.board);
         } catch (err: any) {
           if (err?.response?.status === 404) {
             console.error(`✗ Board not found: "${options.board}"`);
@@ -433,7 +433,7 @@ export function registerBatchAssignCommand(batch: Command): void {
         // Fetch cards from board
         let allCards: Card[];
         try {
-          allCards = await api.listCards(options.board, 10000);
+          allCards = await api.listCards(options.board);
         } catch (err: any) {
           if (err?.response?.status === 404) {
             console.error(`✗ Board not found: "${options.board}"`);

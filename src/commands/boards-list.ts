@@ -7,6 +7,7 @@ import { Command } from 'commander';
 import BoardsAPI, { Board, ExtendedBoard, aggregateBoardStats, calculateVelocity } from '../lib/boards-api';
 import { createFavroClient } from '../lib/client-factory';
 import { logError } from '../lib/error-handler';
+import { writeEnvelope } from '../lib/read-shape';
 
 export function formatBoardsTable(boards: Board[]): void {
   if (boards.length === 0) {
@@ -102,7 +103,10 @@ export function registerBoardsListCommand(boardsParent: Command): void {
         }
 
         if (options.json) {
-          console.log(JSON.stringify(boards, null, 2));
+          // A list read: envelope, compact. `boards` has no bulk field to omit,
+          // and no output cap — `normalizeWidget` already keeps a row small, so
+          // the cost here is row count alone.
+          writeEnvelope({ rows: boards });
         } else {
           console.log(`Found ${boards.length} board(s):`);
           if (include?.includes('stats') || include?.includes('velocity')) {

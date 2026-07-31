@@ -10,6 +10,7 @@ import TagsAPI from '../lib/tags-api';
 import { createFavroClient } from '../lib/client-factory';
 import { logError } from '../lib/error-handler';
 import { confirmAction, dryRunLog } from '../lib/safety';
+import { writeEnvelope } from '../lib/read-shape';
 
 export function registerTagsCommands(program: Command): void {
   const tagsCommand = program.command('tags').description('Manage global workspace tags');
@@ -26,7 +27,9 @@ export function registerTagsCommands(program: Command): void {
         const tags = await api.listTags();
 
         if (options.json) {
-          console.log(JSON.stringify(tags, null, 2));
+          // A list read: envelope, compact. A tag row has no bulk field — the
+          // 27 KB is 249 rows, which `favro tags get` answers for a single tag.
+          writeEnvelope({ rows: tags });
         } else {
           console.log(`Found ${tags.length} tag(s):`);
           const rows = tags.map(t => ({

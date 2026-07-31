@@ -80,6 +80,7 @@ import { runMainMenu } from './commands/main-menu';
 import { logError } from './lib/error-handler';
 import { ProgressBar } from './lib/progress';
 import { createFavroClient } from './lib/client-factory';
+import { capRows, omitBulk, writeEnvelope } from './lib/read-shape';
 
 /**
  * Build the CLI program (exported for testing).
@@ -233,28 +234,32 @@ cards
   .command('list [boardId]')
   .description(
     'List cards from a board with optional filters.\n\n' +
-    'Pagination: default 25 cards, max 100 per request.\n\n' +
+    'Reads live cards only by default (--archived false). The board is always\n' +
+    'fetched to completion, filters run over all of it, and --limit caps only\n' +
+    'what is printed — a capped list says so with "truncated": true.\n\n' +
+    'Card bodies and custom fields are omitted from output by default; --body\n' +
+    'and --include custom-fields bring them back.\n\n' +
     'Examples:\n' +
     '  favro cards list <board-id>\n' +
     '  favro cards list <board-id> --status "In Progress" --limit 100\n' +
-    '  favro cards list <board-id> --assignee alice --json\n' +
-    '  favro cards list <board-id> --tag bug\n' +
-    '  favro cards list <board-id> --filter "customField:value"\n\n' +
+    '  favro cards list <board-id> --archived all --json\n' +
+    '  favro cards list <board-id> --filter "status:done AND tag:bug" --json\n' +
+    '  favro cards list <board-id> --body --include custom-fields --json\n\n' +
     'Tip: Use `favro boards list` to find board IDs.'
   )
   .option('--board <id>', 'Board ID to list cards from (alternative to positional arg)')
   .option('--status <column>', 'Narrow to one column, by name or columnId. Filtered on the wire.')
+  .option('--archived <mode>', 'Which cards to read: true, false or all. Filtered on the wire.', 'false')
   .option('--assignee <user>', 'Filter by assignee')
   .option('--tag <tag>', 'Filter by tag')
-  .option('--filter <expression>', 'Filter cards using query syntax (e.g. "customField:value")')
-  // NOTE: --include is intentionally omitted from cards list — metadata includes are a cards get feature.
-  // Removing unimplemented flag per CLA-1785 critic feedback (Issue #3).
-  .option('--limit <number>', 'Maximum number of cards (default 25, max 100)', '25')
+  .option('--filter <expression>', 'Filter cards using query syntax (e.g. "status:done AND tag:bug")')
+  .option('--body', 'Include card descriptions, omitted by default')
+  .option('--include <keys>', 'Comma-separated extras to keep in output: custom-fields')
+  .option('--limit <number>', 'Cap how many cards are printed (default 25); sets "truncated"', '25')
   .option('--json', 'Output as JSON')
   .action(async (boardId: string | undefined, options) => {
     try {
       const client = await createFavroClient();
-      const api = new CardsAPI(client);
 
       // Support positional boardId or --board option
       const effectiveBoardId = boardId ?? options.board;
@@ -264,18 +269,53 @@ cards
         process.exit(1);
       }
 
+      const archived = String(options.archived ?? 'false').toLowerCase();
+      if (archived !== 'true' && archived !== 'false' && archived !== 'all') {
+        console.error(`Error: --archived takes true, false or all — got "${options.archived}"`);
+        process.exit(1);
+      }
+
+      const include: string[] = options.include
+        ? String(options.include).split(',').map((s: string) => s.trim()).filter(Boolean)
+        : [];
+      const unknownIncludes = include.filter((key) => key !== 'custom-fields');
+      if (unknownIncludes.length > 0) {
+        console.error(`Error: unknown --include value(s): ${unknownIncludes.join(', ')}. Valid: custom-fields`);
+        process.exit(1);
+      }
+
       const parsedLimit = parseInt(options.limit, 10);
-      // CLA-1785 critic fix: enforce max 100 cap to prevent DoS via --limit 9999
-      const limit = (!isNaN(parsedLimit) && parsedLimit >= 1) ? Math.min(parsedLimit, 100) : 25;
-      // `--status` is resolved to a columnId and narrowed on the wire, so it
-      // no longer filters a page we already truncated to `limit`.
+      // A pure OUTPUT cap now, so there is nothing to clamp: the fetch runs to
+      // completion whatever this says.
+      const limit = !isNaN(parsedLimit) && parsedLimit >= 1 ? parsedLimit : 25;
+
+      const api = new CardsAPI(client);
+
+      // The filter is parsed AND its values settled against Favro's own
+      // vocabularies BEFORE the fetch — so a typo'd tag or column refuses
+      // instead of costing a whole board read and answering a plausible 0 rows.
+      let query: import('./lib/query-parser').Query | undefined;
+      if (options.filter) {
+        const { parseQuery } = await import('./lib/query-parser');
+        const { validateQueryValues } = await import('./lib/query-values');
+        query = await validateQueryValues(parseQuery(options.filter), {
+          client,
+          boardId: effectiveBoardId,
+        });
+      }
+
+      // `--status` and `--archived` are resolved and narrowed on the wire.
       let cardList = await api.listCards({
         boardId: effectiveBoardId,
-        limit,
-        filter: options.filter,
         status: options.status,
+        archived: archived as import('./lib/cards-api').ArchivedSelector,
       });
 
+      // Client-side filters now run over the COMPLETE board, not a truncated page.
+      if (query) {
+        const { filterCards } = await import('./lib/query-parser');
+        cardList = filterCards(query, cardList);
+      }
       if (options.assignee) {
         cardList = cardList.filter(c => (c.assignees ?? []).some(
           a => a.toLowerCase().includes(options.assignee.toLowerCase())
@@ -287,12 +327,20 @@ cards
         ));
       }
 
+      // Cap last, and say so.
+      const capped = capRows(cardList, limit);
+
       if (options.json) {
-        console.log(JSON.stringify(cardList, null, 2));
+        // Omission is rendering only — `cardList` still holds every field.
+        const keep = [
+          ...(options.body ? ['description', 'detailedDescription'] : []),
+          ...(include.includes('custom-fields') ? ['customFields'] : []),
+        ];
+        writeEnvelope({ ...capped, rows: omitBulk('card', capped.rows, keep) });
       } else {
-        console.log(`Found ${cardList.length} card(s):`);
-        if (cardList.length > 0) {
-          const rows = cardList.map(card => ({
+        console.log(`Found ${capped.rows.length} card(s):`);
+        if (capped.rows.length > 0) {
+          const rows = capped.rows.map(card => ({
             ID: card.cardId,
             Title: (card.name ?? '').length > 40 ? (card.name ?? '').slice(0, 37) + '...' : (card.name ?? ''),
             Status: card.status ?? '—',
@@ -301,6 +349,9 @@ cards
             Created: card.createdAt ? card.createdAt.slice(0, 10) : '—',
           }));
           console.table(rows);
+        }
+        if (capped.truncated) {
+          console.log(`(truncated to ${limit} of ${cardList.length} — raise --limit to see the rest)`);
         }
       }
     } catch (error) {
@@ -648,7 +699,7 @@ cards
 
         let allCards: Card[];
         try {
-          allCards = await api.listCards(options.board, 10000);
+          allCards = await api.listCards(options.board);
         } catch (err: any) {
           if (err?.response?.status === 404) {
             console.error(`✗ Board not found: "${options.board}"`);
@@ -856,7 +907,8 @@ cards
     '  assignee:alice    cards where alice is an assignee\n' +
     '  status:Done       cards with status "Done"\n' +
     '  tag:bug           cards tagged "bug"\n\n' +
-    'Handles 10,000+ cards with automatic pagination.'
+    'Handles 10,000+ cards with automatic pagination. Export is carved out of the\n' +
+    'default output omission: it always carries card bodies, whole and unrendered.'
   )
   .option('--format <format>', 'Export format: json or csv', 'json')
   .option('--out <file>', 'Output file path (defaults to stdout)')
@@ -866,7 +918,8 @@ cards
     (val: string, prev: string[]) => prev.concat([val]),
     [] as string[]
   )
-  .option('--limit <number>', 'Maximum cards to fetch', '10000')
+  // No --limit: the board is always fetched to completion. A cap here could only
+  // silently export part of a board and call it the export.
   .action(async (board: string, options) => {
     const format = (options.format ?? 'json').toLowerCase() as ExportFormat;
     if (format !== 'json' && format !== 'csv') {
@@ -883,16 +936,13 @@ cards
       }
     }
 
-    const parsedLimit = parseInt(options.limit ?? '10000', 10);
-    const limit = !isNaN(parsedLimit) && parsedLimit >= 1 ? parsedLimit : 10000;
-
     try {
       const client = await createFavroClient();
       const api = new CardsAPI(client);
 
       const spinner = new (await import('./lib/progress')).Spinner('Fetching cards');
       spinner.start();
-      let cardList = await api.listCards(board, limit);
+      let cardList = await api.listCards(board);
       spinner.stop();
 
       const filters: string[] = options.filter ?? [];

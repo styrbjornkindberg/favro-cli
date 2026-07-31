@@ -211,13 +211,12 @@ export class AggregateAPI {
       if (collId !== '__boards__') {
         cards = await this.cardsApi.listCards({
           collectionId: collId,
-          limit: cardLimit,
           unique: true,
         });
       } else {
         // Fetch per-board when we only have boardIds
         const perBoard = await Promise.all(
-          boards.map(b => this.cardsApi.listCards({ boardId: b.boardId, limit: cardLimit })),
+          boards.map(b => this.cardsApi.listCards({ boardId: b.boardId })),
         );
         cards = perBoard.flat();
       }

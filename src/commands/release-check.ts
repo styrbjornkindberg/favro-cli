@@ -85,7 +85,7 @@ export function registerReleaseCheckCommand(program: Command): void {
         const api = new CardsAPI(client);
 
         // Fetch all cards from board (with high limit)
-        const allCards = await api.listCards(board, 10000);
+        const allCards = await api.listCards(board);
 
         // Filter to Review/Done statuses - use exact matching to avoid substring matches
         const reviewAndDoneCards = allCards.filter(card =>
