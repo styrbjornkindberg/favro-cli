@@ -8,10 +8,10 @@
  *   2. AND/OR logical operators with precedence
  *   3. Parenthesised sub-expressions
  *   4. Date predicates — absolute, relative, relative-math, week, quarter
- *   5. Relationship queries (blocks, depends, relates)
+ *   5. Dependency predicates (unblocked, blocks:, blocked-by:)
  *   6. Custom field queries
- *   7. Error cases (unclosed parens, bad dates, invalid relationship types)
- *   8. Enum validation (status, relationship types)
+ *   7. Error cases (unclosed parens, bad dates, unknown fields)
+ *   8. Fail-closed field validation
  *   9. filterCards() integration helper
  *  10. evaluateNode() coverage
  *  11. Edge cases (empty input, bare keywords, nested AND/OR)
@@ -22,12 +22,10 @@ import {
   filterCards,
   evaluateNode,
   ParseError,
-  VALID_RELATIONSHIP_TYPES,
   DATE_KEYWORDS,
   type Query,
   type QueryNode,
   type FieldPredicate,
-  type RelationshipPredicate,
   type DatePredicate,
   type CustomFieldPredicate,
   type AndExpression,
@@ -58,23 +56,23 @@ describe('parseQuery — basic field predicates', () => {
   });
 
   test('parses field>value', () => {
-    const q = parseQuery('estimate>5');
-    expect(q.ast).toMatchObject({ kind: 'field', field: 'estimate', operator: '>', value: '5' });
+    const q = parseQuery('sequentialId>5');
+    expect(q.ast).toMatchObject({ kind: 'field', field: 'sequentialid', operator: '>', value: '5' });
   });
 
   test('parses field<value', () => {
-    const q = parseQuery('estimate<8');
-    expect(q.ast).toMatchObject({ kind: 'field', field: 'estimate', operator: '<', value: '8' });
+    const q = parseQuery('sequentialId<8');
+    expect(q.ast).toMatchObject({ kind: 'field', field: 'sequentialid', operator: '<', value: '8' });
   });
 
   test('parses field>=value', () => {
-    const q = parseQuery('estimate>=3');
-    expect(q.ast).toMatchObject({ kind: 'field', field: 'estimate', operator: '>=', value: '3' });
+    const q = parseQuery('sequentialId>=3');
+    expect(q.ast).toMatchObject({ kind: 'field', field: 'sequentialid', operator: '>=', value: '3' });
   });
 
   test('parses field<=value', () => {
-    const q = parseQuery('estimate<=10');
-    expect(q.ast).toMatchObject({ kind: 'field', field: 'estimate', operator: '<=', value: '10' });
+    const q = parseQuery('sequentialId<=10');
+    expect(q.ast).toMatchObject({ kind: 'field', field: 'sequentialid', operator: '<=', value: '10' });
   });
 
   test('parses field~value (contains)', () => {
@@ -110,7 +108,6 @@ describe('parseQuery — basic field predicates', () => {
   test('empty filter returns null AST', () => {
     const q = parseQuery('');
     expect(q.ast).toBeNull();
-    expect(q.warnings).toHaveLength(0);
   });
 
   test('whitespace-only filter returns null AST', () => {
@@ -155,14 +152,14 @@ describe('parseQuery — AND/OR logical operators', () => {
   });
 
   test('chained ANDs build left-associative tree', () => {
-    const q = parseQuery('a:1 AND b:2 AND c:3');
+    const q = parseQuery('status:1 AND title:2 AND tag:3');
     const ast = q.ast as AndExpression;
     expect(ast.kind).toBe('and');
     expect(ast.left).toMatchObject({ kind: 'and' }); // (a:1 AND b:2) AND c:3
   });
 
   test('chained ORs build left-associative tree', () => {
-    const q = parseQuery('a:1 OR b:2 OR c:3');
+    const q = parseQuery('status:1 OR title:2 OR tag:3');
     const ast = q.ast as OrExpression;
     expect(ast.kind).toBe('or');
     expect(ast.left).toMatchObject({ kind: 'or' });
@@ -221,7 +218,7 @@ describe('parseQuery — parentheses', () => {
   });
 
   test('title~ with OR', () => {
-    const q = parseQuery('title~"bug" OR (assignee:mary AND estimate>3)');
+    const q = parseQuery('title~"bug" OR (assignee:mary AND sequentialId>3)');
     expect(q.ast?.kind).toBe('or');
   });
 });
@@ -386,54 +383,51 @@ describe('parseQuery — date predicates', () => {
 // 5. Relationship queries
 // ---------------------------------------------------------------------------
 
-describe('parseQuery — relationship predicates', () => {
-  test('parses relationship:blocks', () => {
-    const q = parseQuery('relationship:blocks');
-    const ast = q.ast as RelationshipPredicate;
-    expect(ast.kind).toBe('relationship');
-    expect(ast.type).toBe('blocks');
-    expect(ast.targetId).toBeUndefined();
+describe('parseQuery — dependency predicates', () => {
+  // Favro has no link "types" — one edge, one `isBefore` flag. `relationship:`
+  // named three types Favro cannot store and read them off a `card.relationships`
+  // that never exists, so it is gone; these three replace it.
+
+  test('refuses relationship: — Favro stores no such thing', () => {
+    expect(() => parseQuery('relationship:blocks')).toThrow(ParseError);
+    expect(() => parseQuery('relationship:blocks')).toThrow(/Unknown filter field 'relationship'/);
   });
 
-  test('parses relationship:depends', () => {
-    const q = parseQuery('relationship:depends');
-    const ast = q.ast as RelationshipPredicate;
-    expect(ast.type).toBe('depends');
+  test('parses bare unblocked as a whole predicate', () => {
+    const q = parseQuery('unblocked');
+    expect(q.ast).toMatchObject({ kind: 'field', field: 'unblocked' });
   });
 
-  test('parses relationship:relates', () => {
-    const q = parseQuery('relationship:relates');
-    const ast = q.ast as RelationshipPredicate;
-    expect(ast.type).toBe('relates');
+  test('parses blocked-by:<ref>', () => {
+    const q = parseQuery('blocked-by:CLA-1804');
+    expect(q.ast).toMatchObject({ kind: 'field', field: 'blocked-by', value: 'CLA-1804' });
   });
 
-  test('parses relationship:blocks:CARD-123 with target', () => {
-    const q = parseQuery('relationship:blocks:CARD-123');
-    const ast = q.ast as RelationshipPredicate;
-    expect(ast.type).toBe('blocks');
-    expect(ast.targetId).toBe('CARD-123');
+  test('parses blocks:<ref>', () => {
+    const q = parseQuery('blocks:CLA-1804');
+    expect(q.ast).toMatchObject({ kind: 'field', field: 'blocks', value: 'CLA-1804' });
   });
 
-  test('parses relationship:depends:CARD-456', () => {
-    const q = parseQuery('relationship:depends:CARD-456');
-    const ast = q.ast as RelationshipPredicate;
-    expect(ast.type).toBe('depends');
-    expect(ast.targetId).toBe('CARD-456');
+  test('unblocked is true only when no edge comes before the card', () => {
+    const blocked = { name: 'a', links: [{ isBefore: true, cardSequentialId: 'CLA-1' }] };
+    const blocking = { name: 'b', links: [{ isBefore: false, cardSequentialId: 'CLA-2' }] };
+    const q = parseQuery('unblocked');
+    expect(evaluateNode(q.ast!, blocked)).toBe(false);
+    expect(evaluateNode(q.ast!, blocking)).toBe(true);
+    expect(evaluateNode(q.ast!, { name: 'c' })).toBe(true);
   });
 
-  test('throws on invalid relationship type', () => {
-    expect(() => parseQuery('relationship:invalid')).toThrow(ParseError);
-    expect(() => parseQuery('relationship:invalid')).toThrow(/Invalid relationship type/i);
+  test('blocked-by matches an incoming edge by any identifier shape', () => {
+    const card = { name: 'a', links: [{ isBefore: true, cardCommonId: 'abc', cardSequentialId: 'CLA-1' }] };
+    expect(evaluateNode(parseQuery('blocked-by:CLA-1').ast!, card)).toBe(true);
+    expect(evaluateNode(parseQuery('blocked-by:abc').ast!, card)).toBe(true);
+    expect(evaluateNode(parseQuery('blocked-by:CLA-9').ast!, card)).toBe(false);
   });
 
-  test('throws on unknown relationship type: linked', () => {
-    expect(() => parseQuery('relationship:linked')).toThrow(ParseError);
-  });
-
-  test('VALID_RELATIONSHIP_TYPES exports correct values', () => {
-    expect(VALID_RELATIONSHIP_TYPES).toContain('blocks');
-    expect(VALID_RELATIONSHIP_TYPES).toContain('depends');
-    expect(VALID_RELATIONSHIP_TYPES).toContain('relates');
+  test('blocks reads the same edge from the other end', () => {
+    const card = { name: 'a', links: [{ isBefore: false, cardSequentialId: 'CLA-2' }] };
+    expect(evaluateNode(parseQuery('blocks:CLA-2').ast!, card)).toBe(true);
+    expect(evaluateNode(parseQuery('blocked-by:CLA-2').ast!, card)).toBe(false);
   });
 });
 
@@ -536,27 +530,56 @@ describe('parseQuery — error handling', () => {
 // 8. Enum validation — warnings
 // ---------------------------------------------------------------------------
 
-describe('parseQuery — enum validation and warnings', () => {
-  test('no warning for valid status value', () => {
-    const q = parseQuery('status:done');
-    expect(q.warnings).toHaveLength(0);
+describe('parseQuery — fails closed on the field list', () => {
+  // These six replace the `warnings` assertions that stood here. Every one of
+  // them asserted the bug: an unknown field was recorded in an array nothing in
+  // `src/` ever read, and the query ran anyway.
+
+  test('a known field parses', () => {
+    expect(parseQuery('status:done').ast).toMatchObject({ kind: 'field', field: 'status' });
   });
 
-  test('warns on unknown field name', () => {
-    const q = parseQuery('invalidfield:value');
-    expect(q.warnings.length).toBeGreaterThan(0);
-    expect(q.warnings[0]).toContain('Unknown field');
+  test('an unknown field REFUSES, with a structured payload', () => {
+    expect(() => parseQuery('invalidfield:value')).toThrow(ParseError);
+    try {
+      parseQuery('invalidfield:value');
+      throw new Error('expected a refusal');
+    } catch (err) {
+      const e = err as ParseError;
+      expect(e.detail.kind).toBe('unknown-field');
+      expect(e.detail.value).toBe('invalidfield');
+      expect(e.detail.candidates).toContain('status');
+    }
   });
 
-  test('no warning for known field names', () => {
-    const q = parseQuery('assignee:john');
-    expect(q.warnings).toHaveLength(0);
+  test('the fields the old VALID_FIELDS list kept alive are refused', () => {
+    // On no card Favro sends: refusing them is the point of deriving the list.
+    for (const dead of ['estimate:5', 'priority:high', 'created_by:john', 'relationship:blocks']) {
+      expect(() => parseQuery(dead)).toThrow(/Unknown filter field/);
+    }
+  });
+
+  test('the computed fields the old list would have refused are accepted', () => {
+    for (const live of ['unblocked', 'blocked-by:CLA-1', 'blocks:CLA-1', 'due_in:7d']) {
+      expect(() => parseQuery(live)).not.toThrow();
+    }
+  });
+
+  test('a pass-through field Favro sends is accepted once a card carries it', () => {
+    // Derived, not enumerated: nothing here names `position`.
+    expect(() => parseQuery('position>0')).toThrow(ParseError);
+    expect(() => parseQuery('position>0', { cards: [{ cardId: '1', position: 3 }] })).not.toThrow();
+  });
+
+  test('the Card floor still refuses a typo when zero cards came back', () => {
+    expect(() => parseQuery('statuz:done', { cards: [] })).toThrow(/Unknown filter field/);
+    expect(() => parseQuery('status:done', { cards: [] })).not.toThrow();
   });
 
   test('a status value is not validated against a global vocabulary', () => {
-    // `status` is a column name and columns are board-specific — there is no
-    // org-wide list to check against, so no value warns here.
-    expect(parseQuery('status:whatever-this-board-calls-it').warnings).toHaveLength(0);
+    // `status` is a column name and columns are board-specific. The board's real
+    // columns settle it in `validateQueryValues`, not here.
+    expect(() => parseQuery('status:whatever-this-board-calls-it')).not.toThrow();
   });
 
   test('DATE_KEYWORDS exports correct keywords', () => {
@@ -566,17 +589,17 @@ describe('parseQuery — enum validation and warnings', () => {
     expect(DATE_KEYWORDS).toContain('overdue');
   });
 
-  test('bare quoted string produces warning and title predicate', () => {
-    const q = parseQuery('"bug fix"');
-    // Should produce title~'bug fix' with a warning or no warning
-    expect(q.ast).toMatchObject({ kind: 'field', field: 'title', operator: '~', value: 'bug fix' });
+  test('a bare quoted string REFUSES and points at the deliberate form', () => {
+    expect(() => parseQuery('"bug fix"')).toThrow(ParseError);
+    expect(() => parseQuery('"bug fix"')).toThrow(/title~"bug fix"/);
+    // …which is accepted, and is the only free-text form.
+    expect(parseQuery('title~"bug fix"').ast)
+      .toMatchObject({ kind: 'field', field: 'title', operator: '~', value: 'bug fix' });
   });
 
-  test('warns when date keyword on non-date field', () => {
-    // "status:today" — status field but today is a date keyword
-    const q = parseQuery('status:today');
-    // should warn about date keyword on non-date field
-    expect(q.warnings.length).toBeGreaterThan(0);
+  test('a date keyword on a non-date field is left to value validation', () => {
+    // `status:today` is a column named "today" as far as parsing knows.
+    expect(parseQuery('status:today').ast).toMatchObject({ field: 'status', value: 'today' });
   });
 });
 
@@ -625,20 +648,20 @@ describe('filterCards', () => {
   });
 
   test('filters by estimate greater than', () => {
-    const q = parseQuery('estimate>5');
+    const q = parseQuery('estimate>5', { cards });
     const result = filterCards(q, cards);
     expect(result).toHaveLength(1);
     expect(result[0].cardId).toBe('2');
   });
 
   test('filters by estimate >= 5', () => {
-    const q = parseQuery('estimate>=5');
+    const q = parseQuery('estimate>=5', { cards });
     const result = filterCards(q, cards);
     expect(result.map(c => c.cardId).sort()).toEqual(['2', '3']);
   });
 
   test('filters by estimate <= 3', () => {
-    const q = parseQuery('estimate<=3');
+    const q = parseQuery('estimate<=3', { cards });
     const result = filterCards(q, cards);
     expect(result.map(c => c.cardId).sort()).toEqual(['1', '4']);
   });
@@ -704,8 +727,8 @@ describe('evaluateNode — direct evaluation', () => {
       { name: 'Priority', value: 'High' },
       { name: 'Score', value: '90' },
     ],
-    relationships: [
-      { type: 'blocks', targetId: 'CARD-999' },
+    links: [
+      { isBefore: false, cardSequentialId: 'CLA-999' },
     ],
   };
 
@@ -822,36 +845,23 @@ describe('evaluateNode — direct evaluation', () => {
     expect(evaluateNode(q.ast!, cardAlt)).toBe(true);
   });
 
-  test('relationship: blocks match', () => {
-    const q = parseQuery('relationship:blocks');
-    expect(evaluateNode(q.ast!, card)).toBe(true);
+  test('blocks: matches the outgoing edge', () => {
+    expect(evaluateNode(parseQuery('blocks:CLA-999').ast!, card)).toBe(true);
   });
 
-  test('relationship: blocks with target match', () => {
-    const q = parseQuery('relationship:blocks:CARD-999');
-    expect(evaluateNode(q.ast!, card)).toBe(true);
+  test('blocks: wrong target no match', () => {
+    expect(evaluateNode(parseQuery('blocks:CLA-000').ast!, card)).toBe(false);
   });
 
-  test('relationship: blocks with wrong target no match', () => {
-    const q = parseQuery('relationship:blocks:CARD-000');
-    expect(evaluateNode(q.ast!, card)).toBe(false);
+  test('a card that only blocks is itself unblocked', () => {
+    expect(evaluateNode(parseQuery('unblocked').ast!, card)).toBe(true);
+    expect(evaluateNode(parseQuery('blocked-by:CLA-999').ast!, card)).toBe(false);
   });
 
-  test('relationship: depends — no match on card with only blocks', () => {
-    const q = parseQuery('relationship:depends');
-    expect(evaluateNode(q.ast!, card)).toBe(false);
-  });
-
-  test('relationship: uses links alias', () => {
-    const cardAlt = { ...card, relationships: undefined, links: [{ type: 'blocks', target: 'CARD-999' }] };
-    const q = parseQuery('relationship:blocks');
-    expect(evaluateNode(q.ast!, cardAlt)).toBe(true);
-  });
-
-  test('relationship: card with no relationships returns false', () => {
-    const cardNoRel = { ...card, relationships: [] };
-    const q = parseQuery('relationship:blocks');
-    expect(evaluateNode(q.ast!, cardNoRel)).toBe(false);
+  test('reads dependencies when links has not been aliased', () => {
+    const cardAlt = { ...card, links: undefined, dependencies: [{ isBefore: true, cardCommonId: 'abc' }] };
+    expect(evaluateNode(parseQuery('blocked-by:abc').ast!, cardAlt)).toBe(true);
+    expect(evaluateNode(parseQuery('unblocked').ast!, cardAlt)).toBe(false);
   });
 
   test('field: returns false when field not found on card', () => {
@@ -886,13 +896,6 @@ describe('parseQuery — edge cases', () => {
     }
   });
 
-  test('all VALID_RELATIONSHIP_TYPES parse successfully', () => {
-    for (const rt of VALID_RELATIONSHIP_TYPES) {
-      const q = parseQuery(`relationship:${rt}`);
-      expect(q.ast).toMatchObject({ kind: 'relationship', type: rt });
-    }
-  });
-
   test('due_date with this-month keyword', () => {
     const q = parseQuery('due_date:this-month');
     const ast = q.ast as DatePredicate;
@@ -907,7 +910,7 @@ describe('parseQuery — edge cases', () => {
   });
 
   test('complex nested query with mixed operators', () => {
-    const filter = 'title~"bug" OR (assignee:mary AND estimate>3)';
+    const filter = 'title~"bug" OR (assignee:mary AND sequentialId>3)';
     const q = parseQuery(filter);
     expect(q.ast?.kind).toBe('or');
   });
@@ -931,9 +934,10 @@ describe('parseQuery — edge cases', () => {
     expect(evaluateNode(q.ast!, card)).toBe(true);
   });
 
-  test('parseQuery returns warnings array even on success', () => {
-    const q = parseQuery('status:done');
-    expect(Array.isArray(q.warnings)).toBe(true);
+  test('a parsed query carries the AST and the raw string, and nothing else', () => {
+    // `warnings` lived here. Nothing in src/ ever read it, so a degraded query
+    // notified nobody — a refusal replaced it.
+    expect(Object.keys(parseQuery('status:done')).sort()).toEqual(['ast', 'raw']);
   });
 
   test('parseQuery raw preserves original input', () => {
@@ -942,18 +946,9 @@ describe('parseQuery — edge cases', () => {
     expect(q.raw).toBe(filter);
   });
 
-  test('relationship with target uses target alias', () => {
-    const card = {
-      name: 'test',
-      links: [{ type: 'relates', target: 'CARD-111', targetId: undefined }]
-    };
-    const q = parseQuery('relationship:relates:CARD-111');
-    expect(evaluateNode(q.ast!, card)).toBe(true);
-  });
-
-  test('estimate field numeric equality', () => {
+  test('a derived field compares numerically', () => {
     const card = { name: 'test', estimate: 5 };
-    const q = parseQuery('estimate:5');
+    const q = parseQuery('estimate:5', { cards: [card] });
     expect(evaluateNode(q.ast!, card)).toBe(true);
   });
 
@@ -974,15 +969,11 @@ describe('parseQuery — edge cases', () => {
     expect(evaluateNode(q.ast!, card)).toBe(true);
   });
 
-  test('created_by field works', () => {
-    const card = { name: 'test', createdBy: 'john' };
-    const q = parseQuery('created_by:john');
-    expect(evaluateNode(q.ast!, card)).toBe(true);
-  });
-
-  test('priority field works', () => {
-    const card = { name: 'test', priority: 'high' };
-    const q = parseQuery('priority:high');
+  test('createdByUserId is read by the name Favro sends it under', () => {
+    // `created_by` was an alias for a field no card has. The real one derives.
+    const card = { name: 'test', createdByUserId: 'abc123' };
+    expect(() => parseQuery('created_by:abc123')).toThrow(ParseError);
+    const q = parseQuery('createdByUserId:abc123', { cards: [card] });
     expect(evaluateNode(q.ast!, card)).toBe(true);
   });
 });
@@ -992,18 +983,20 @@ describe('parseQuery — edge cases', () => {
 // ---------------------------------------------------------------------------
 
 describe('parseQuery — additional branch coverage', () => {
-  test('bare token without operator becomes title~ with warning', () => {
-    // A raw token like "bugfix" with no operator — should warn and produce title~bugfix
-    // We need to reach parsePredicate with a raw value that doesn't match opRegex
-    // The easiest way: inject a token that looks like no-op-char word
-    // Actually "bugfix" alone in a standalone position goes through parsePrimary as FIELD_OP
-    // but "bugfix" doesn't match the opRegex /^([a-zA-Z_]...)(>=|<=|>|<|~|=|:)(.+)$/
-    // This hits the fallback warning path
-    const q = parseQuery('status:done AND bugfix');
-    // "bugfix" has no operator → warning
-    expect(q.warnings.some(w => w.includes("bugfix"))).toBe(true);
-    // And ast is still valid
-    expect(q.ast?.kind).toBe('and');
+  test('bare token without operator REFUSES the whole query', () => {
+    // This asserted the headline bug: `bugfix` degraded into title~bugfix, the
+    // rest of the query still ran, and the warning went into an array no
+    // production code read.
+    expect(() => parseQuery('status:done AND bugfix')).toThrow(ParseError);
+    try {
+      parseQuery('status:done AND bugfix');
+      throw new Error('expected a refusal');
+    } catch (err) {
+      const e = err as ParseError;
+      expect(e.detail.kind).toBe('unknown-token');
+      expect(e.detail.value).toBe('bugfix');
+      expect(e.message).toContain('title~"bugfix"');
+    }
   });
 
   test('escaped quote inside quoted value', () => {

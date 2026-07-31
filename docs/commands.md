@@ -172,18 +172,28 @@ Get board details including columns, members, and stats.
 | Flag | Description |
 |------|-------------|
 | `--name <name>` | New title |
-| `--status <status>` | New status (metadata, not column) |
+| `--status <status>` | Move the card to this column (name or `columnId`) |
 | `--column <column>` | Move to column by name (requires `--board`) |
-| `--assignees <list>` | Comma-separated assignees |
+| `--assignees <list>` | Comma-separated assignees — the whole set; drop one to unassign |
 | `--tags <list>` | Comma-separated tags |
-| `--parent <cardId>` | Parent card |
 | `--board <boardId>` | Board context |
 | `--from-csv <file>` | Batch update from CSV |
 | `--dry-run` | Preview only |
 | `-y, --yes` | Skip confirmation |
 | `--force` | Bypass scope check |
 
-**Important:** `--column` moves the card on the kanban board. `--status` sets metadata. Use `--column` to move cards through workflow stages.
+**Important:** `--status` IS the column — Favro has no separate status field, so a
+`--status` write moves the card, resolving the name against the card's own board
+and refusing an unknown name with that board's real columns listed.
+
+**Important:** never read a description back and write it again. Favro injects a
+card's tasklist items into the description it returns, so a read-modify-write
+re-persists those `- [ ]` lines as literal body text and doubles the tasklist
+permanently. Compose the whole body and write that (`--description`).
+
+There is no `--parent` on update: Favro answers `202 Access denied` to
+`parentCardId` on a card update, and rejects `parentCardId: null` with a 400, so
+a parent can be set at create time only and can never be cleared.
 
 ### `cards export <board>`
 

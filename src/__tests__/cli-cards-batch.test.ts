@@ -20,6 +20,13 @@ jest.mock('../lib/cards-api');
 jest.mock('../lib/http-client');
 jest.mock('../lib/config');
 jest.mock('fs/promises');
+// A batch assign now resolves the flag to a userId before writing: `card.assignees`
+// are userIds and `updateCard` diffs the whole array against them, so forwarding
+// a bare name would unassign everyone else (#49).
+jest.mock('../lib/assignee', () => ({
+  resolveAssignee: jest.fn(async (_client: unknown, value: string) => `u-${value}`),
+  resolveAssignees: jest.fn(async (_client: unknown, values: string[]) => values.map((v) => `u-${v}`)),
+}));
 
 const mockResolveApiKey = config.resolveApiKey as jest.MockedFunction<typeof config.resolveApiKey>;
 const mockFsReadFile = fsPromises.readFile as jest.MockedFunction<typeof fsPromises.readFile>;
@@ -225,7 +232,7 @@ describe('favro cards update — batch operations (CLA-1791)', () => {
     it('assigns all matching cards when --board + --assignee given', async () => {
       mockApi.listCards.mockResolvedValue([
         makeCard({ cardId: 'card-1', status: 'Backlog', assignees: [] }),
-        makeCard({ cardId: 'card-2', status: 'Done', assignees: ['alice'] }),
+        makeCard({ cardId: 'card-2', status: 'Done', assignees: ['u-alice'] }),
       ]);
       mockApi.updateCard.mockResolvedValue(makeCard());
 
@@ -235,10 +242,12 @@ describe('favro cards update — batch operations (CLA-1791)', () => {
         '--assignee', 'alice',
       ]);
 
-      // card-1 gets assigned (not already assigned); card-2 is skipped
+      // card-1 gets assigned (not already assigned); card-2 is skipped —
+      // "already assigned" is compared on userIds, which is the only thing
+      // `card.assignees` ever holds.
       expect(mockApi.updateCard).toHaveBeenCalledTimes(1);
       expect(mockApi.updateCard).toHaveBeenCalledWith('card-1', expect.objectContaining({
-        assignees: expect.arrayContaining(['alice']),
+        assignees: expect.arrayContaining(['u-alice']),
       }));
     });
 

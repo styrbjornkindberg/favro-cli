@@ -8,10 +8,10 @@
  *   - Date predicates: today, tomorrow, next-week, next-month, last-month
  *   - Relative date maths: due_in:7d, due_in:2w
  *   - Absolute date formats: 2026-04-01, 2026-Q2, 2026-W15
- *   - Relationship queries: blocks, depends, relates
+ *   - Dependency predicates: unblocked, blocks:<ref>, blocked-by:<ref>
  *   - Custom field queries: customField:name=value
- *   - Numeric operators: estimate:5, estimate>3
- *   - Enum validation against known Favro API values
+ *   - Numeric operators on any numeric card field
+ *   - Fail-closed field validation against a DERIVED field list (#46)
  *
  * Grammar (simplified LL):
  *
@@ -32,19 +32,11 @@
 
 export type Operator = '=' | '>' | '<' | '>=' | '<=' | '~' | 'in';
 
-export type RelationshipType = 'blocks' | 'depends' | 'relates';
-
 export interface FieldPredicate {
   kind: 'field';
   field: string;
   operator: Operator;
   value: string;
-}
-
-export interface RelationshipPredicate {
-  kind: 'relationship';
-  type: RelationshipType;
-  targetId?: string;
 }
 
 export interface DatePredicate {
@@ -75,7 +67,6 @@ export interface OrExpression {
 
 export type QueryNode =
   | FieldPredicate
-  | RelationshipPredicate
   | DatePredicate
   | CustomFieldPredicate
   | AndExpression
@@ -97,21 +88,58 @@ export interface Query {
   ast: QueryNode | null;
   /** Raw filter string */
   raw: string;
-  /** Warnings produced during parsing (non-fatal) */
-  warnings: string[];
 }
 
 // ---------------------------------------------------------------------------
-// Known enum values (validated against Favro API)
+// The checked field list
+//
+// It is DERIVED, not enumerated. `normalizeCard` passes every field Favro sends
+// straight through, so the cards in hand ARE the field list; a hand-written list
+// rots (the one this replaced was 19 entries, the majority naming fields that
+// exist on no card). Two things cannot be derived and are therefore declared:
+// the aliases `resolveFieldValue` maps, and the predicates computed here with no
+// card field behind them. `CARD_FIELDS` is the static floor, so a zero-row fetch
+// still refuses a typo instead of accepting everything.
 // ---------------------------------------------------------------------------
 
-export const VALID_RELATIONSHIP_TYPES: RelationshipType[] = ['blocks', 'depends', 'relates'];
-
-export const VALID_FIELDS = [
-  'status', 'assignee', 'label', 'tag', 'due_date', 'created_at', 'updated_at',
-  'estimate', 'priority', 'title', 'name', 'description', 'created_by',
-  'due_before', 'due_after', 'due_in', 'relationship', 'customField',
+/** The `Card` interface's named keys — the floor, for when no card is in hand. */
+export const CARD_FIELDS: readonly string[] = [
+  'cardId', 'cardCommonId', 'name', 'description', 'status', 'assignees', 'tags',
+  'tagIds', 'dueDate', 'createdAt', 'boardId', 'widgetCommonId', 'assignments',
+  'columnId', 'collectionId', 'archived', 'sequentialId', 'parentCardId', 'board',
+  'collection', 'customFields', 'links', 'comments', 'relations',
 ];
+
+/** Aliases and computed predicates — the part no card can tell you about. */
+export const DECLARED_FIELDS: readonly string[] = [
+  // Aliases onto real card fields (see `resolveFieldValue`).
+  'title', 'label', 'tag', 'assignee', 'due_date', 'due_before', 'due_after',
+  'created_at', 'updated_at',
+  // Computed here — nothing on the card is named this.
+  'due_in', 'unblocked', 'blocks', 'blocked-by', 'customfield',
+];
+
+/**
+ * Every field a filter may name, lowercased.
+ *
+ * Pass the cards in hand to widen it by what Favro actually sent; with none,
+ * the floor plus the declared set still refuses a typo.
+ */
+export function knownFields(cards: ReadonlyArray<Record<string, unknown>> = []): Set<string> {
+  const fields = new Set<string>(
+    [...CARD_FIELDS, ...DECLARED_FIELDS].map((f) => f.toLowerCase())
+  );
+  for (const card of cards) {
+    for (const key of Object.keys(card)) fields.add(key.toLowerCase());
+  }
+  return fields;
+}
+
+/** Fields whose values come from a closed vocabulary — see `validateQueryValues`. */
+const CLOSED_VOCABULARY_FIELDS = ['tag', 'label', 'status', 'assignee'];
+
+/** Bare keywords that are a whole predicate on their own. */
+const BARE_KEYWORDS = ['unblocked'];
 
 export const DATE_KEYWORDS = [
   'today', 'tomorrow', 'yesterday', 'next-week', 'next-month',
@@ -166,7 +194,8 @@ function tokenise(input: string): Token[] {
     if (input[i] === '(') { tokens.push({ type: 'LPAREN', value: '(', pos: start }); i++; continue; }
     if (input[i] === ')') { tokens.push({ type: 'RPAREN', value: ')', pos: start }); i++; continue; }
 
-    // Standalone quoted string — treat as title~ predicate
+    // Standalone quoted string. NOT free text — it is emitted as-is so the
+    // parser refuses it and points at `title~"…"`, the one deliberate form.
     if (input[i] === '"' || input[i] === "'") {
       const quote = input[i++];
       let raw = '';
@@ -175,7 +204,7 @@ function tokenise(input: string): Token[] {
         else { raw += input[i++]; }
       }
       if (i < n) i++; // skip closing quote
-      tokens.push({ type: 'FIELD_OP', value: `title~${raw}`, pos: start });
+      tokens.push({ type: 'FIELD_OP', value: raw, pos: start });
       continue;
     }
 
@@ -218,7 +247,7 @@ function tokenise(input: string): Token[] {
     // Look-ahead: handle "field in(list)" where space separates field and in(...)
     // If this is a bare identifier (no operator chars) and the next non-whitespace
     // chars are 'in(' — combine into a single token.
-    if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(raw)) {
+    if (/^[a-zA-Z_][a-zA-Z0-9_-]*$/.test(raw)) {
       let j = i;
       while (j < n && /\s/.test(input[j])) j++; // skip whitespace
       if (input.slice(j, j + 3).toLowerCase() === 'in(') {
@@ -249,9 +278,8 @@ class Parser {
   private tokens: Token[];
   private pos = 0;
   private depth = 0;
-  public warnings: string[] = [];
 
-  constructor(private input: string) {
+  constructor(private input: string, private fields: Set<string>) {
     this.tokens = tokenise(input);
   }
 
@@ -330,8 +358,8 @@ class Parser {
    *   due_date>=2026-04-01
    *   title~"bug"
    *   customField:Priority=High
-   *   relationship:blocks
-   *   relationship:depends:CARD-123
+   *   blocked-by:CLA-1804
+   *   unblocked
    *   due_in:7d
    *   due_date:today
    *   assignee in(john,mary)
@@ -339,24 +367,31 @@ class Parser {
   private parsePredicate(raw: string, pos: number): QueryNode {
     // Handle "field in(v1,v2,...)" format — raw ends with part before in(...)
     // but we may have read it as a single token if no space; handle anyway
-    const inMatch = raw.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\s+in\((.+)\)$/i);
+    const inMatch = raw.match(/^([a-zA-Z_][a-zA-Z0-9_-]*)\s+in\((.+)\)$/i);
     if (inMatch) {
       const [, field, list] = inMatch;
-      this.validateField(field, pos);
-      return { kind: 'field', field, operator: 'in', value: list } as FieldPredicate;
+      this.validateField(field.toLowerCase(), pos);
+      return { kind: 'field', field: field.toLowerCase(), operator: 'in', value: list } as FieldPredicate;
+    }
+
+    // A bare keyword that is a whole predicate on its own.
+    if (BARE_KEYWORDS.includes(raw.toLowerCase())) {
+      return { kind: 'field', field: raw.toLowerCase(), operator: '=', value: 'true' } as FieldPredicate;
     }
 
     // Parse field + operator + value
     // Operators to detect: >=, <=, >, <, ~, =, :
-    const opRegex = /^([a-zA-Z_][a-zA-Z0-9_.]*)(>=|<=|>|<|~|=|:)(.+)$/;
+    const opRegex = /^([a-zA-Z_][a-zA-Z0-9_.-]*)(>=|<=|>|<|~|=|:)(.+)$/;
     const m = raw.match(opRegex);
     if (!m) {
-      // Unknown token behavior (graceful degradation):
-      // If a token doesn't match any known field:operator:value pattern, treat it as a title search.
-      // This allows user-friendly behavior: "my task" → search title for "my task"
-      // A warning is recorded so CLI can inform the user of the interpretation.
-      this.warnings.push(`Unknown token '${raw}' at position ${pos} — treating as title~'${raw}'`);
-      return { kind: 'field', field: 'title', operator: '~', value: raw } as FieldPredicate;
+      // Fails closed. The old fallback read an unparseable token as a title
+      // search and answered a plausible `0 rows`; free text is `title~"…"` and
+      // nothing else.
+      throw new ParseError(
+        `Unrecognised filter token '${raw}' at position ${pos} — it names no field and carries no operator. ` +
+          `Filters are field:value (see 'favro cards list --help'). For free text, say it: title~"${raw}".`,
+        { kind: 'unknown-token', value: raw, position: pos }
+      );
     }
 
     let [, fieldRaw, opChar, valuePart] = m;
@@ -387,22 +422,6 @@ class Parser {
       } as CustomFieldPredicate;
     }
 
-    // --- Handle relationship:type[:targetId] ---
-    if (fieldRaw.toLowerCase() === 'relationship') {
-      const parts = valuePart.split(':');
-      const relType = parts[0].toLowerCase();
-      if (!VALID_RELATIONSHIP_TYPES.includes(relType as RelationshipType)) {
-        throw new ParseError(
-          `Invalid relationship type '${relType}' at position ${pos}. Valid types: ${VALID_RELATIONSHIP_TYPES.join(', ')}`
-        );
-      }
-      return {
-        kind: 'relationship',
-        type: relType as RelationshipType,
-        targetId: parts[1],
-      } as RelationshipPredicate;
-    }
-
     // --- Handle date-specific fields ---
     const dateFields = ['due_date', 'created_at', 'updated_at', 'due_before', 'due_after', 'due_in'];
     if (dateFields.includes(fieldRaw.toLowerCase())) {
@@ -415,20 +434,12 @@ class Parser {
       } as DatePredicate;
     }
 
-    // For non-date field with `:` — check for date keyword values on status-like fields
-    if (DATE_KEYWORDS.includes(valuePart.toLowerCase())) {
-      // e.g. "overdue" passed as a standalone to a date-ish context — emit warning but continue
-      this.warnings.push(
-        `Date keyword '${valuePart}' used on field '${fieldRaw}' — expected a date field like due_date`
-      );
-    }
-
     // --- Validate field name ---
     this.validateField(fieldRaw.toLowerCase(), pos);
 
     // `status` is a column name, which is board-specific — there is no global
-    // vocabulary to validate against here. #46 validates it against the board's
-    // real columns, where the board is known.
+    // vocabulary to check here. `validateQueryValues` checks it against the
+    // board's real columns, where the board is known.
 
     return {
       kind: 'field',
@@ -441,11 +452,13 @@ class Parser {
   private validateField(field: string, pos: number): void {
     // Allow any field that starts with 'customfield' (dynamic)
     if (field.startsWith('customfield')) return;
-    if (!VALID_FIELDS.includes(field)) {
-      this.warnings.push(
-        `Unknown field '${field}' at position ${pos}. Valid fields: ${VALID_FIELDS.join(', ')}`
-      );
-    }
+    if (this.fields.has(field)) return;
+    const known = [...this.fields].sort().join(', ');
+    throw new ParseError(
+      `Unknown filter field '${field}' at position ${pos} — refusing to run a query that cannot mean what you asked. ` +
+        `Known fields: ${known}.`,
+      { kind: 'unknown-field', value: field, position: pos, candidates: [...this.fields].sort() }
+    );
   }
 }
 
@@ -521,8 +534,39 @@ function parseDateValue(raw: string, pos: number): DateValue {
 // ParseError
 // ---------------------------------------------------------------------------
 
+export type ParseFailure =
+  /** The token names no field this parser knows. */
+  | 'unknown-field'
+  /** The token carries no operator at all — the old `title~` degrade path. */
+  | 'unknown-token'
+  /** The value is not in the closed vocabulary its field draws from. */
+  | 'unknown-value'
+  /** `status:` was asked without the board whose columns settle it. */
+  | 'missing-board'
+  /** Anything structural: unclosed parens, bad dates, limits. */
+  | 'syntax';
+
+/**
+ * The machine-readable half of a refusal. Replaces `Query.warnings`, which had
+ * no production reader and so notified nobody.
+ */
+export interface ParseErrorDetail {
+  kind: ParseFailure;
+  /** The offending text — the field name, the token, or the value. */
+  value?: string;
+  /** Character offset into the filter string, when known. */
+  position?: number;
+  /** The field whose value was refused (`unknown-value` only). */
+  field?: string;
+  /** What the vocabulary actually holds, when it is closed and in hand. */
+  candidates?: string[];
+}
+
 export class ParseError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    readonly detail: ParseErrorDetail = { kind: 'syntax' }
+  ) {
     super(message);
     this.name = 'ParseError';
   }
@@ -543,6 +587,12 @@ export function evaluateNode(node: QueryNode, card: Record<string, any>): boolea
     case 'or':  return evaluateNode(node.left, card) || evaluateNode(node.right, card);
 
     case 'field': {
+      // Computed dependency predicates — Favro stores one edge with one flag,
+      // `isBefore`: true means the linked card comes before, i.e. blocks this one.
+      if (node.field === 'unblocked') return blockersOf(card).length === 0;
+      if (node.field === 'blocked-by') return blockersOf(card).some(l => linkMatches(l, node.value));
+      if (node.field === 'blocks') return blockedByThis(card).some(l => linkMatches(l, node.value));
+
       const v = resolveFieldValue(node.field, card);
       return compareValues(v, node.operator, node.value);
     }
@@ -609,23 +659,47 @@ export function evaluateNode(node: QueryNode, card: Record<string, any>): boolea
       return compareValues(cfVal, node.operator, node.value);
     }
 
-    case 'relationship': {
-      const rels: any[] = card.relationships ?? card.links ?? [];
-      return rels.some(r => r.type?.toLowerCase() === node.type &&
-        (!node.targetId || r.targetId === node.targetId || r.target === node.targetId)
-      );
-    }
-
     default:
       return false;
   }
 }
 
+/**
+ * A card's dependency edges.
+ *
+ * ponytail: a card carrying no `links` is read as having no dependencies —
+ * `GET /cards` inlines them, so absence is absence. If a fetch path ever omits
+ * them, `unblocked` would answer confidently about data it never saw; make the
+ * caller prove they were requested before trusting it there.
+ */
+function linksOf(card: Record<string, any>): any[] {
+  return card.links ?? card.dependencies ?? [];
+}
+
+/** Edges where the linked card comes before this one — this card's blockers. */
+function blockersOf(card: Record<string, any>): any[] {
+  return linksOf(card).filter(l => l.isBefore === true);
+}
+
+/** Edges where the linked card comes after this one — cards this one blocks. */
+function blockedByThis(card: Record<string, any>): any[] {
+  return linksOf(card).filter(l => l.isBefore !== true);
+}
+
+/** Match a dependency edge against a card reference, in any identifier shape. */
+function linkMatches(link: Record<string, any>, ref: string): boolean {
+  if (ref === 'true' || ref === '') return true; // bare `blocked-by` — any blocker
+  const wanted = ref.trim().toLowerCase();
+  return [link.cardId, link.cardCommonId, link.cardSequentialId]
+    .some(id => id !== undefined && String(id).toLowerCase() === wanted);
+}
+
 function resolveFieldValue(field: string, card: Record<string, any>): any {
-  const fieldMap: Record<string, string | string[]> = {
+  // Only aliases live here. Every other field is read off the card by its own
+  // name — `normalizeCard` passes them all through, so an entry that merely
+  // repeated the field name was noise that outlived the field.
+  const fieldMap: Record<string, string[]> = {
     'title': ['name', 'title'],
-    'name': ['name', 'title'],
-    'status': ['status'],
     'assignee': ['assignees', 'assignee'],
     'label': ['tags', 'labels'],
     'tag': ['tags', 'labels'],
@@ -635,17 +709,17 @@ function resolveFieldValue(field: string, card: Record<string, any>): any {
     'due_after': ['dueDate', 'due_date'],
     'created_at': ['createdAt', 'created_at'],
     'updated_at': ['updatedAt', 'updated_at'],
-    'description': ['description'],
-    'estimate': ['estimate'],
-    'priority': ['priority'],
-    'created_by': ['createdBy', 'created_by'],
   };
 
   const aliases = fieldMap[field] ?? [field];
   for (const alias of aliases) {
     if (card[alias] !== undefined) return card[alias];
   }
-  return undefined;
+  // Field names are matched lowercased; Favro's pass-through fields are
+  // camelCase (`sequentialId`, `createdByUserId`), so the last look is one that
+  // ignores case — otherwise a field the list accepts would read as undefined.
+  const key = Object.keys(card).find(k => k.toLowerCase() === field);
+  return key === undefined ? undefined : card[key];
 }
 
 function compareValues(cardValue: any, op: Operator, queryValue: string): boolean {
@@ -770,12 +844,24 @@ function resolveRelativeKeyword(keyword: string, today: Date): Date {
 // Public API
 // ---------------------------------------------------------------------------
 
+export interface ParseOptions {
+  /**
+   * The cards the filter will run against, when they are already in hand.
+   * Widens the checked field list by what Favro actually sent; without them the
+   * static floor plus the declared set still refuses a typo.
+   */
+  cards?: ReadonlyArray<Record<string, unknown>>;
+}
+
 /**
  * Parse a filter string into a Query AST.
  *
+ * Fails closed: an unknown field or an unparseable token is a refusal, never a
+ * title search that answers a plausible `0 rows`.
+ *
  * @param filter  The query string, e.g. "status:in-progress AND assignee:john"
- * @returns       A Query object with the parsed AST and any warnings.
- * @throws        ParseError on syntax errors (unclosed parens, invalid date formats, etc.)
+ * @returns       A Query object with the parsed AST.
+ * @throws        ParseError, carrying a structured `detail`, on any refusal.
  *
  * @example
  * const q = parseQuery('status:done AND due_date<=today');
@@ -788,24 +874,18 @@ function resolveRelativeKeyword(keyword: string, today: Date): Date {
  * const q = parseQuery('customField:Priority=High');
  *
  * @example
- * const q = parseQuery('relationship:blocks:CARD-123');
+ * const q = parseQuery('unblocked AND blocked-by:CLA-1804');
  *
  * @example
  * const q = parseQuery('due_in:7d');
  */
-export function parseQuery(filter: string): Query {
+export function parseQuery(filter: string, options: ParseOptions = {}): Query {
   if (!filter || filter.trim() === '') {
-    return { ast: null, raw: filter, warnings: [] };
+    return { ast: null, raw: filter };
   }
 
-  const parser = new Parser(filter.trim());
-  const ast = parser.parse();
-
-  return {
-    ast,
-    raw: filter,
-    warnings: parser.warnings,
-  };
+  const parser = new Parser(filter.trim(), knownFields(options.cards));
+  return { ast: parser.parse(), raw: filter };
 }
 
 /**

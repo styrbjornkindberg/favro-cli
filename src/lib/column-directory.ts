@@ -27,6 +27,31 @@ export interface ColumnRef {
 
 const norm = (s: string): string => s.trim().toLowerCase();
 
+/**
+ * A refusal that names the candidates and the flag that settles them.
+ *
+ * A board/column disagreement is refused rather than forwarded, because the
+ * wire will not refuse it: `GET /cards` accepts a `columnId` alone, lets it
+ * **override** `widgetCommonId`, and never validates the pair — so
+ * `--board A --status <id-from-B>` answers 200 and populated, about a board
+ * nobody asked for.
+ */
+export class ColumnResolutionError extends Error {
+  constructor(
+    message: string,
+    readonly value: string,
+    readonly candidates: ColumnRef[] = [],
+  ) {
+    super(message);
+    this.name = 'ColumnResolutionError';
+  }
+}
+
+function listColumnsFor(columns: ColumnRef[]): string {
+  if (columns.length === 0) return '  (that board has no columns)';
+  return columns.map((c) => `  ${c.columnId}  ${c.name}`).join('\n');
+}
+
 export class ColumnDirectory {
   private columnsApi: ColumnsAPI;
   private widgetsApi: WidgetsAPI;
@@ -86,6 +111,75 @@ export class ColumnDirectory {
   async boardOf(columnId: string): Promise<string | undefined> {
     const found = await this.resolve(cols => cols.filter(c => c.columnId === columnId));
     return found[0]?.boardId;
+  }
+
+  /**
+   * Settle a `--status` / `--column` argument to a `columnId`.
+   *
+   * A column has exactly two shapes and both are locally checkable against the
+   * cache, so detection is shape-first with **no fallback in either
+   * direction** — a name never degrades into an id lookup, and an id never
+   * degrades into a name search.
+   *
+   * Scope: a **name requires a board** (a column name is only unique within
+   * one). An **id permits a board or nothing**, and when a board is given the
+   * pair is validated rather than forwarded.
+   *
+   * Both shapes are answered from **one** snapshot: probing them separately
+   * made every name lookup refill the whole org, because the id probe missed
+   * first and a miss refills.
+   */
+  async resolveColumnId(value: string, boardId?: string): Promise<string> {
+    const wanted = value.trim();
+    const byId = (cols: ColumnRef[]) => cols.filter(c => c.columnId === wanted);
+    const byName = (cols: ColumnRef[]) =>
+      cols.filter(c => c.boardId === boardId && norm(c.name) === norm(wanted));
+
+    const cached = await readCache<ColumnRef>(this.organizationId, 'columns');
+    let cols = cached ?? await this.refill();
+    // A miss is never the answer on its own — refill once, then decide. Org-wide:
+    // a per-board top-up would replace this board's entries with whatever
+    // `GET /columns` returns, so an empty answer would erase what we'd report.
+    if (cached && byId(cols).length === 0 && byName(cols).length === 0) {
+      cols = await this.refill();
+    }
+    const onBoard = cols.filter(c => c.boardId === boardId);
+
+    const [column] = byId(cols);
+    if (column) {
+      if (boardId && column.boardId !== boardId) {
+        throw new ColumnResolutionError(
+          `Column ${wanted} is on board ${column.boardId}, not ${boardId}. ` +
+          `The wire would answer about ${column.boardId} without saying so. That board's columns:\n${listColumnsFor(onBoard)}`,
+          wanted,
+          onBoard,
+        );
+      }
+      return column.columnId;
+    }
+
+    if (!boardId) {
+      throw new ColumnResolutionError(
+        `Column name "${wanted}" needs a board — a column name is only unique within one. Pass --board <board>, or give the columnId instead.`,
+        wanted,
+      );
+    }
+
+    const matches = byName(cols);
+    if (matches.length === 1) return matches[0].columnId;
+    if (matches.length > 1) {
+      throw new ColumnResolutionError(
+        `Board ${boardId} has ${matches.length} columns named "${wanted}" — refusing to pick one. Pass the id instead:\n${listColumnsFor(matches)}`,
+        wanted,
+        matches,
+      );
+    }
+
+    throw new ColumnResolutionError(
+      `No column named "${wanted}" on board ${boardId} — it is missing or not visible to your key. That board's columns:\n${listColumnsFor(onBoard)}`,
+      wanted,
+      onBoard,
+    );
   }
 
   /** Look in the cache, and refill once before reporting a miss. */

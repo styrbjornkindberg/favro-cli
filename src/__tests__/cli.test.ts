@@ -162,7 +162,9 @@ describe('cli.ts — CLA-1785 critic fixes: limit cap and null guard', () => {
     await program.parseAsync(['node', 'cli', 'cards', 'list', 'board-123', '--limit', '101']);
 
     // Should be capped to 100, not 101
-    expect(mockListCards).toHaveBeenCalledWith('board-123', 100, undefined);
+    expect(mockListCards).toHaveBeenCalledWith(
+      expect.objectContaining({ boardId: 'board-123', limit: 100, filter: undefined })
+    );
   });
 
   test('--limit 9999 is capped to 100 (DoS prevention)', async () => {
@@ -175,7 +177,9 @@ describe('cli.ts — CLA-1785 critic fixes: limit cap and null guard', () => {
     await program.parseAsync(['node', 'cli', 'cards', 'list', 'board-123', '--limit', '9999']);
 
     // Should be capped to 100
-    expect(mockListCards).toHaveBeenCalledWith('board-123', 100, undefined);
+    expect(mockListCards).toHaveBeenCalledWith(
+      expect.objectContaining({ boardId: 'board-123', limit: 100, filter: undefined })
+    );
   });
 
   test('--limit 50 passes through uncapped', async () => {
@@ -187,7 +191,9 @@ describe('cli.ts — CLA-1785 critic fixes: limit cap and null guard', () => {
     const program = buildProgram();
     await program.parseAsync(['node', 'cli', 'cards', 'list', 'board-123', '--limit', '50']);
 
-    expect(mockListCards).toHaveBeenCalledWith('board-123', 50, undefined);
+    expect(mockListCards).toHaveBeenCalledWith(
+      expect.objectContaining({ boardId: 'board-123', limit: 50, filter: undefined })
+    );
   });
 
   test('--limit 0 falls back to default 25', async () => {
@@ -200,7 +206,9 @@ describe('cli.ts — CLA-1785 critic fixes: limit cap and null guard', () => {
     await program.parseAsync(['node', 'cli', 'cards', 'list', 'board-123', '--limit', '0']);
 
     // 0 is invalid (< 1), falls back to default 25
-    expect(mockListCards).toHaveBeenCalledWith('board-123', 25, undefined);
+    expect(mockListCards).toHaveBeenCalledWith(
+      expect.objectContaining({ boardId: 'board-123', limit: 25, filter: undefined })
+    );
   });
 });
 

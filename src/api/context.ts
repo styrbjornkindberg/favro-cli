@@ -11,6 +11,9 @@ import CardsAPI, { Card } from '../lib/cards-api';
 import { FavroApiClient } from './members';
 import { CustomFieldsAPI, CustomFieldDefinition } from '../lib/custom-fields-api';
 import { ColumnsAPI } from '../lib/columns-api';
+import { detectStage, WorkflowStage } from '../lib/workflow-stage';
+
+export { WorkflowStage };
 
 // ─── Output Types ─────────────────────────────────────────────────────────────
 
@@ -70,8 +73,6 @@ export interface BoardContextSnapshot {
   generatedAt: string;
 }
 
-export type WorkflowStage = 'backlog' | 'queued' | 'active' | 'review' | 'testing' | 'approved' | 'done' | 'archived';
-
 export interface WorkflowStep {
   columnId: string;
   columnName: string;
@@ -81,38 +82,6 @@ export interface WorkflowStep {
 }
 
 // ─── Helper Functions ─────────────────────────────────────────────────────────
-
-/**
- * Auto-detect workflow stage from a column name using keyword matching.
- * Covers common patterns across Swedish, English, and mixed-language boards.
- */
-function detectStage(name: string): WorkflowStage {
-  const n = name.toLowerCase();
-
-  // Done / completed / archived
-  if (/done|klar|färdig|complete|closed|released|shipped|deploy|live|finished|avslut/i.test(n)) return 'done';
-  if (/archived?|arkiver/i.test(n)) return 'archived';
-
-  // Approved / accepted
-  if (/approv|godkän|accept|verified|sign.?off/i.test(n)) return 'approved';
-
-  // Active / in progress / developing — check BEFORE testing so "Developing" isn't caught by "test"
-  if (/progress|develop|pågå|aktiv|doing|working|implement|bygg|coding|current/i.test(n)) return 'active';
-
-  // Testing / QA
-  if (/test|qa|kvalit|verif/i.test(n)) return 'testing';
-
-  // Review / code review
-  if (/review|gransk|feedback|pending/i.test(n)) return 'review';
-
-  // Queued / selected / ready / next
-  if (/select|vald|ready|next|sprint|priorit|planned|schedul|redo/i.test(n)) return 'queued';
-
-  // Backlog / inbox / new / todo
-  if (/backlog|inbox|new|ny|todo|to.do|icke|idea|wish|önskelista|triage|incoming/i.test(n)) return 'backlog';
-
-  return 'queued';
-}
 
 /**
  * Build workflow steps from ordered columns.

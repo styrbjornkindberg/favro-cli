@@ -11,6 +11,12 @@ import * as readline from 'readline';
 jest.mock('../lib/cards-api');
 jest.mock('../lib/http-client');
 jest.mock('readline');
+// `--assignees` resolves names to userIds before the write: `updateCard` diffs
+// the whole array against the card's current userIds, so a bare name would read
+// as "remove everyone, add a stranger" (#49).
+jest.mock('../lib/assignee', () => ({
+  resolveAssignees: jest.fn(async (_client: unknown, values: string[]) => values.map((v) => `u-${v}`)),
+}));
 
 const mockReadline = readline as jest.Mocked<typeof readline>;
 
@@ -138,7 +144,7 @@ describe('Cards Update Command', () => {
     registerCardsUpdateCommand(program);
     await program.parseAsync(['node', 'test', 'cards', 'update', 'card-abc', '--assignees', 'alice,bob', '--yes']);
 
-    expect(api.updateCard).toHaveBeenCalledWith('card-abc', { assignees: ['alice', 'bob'] });
+    expect(api.updateCard).toHaveBeenCalledWith('card-abc', { assignees: ['u-alice', 'u-bob'] });
   });
 
   test('updates card with comma-separated tags', async () => {
@@ -175,7 +181,7 @@ describe('Cards Update Command', () => {
       name: 'Updated',
       description: 'Desc',
       status: 'in-progress',
-      assignees: ['alice'],
+      assignees: ['u-alice'],
       tags: ['feature'],
     });
   });

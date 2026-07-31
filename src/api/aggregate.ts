@@ -15,9 +15,9 @@ import { Member } from '../types/members';
 import {
   ContextCard,
   WorkflowStep,
-  WorkflowStage,
   BoardContextSnapshot,
 } from './context';
+import { detectStage, WorkflowStage } from '../lib/workflow-stage';
 
 // Re-export for convenience
 export { ContextCard, WorkflowStage, WorkflowStep };
@@ -66,21 +66,6 @@ export interface AggregateSnapshot {
 export interface AggregateScope {
   collectionIds?: string[];
   boardIds?: string[];
-}
-
-// ─── Stage detection (re-exported from context.ts logic) ──────────────────────
-
-function detectStage(name: string): WorkflowStage {
-  const n = name.toLowerCase();
-  if (/done|klar|färdig|complete|closed|released|shipped|deploy|live|finished|avslut/i.test(n)) return 'done';
-  if (/archived?|arkiver/i.test(n)) return 'archived';
-  if (/approv|godkän|accept|verified|sign.?off/i.test(n)) return 'approved';
-  if (/progress|develop|pågå|aktiv|doing|working|implement|bygg|coding|current/i.test(n)) return 'active';
-  if (/test|qa|kvalit|verif/i.test(n)) return 'testing';
-  if (/review|gransk|feedback|pending/i.test(n)) return 'review';
-  if (/select|vald|ready|next|sprint|priorit|planned|schedul|redo/i.test(n)) return 'queued';
-  if (/backlog|inbox|new|ny|todo|to.do|icke|idea|wish|önskelista|triage|incoming/i.test(n)) return 'backlog';
-  return 'queued';
 }
 
 function buildWorkflow(columns: Array<{ id: string; name: string }>): WorkflowStep[] {

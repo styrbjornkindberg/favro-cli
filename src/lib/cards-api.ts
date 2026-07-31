@@ -1,8 +1,9 @@
 import FavroHttpClient from './http-client';
 import TagsAPI from './tags-api';
-import ColumnDirectory from './column-directory';
+import ColumnDirectory, { ColumnResolutionError } from './column-directory';
 import CardReferenceResolver, { CardResolutionError, isSequentialReference } from './card-reference';
 import { cachedTags } from './name-cache';
+import { isUserId } from './users-api';
 
 /** Raw card shape returned directly by the Favro REST API */
 interface RawCard {
@@ -193,8 +194,27 @@ export interface CreateCardRequest {
 export interface UpdateCardRequest {
   name?: string;
   description?: string;
+  /**
+   * Column name or `columnId` — on a write, `status` IS a column move. Favro has
+   * no status field, and `PUT {status}` 200s and changes nothing, so `updateCard`
+   * resolves the name against the card's **own** board (or `boardId`, when the
+   * same write moves boards) and sends `columnId`. An unknown name is refused
+   * with that board's real columns listed (`ColumnResolutionError`).
+   */
   status?: string;
+  /**
+   * Whole-array assignee replacement, as **userIds** — a name is refused rather
+   * than diffed into "remove everyone, add a string Favro has never seen"
+   * (resolve names through `resolveAssignees` first). Favro has no such field on PUT: both
+   * `assignees` and `assignmentIds` answer 200 and change nothing, and only
+   * `add`/`removeAssignmentIds` are honoured — so this is diffed into them at
+   * the cost of one card read. Pass those directly to skip the read.
+   */
   assignees?: string[];
+  /** userIds to assign. Pass-through, zero extra reads. Re-adding is a 200 no-op. */
+  addAssignmentIds?: string[];
+  /** userIds to unassign. Pass-through, zero extra reads. Removing an absent one is a 200 no-op. */
+  removeAssignmentIds?: string[];
   /**
    * Whole-array tag replacement, by tag name or tagId. Favro has no such field —
    * `updateCard` diffs it into `addTags`/`addTagIds`/`removeTagIds` (see
@@ -212,8 +232,6 @@ export interface UpdateCardRequest {
   boardId?: string;
   /** Target column ID when moving a card between columns on a board. */
   columnId?: string;
-  /** Parent card ID — sets or changes the parent card */
-  parentCardId?: string;
 }
 
 /**
@@ -256,6 +274,14 @@ export interface ListCardsOptions {
   limit?: number;
   filter?: string;
   unique?: boolean;
+  /**
+   * Column name or `columnId` to narrow to, filtered on the wire. A name
+   * requires `boardId`; an id is validated against `boardId` when both are
+   * given. Mutually exclusive with `collectionId` — validating a column
+   * across a collection is a per-board loop, so it is refused rather than
+   * answered about the wrong board.
+   */
+  status?: string;
 }
 
 /** Parsed components of a Favro card web URL. */
@@ -421,6 +447,17 @@ export class CardsAPI {
     }
 
     const effectiveLimit = (isNaN(opts.limit!) || !opts.limit || opts.limit < 1) ? 25 : opts.limit;
+    // Refused before any call: a column and a collection cannot both scope one
+    // read, and the wire would silently answer about the column's own board.
+    if (opts.status && opts.collectionId) {
+      throw new ColumnResolutionError(
+        'A column and a collection cannot scope the same read: pass --status with --board, or --collection on its own.',
+        opts.status,
+      );
+    }
+    const columnId = opts.status
+      ? await this.columns.resolveColumnId(opts.status, opts.boardId)
+      : undefined;
     const path = '/cards';
     const allCards: Card[] = [];
     let page = 0;
@@ -443,6 +480,11 @@ export class CardsAPI {
       // Favro uses widgetCommonId to scope cards to a board
       if (opts.boardId) {
         params.widgetCommonId = opts.boardId;
+      }
+
+      // Column narrowing rides the wire, not a client-side pass over one page.
+      if (columnId) {
+        params.columnId = columnId;
       }
 
       // Collection-scoped cross-board queries
@@ -501,53 +543,6 @@ export class CardsAPI {
     const cards = allCards.slice(0, effectiveLimit);
     await this.hydrateNames(cards);
     return cards;
-  }
-
-  /**
-   * Get the raw detailedDescription for a card in markdown format,
-   * preserving formatting for safe round-trips.
-   * Fetches task list items separately and strips them from the markdown,
-   * since Favro injects them into the GET response but they're separate objects.
-   */
-  async getRawDescription(cardRef: string): Promise<string> {
-    const cardId = await this.references.toCardId(cardRef);
-    let rawCard: RawCard;
-    try {
-      rawCard = await this.client.get<RawCard>(`/cards/${cardId}`, {
-        params: { descriptionFormat: 'markdown' },
-      });
-    } catch (err) {
-      const status = (err as { response?: { status?: number } })?.response?.status;
-      if (status !== 500) throw err;
-      // Fall back to default format when markdown rendering crashes server-side
-      rawCard = await this.client.get<RawCard>(`/cards/${cardId}`);
-    }
-    const md = rawCard.detailedDescription ?? '';
-    const cardCommonId = rawCard.cardCommonId ?? rawCard.cardId;
-    try {
-      const tasks = await this.client.get<{ entities?: Array<{ name: string; completed?: boolean }> }>(
-        `/tasks`, { params: { cardCommonId } }
-      );
-      const taskItems = tasks.entities ?? [];
-      if (taskItems.length === 0) return md;
-      // Build a set of task names for matching — Favro injects these as -[ ] or -[x] lines
-      const taskNames = new Set(taskItems.map(t => t.name));
-      // Only strip the TRAILING block of task items (Favro injects them at the end).
-      // Don't touch task-like lines in the middle — those are real description content.
-      const lines = md.split('\n');
-      let cutIndex = lines.length;
-      for (let i = lines.length - 1; i >= 0; i--) {
-        const trimmed = lines[i].trim();
-        if (trimmed === '') { cutIndex = i; continue; }
-        const match = trimmed.match(/^\\?-\s*\\?\[[ x]\\?\]\s*(.+)$/);
-        if (match && taskNames.has(match[1])) { cutIndex = i; continue; }
-        break;
-      }
-      if (cutIndex < lines.length) {
-        return lines.slice(0, cutIndex).join('\n').replace(/\n+$/, '');
-      }
-    } catch { /* best effort — return full markdown if tasks API fails */ }
-    return md;
   }
 
   /**
@@ -715,6 +710,19 @@ export class CardsAPI {
     return created;
   }
 
+  /**
+   * Update a card.
+   *
+   * Three fields on `UpdateCardRequest` have no wire field of their own —
+   * `status`, `assignees` and `tags` — and each is translated here rather than
+   * forwarded, because Favro answers 200 and writes nothing to all three. The
+   * translations that need the card's current state share **one** read.
+   *
+   * Note on descriptions: Favro injects a card's tasklist items into the
+   * description it returns, so a caller-side read-modify-write of `description`
+   * re-persists those `- [ ]` lines as literal body text, permanently doubling
+   * the tasklist. Write a whole body you composed, never one you read back.
+   */
   async updateCard(cardRef: string, data: UpdateCardRequest): Promise<Card> {
     const cardId = await this.references.toCardId(cardRef);
     const payload: Record<string, unknown> = { ...data };
@@ -723,17 +731,51 @@ export class CardsAPI {
       payload.widgetCommonId = payload.boardId;
       delete payload.boardId;
     }
-    // Favro API uses addAssignmentIds/removeAssignmentIds, not assignees
-    if (payload.assignees !== undefined) {
-      payload.addAssignmentIds = payload.assignees;
-      delete payload.assignees;
+
+    // At most one read, shared by every field that has to diff against the card.
+    let current: Card | undefined;
+    const currentCard = async (): Promise<Card> => (current ??= await this.getCard(cardId));
+
+    // `status` on a write IS a column move: name → columnId, against the board
+    // the card will be on (the target board when this write also moves boards).
+    if (payload.status !== undefined) {
+      const status = String(payload.status);
+      delete payload.status;
+      const boardId = (payload.widgetCommonId as string | undefined) ?? (await currentCard()).boardId;
+      payload.columnId = await this.columns.resolveColumnId(status, boardId);
     }
+
+    // Favro ignores both `assignees` and `assignmentIds` on PUT (200, no change)
+    // and honours only the verb fields — which is also the only way an
+    // assignment can be *removed*. Diff so the write stays minimal; the verbs
+    // themselves are forgiving either way.
+    if (payload.assignees !== undefined) {
+      const desired = (payload.assignees ?? []) as string[];
+      delete payload.assignees;
+      // A name here would diff as "remove everyone, add a string Favro has never
+      // seen" — a wipe reported as success. Refused, never guessed at.
+      const notIds = desired.filter((v) => !isUserId(v));
+      if (notIds.length > 0) {
+        throw new Error(
+          `updateCard {assignees} takes userIds, got ${notIds.map((v) => `"${v}"`).join(', ')}. ` +
+            `A whole-array assignee write is diffed against the card's current userIds, so a name would ` +
+            `unassign everyone. Resolve names first with resolveAssignees(), or pass ` +
+            `addAssignmentIds/removeAssignmentIds.`,
+        );
+      }
+      const currentIds = (await currentCard()).assignees ?? [];
+      const add = desired.filter((id) => !currentIds.includes(id));
+      const remove = currentIds.filter((id) => !desired.includes(id));
+      if (add.length > 0) payload.addAssignmentIds = add;
+      if (remove.length > 0) payload.removeAssignmentIds = remove;
+    }
+
     // Favro ignores a whole-array `tags` on update (200, no change) — it only
     // honours add/remove. Translate the replacement into that shape.
     if (payload.tags !== undefined) {
       const desired = (payload.tags ?? []) as string[];
       delete payload.tags;
-      Object.assign(payload, await this.tagReplacement(cardId, desired));
+      Object.assign(payload, await this.tagReplacement(await currentCard(), desired));
     }
     // Favro uses PUT for card updates, not PATCH
     return this.client.put<Card>(`/cards/${cardId}`, payload, MARKDOWN_BODY);
@@ -756,13 +798,10 @@ export class CardsAPI {
    * workspace". Either way it is a loud outcome, not a silent no-op.
    */
   private async tagReplacement(
-    cardId: string,
+    card: Card,
     desired: string[],
   ): Promise<{ addTags?: string[]; addTagIds?: string[]; removeTagIds?: string[] }> {
-    const [card, orgTags] = await Promise.all([
-      this.getCard(cardId),
-      new TagsAPI(this.client).listTags(),
-    ]);
+    const orgTags = await new TagsAPI(this.client).listTags();
 
     const byName = new Map(orgTags.map((t) => [t.name.toLowerCase(), t.tagId]));
     const knownIds = new Set(orgTags.map((t) => t.tagId));

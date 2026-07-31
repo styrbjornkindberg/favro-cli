@@ -75,6 +75,7 @@ import { registerOverviewCommand } from './commands/overview';
 import { registerHealthCommand } from './commands/health';
 import { registerTeamCommand } from './commands/team';
 import { registerInitCommand } from './commands/init';
+import { registerTrackerInitCommand } from './commands/tracker-init';
 import { runMainMenu } from './commands/main-menu';
 import { logError } from './lib/error-handler';
 import { ProgressBar } from './lib/progress';
@@ -195,6 +196,10 @@ registerTeamCommand(program);
 // ─── init command ───────────────────────────────────────────────────────────
 registerInitCommand(program);
 
+// ─── tracker commands ───────────────────────────────────────────────────────
+const trackerCmd = program.command('tracker').description('Issue-tracker setup — designate which board is the tracker');
+registerTrackerInitCommand(trackerCmd);
+
 // ─── cards parent ────────────────────────────────────────────────────────────
 const cards = program.command('cards').description(
   'Card operations — get, list, create, update, export, link, unlink, and move cards.\n\n' +
@@ -238,7 +243,7 @@ cards
     'Tip: Use `favro boards list` to find board IDs.'
   )
   .option('--board <id>', 'Board ID to list cards from (alternative to positional arg)')
-  .option('--status <status>', 'Filter by status')
+  .option('--status <column>', 'Narrow to one column, by name or columnId. Filtered on the wire.')
   .option('--assignee <user>', 'Filter by assignee')
   .option('--tag <tag>', 'Filter by tag')
   .option('--filter <expression>', 'Filter cards using query syntax (e.g. "customField:value")')
@@ -262,11 +267,15 @@ cards
       const parsedLimit = parseInt(options.limit, 10);
       // CLA-1785 critic fix: enforce max 100 cap to prevent DoS via --limit 9999
       const limit = (!isNaN(parsedLimit) && parsedLimit >= 1) ? Math.min(parsedLimit, 100) : 25;
-      let cardList = await api.listCards(effectiveBoardId, limit, options.filter);
+      // `--status` is resolved to a columnId and narrowed on the wire, so it
+      // no longer filters a page we already truncated to `limit`.
+      let cardList = await api.listCards({
+        boardId: effectiveBoardId,
+        limit,
+        filter: options.filter,
+        status: options.status,
+      });
 
-      if (options.status) {
-        cardList = cardList.filter(c => c.status?.toLowerCase() === options.status.toLowerCase());
-      }
       if (options.assignee) {
         cardList = cardList.filter(c => (c.assignees ?? []).some(
           a => a.toLowerCase().includes(options.assignee.toLowerCase())
@@ -470,14 +479,12 @@ cards
   )
   .option('--name <name>', 'New card name (single card update)')
   .option('--description <desc>', 'Card description (single card update)')
-  .option('--append-description <text>', 'Append text to existing description (⚠️ lossy if card has checklists)')
   .option('--comment <text>', 'Add a comment to the card (non-destructive)')
-  .option('--status <status>', 'Card status to set')
-  .option('--assignees <list>', 'Assignees (comma-separated, single card update)')
+  .option('--status <status>', 'Move the card to this column (name or columnId)')
+  .option('--assignees <list>', 'Assignees, comma-separated — the whole set; drop one to unassign')
   .option('--assignee <user>', 'Assignee for batch assign (use with --board)')
   .option('--tags <list>', 'Tags (comma-separated, single card update)')
   .option('--column <column>', 'Move card to this column by name (use with --board)')
-  .option('--parent <card>', 'Parent card ID (makes this a child card)')
   .option('--label <label>', 'Label/tag filter for batch operations (use with --board)')
   .option('--board <id>', 'Board ID — required for batch operations, optional for single')
   .option('--from-csv <file>', 'CSV file with card updates (columns: cardId, status, assignee, dueDate)')
@@ -676,8 +683,11 @@ cards
         let ops;
 
         if (isAssignOnly) {
-          // Batch assign: add assignee to matching cards
-          const assignee = options.assignee;
+          // Batch assign: add assignee to matching cards. `card.assignees` are
+          // userIds and updateCard diffs against them, so the flag value has to
+          // be a userId too — a bare name would unassign everyone else.
+          const { resolveAssignee } = await import('./lib/assignee');
+          const assignee = await resolveAssignee(client!, options.assignee);
           const toAssign = matchingCards.filter(
             (card) => !(card.assignees ?? []).includes(assignee)
           );
@@ -756,19 +766,16 @@ cards
       if (options.name) updateData.name = options.name;
       if (options.description) updateData.description = options.description.replace(/\\n/g, '\n');
       if (options.status) updateData.status = options.status;
-      if (options.assignees) updateData.assignees = options.assignees.split(',');
-      if (options.tags) updateData.tags = options.tags.split(',');
-
-      // Parent card
-      if (options.parent) updateData.parentCardId = options.parent;
-
-      // Warn if --status looks like a column name (common mistake)
-      if (options.status && !options.column) {
-        const columnLike = /^(backlog|selected|ready|next|sprint|developing|in.?progress|doing|review|feedback|test|qa|testbar|approved|done|closed|released|archived|godkänd)/i;
-        if (columnLike.test(options.status)) {
-          console.warn(`⚠  --status sets metadata, not column position. To move this card to the "${options.status}" column, use --column "${options.status}" --board <boardId> instead.`);
-        }
+      // Names must become userIds before the whole-array write is diffed —
+      // an unresolved name would read as "remove everyone, add a stranger".
+      if (options.assignees) {
+        const { resolveAssignees } = await import('./lib/assignee');
+        updateData.assignees = await resolveAssignees(
+          client!,
+          options.assignees.split(',').map((a: string) => a.trim()).filter(Boolean),
+        );
       }
+      if (options.tags) updateData.tags = options.tags.split(',');
 
       // Column move: resolve column name → columnId
       if (options.column) {
@@ -800,24 +807,6 @@ cards
 
       const api = new CardsAPI(client!);
       const card = await api.getCard(cardId);
-
-      // --append-description: fetch raw description to preserve Favro's rich text format
-      if (options.appendDescription) {
-        // Warn if card has task lists — round-trip will escape checklist syntax
-        const cardCommonId = card.cardCommonId ?? cardId;
-        try {
-          const { TasksAPI } = await import('./lib/tasks-api');
-          const tasksApi = new TasksAPI(client!);
-          const tasks = await tasksApi.listTasks(cardCommonId);
-          if (tasks.length > 0) {
-            console.warn('⚠  This card has checklists. Appending to the description will cause Favro to');
-            console.warn('   escape checklist items in the description text. Consider using --comment instead.');
-          }
-        } catch { /* best effort */ }
-        const appendText = options.appendDescription.replace(/\\n/g, '\n');
-        const rawDescription = await api.getRawDescription(cardId);
-        updateData.description = rawDescription + appendText;
-      }
 
       const { readConfig } = await import('./lib/config');
       const { checkScope, confirmAction } = await import('./lib/safety');

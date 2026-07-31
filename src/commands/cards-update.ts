@@ -8,6 +8,7 @@ import * as readline from 'readline';
 import CardsAPI, { UpdateCardRequest } from '../lib/cards-api';
 import { ColumnsAPI } from '../lib/columns-api';
 import { logError, missingApiKeyError } from '../lib/error-handler';
+import { resolveAssignees } from '../lib/assignee';
 import { parseQuery } from '../lib/query-parser';
 
 /**
@@ -37,10 +38,9 @@ export function registerCardsUpdateCommand(program: Command): void {
     .description('Update a card')
     .option('--name <name>', 'New card name')
     .option('--description <desc>', 'Card description')
-    .option('--status <status>', 'Card status')
-    .option('--assignees <list>', 'Assignees (comma-separated)')
+    .option('--status <status>', 'Move the card to this column (name or columnId)')
+    .option('--assignees <list>', 'Assignees, comma-separated — the whole set; drop one to unassign')
     .option('--tags <list>', 'Tags (comma-separated)')
-    .option('--parent <card>', 'Set or change parent card ID')
     .option('--column <column>', 'Move card to this column (by name, requires --board)')
     .option('--board <boardId>', 'Board ID (required when using --column)')
     .option('--filter <filter>', 'Filter expression for card selection')
@@ -53,7 +53,6 @@ export function registerCardsUpdateCommand(program: Command): void {
       status?: string;
       assignees?: string;
       tags?: string;
-      parent?: string;
       column?: string;
       board?: string;
       filter?: string;
@@ -82,12 +81,18 @@ export function registerCardsUpdateCommand(program: Command): void {
         if (options.name) updateData.name = options.name;
         if (options.description) updateData.description = options.description;
         if (options.status) updateData.status = options.status;
-        if (options.assignees) updateData.assignees = options.assignees.split(',');
+        // Names must become userIds before the whole-array write is diffed —
+        // an unresolved name would read as "remove everyone, add a stranger".
+        if (options.assignees) {
+          updateData.assignees = await resolveAssignees(
+            client,
+            options.assignees.split(',').map(a => a.trim()).filter(Boolean),
+          );
+        }
         // `--tags ""` clears every tag, so test for presence, not truthiness.
         if (options.tags !== undefined) {
           updateData.tags = options.tags.split(',').map(t => t.trim()).filter(Boolean);
         }
-        if (options.parent) updateData.parentCardId = options.parent;
 
         // Column move: resolve column name → columnId
         if (options.column) {

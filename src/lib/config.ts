@@ -23,6 +23,15 @@ export interface FavroConfig {
   scopeCollectionName?: string;
   /** Cached Favro userId — resolved during `auth login` by matching email against /users */
   userId?: string;
+  /**
+   * Tracker mapping — the repo-less fallback only. The authoritative store is
+   * the git-committed `docs/agents/issue-tracker.md`; see `tracker-config.ts`.
+   */
+  tracker?: {
+    collectionId: string;
+    boardId: string;
+    columns: { active: string; done: string };
+  };
   outputFormat?: 'table' | 'json' | 'csv';
 }
 

@@ -6,6 +6,13 @@ export interface Column {
   position: number;
   color?: string;
   boardId: string;
+  /**
+   * Favro already sends these three on every `GET /columns` response, so a
+   * per-column count costs nothing. `cardCount` excludes archived cards.
+   */
+  cardCount?: number;
+  timeSum?: number;
+  estimationSum?: number;
 }
 
 export interface PaginatedResponse<T> {

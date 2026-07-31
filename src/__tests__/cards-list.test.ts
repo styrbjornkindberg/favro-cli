@@ -115,7 +115,9 @@ describe('Cards List Command', () => {
     registerCardsListCommand(program);
     await program.parseAsync(['node', 'test', 'cards', 'list', '--board', 'board-123', '--limit', '10']);
 
-    expect(mockListCards).toHaveBeenCalledWith('board-123', 10);
+    expect(mockListCards).toHaveBeenCalledWith(
+      expect.objectContaining({ boardId: 'board-123', limit: 10 })
+    );
     expect(consoleSpy).toHaveBeenCalledWith('Found 3 card(s):');
   });
 
@@ -126,7 +128,9 @@ describe('Cards List Command', () => {
     registerCardsListCommand(program);
     await program.parseAsync(['node', 'test', 'cards', 'list', '--board', 'board-123']);
 
-    expect(mockListCards).toHaveBeenCalledWith('board-123', 50);
+    expect(mockListCards).toHaveBeenCalledWith(
+      expect.objectContaining({ boardId: 'board-123', limit: 50 })
+    );
   });
 
   test('outputs table format by default', async () => {
@@ -221,18 +225,35 @@ describe('Cards List Command', () => {
 
   // --- Filtering ---
 
-  test('filters cards by status', async () => {
-    buildMockApi();
+  // #43: --status is a column, narrowed on the wire. It is handed down verbatim
+  // (resolution and case-folding live in ColumnDirectory, pinned by
+  // column-resolution-wire.test.ts) and the answer is NOT filtered again here —
+  // re-filtering would drop cards the wire already scoped correctly.
+  test('hands --status to the wire and does not re-filter the answer', async () => {
+    const mockListCards = buildMockApi();
 
     const program = new Command();
     registerCardsListCommand(program);
     await program.parseAsync(['node', 'test', 'cards', 'list', '--board', 'board-123', '--status', 'todo', '--json']);
 
+    expect(mockListCards).toHaveBeenCalledWith(
+      expect.objectContaining({ boardId: 'board-123', status: 'todo' })
+    );
     const calls = consoleSpy.mock.calls.map(c => c[0]);
     const jsonCall = calls.find(c => typeof c === 'string' && c.startsWith('['));
-    const parsed = JSON.parse(jsonCall!);
-    expect(parsed).toHaveLength(1);
-    expect(parsed[0].status).toBe('todo');
+    expect(JSON.parse(jsonCall!)).toHaveLength(3);
+  });
+
+  test('--collection is passed through as the scope', async () => {
+    const mockListCards = buildMockApi();
+
+    const program = new Command();
+    registerCardsListCommand(program);
+    await program.parseAsync(['node', 'test', 'cards', 'list', '--collection', 'coll-1', '--json']);
+
+    expect(mockListCards).toHaveBeenCalledWith(
+      expect.objectContaining({ collectionId: 'coll-1' })
+    );
   });
 
   test('filters cards by assignee (partial match)', async () => {
@@ -261,20 +282,6 @@ describe('Cards List Command', () => {
     const parsed = JSON.parse(jsonCall!);
     expect(parsed).toHaveLength(1);
     expect(parsed[0].cardId).toBe('card-1');
-  });
-
-  test('filter by status is case-insensitive', async () => {
-    buildMockApi();
-
-    const program = new Command();
-    registerCardsListCommand(program);
-    await program.parseAsync(['node', 'test', 'cards', 'list', '--board', 'board-123', '--status', 'TODO', '--json']);
-
-    const calls = consoleSpy.mock.calls.map(c => c[0]);
-    const jsonCall = calls.find(c => typeof c === 'string' && c.startsWith('['));
-    const parsed = JSON.parse(jsonCall!);
-    expect(parsed).toHaveLength(1);
-    expect(parsed[0].status).toBe('todo');
   });
 
   // --- Empty results ---
@@ -312,7 +319,9 @@ describe('Cards List Command', () => {
     registerCardsListCommand(program);
     await program.parseAsync(['node', 'test', 'cards', 'list', '--limit', '100']);
 
-    expect(mockListCards).toHaveBeenCalledWith(undefined, 100);
+    expect(mockListCards).toHaveBeenCalledWith(
+      expect.objectContaining({ boardId: undefined, limit: 100 })
+    );
   });
 
   test('--limit 0 falls back to default 50 (no falsy coercion bug)', async () => {
@@ -323,7 +332,9 @@ describe('Cards List Command', () => {
     await program.parseAsync(['node', 'test', 'cards', 'list', '--limit', '0']);
 
     // 0 is invalid (< 1), so should fall back to default 50
-    expect(mockListCards).toHaveBeenCalledWith(undefined, 50);
+    expect(mockListCards).toHaveBeenCalledWith(
+      expect.objectContaining({ boardId: undefined, limit: 50 })
+    );
   });
 
   test('--limit -1 falls back to default 50 (negative values invalid)', async () => {
@@ -334,7 +345,9 @@ describe('Cards List Command', () => {
     await program.parseAsync(['node', 'test', 'cards', 'list', '--limit', '-1']);
 
     // Negative values are invalid, should fall back to 50
-    expect(mockListCards).toHaveBeenCalledWith(undefined, 50);
+    expect(mockListCards).toHaveBeenCalledWith(
+      expect.objectContaining({ boardId: undefined, limit: 50 })
+    );
   });
 
   test('handles large result sets (100+ cards)', async () => {

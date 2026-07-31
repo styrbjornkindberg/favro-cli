@@ -49,7 +49,8 @@ export function registerCardsListCommand(program: Command): void {
     .command('cards list')
     .description('List cards from a board')
     .option('--board <id>', 'Board ID to list cards from')
-    .option('--status <status>', 'Filter by status (legacy, use --filter instead)')
+    .option('--status <column>', 'Narrow to one column, by name (needs --board) or columnId. Filtered on the wire.')
+    .option('--collection <collection>', 'Collection to list cards across. Cannot be combined with --status.')
     .option('--assignee <user>', 'Filter by assignee (legacy, use --filter instead)')
     .option('--tag <tag>', 'Filter by tag (legacy, use --filter instead)')
     .option('--filter <expression>', 'Filter cards using enhanced query syntax (e.g. "status:done OR status:in-progress")', (val, prev: string[]) => prev.concat([val]), [] as string[])
@@ -65,7 +66,12 @@ export function registerCardsListCommand(program: Command): void {
 
         const parsedLimit = parseInt(options.limit, 10);
         const limit = isNaN(parsedLimit) || parsedLimit < 1 ? 50 : parsedLimit;
-        let cards = await api.listCards(options.board, limit);
+        let cards = await api.listCards({
+          boardId: options.board,
+          collectionId: options.collection,
+          status: options.status,
+          limit,
+        });
 
         // Apply enhanced query filters (if provided)
         if (options.filter && options.filter.length > 0) {
@@ -78,10 +84,7 @@ export function registerCardsListCommand(program: Command): void {
             process.exit(1);
           }
         } else {
-          // Fallback to legacy options for backward compatibility
-          if (options.status) {
-            cards = cards.filter(c => c.status?.toLowerCase() === options.status.toLowerCase());
-          }
+          // `--status` already narrowed on the wire; nothing to re-filter here.
           if (options.assignee) {
             cards = cards.filter(c => (c.assignees || []).some(
               a => a.toLowerCase().includes(options.assignee.toLowerCase())

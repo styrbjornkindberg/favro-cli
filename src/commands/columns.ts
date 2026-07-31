@@ -31,10 +31,15 @@ export function registerColumnsCommands(program: Command): void {
           console.log(JSON.stringify(columns, null, 2));
         } else {
           console.log(`Found ${columns.length} column(s) on board ${boardId}:`);
+          // cardCount / timeSum / estimationSum ride along on the same
+          // response — rendering them means a per-column count costs no call.
           const rows = columns.map(c => ({
             Position: c.position,
             ID: c.columnId,
             Name: c.name,
+            Cards: c.cardCount ?? 0,
+            Time: c.timeSum ?? 0,
+            Estimate: c.estimationSum ?? 0,
           }));
           console.table(rows);
         }
