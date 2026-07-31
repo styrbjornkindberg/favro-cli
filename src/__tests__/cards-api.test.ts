@@ -5,6 +5,9 @@
 import CardsAPI from '../lib/cards-api';
 import FavroHttpClient from '../lib/http-client';
 
+/** Card writes carry `descriptionFormat` on the query string (issue #17). */
+const MARKDOWN_QUERY = { params: { descriptionFormat: 'markdown' } };
+
 describe('Cards API', () => {
   let api: CardsAPI;
   let mockClient: jest.Mocked<Pick<FavroHttpClient, 'get' | 'post' | 'patch' | 'put' | 'delete'>>;
@@ -244,7 +247,7 @@ describe('Cards API', () => {
     mockClient.post.mockResolvedValue(card);
     const result = await api.createCard({ name: 'New' });
     expect(result.name).toBe('New');
-    expect(mockClient.post).toHaveBeenCalledWith('/cards', { name: 'New' });
+    expect(mockClient.post).toHaveBeenCalledWith('/cards', { name: 'New' }, MARKDOWN_QUERY);
   });
 
   test('createCard with all fields', async () => {
@@ -255,9 +258,11 @@ describe('Cards API', () => {
     mockClient.post.mockResolvedValue(card);
     const result = await api.createCard({ name: 'Full', description: 'desc', status: 'todo', boardId: 'board-1' });
     expect(result.description).toBe('desc');
+    // `descriptionFormat` rides the query string, never the body — in the body
+    // Favro ignores it and escapes the markdown (issue #17).
     expect(mockClient.post).toHaveBeenCalledWith('/cards', {
-      name: 'Full', detailedDescription: 'desc', descriptionFormat: 'markdown', status: 'todo', widgetCommonId: 'board-1'
-    });
+      name: 'Full', detailedDescription: 'desc', status: 'todo', widgetCommonId: 'board-1'
+    }, MARKDOWN_QUERY);
   });
 
   test('createCard propagates API errors', async () => {
@@ -283,7 +288,7 @@ describe('Cards API', () => {
     mockClient.put.mockResolvedValue(updated);
     const result = await api.updateCard('card-1', { name: 'Updated' });
     expect(result.name).toBe('Updated');
-    expect(mockClient.put).toHaveBeenCalledWith('/cards/card-1', { name: 'Updated' });
+    expect(mockClient.put).toHaveBeenCalledWith('/cards/card-1', { name: 'Updated' }, MARKDOWN_QUERY);
   });
 
   // `updateCard with tags parsed as array` lived here and asserted that `tags`

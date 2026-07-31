@@ -176,7 +176,10 @@ describe('createCards (no client mock)', () => {
     try {
       const made = await api.createCards([{ name: 'one' }, { name: 'two' }]);
       expect(made).toHaveLength(2);
-      expect(received.map((r) => r.url)).toEqual(['/api/v1/cards', '/api/v1/cards']);
+      expect(received.map((r) => r.url)).toEqual([
+        '/api/v1/cards?descriptionFormat=markdown',
+        '/api/v1/cards?descriptionFormat=markdown',
+      ]);
       expect(received.some((r) => r.url.includes('bulk'))).toBe(false);
     } finally {
       await close();

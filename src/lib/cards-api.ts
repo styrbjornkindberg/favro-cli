@@ -246,6 +246,42 @@ export function parseCardUrl(url: string): ParsedCardUrl {
   return { organizationId, widgetCommonId, cardSequentialIdLabel: cardParam, sequentialId };
 }
 
+/**
+ * Favro only runs its markdown parser when `descriptionFormat` rides the **query
+ * string**. In the request body it is ignored: the body is escaped as literal
+ * text with a zero-width space (U+200B) injected after every `[`, which destroys
+ * every `- [ ]` checkbox — silently, with a 200. Verified byte-level live (#15,
+ * #17). Also the response format flag, so it belongs on writes either way.
+ *
+ * An invalid value is worse than none: `md` and `plaintext` both answer 200 and
+ * leave the card holding the new body concatenated *after* the old one. Only
+ * `markdown` is ever sent, and `assertDescriptionFormat` refuses anything else a
+ * caller smuggles in through the body.
+ */
+const MARKDOWN_BODY = { params: { descriptionFormat: 'markdown' } };
+
+/**
+ * Normalise the description field of a card write payload.
+ *
+ * `PUT /cards/:cardId {description: …}` is a silent no-op — 200, nothing written
+ * (same class as `PUT {tags:[…]}` in #16). The real field is
+ * `detailedDescription`, and the raw one must never reach the wire.
+ */
+function mapDescription(payload: Record<string, unknown>): void {
+  if (payload.description !== undefined) {
+    payload.detailedDescription = payload.description;
+  }
+  delete payload.description;
+  if (payload.descriptionFormat !== undefined && payload.descriptionFormat !== 'markdown') {
+    throw new Error(
+      `Unsupported descriptionFormat "${payload.descriptionFormat}" — Favro accepts only "markdown" ` +
+        `on a card write; anything else appends the new body to the old one and reports success.`,
+    );
+  }
+  // Belongs on the query string (MARKDOWN_BODY), never in the body.
+  delete payload.descriptionFormat;
+}
+
 export class CardsAPI {
   constructor(private client: FavroHttpClient) {}
 
@@ -511,12 +547,8 @@ export class CardsAPI {
       payload.widgetCommonId = payload.boardId;
       delete payload.boardId;
     }
-    if (payload.description !== undefined) {
-      payload.detailedDescription = payload.description;
-      payload.descriptionFormat = 'markdown';
-      delete payload.description;
-    }
-    return this.client.post<Card>('/cards', payload);
+    mapDescription(payload);
+    return this.client.post<Card>('/cards', payload, MARKDOWN_BODY);
   }
 
   /**
@@ -545,11 +577,7 @@ export class CardsAPI {
 
   async updateCard(cardId: string, data: UpdateCardRequest): Promise<Card> {
     const payload: Record<string, unknown> = { ...data };
-    if (payload.description !== undefined) {
-      payload.detailedDescription = payload.description;
-      payload.descriptionFormat = 'markdown';
-      delete payload.description;
-    }
+    mapDescription(payload);
     if (payload.boardId !== undefined) {
       payload.widgetCommonId = payload.boardId;
       delete payload.boardId;
@@ -567,7 +595,7 @@ export class CardsAPI {
       Object.assign(payload, await this.tagReplacement(cardId, desired));
     }
     // Favro uses PUT for card updates, not PATCH
-    return this.client.put<Card>(`/cards/${cardId}`, payload);
+    return this.client.put<Card>(`/cards/${cardId}`, payload, MARKDOWN_BODY);
   }
 
   /**
