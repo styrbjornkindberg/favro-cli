@@ -12,6 +12,7 @@ import { FavroApiClient } from './members';
 import { CustomFieldsAPI, CustomFieldDefinition } from '../lib/custom-fields-api';
 import { ColumnsAPI } from '../lib/columns-api';
 import { detectStage, WorkflowStage } from '../lib/workflow-stage';
+import { blockingEdges } from '../lib/blocking';
 
 export { WorkflowStage };
 
@@ -122,24 +123,8 @@ function normalizeCard(card: Card): ContextCard {
     }
   }
 
-  // Relationship links. Favro edges carry one direction flag: isBefore === true
-  // means the linked card comes before this one, so it blocks this one.
-  if (card.links && card.links.length > 0) {
-    // An edge inlined by `GET /cards` carries only `cardCommonId`; one read
-    // from `/cards/:id/dependencies` carries `cardId`. Take whichever is there.
-    const farId = (l: { cardId?: string; cardCommonId?: string }) => l.cardId ?? l.cardCommonId;
-    ctx.blockedBy = card.links
-      .filter(l => l.isBefore)
-      .map(farId)
-      .filter((id): id is string => Boolean(id));
-    ctx.blocking = card.links
-      .filter(l => !l.isBefore)
-      .map(farId)
-      .filter((id): id is string => Boolean(id));
-  } else {
-    ctx.blockedBy = [];
-    ctx.blocking = [];
-  }
+  // Blocking edges, from the one place that knows Favro's direction flag.
+  Object.assign(ctx, blockingEdges(card));
 
   return ctx;
 }

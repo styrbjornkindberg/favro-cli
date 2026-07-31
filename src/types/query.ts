@@ -20,12 +20,11 @@ export interface QueryFilter {
   owner?: string;
   /** Filter by label/tag */
   label?: string;
-  /** Filter: only blocked cards (blockedBy.length > 0) */
-  blocked?: boolean;
-  /** Filter: only blocking cards (blocking.length > 0) */
-  blocking?: boolean;
-  /** Filter by relationship to a card ID or title */
-  relatesTo?: string;
+  // `blocked` / `blocking` / `relatesTo` are GONE (#47). They read `card.links`,
+  // which `normalizeCard` never populated, so all three answered about an empty
+  // array on every card. Blocking lives on `cards list --filter` — `unblocked`,
+  // `blocks:`, `blocked-by:` — where it reads the real `isBefore` edge and where
+  // a mistyped predicate is a refusal instead of a free-text title search.
   /** Filter by priority custom field value */
   priority?: string;
   /** Free-text search across title and tags */

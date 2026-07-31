@@ -16,7 +16,7 @@ import { writeCardsCSV, writeCardsJSON } from '../lib/csv';
 import { logError, missingApiKeyError, suggestBoard } from '../lib/error-handler';
 import BoardsAPI from '../lib/boards-api';
 import { ProgressBar, Spinner } from '../lib/progress';
-import { parseQuery, filterCards } from '../lib/query-parser';
+import { parseQuery, filterCards, queryNames } from '../lib/query-parser';
 
 export type ExportFormat = 'json' | 'csv';
 
@@ -26,14 +26,30 @@ export type ExportFormat = 'json' | 'csv';
  * @throws Error if the filter syntax is invalid
  */
 export function applyFilter(cards: Card[], filterExpression: string): Card[] {
+  let query;
   try {
-    const query = parseQuery(filterExpression);
-    return filterCards(query, cards);
+    query = parseQuery(filterExpression);
   } catch (err: any) {
     console.error(`✗ Invalid filter expression: "${filterExpression}"`);
     console.error(`  Error: ${err.message}`);
     process.exit(1);
   }
+
+  // `unblocked` is refused here rather than answered wrong (#47). Judging whether
+  // a blocker is FINISHED takes extra reads, and an export writes a file — it is
+  // carved out of the envelope contract, so it has no `unreachable` to report the
+  // blockers it could not check. Answering anyway would silently drop every card
+  // that has any edge at all.
+  if (queryNames(query, 'unblocked')) {
+    console.error(
+      `✗ "unblocked" is not available on export: it has to judge each blocker, ` +
+        `and an export has no way to tell you which ones it could not reach.`
+    );
+    console.error(`  Ask the frontier instead: favro cards list <board> --filter "unblocked"`);
+    process.exit(1);
+  }
+
+  return filterCards(query, cards);
 }
 
 /**

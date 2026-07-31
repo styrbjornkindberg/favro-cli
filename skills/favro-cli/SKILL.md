@@ -333,7 +333,7 @@ Key relationships:
 - A **collection** contains multiple **boards**
 - A **board** has **columns** representing workflow stages
 - A **card** lives on a board in a specific column
-- Cards can be **linked** (depends-on, blocks, relates-to)
+- Cards can be **linked** (depends-on, blocks) — Favro has one edge with one direction flag; `related` / `duplicates` are refused
 - Cards have **assignees**, **tags**, **custom fields**, and **due dates**
 
 **IDs are hex strings** (e.g. `a82adb26b63df3bbaeb39e7c`). You'll get them from list/get commands.
@@ -455,7 +455,8 @@ favro my-standup [--collection <name>] [--days <n>]
 # "What should I work on next?" — AI-scored suggestions
 favro next [--collection <name>] [--top <n>]
 # Returns: { scope, suggestions[{ card, score, reasons[] }], generatedAt }
-# Scoring: priority×4 + due urgency×3 − blockers×5 + low effort bonus + active stage bonus
+# Scoring: priority×4 + due urgency×3 + low effort bonus + active stage bonus
+# Blocking is NOT scored — ask `cards list --board <id> --filter "unblocked"` for the frontier
 ```
 
 ### PM/PO Persona

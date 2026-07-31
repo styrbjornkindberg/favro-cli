@@ -64,7 +64,9 @@ function findTopBlockers(cards: AggregateCard[], count: number = 5) {
         if (existing) {
           existing.count++;
         } else {
-          const blocker = cards.find(c => c.id === blockerId);
+          // `blockedBy` holds `cardCommonId`s — that is all an inlined edge
+          // carries — while `id` is the `cardId`. Matching on `id` never hit.
+          const blocker = cards.find(c => c.commonId === blockerId);
           if (blocker) {
             blockingCount.set(blockerId, { card: blocker, count: 1 });
           }

@@ -1,9 +1,10 @@
 import FavroHttpClient from './http-client';
-import TagsAPI from './tags-api';
+import TagsAPI, { Tag } from './tags-api';
 import ColumnDirectory, { ColumnResolutionError } from './column-directory';
 import CardReferenceResolver, { CardResolutionError, isSequentialReference } from './card-reference';
-import { cachedTags } from './name-cache';
+import { cachedTags, invalidateCache } from './name-cache';
 import { isUserId } from './users-api';
+import { resolveAssignee } from './assignee';
 
 /** Raw card shape returned directly by the Favro REST API */
 interface RawCard {
@@ -177,18 +178,62 @@ export interface Card {
   [key: string]: unknown;
 }
 
+/**
+ * `POST /cards` is **one atomic validated call** (#48). Every composite below
+ * rides the same POST — Favro validates each one and 403s the whole create with
+ * **no card created** on a bad tag, assignee, column or dependency target, which
+ * is what makes these flags safe without a compensation entry.
+ *
+ * The same fields are refused on `PUT`: `dependencies` is a silent no-op,
+ * `parentCardId` answers 202 `Access denied`, `assignees`/`assignmentIds` are
+ * silent no-ops. So this shape is create-only by measurement, not by taste.
+ */
 export interface CreateCardRequest {
   name: string;
   description?: string;
+  /**
+   * Column name or `columnId`. Favro has no `status` field — resolved here to
+   * `columnId`, which `POST /cards` honours and validates (bogus → `403 Invalid
+   * column`). A name needs `widgetCommonId`/`boardId`.
+   */
   status?: string;
   /** widgetCommonId — the board (widget) to create the card on */
   widgetCommonId?: string;
   /** @deprecated Use widgetCommonId instead */
   boardId?: string;
   columnId?: string;
+  /**
+   * Assignee references — name, email, `userId` or `@me`. Resolved to `userId`s
+   * and sent as `assignmentIds`, the only assignment field `POST /cards`
+   * honours (`assignees` is a silent no-op on both verbs).
+   */
   assignees?: string[];
-  /** Parent card ID — makes this card a child of the specified card */
+  /**
+   * A `sequentialId` (`CLA-1804`) or a `cardId`. Same board only.
+   *
+   * **Not** a `cardCommonId`: `toCardId` is shape-first and passes a
+   * non-sequential reference through uncalled, so a `cardCommonId` reaches the
+   * wire as a `cardId` and Favro 403s the whole create. Escalating it would cost
+   * a read per reference on every create, including the correct ones — so the
+   * keyspace is stated instead of guessed at.
+   */
   parentCardId?: string;
+  /**
+   * Tag **names**. Pre-validated against the org tag list CLI-side, because an
+   * unknown name is a tag *creation* — which only 403s on a key that lacks that
+   * permission, so auto-create-on-typo would be permission-dependent. Names go
+   * to the wire unresolved: Favro's own casing resolution does not always pick
+   * the byte-exact match, so writing a `tagId` we chose could write an id Favro
+   * never selects.
+   */
+  tags?: string[];
+  /**
+   * Cards that must come **before** this one (`isBefore: true`). Same keyspace
+   * rule as `parentCardId`: `sequentialId` or `cardId`, not `cardCommonId`.
+   */
+  blockedBy?: string[];
+  /** Cards this one comes before (`isBefore: false`). Same keyspace rule. */
+  blocks?: string[];
 }
 
 export interface UpdateCardRequest {
@@ -688,15 +733,105 @@ export class CardsAPI {
     });
   }
 
+  /**
+   * Create a card — **one** POST carrying every composite.
+   *
+   * On create this is not composition: `parentCardId`, `dependencies`,
+   * `columnId`, `tags` and `assignmentIds` are all honoured and validated by the
+   * same call, and any bad value 403s the whole thing with no card created. So
+   * there are no follow-up writes and nothing to compensate. Resolution happens
+   * first, so a name that cannot be settled refuses before any card exists.
+   */
   async createCard(data: CreateCardRequest): Promise<Card> {
+    const { status, assignees, tags, blockedBy, blocks, ...rest } = data;
     // Map boardId → widgetCommonId for callers using the old field name
-    const payload: Record<string, unknown> = { ...data };
+    const payload: Record<string, unknown> = { ...rest };
     if (payload.boardId && !payload.widgetCommonId) {
       payload.widgetCommonId = payload.boardId;
       delete payload.boardId;
     }
     mapDescription(payload);
+
+    if (status !== undefined) {
+      payload.columnId = await this.columns.resolveColumnId(
+        status,
+        payload.widgetCommonId as string | undefined,
+      );
+    }
+
+    if (payload.parentCardId !== undefined) {
+      payload.parentCardId = await this.references.toCardId(String(payload.parentCardId), {
+        widgetCommonId: payload.widgetCommonId as string | undefined,
+      });
+    }
+
+    if (assignees !== undefined && assignees.length > 0) {
+      payload.assignmentIds = await Promise.all(
+        assignees.map((ref) => resolveAssignee(this.client, ref)),
+      );
+    }
+
+    if (tags !== undefined && tags.length > 0) {
+      payload.tags = await this.validateTagNames(tags);
+    }
+
+    // Both directions live in ONE array — two edges per create, mirrored, and
+    // undocumented. `isBefore` describes the far card relative to this one, so
+    // "blocked by X" is X before us and "blocks Y" is Y after us.
+    const edges = [
+      ...(blockedBy ?? []).map((ref) => ({ ref, isBefore: true })),
+      ...(blocks ?? []).map((ref) => ({ ref, isBefore: false })),
+    ];
+    if (edges.length > 0) {
+      payload.dependencies = await Promise.all(
+        edges.map(async ({ ref, isBefore }) => ({
+          cardId: await this.references.toCardId(ref),
+          isBefore,
+        })),
+      );
+    }
+
     return this.client.post<Card>('/cards', payload, MARKDOWN_BODY);
+  }
+
+  /**
+   * Refuse an unknown tag name **before** the create, and hand back the org's
+   * own spelling of each name.
+   *
+   * Leaving this to the wire is not equivalent: to Favro an unknown name is a
+   * tag *creation*, so a typo either silently creates a tag or 403s the whole
+   * create, depending on whether this key holds that permission. Neither is an
+   * answer an agent can act on. Ambiguity does **not** refuse here — we send the
+   * name and let Favro resolve it, which is exactly why we must not send an id.
+   */
+  private async validateTagNames(names: string[]): Promise<string[]> {
+    const orgId = this.client.organizationId;
+    const key = (name: string) => name.trim().toLowerCase();
+    const index = (tags: Tag[]) => new Map(tags.map((t) => [key(t.name ?? ''), t.name]));
+
+    let byName = index(await cachedTags(this.client, orgId));
+    if (names.some((raw) => !byName.has(key(raw)))) {
+      // Never refuse on cache evidence alone — the read path settled this in
+      // `query-values`' `checkTag`, and a false refusal costs more on a write.
+      // Without this, the 15-minute TTL made this method's own advice useless:
+      // `favro tags create` then `cards create --tag` still refused. `tags` is a
+      // whole-org list, so this refill replaces nothing the message then lists.
+      await invalidateCache(orgId, 'tags');
+      byName = index(await cachedTags(this.client, orgId));
+    }
+
+    return names.map((raw) => {
+      const known = byName.get(key(raw));
+      if (known === undefined) {
+        throw new Error(
+          `Unknown tag "${raw}" — no workspace tag has that name. Refusing to create it: ` +
+            `on a write Favro treats an unknown name as a new tag, so a typo either invents a tag or ` +
+            `403s the whole create depending on this key's permissions. ` +
+            `Run 'favro tags list' to see the workspace tags, or 'favro tags create "${raw}"' to add it first.`,
+        );
+      }
+      return known;
+    });
   }
 
   /**

@@ -8,7 +8,7 @@ Complete reference for every `favro` CLI command, flag, and option.
 
 ## Breaking changes
 
-Three changes to how reads answer. Each is visible; none is silent.
+Changes to how reads answer, and to two names. Each is visible; none is silent.
 
 ### `--json` on a list read is an object, not an array
 
@@ -57,6 +57,56 @@ a **rendering** decision — the read still returns every field, so
 
 Bring them back with `--body` and `--include custom-fields`. There is no
 `--full`. `cards export` is carved out and always carries bodies.
+
+### `cards blockers` is now `cards blocking`
+
+It returns the cards this card *blocks*, exactly as its own help string always
+said. `blockers` named the other end; `cards blocked-by` is unchanged.
+
+### `favro query` no longer takes blocking predicates
+
+`blocked`, `blocking` and `relates:`/`relates to` are gone from the natural-
+language `query` command. All three read `card.links`, which was never populated
+for them, so every one of them answered about an empty array on every card. Ask
+`cards list --filter` instead, where the grammar fails closed:
+
+```
+favro cards list <board> --filter "unblocked"
+favro cards list <board> --filter "blocked-by:CLA-1804"
+favro cards list <board> --filter "blocks:CLA-1804"
+```
+
+`favro next` also stopped scoring blocking, rather than keep a penalty that
+could never fire.
+
+---
+
+## Blocking: `unblocked`, `blocks:`, `blocked-by:`
+
+Favro's UI says only **before** and **after**; this CLI says **blocks** and
+**blocked-by**. That is one deliberate, scoped override of the
+mirror-Favro-terminology rule — mapped exactly once, here: an edge whose far card
+`isBefore` **blocks** the card you asked about.
+
+There is one edge, with one direction flag. No `depends-on`, no `related`, no
+`duplicates` — the API cannot store them.
+
+`--filter "unblocked"` is the frontier: takeable now.
+
+- **Board-agnostic.** A blocker is a blocker wherever it lives.
+- Says nothing about the column: *blocked* and *doing* are indistinguishable in
+  the column a human looks at, because the column carries open/closed.
+- Excludes **archived** cards and **forks** (an assignment entity has no board
+  and no column, so there is nothing to act on).
+- A blocker counts as finished when it sits in the **tracker board's mapped
+  `done` column** (`favro tracker init`), or is **archived** off that board.
+  There is no board-independent completion signal in Favro to use instead: no
+  `completed`, no `status`, no `state`; `assignments[].completed` is per person;
+  and `position` is monotone but rightmost is not done on every board.
+- **A blocker we could not read still blocks**, and says so under `unreachable`.
+
+So `unblocked` is wrong in one direction only — it can hide a takeable ticket,
+never offer a blocked one.
 
 ---
 
@@ -241,14 +291,24 @@ refuses instead of answering a plausible `0 rows`. `status:` needs `--board`.
 |------|-------------|
 | `--board <boardId>` | Target board |
 | `--description <text>` | Card description |
-| `--status <status>` | Initial status |
-| `--assignee <user>` | Assignee |
-| `--parent <cardId>` | Parent card (makes this a child) |
+| `--status <column>` | Column to create the card in — a name needs `--board`, or pass a `columnId` |
+| `--tag <name>` | Tag by **name**, repeatable. An unknown name is refused CLI-side, never created |
+| `--assignee <user>` | Assignee — name, email, `userId` or `@me`. Repeatable |
+| `--parent <cardId>` | Parent card, same board only (makes this a child). `CLA-1804` or a `cardId` |
+| `--blocked-by <cardId>` | Card that must come before this one, repeatable. `CLA-1804` or a `cardId` |
+| `--blocks <cardId>` | Card this one comes before, repeatable. `CLA-1804` or a `cardId` |
 | `--csv <file>` | Bulk import from CSV |
 | `--bulk <file>` | Bulk import from JSON |
 | `--dry-run` | Preview only |
 | `-y, --yes` | Skip confirmation |
 | `--force` | Bypass scope check |
+
+Every flag above rides the **one** `POST /cards`, so a bad tag, assignee, column
+or dependency target fails the whole create and leaves no card behind.
+
+Card references on `--parent`, `--blocked-by` and `--blocks` take a
+`sequentialId` (`CLA-1804`) or a `cardId`. A `cardCommonId` is **not** accepted
+here — it reaches the wire unresolved and Favro rejects the create.
 
 ### `cards update <cardId>` ⚠️ WRITE
 
@@ -293,7 +353,7 @@ bodies, whole. It has no `--limit` — the board is fetched to completion.
 
 | Flag | Description |
 |------|-------------|
-| `--type <type>` | `depends-on`, `blocks`, `relates-to` |
+| `--type <type>` | `depends-on` or `blocks` — Favro stores one edge with one direction flag, so `related` / `duplicates` are refused, not discarded |
 
 ### `cards unlink <cardId> <fromCardId>` ⚠️ WRITE
 

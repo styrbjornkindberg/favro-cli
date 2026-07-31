@@ -11,6 +11,7 @@ import { createFavroClient } from '../lib/client-factory';
 import { logError } from '../lib/error-handler';
 import { confirmAction, dryRunLog } from '../lib/safety';
 import { writeEnvelope } from '../lib/read-shape';
+import { invalidateCache } from '../lib/name-cache';
 
 export function registerTagsCommands(program: Command): void {
   const tagsCommand = program.command('tags').description('Manage global workspace tags');
@@ -92,6 +93,10 @@ export function registerTagsCommands(program: Command): void {
         const client = await createFavroClient();
         const api = new TagsAPI(client);
         const tag = await api.createTag(options.name, options.color);
+        // Or the 15-minute TTL keeps the new tag invisible to every resolver that
+        // refuses on an unknown name — including `cards create --tag`, whose
+        // refusal message tells you to run this command.
+        await invalidateCache(client.organizationId, 'tags');
 
         if (options.json) {
           console.log(JSON.stringify(tag, null, 2));

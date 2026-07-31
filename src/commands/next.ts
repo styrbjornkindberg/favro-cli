@@ -5,7 +5,8 @@
  * Algorithm:
  *   1. Fetch my cards across collections
  *   2. Filter to queued/backlog/ready stages only
- *   3. Score: priority (4x) + due urgency (3x) + blocked-by (negative) + low effort (bonus)
+ *   3. Score: priority (4x) + due urgency (3x) + low effort (bonus)
+ *      Blocking is deliberately NOT scored — see `scoreCard`.
  *   4. Return top N ranked cards with reasoning
  */
 import { Command } from 'commander';
@@ -87,11 +88,14 @@ function scoreCard(card: AggregateCard): { score: number; reasons: string[] } {
     }
   }
 
-  // Blocked-by penalty
-  if (card.blockedBy && card.blockedBy.length > 0) {
-    score -= card.blockedBy.length * 5;
-    reasons.push(`blocked by ${card.blockedBy.length} card(s)`);
-  }
+  // No blocking term (#47). The −5-per-blocker penalty could never fire —
+  // `aggregate.ts` handed every card `blockedBy: []` — and now that the edges
+  // are real, scoring them still needs the one thing this snapshot cannot say:
+  // whether the blocker is FINISHED. That answer lives on the blocker (the
+  // tracker board's mapped `done` column, or `archived` off it) and costs a
+  // per-blocker read. Paying for it to nudge a heuristic by 5 points is not
+  // worth it, and scoring an unjudged blocker is how it was wrong before.
+  // Ask the frontier instead: `cards list --board <id> --filter "unblocked"`.
 
   // Low effort bonus (prefer quick wins)
   const effort = extractEffort(card);

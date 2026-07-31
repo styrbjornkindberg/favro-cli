@@ -18,6 +18,7 @@ import {
   BoardContextSnapshot,
 } from './context';
 import { detectStage, WorkflowStage } from '../lib/workflow-stage';
+import { blockingEdges } from '../lib/blocking';
 
 // Re-export for convenience
 export { ContextCard, WorkflowStage, WorkflowStep };
@@ -35,6 +36,12 @@ export interface AggregateBoard {
 }
 
 export interface AggregateCard extends ContextCard {
+  /**
+   * `cardCommonId`. `id` is the `cardId`, and the two are different keyspaces —
+   * an inlined `dependencies` edge names only the `cardCommonId`, so this is the
+   * field a blocker lookup has to match on (#47).
+   */
+  commonId?: string;
   boardId?: string;
   boardName?: string;
   collectionId?: string;
@@ -88,6 +95,7 @@ function normalizeToAggregateCard(
 ): AggregateCard {
   const ac: AggregateCard = {
     id: card.cardId,
+    commonId: card.cardCommonId,
     title: card.name,
     status: card.status,
     assignees: card.assignees,
@@ -100,8 +108,10 @@ function normalizeToAggregateCard(
     boardName,
     collectionId,
     collectionName,
-    blockedBy: [],
-    blocking: [],
+    // Was hardcoded `[]` / `[]` (#47) — a third dead blocking consumer, and the
+    // reason every persona command that counts blocked cards counted zero.
+    // `GET /cards` inlines the edges, so the real answer was already in hand.
+    ...blockingEdges(card),
   };
 
   if (card.customFields && card.customFields.length > 0) {

@@ -1,5 +1,5 @@
 /**
- * cards link / unlink / move / show / dependencies / blockers / blocked-by
+ * cards link / unlink / move / show / dependencies / blocking / blocked-by
  * CLA-1786 (FAVRO-024): Card Relationship Operations
  */
 import { Command } from 'commander';
@@ -48,7 +48,7 @@ async function wouldCreateCycle(
 }
 
 /**
- * Register link / unlink / move / show / dependencies / blockers / blocked-by
+ * Register link / unlink / move / show / dependencies / blocking / blocked-by
  * subcommands on the `cards` parent command.
  */
 export function registerCardsLinkCommands(cardsCmd: Command): void {
@@ -316,13 +316,15 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
       }
     });
 
-  // ─── cards blockers ─────────────────────────────────────────────────────────
+  // ─── cards blocking ─────────────────────────────────────────────────────────
+  // Renamed from `cards blockers` (#47): it returns the cards this card BLOCKS,
+  // exactly as its own help string always said. `blockers` named the other end.
   cardsCmd
-    .command('blockers <card>')
+    .command('blocking <card>')
     .description(
       'List all cards blocked by this card.\n\n' +
       'Examples:\n' +
-      '  favro cards blockers CARD-ID\n'
+      '  favro cards blocking CARD-ID\n'
     )
     .option('--json', 'Output as JSON')
     .action(async (cardId: string, options) => {
@@ -334,20 +336,20 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
 
         const links = await api.getCardLinks(cardId);
         // Cards this card blocks come after it: isBefore === false.
-        const blockers = links.filter(l => !l.isBefore);
+        const blocked = links.filter(l => !l.isBefore);
 
         if (options.json) {
-          console.log(JSON.stringify(blockers, null, 2));
+          console.log(JSON.stringify(blocked, null, 2));
           return;
         }
 
-        if (blockers.length === 0) {
+        if (blocked.length === 0) {
           console.log(`Card ${cardId} is not blocking any cards.`);
           return;
         }
 
         console.log(`Cards blocked by ${cardId}:`);
-        blockers.forEach(l => console.log(`  ⛔ ${l.cardId}${l.cardName ? ` (${l.cardName})` : ''}`));
+        blocked.forEach(l => console.log(`  ⛔ ${l.cardId}${l.cardName ? ` (${l.cardName})` : ''}`));
       } catch (error: any) {
         if (error?.message === 'process.exit') throw error;
         if (error?.response?.status === 404) {

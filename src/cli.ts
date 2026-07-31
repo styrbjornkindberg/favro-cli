@@ -6,7 +6,8 @@
  *   favro auth login                  # set up API key interactively
  *   favro auth check                  # verify API key is valid
  *   favro cards list [--board <id>] [--status <s>] [--assignee <a>] [--limit <n>]
- *   favro cards create <title> [--description <d>] [--status <s>] [--board <id>] [--dry-run]
+ *   favro cards create <title> [--board <id>] [--status <s>] [--tag <t>] [--assignee <a>]
+ *                              [--parent <card>] [--blocked-by <card>] [--blocks <card>]
  *   favro cards create --csv <file> --board <id> [--dry-run]
  *   favro cards update <card> [--name <n>] [--status <s>] [--assignees <a>] [--dry-run]
  *   favro cards export <board> --format json|csv [--out <file>] [--filter <expr>]
@@ -239,8 +240,20 @@ cards
     'what is printed — a capped list says so with "truncated": true.\n\n' +
     'Card bodies and custom fields are omitted from output by default; --body\n' +
     'and --include custom-fields bring them back.\n\n' +
+    'Blocking (Favro says before/after; this CLI says blocks/blocked-by):\n' +
+    '  --filter "unblocked"          takeable now — no unfinished blocker,\n' +
+    '                                board-agnostic, excludes archived and forks\n' +
+    '  --filter "blocked-by:<ref>"   blocked by that specific card\n' +
+    '  --filter "blocks:<ref>"       blocking that specific card\n' +
+    'A blocker counts as finished when it sits in the tracker board\'s mapped\n' +
+    'done column, or is archived off it. A blocker we could not read still\n' +
+    'blocks, and says so under "unreachable".\n' +
+    'Blockers not already in this board fetch are looked up one call each, capped\n' +
+    'at 20 per list (not per card); ids past the cap stay blocked and are named\n' +
+    'under "unreachable" as not attempted.\n\n' +
     'Examples:\n' +
     '  favro cards list <board-id>\n' +
+    '  favro cards list <board-id> --filter "unblocked" --json\n' +
     '  favro cards list <board-id> --status "In Progress" --limit 100\n' +
     '  favro cards list <board-id> --archived all --json\n' +
     '  favro cards list <board-id> --filter "status:done AND tag:bug" --json\n' +
@@ -312,9 +325,22 @@ cards
       });
 
       // Client-side filters now run over the COMPLETE board, not a truncated page.
+      // `unblocked` is the one predicate that cannot be answered from a card
+      // alone: whether a blocker is FINISHED lives on the blocker, judged by the
+      // tracker's mapped `done` column or by `archived` off it. Blockers already
+      // in this fetch cost nothing; the rest go through the bounded sweep, whose
+      // holes ride out on `unreachable` rather than passing as "not blocked".
+      let unreachable: import('./lib/read-shape').Unreachable[] = [];
       if (query) {
-        const { filterCards } = await import('./lib/query-parser');
-        cardList = filterCards(query, cardList);
+        const { filterCards, queryNames } = await import('./lib/query-parser');
+        let ctx: import('./lib/query-parser').EvalContext = {};
+        if (queryNames(query, 'unblocked')) {
+          const { judgeBlockers } = await import('./lib/blocking');
+          const judged = await judgeBlockers(cardList, client);
+          ctx = { doneBlockers: judged.done };
+          unreachable = judged.unreachable;
+        }
+        cardList = filterCards(query, cardList, ctx);
       }
       if (options.assignee) {
         cardList = cardList.filter(c => (c.assignees ?? []).some(
@@ -336,7 +362,11 @@ cards
           ...(options.body ? ['description', 'detailedDescription'] : []),
           ...(include.includes('custom-fields') ? ['customFields'] : []),
         ];
-        writeEnvelope({ ...capped, rows: omitBulk('card', capped.rows, keep) });
+        writeEnvelope({
+          ...capped,
+          rows: omitBulk('card', capped.rows, keep),
+          ...(unreachable.length > 0 ? { unreachable } : {}),
+        });
       } else {
         console.log(`Found ${capped.rows.length} card(s):`);
         if (capped.rows.length > 0) {
@@ -352,6 +382,10 @@ cards
         }
         if (capped.truncated) {
           console.log(`(truncated to ${limit} of ${cardList.length} — raise --limit to see the rest)`);
+        }
+        if (unreachable.length > 0) {
+          console.log(`(${unreachable.length} blocker(s) could not be checked, so their cards stayed blocked:)`);
+          unreachable.forEach((u) => console.log(`  ${u.id} — ${u.reason}`));
         }
       }
     } catch (error) {
@@ -380,6 +414,9 @@ function parseCSV(content: string): Record<string, string>[] {
 }
 
 // ─── cards create ─────────────────────────────────────────────────────────────
+/** Commander reducer for a repeatable flag. */
+const collect = (value: string, acc: string[]): string[] => [...acc, value];
+
 cards
   .command('create [title]')
   .description(
@@ -387,6 +424,8 @@ cards
     'Examples:\n' +
     '  favro cards create "Fix login bug" --board <id>\n' +
     '  favro cards create "My card" --board <id> --status "Todo" --description "Details"\n' +
+    '  favro cards create "Ship it" --board <id> --tag bug --assignee alice --parent CLA-1804\n' +
+    '  favro cards create "Ship it" --board <id> --blocked-by CLA-1800 --blocks CLA-1900\n' +
     '  favro cards create --csv tasks.csv --board <id>\n' +
     '  favro cards create --bulk tasks.json --board <id>\n' +
     '  favro cards create --csv tasks.csv --board <id> --dry-run\n\n' +
@@ -394,13 +433,18 @@ cards
     '  name,description,status\n' +
     '  "Fix bug","Safari issue","In Progress"\n' +
     '  "Add feature","User request","Backlog"\n\n' +
-    'Tip: Always test with --dry-run before bulk importing.'
+    'Tip: Always test with --dry-run before bulk importing.\n\n' +
+    'Composites (--tag/--assignee/--parent/--blocked-by/--blocks/--status) all ride the ONE\n' +
+    'create call Favro validates, so a bad value fails the whole create and leaves no card behind.'
   )
   .option('--board <id>', 'Target board ID')
   .option('--description <text>', 'Card description')
-  .option('--status <status>', 'Card status')
-  .option('--assignee <user>', 'Assignee username or user ID')
-  .option('--parent <card>', 'Parent card ID (makes this a child card)')
+  .option('--status <status>', 'Column to create the card in (name needs --board, or a columnId)')
+  .option('--tag <name>', 'Tag by name (repeatable) — an unknown name is refused, never created', collect, [])
+  .option('--assignee <user>', 'Assignee name, email, userId or @me (repeatable)', collect, [])
+  .option('--parent <card>', 'Parent card — sequentialId or cardId, not cardCommonId (same board only)')
+  .option('--blocked-by <card>', 'Card that must come before this one — sequentialId or cardId (repeatable)', collect, [])
+  .option('--blocks <card>', 'Card this one comes before — sequentialId or cardId (repeatable)', collect, [])
   .option('--bulk <file>', 'Bulk create from JSON file')
   .option('--csv <file>', 'Bulk import from CSV file (columns: name, description, status)')
   .option('--dry-run', 'Print what would be created without making API calls')
@@ -492,13 +536,19 @@ cards
       }
       
       const api = new CardsAPI(client);
+      // Every composite below rides the ONE POST Favro validates: a bad tag,
+      // assignee, column or dependency target 403s the whole create and leaves
+      // no card behind, so there is nothing to undo and no follow-up write.
       const card = await api.createCard({
         name: title ?? '',
         description: options.description ? options.description.replace(/\\n/g, '\n') : undefined,
         status: options.status,
         boardId: options.board,
-        assignees: options.assignee ? [options.assignee] : undefined,
+        assignees: options.assignee.length > 0 ? options.assignee : undefined,
         parentCardId: options.parent,
+        tags: options.tag.length > 0 ? options.tag : undefined,
+        blockedBy: options.blockedBy.length > 0 ? options.blockedBy : undefined,
+        blocks: options.blocks.length > 0 ? options.blocks : undefined,
       });
       console.log(`✓ Card created: ${card.cardId}`);
       if (options.json) console.log(JSON.stringify(card));

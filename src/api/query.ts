@@ -9,8 +9,6 @@
  * Supported query patterns:
  *   status:done / status:"In Progress"
  *   assigned:@me / assigned:alice
- *   blocked / blocking
- *   relates:card-x
  *   priority:high
  *   label:bug / tag:bug
  *   due:overdue
@@ -30,11 +28,12 @@ import type { QueryFilter, QueryMatch, QueryResult } from '../types/query';
  * Examples:
  *   "status:done"                → { status: "done" }
  *   "assigned to @alice"         → { owner: "alice" }
- *   "blocked cards"              → { blocked: true }
  *   "priority:high"              → { priority: "high" }
  *   "bug fixes in review"        → { text: "bug fixes", status: "review" }
  *   "overdue"                    → { due: "overdue" }
- *   "relates to api-redesign"    → { relatesTo: "api-redesign" }
+ *
+ * Blocking is NOT here (#47). Ask `cards list --filter "unblocked"` /
+ * `"blocked-by:<ref>"` / `"blocks:<ref>"`, which read the real `isBefore` edge.
  */
 export function parseQueryFilter(query: string): QueryFilter {
   const filter: QueryFilter = { rawQuery: query };
@@ -69,13 +68,6 @@ export function parseQueryFilter(query: string): QueryFilter {
     remaining = remaining.replace(labelMatch[0], '').trim();
   }
 
-  // relates:value / relates-to:value
-  const relatesToMatch = remaining.match(/\brelates(?:-to)?:["']?([^"'\s,]+(?:\s+[^"'\s,]+)*)["']?/i);
-  if (relatesToMatch) {
-    filter.relatesTo = relatesToMatch[1].trim();
-    remaining = remaining.replace(relatesToMatch[0], '').trim();
-  }
-
   // due:value
   const dueMatch = remaining.match(/\bdue:["']?([^"'\s,]+)["']?/i);
   if (dueMatch) {
@@ -84,18 +76,6 @@ export function parseQueryFilter(query: string): QueryFilter {
   }
 
   // ── Natural language shorthands ──────────────────────────────────────────
-  // "blocked" / "blocked cards"
-  if (/\bblocked(?:\s+cards?)?\b/i.test(remaining) && !/\bblocking\b/i.test(remaining)) {
-    filter.blocked = true;
-    remaining = remaining.replace(/\bblocked(?:\s+cards?)?\b/i, '').trim();
-  }
-
-  // "blocking"
-  if (/\bblocking(?:\s+cards?)?\b/i.test(remaining)) {
-    filter.blocking = true;
-    remaining = remaining.replace(/\bblocking(?:\s+cards?)?\b/i, '').trim();
-  }
-
   // "overdue" shorthand
   if (/\boverdue\b/i.test(remaining)) {
     filter.due = filter.due ?? 'overdue';
@@ -108,15 +88,6 @@ export function parseQueryFilter(query: string): QueryFilter {
     if (assignedToMatch) {
       filter.owner = assignedToMatch[1];
       remaining = remaining.replace(assignedToMatch[0], '').trim();
-    }
-  }
-
-  // "relates to <card>" / "related to <card>"
-  if (!filter.relatesTo) {
-    const relatesToNlMatch = remaining.match(/\brelate[sd]?\s+to\s+["']?([^"'\n]+?)["']?(?:\s|$)/i);
-    if (relatesToNlMatch) {
-      filter.relatesTo = relatesToNlMatch[1].trim();
-      remaining = remaining.replace(relatesToNlMatch[0], '').trim();
     }
   }
 
@@ -231,33 +202,6 @@ export function matchCard(
       return null;
     }
     reasons.push(`tag: ${filter.label}`);
-  }
-
-  // ── Blocked ──────────────────────────────────────────────────────────────
-  if (filter.blocked === true) {
-    if (!card.blockedBy || card.blockedBy.length === 0) {
-      return null;
-    }
-    reasons.push(`blocked by: ${card.blockedBy.join(', ')}`);
-  }
-
-  // ── Blocking ─────────────────────────────────────────────────────────────
-  if (filter.blocking === true) {
-    if (!card.blocking || card.blocking.length === 0) {
-      return null;
-    }
-    reasons.push(`blocking: ${card.blocking.join(', ')}`);
-  }
-
-  // ── Relates to ──────────────────────────────────────────────────────────
-  if (filter.relatesTo !== undefined) {
-    const filterRel = filter.relatesTo.toLowerCase();
-    const allLinks = [...(card.blockedBy ?? []), ...(card.blocking ?? [])];
-    const matched = allLinks.some(l => l.toLowerCase().includes(filterRel));
-    if (!matched) {
-      return null;
-    }
-    reasons.push(`relates to: ${filter.relatesTo}`);
   }
 
   // ── Priority ────────────────────────────────────────────────────────────
@@ -379,16 +323,6 @@ export function explainNoResults(
     );
   }
 
-  // Blocked
-  if (filter.blocked) {
-    return `No cards in board "${context.board.name}" are currently blocked.`;
-  }
-
-  // Blocking
-  if (filter.blocking) {
-    return `No cards in board "${context.board.name}" are currently blocking others.`;
-  }
-
   // Priority
   if (filter.priority) {
     return (
@@ -404,13 +338,6 @@ export function explainNoResults(
     return (
       `No cards have tag "${filter.label}" in board "${context.board.name}". ` +
       `Available tags: ${tagList}.`
-    );
-  }
-
-  // Relates to
-  if (filter.relatesTo) {
-    return (
-      `No cards relate to "${filter.relatesTo}" in board "${context.board.name}".`
     );
   }
 

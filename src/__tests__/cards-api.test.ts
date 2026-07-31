@@ -264,12 +264,16 @@ describe('Cards API', () => {
       createdAt: '2026-01-01', updatedAt: '2026-01-01'
     };
     mockClient.post.mockResolvedValue(card);
-    const result = await api.createCard({ name: 'Full', description: 'desc', status: 'todo', boardId: 'board-1' });
+    // `status` used to be asserted here riding the body — Favro has no such
+    // field on POST, so that assertion pinned a silent no-op. The honoured field
+    // is `columnId`; the name → `columnId` resolution is covered on the wire in
+    // cards-create-wire.test.ts (issue #48).
+    const result = await api.createCard({ name: 'Full', description: 'desc', columnId: 'col-1', boardId: 'board-1' });
     expect(result.description).toBe('desc');
     // `descriptionFormat` rides the query string, never the body — in the body
     // Favro ignores it and escapes the markdown (issue #17).
     expect(mockClient.post).toHaveBeenCalledWith('/cards', {
-      name: 'Full', detailedDescription: 'desc', status: 'todo', widgetCommonId: 'board-1'
+      name: 'Full', detailedDescription: 'desc', columnId: 'col-1', widgetCommonId: 'board-1'
     }, MARKDOWN_QUERY);
   });
 

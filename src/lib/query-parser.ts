@@ -577,19 +577,38 @@ export class ParseError extends Error {
 // ---------------------------------------------------------------------------
 
 /**
+ * What evaluation cannot work out from one card on its own.
+ *
+ * `unblocked` needs to know whether each blocker is FINISHED, and Favro has no
+ * board-independent completion signal — the answer comes from the tracker's
+ * mapped `done` column, or from `archived`, both of which live on the *blocker*.
+ * `lib/blocking.ts` settles that before the filter runs and hands the verdicts in
+ * here. Omitting it is safe and deliberate: with no verdicts every blocker
+ * blocks, which is the over-blocking direction this whole predicate accepts.
+ */
+export interface EvalContext {
+  /** `cardCommonId`s of blockers proved done. Anything absent still blocks. */
+  doneBlockers?: ReadonlySet<string>;
+}
+
+/**
  * Evaluate a parsed QueryNode against a card object.
  * Returns true if the card matches the node.
  * Designed to work with the Card interface from cards-api.ts (duck-typed).
  */
-export function evaluateNode(node: QueryNode, card: Record<string, any>): boolean {
+export function evaluateNode(
+  node: QueryNode,
+  card: Record<string, any>,
+  ctx: EvalContext = {},
+): boolean {
   switch (node.kind) {
-    case 'and': return evaluateNode(node.left, card) && evaluateNode(node.right, card);
-    case 'or':  return evaluateNode(node.left, card) || evaluateNode(node.right, card);
+    case 'and': return evaluateNode(node.left, card, ctx) && evaluateNode(node.right, card, ctx);
+    case 'or':  return evaluateNode(node.left, card, ctx) || evaluateNode(node.right, card, ctx);
 
     case 'field': {
       // Computed dependency predicates — Favro stores one edge with one flag,
       // `isBefore`: true means the linked card comes before, i.e. blocks this one.
-      if (node.field === 'unblocked') return blockersOf(card).length === 0;
+      if (node.field === 'unblocked') return isUnblocked(card, ctx);
       if (node.field === 'blocked-by') return blockersOf(card).some(l => linkMatches(l, node.value));
       if (node.field === 'blocks') return blockedByThis(card).some(l => linkMatches(l, node.value));
 
@@ -677,13 +696,37 @@ function linksOf(card: Record<string, any>): any[] {
 }
 
 /** Edges where the linked card comes before this one — this card's blockers. */
-function blockersOf(card: Record<string, any>): any[] {
+export function blockersOf(card: Record<string, any>): any[] {
   return linksOf(card).filter(l => l.isBefore === true);
 }
 
 /** Edges where the linked card comes after this one — cards this one blocks. */
-function blockedByThis(card: Record<string, any>): any[] {
+export function blockedByThis(card: Record<string, any>): any[] {
   return linksOf(card).filter(l => l.isBefore !== true);
+}
+
+/**
+ * The frontier: takeable now, board-agnostic.
+ *
+ * Says nothing about the column — *blocked* and *doing* are indistinguishable in
+ * the column a human looks at, because the column carries open/closed. It does
+ * exclude two things no column can excuse:
+ *
+ *   - **archived** cards, which are not work;
+ *   - **forks** — an assignment entity with no `widgetCommonId`, hence no column
+ *     and nothing to act on.
+ *
+ * A blocker counts as cleared only when `ctx.doneBlockers` proves it. Without
+ * that proof every blocker blocks: over-blocking, never under.
+ */
+function isUnblocked(card: Record<string, any>, ctx: EvalContext): boolean {
+  if (card.archived === true) return false;
+  if (!card.widgetCommonId && !card.boardId) return false;
+  const done = ctx.doneBlockers;
+  return blockersOf(card).every(l => {
+    const id = l.cardCommonId ?? l.cardId;
+    return id !== undefined && done !== undefined && done.has(String(id));
+  });
 }
 
 /** Match a dependency edge against a card reference, in any identifier shape. */
@@ -897,8 +940,29 @@ export function parseQuery(filter: string, options: ParseOptions = {}): Query {
  */
 export function filterCards<T extends Record<string, any>>(
   query: Query,
-  cards: T[]
+  cards: T[],
+  ctx: EvalContext = {},
 ): T[] {
   if (!query.ast) return cards; // no filter — return all
-  return cards.filter(card => evaluateNode(query.ast!, card));
+  return cards.filter(card => evaluateNode(query.ast!, card, ctx));
+}
+
+/**
+ * Does the query name this field anywhere?
+ *
+ * Callers use it to decide whether a predicate's extra reads are worth paying
+ * for — `unblocked` needs the blockers judged, and nothing else does.
+ */
+export function queryNames(query: Query, field: string): boolean {
+  const walk = (node: QueryNode | null): boolean => {
+    if (!node) return false;
+    switch (node.kind) {
+      case 'and':
+      case 'or': return walk(node.left) || walk(node.right);
+      case 'field':
+      case 'date': return node.field === field;
+      default: return false;
+    }
+  };
+  return walk(query.ast);
 }

@@ -1,6 +1,6 @@
 /**
  * Unit tests for cards-link / cards-unlink / cards-move / cards-show /
- * cards-dependencies / cards-blockers / cards-blocked-by commands
+ * cards-dependencies / cards-blocking / cards-blocked-by commands
  * CLA-1786 (FAVRO-024): Card Relationship Operations
  */
 import { registerCardsLinkCommands, VALID_LINK_TYPES } from '../commands/cards-link';
@@ -76,7 +76,7 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
 
   // ─── Registration ──────────────────────────────────────────────────────────
 
-  test('registers link, unlink, move, show, dependencies, blockers, blocked-by subcommands', () => {
+  test('registers link, unlink, move, show, dependencies, blocking, blocked-by subcommands', () => {
     const cardsCmd = new Command('cards');
     registerCardsLinkCommands(cardsCmd);
     const subNames = cardsCmd.commands.map(c => c.name());
@@ -85,7 +85,9 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
     expect(subNames).toContain('move');
     expect(subNames).toContain('show');
     expect(subNames).toContain('dependencies');
-    expect(subNames).toContain('blockers');
+    // Renamed from `blockers` (#47): it returns what this card BLOCKS.
+    expect(subNames).toContain('blocking');
+    expect(subNames).not.toContain('blockers');
     expect(subNames).toContain('blocked-by');
   });
 
@@ -460,7 +462,7 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
     expect(jsonCall).toBeDefined();
   });
 
-  // ─── cards blockers ─────────────────────────────────────────────────────────
+  // ─── cards blocking ─────────────────────────────────────────────────────────
 
   test('lists cards blocked by this card (blocks links)', async () => {
     const links: CardLink[] = [
@@ -470,7 +472,7 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
     buildMockApi({ getCardLinks: jest.fn().mockResolvedValue(links) });
     const cardsCmd = new Command('cards');
     registerCardsLinkCommands(cardsCmd);
-    await cardsCmd.parseAsync(['node', 'cards', 'blockers', 'card-src']);
+    await cardsCmd.parseAsync(['node', 'cards', 'blocking', 'card-src']);
 
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('blocked-card-1'));
     const calls = consoleSpy.mock.calls.map(c => c[0] as string);
@@ -481,7 +483,7 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
     buildMockApi({ getCardLinks: jest.fn().mockResolvedValue([]) });
     const cardsCmd = new Command('cards');
     registerCardsLinkCommands(cardsCmd);
-    await cardsCmd.parseAsync(['node', 'cards', 'blockers', 'card-src']);
+    await cardsCmd.parseAsync(['node', 'cards', 'blocking', 'card-src']);
 
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('not blocking'));
   });

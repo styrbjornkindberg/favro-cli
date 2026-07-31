@@ -24,19 +24,17 @@ export function registerQueryCommand(program: Command): void {
       'Supported query patterns:\n' +
       '  status:done                  Cards with a specific status\n' +
       '  assigned:@alice              Cards assigned to a user\n' +
-      '  blocked                      Cards that are blocked\n' +
-      '  blocking                     Cards that are blocking others\n' +
       '  priority:high                Cards with a priority custom field\n' +
       '  label:bug / tag:bug          Cards with a specific tag/label\n' +
       '  due:overdue                  Cards past their due date\n' +
-      '  relates:card-id              Cards related to a specific card\n' +
       '  Free text                    Title/tag search\n\n' +
+      'Blocking is NOT asked here. Use the fail-closed filter grammar:\n' +
+      '  favro cards list <board> --filter "unblocked"\n' +
+      '  favro cards list <board> --filter "blocked-by:CLA-1804"\n\n' +
       'Examples:\n' +
       '  favro query boards-1234 "status:done"\n' +
       '  favro query "Sprint 42" "assigned:@alice"\n' +
-      '  favro query "My Board" "blocked cards"\n' +
-      '  favro query boards-1234 "high priority status:In Progress"\n' +
-      '  favro query "My Board" "relates to feature-x"\n\n' +
+      '  favro query boards-1234 "high priority status:In Progress"\n\n' +
       'If no results are found, an explanation is provided.\n' +
       'Use --json to get full card data as JSON.'
     )

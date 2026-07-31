@@ -408,13 +408,41 @@ describe('parseQuery — dependency predicates', () => {
     expect(q.ast).toMatchObject({ kind: 'field', field: 'blocks', value: 'CLA-1804' });
   });
 
-  test('unblocked is true only when no edge comes before the card', () => {
-    const blocked = { name: 'a', links: [{ isBefore: true, cardSequentialId: 'CLA-1' }] };
-    const blocking = { name: 'b', links: [{ isBefore: false, cardSequentialId: 'CLA-2' }] };
+  test('unblocked is true only when no unfinished edge comes before the card', () => {
+    // A real card always carries `widgetCommonId`. One that does not is a FORK
+    // (an assignment entity with no column), and a fork is never takeable — so
+    // these fixtures have to be board instances to mean anything (#47).
+    const board = { widgetCommonId: 'board-1' };
+    const blocked = { ...board, name: 'a', links: [{ isBefore: true, cardSequentialId: 'CLA-1' }] };
+    const blocking = { ...board, name: 'b', links: [{ isBefore: false, cardSequentialId: 'CLA-2' }] };
     const q = parseQuery('unblocked');
     expect(evaluateNode(q.ast!, blocked)).toBe(false);
     expect(evaluateNode(q.ast!, blocking)).toBe(true);
-    expect(evaluateNode(q.ast!, { name: 'c' })).toBe(true);
+    expect(evaluateNode(q.ast!, { ...board, name: 'c' })).toBe(true);
+  });
+
+  test('a blocker clears only on proof it is done — no proof means blocked', () => {
+    const card = {
+      widgetCommonId: 'board-1',
+      links: [{ isBefore: true, cardCommonId: 'blocker-1' }],
+    };
+    // No context at all: the blocker blocks. Over-blocking, never under.
+    expect(evaluateNode(parseQuery('unblocked').ast!, card)).toBe(false);
+    // A context that judged some OTHER card does not clear this one either.
+    expect(evaluateNode(parseQuery('unblocked').ast!, card, {
+      doneBlockers: new Set(['blocker-9']),
+    })).toBe(false);
+    expect(evaluateNode(parseQuery('unblocked').ast!, card, {
+      doneBlockers: new Set(['blocker-1']),
+    })).toBe(true);
+  });
+
+  test('unblocked excludes archived cards and forks whatever their edges say', () => {
+    const q = parseQuery('unblocked');
+    expect(evaluateNode(q.ast!, { widgetCommonId: 'board-1', archived: true })).toBe(false);
+    // A fork: assigning a card produces a second entity with no widgetCommonId
+    // and no columnId. Nothing to act on, so it is never on the frontier.
+    expect(evaluateNode(q.ast!, { cardId: 'c1', name: 'fork' })).toBe(false);
   });
 
   test('blocked-by matches an incoming edge by any identifier shape', () => {
@@ -715,6 +743,8 @@ describe('filterCards', () => {
 describe('evaluateNode — direct evaluation', () => {
   const card = {
     cardId: '1',
+    // A board instance, not a fork — `unblocked` refuses a card with no board.
+    widgetCommonId: 'board-1',
     name: 'Fix bug',
     status: 'done',
     assignees: ['john', 'mary'],

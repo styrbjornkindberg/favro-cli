@@ -307,6 +307,25 @@ describe('applyFilter', () => {
     errorSpy.mockRestore();
     exitSpy.mockRestore();
   });
+
+  test('refuses `unblocked` and names where it lives, rather than over-excluding', () => {
+    // An export writes a file: no envelope, so no way to say which blockers it
+    // could not check. Answering would silently drop every card with any edge.
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => { throw new Error('process.exit'); });
+
+    expect(() => applyFilter(sampleCards, 'unblocked')).toThrow('process.exit');
+    const said = errorSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(said).toContain('cards list');
+    expect(said).not.toContain('Invalid filter expression');
+
+    // A specific edge needs no judgement, so it still works.
+    errorSpy.mockClear();
+    expect(() => applyFilter(sampleCards, 'blocked-by:CLA-1')).not.toThrow();
+
+    errorSpy.mockRestore();
+    exitSpy.mockRestore();
+  });
 });
 
 // ----------------------------
