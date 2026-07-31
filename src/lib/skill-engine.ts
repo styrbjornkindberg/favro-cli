@@ -5,7 +5,7 @@
  * that is dispatched to the underlying API layer.
  *
  * Supported commands in skill steps:
- *   context, query, standup, sprint-plan, audit
+ *   context, query, standup, sprint-plan
  */
 import FavroHttpClient from '../lib/http-client';
 import { createFavroClient } from './client-factory';
@@ -14,7 +14,6 @@ import ContextAPI from '../api/context';
 import { StandupAPI } from '../api/standup';
 import { SprintPlanAPI } from '../api/sprint-plan';
 import { SkillDefinition, SkillStep, SkillVariable } from './skill-store';
-import { parseSince } from './audit-api';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -145,20 +144,8 @@ async function executeStep(
         result.matches.map((m: any) => `  - [${m.card.id}] ${m.card.title} (${m.card.status ?? 'no status'})`).join('\n');
     }
 
-    case 'audit': {
-      const board = args.board ?? vars.board;
-      if (!board) throw new Error('Step requires "board" argument');
-      const AuditAPI = (await import('./audit-api')).default;
-      const auditApi = new AuditAPI(client);
-      const since = args.since ?? '1d';
-      const sinceDate = parseSince(since);
-      const results = await auditApi.getBoardAuditLog(board, sinceDate, parseInt(args.limit ?? '50', 10));
-      return `Audit for ${board} (since ${since}):\n` +
-        results.map(a => `  - ${a.changeType}: ${a.cardName} (${a.author ?? 'unknown'})`).join('\n');
-    }
-
     default:
-      throw new Error(`Unknown skill command: "${step.command}". Supported: context, standup, sprint-plan, query, audit`);
+      throw new Error(`Unknown skill command: "${step.command}". Supported: context, standup, sprint-plan, query`);
   }
 }
 

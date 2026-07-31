@@ -14,7 +14,7 @@
  */
 import FavroHttpClient from '../lib/http-client';
 import { ActivityEntry } from '../types/comments';
-import { parseSince, formatTimestamp } from '../lib/audit-api';
+import { parseSince, formatTimestamp } from '../lib/time';
 
 export { ActivityEntry, parseSince, formatTimestamp };
 

@@ -11,7 +11,7 @@ import { createFavroClient } from '../lib/client-factory';
 import { logError } from '../lib/error-handler';
 import { confirmAction } from '../lib/safety';
 import CommentsApiClient from '../api/comments';
-import { formatTimestamp } from '../lib/audit-api';
+import { formatTimestamp } from '../lib/time';
 
 export function registerCommentsCommand(program: Command): void {
   const commentsCmd = program

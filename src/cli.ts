@@ -33,8 +33,6 @@ import { registerReleaseCheckCommand } from './commands/release-check';
 import { registerRisksCommand } from './commands/risks';
 import { registerBatchSmartCommand } from './commands/batch-smart';
 import { registerBatchCommand } from './commands/batch';
-import { registerAuditCommand } from './commands/favro-audit';
-import { registerWhoChangedCommand } from './commands/favro-who-changed';
 import { registerCollectionsListCommand } from './commands/collections-list';
 import { registerCollectionsGetCommand } from './commands/collections-get';
 import { registerCollectionsCreateCommand } from './commands/collections-create';
@@ -137,12 +135,6 @@ registerReleaseCheckCommand(program);
 registerRisksCommand(program);
 registerBatchSmartCommand(program);
 registerBatchCommand(program);
-
-// ─── audit command ───────────────────────────────────────────────────────────
-registerAuditCommand(program);
-
-// ─── who-changed command ─────────────────────────────────────────────────────
-registerWhoChangedCommand(program);
 
 // ─── collections parent ──────────────────────────────────────────────────────
 const collectionsCmd = program.command('collections').description('Collection operations');

@@ -41,7 +41,7 @@ const TOP_COMMANDS = [
   'auth', 'scope', 'boards', 'cards', 'collections', 'columns', 'tags',
   'tasks', 'tasklists', 'dependencies', 'attachments', 'users', 'members',
   'comments', 'webhooks', 'batch', 'batch-smart', 'context', 'query',
-  'standup', 'sprint-plan', 'propose', 'execute', 'audit', 'who-changed',
+  'standup', 'sprint-plan', 'propose', 'execute',
   'risks', 'release-check', 'ai', 'skill', 'git',
   'use', 'help', 'exit', 'quit', 'clear',
 ];
@@ -200,7 +200,7 @@ async function runShell(initialBoard?: string): Promise<void> {
     // Auto-inject --board if we have one and the command likely needs it
     if (state.board && !cmd.includes('--board') && !cmd.startsWith('auth') && !cmd.startsWith('scope')) {
       // Commands that take --board
-      const boardCmds = ['cards list', 'standup', 'sprint-plan', 'context', 'query', 'risks', 'audit', 'batch-smart'];
+      const boardCmds = ['cards list', 'standup', 'sprint-plan', 'context', 'query', 'risks', 'batch-smart'];
       if (boardCmds.some(bc => cmd.startsWith(bc))) {
         cmd += ` --board ${state.board}`;
       }
