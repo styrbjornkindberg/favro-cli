@@ -108,6 +108,26 @@ There is one edge, with one direction flag. No `depends-on`, no `related`, no
 So `unblocked` is wrong in one direction only — it can hide a takeable ticket,
 never offer a blocked one.
 
+### Only `unblocked` and `next` judge a blocker's doneness
+
+Judging costs a tracker-mapping read plus one read per blocker, so the summary
+commands do not pay it. Nothing clears a Favro edge when the blocker finishes,
+so an unjudged edge count would report a card as blocked forever — including
+cards that are already done. Those commands therefore report the **edge count**
+and leave the blocked *state* to the column:
+
+| Command | Field | Means |
+|---------|-------|-------|
+| `health` | `boards[].breakdown.dependencies` | % of non-done cards carrying **no** edge |
+| `workload` | `members[].dependencyCards` | cards carrying ≥1 edge |
+| `team` | `members[].dependencyCount`, `bottleneck.dependencyCount` | cards carrying ≥1 edge |
+| `standup` | `StandupCard.dependencies` | that card's edge count |
+| `my-standup`, `standup` | `blocked` group | column/status says blocked — edges are **not** consulted |
+
+The interactive TUI follows the same rule: *My Work* lists cards under **With
+dependencies** rather than *Blocked*, counts them in `queued` all the same, and
+the kanban badge no longer marks a card blocked on an edge alone.
+
 ---
 
 ## Honest failure: unavailable is not empty
@@ -484,7 +504,7 @@ These commands work across boards via `--collection <name>` or the scoped collec
 | Command | Persona | Description |
 |---------|---------|-------------|
 | `my-cards` | Developer | Your cards grouped by collection/board/stage |
-| `my-standup` | Developer | Personal standup: done/active/blocked/due |
+| `my-standup` | Developer | Personal standup: done/active/blocked/due. *Blocked* is the card's column (`Blocked`, `On Hold`), not its dependency edges — see below |
 | `next` | Developer | AI-scored "what should I work on next?" |
 | `workload` | PM | Per-member card distribution + overload alerts |
 | `stale` | PM | Cards inactive >N days |

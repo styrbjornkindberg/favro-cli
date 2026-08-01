@@ -101,8 +101,10 @@ describe('isInProgress', () => {
 // ─── isBlocked ────────────────────────────────────────────────────────────────
 
 describe('isBlocked', () => {
-  it('returns true when blockedBy has entries', () => {
-    expect(isBlocked(makeCard({ blockedBy: ['card-99'] }))).toBe(true);
+  // #61: nothing clears a Favro `isBefore` edge when the blocker finishes, so
+  // an unjudged edge is reported as a count, never as a blocked state.
+  it('returns false for an unjudged dependency edge', () => {
+    expect(isBlocked(makeCard({ blockedBy: ['card-99'] }))).toBe(false);
   });
 
   it('returns true for "Blocked" status', () => {
@@ -172,9 +174,15 @@ describe('classifyCard', () => {
     expect(card?.group).toBe('in-progress');
   });
 
-  it('classifies blocked card as blocked (overrides in-progress)', () => {
-    const card = classifyCard(makeCard({ status: 'In Progress', blockedBy: ['card-99'] }));
+  it('classifies blocked-status card as blocked (overrides in-progress)', () => {
+    const card = classifyCard(makeCard({ status: 'Blocked' }));
     expect(card?.group).toBe('blocked');
+  });
+
+  it('leaves an in-progress card in-progress and reports its edges as a count (#61)', () => {
+    const card = classifyCard(makeCard({ status: 'In Progress', blockedBy: ['card-99'] }));
+    expect(card?.group).toBe('in-progress');
+    expect(card?.dependencies).toBe(1);
   });
 
   it('classifies due-soon card as due-soon', () => {
@@ -222,7 +230,8 @@ const SAMPLE_SNAPSHOT = {
   cards: [
     { id: 'c1', title: 'Completed Task', status: 'Done', assignees: [], tags: [], blockedBy: [], blocking: [] },
     { id: 'c2', title: 'In Progress Task', status: 'In Progress', assignees: ['alice'], tags: [], blockedBy: [], blocking: [] },
-    { id: 'c3', title: 'Blocked Task', status: 'In Progress', assignees: [], tags: [], blockedBy: ['c99'], blocking: [] },
+    // Blocked by STATUS — an unjudged `blockedBy` edge no longer implies the state (#61).
+    { id: 'c3', title: 'Blocked Task', status: 'Blocked', assignees: [], tags: [], blockedBy: ['c99'], blocking: [] },
     { id: 'c4', title: 'Backlog Task', status: 'Backlog', assignees: [], tags: [], blockedBy: [], blocking: [] },
   ],
   stats: { total: 4, by_status: {}, by_owner: {} },
@@ -261,6 +270,15 @@ describe('StandupAPI', () => {
 
     expect(result.blocked).toHaveLength(1);
     expect(result.blocked[0].id).toBe('c3');
+  });
+
+  it('reports c3\'s dependency edge as a count, not as the reason it is blocked', async () => {
+    const client = new FavroHttpClient({} as any);
+    const api = new StandupAPI(client);
+    const result = await api.getStandup('Sprint 42');
+
+    expect(result.blocked[0].dependencies).toBe(1);
+    expect(result.completed[0].dependencies).toBe(0);
   });
 
   it('excludes backlog cards from standup groups', async () => {

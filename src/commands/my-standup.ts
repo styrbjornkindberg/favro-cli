@@ -8,10 +8,10 @@ import { resolveUserId, readConfig } from '../lib/config';
 import AggregateAPI, { AggregateCard } from '../api/aggregate';
 import { outputResult, resolveFormat } from '../lib/output';
 import { logError } from '../lib/error-handler';
+import { isBlocked } from '../api/standup';
 
 const COMPLETED_STAGES = ['done', 'approved', 'archived'];
 const IN_PROGRESS_STAGES = ['active', 'review', 'testing'];
-const BLOCKED_STAGES = ['blocked'];
 
 interface StandupCard {
   id: string;
@@ -36,8 +36,19 @@ interface MyStandupResult {
 
 function classifyCard(card: AggregateCard, dueSoonDays: number): StandupCard['group'] {
   // Priority: blocked > completed > due-soon > in-progress
-  if (card.blockedBy && card.blockedBy.length > 0) return 'blocked';
-  if (BLOCKED_STAGES.includes(card.stage ?? '')) return 'blocked';
+  //
+  // A `blockedBy` edge is NOT consulted here (#61). Nothing clears a Favro
+  // `isBefore` edge when the blocker finishes, so length-of-edges is a
+  // permanent over-count — and sitting above the `completed` check it hid the
+  // real stage of finished work. Judging doneness costs a per-blocker sweep
+  // (`judgeBlockers`); `unblocked` and `next` pay it, a standup summary should
+  // not.
+  //
+  // The blocked *state* comes from the same column-name predicate `favro
+  // standup` uses, so the two commands cannot disagree about one card. The
+  // stage cannot carry it: `WorkflowStage` has no 'blocked' member, and
+  // `detectStage('Blocked')` falls through to 'queued'.
+  if (isBlocked(card)) return 'blocked';
   if (COMPLETED_STAGES.includes(card.stage ?? '')) return 'completed';
 
   if (card.due) {

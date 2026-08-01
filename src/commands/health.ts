@@ -5,7 +5,7 @@
  * Health score (0-100):
  *   Flow ratio: cards in active/done stages (40%)
  *   Stale ratio: % cards inactive >14 days (25%)
- *   Blocked ratio: % cards with blockers (20%)
+ *   Dependency ratio: % cards carrying a dependency edge, judged or not (20%)
  *   Overdue ratio: % cards past due date (15%)
  */
 import { Command } from 'commander';
@@ -26,7 +26,12 @@ interface BoardHealth {
   breakdown: {
     flow: number;
     stale: number;
-    blocked: number;
+    /**
+     * % of non-done cards carrying NO dependency edge. An edge count, not a
+     * blocked state — nothing clears a Favro edge when the blocker finishes,
+     * and this path does not pay for `judgeBlockers` (#61).
+     */
+    dependencies: number;
     overdue: number;
   };
 }
@@ -47,7 +52,7 @@ function daysSince(dateStr?: string): number {
 }
 
 function scoreBoard(cards: AggregateCard[]): BoardHealth['breakdown'] {
-  if (cards.length === 0) return { flow: 100, stale: 100, blocked: 100, overdue: 100 };
+  if (cards.length === 0) return { flow: 100, stale: 100, dependencies: 100, overdue: 100 };
 
   // Flow ratio: % of non-done cards in flowing stages
   const nonDone = cards.filter(c => !DONE_STAGES.includes(c.stage ?? ''));
@@ -66,12 +71,12 @@ function scoreBoard(cards: AggregateCard[]): BoardHealth['breakdown'] {
     ? Math.round(((nonDone.length - staleCount) / nonDone.length) * 100)
     : 100;
 
-  // Blocked ratio: % of non-done cards NOT blocked
-  const blockedCount = nonDone.filter(c =>
+  // Dependency ratio: % of non-done cards carrying no dependency edge (#61)
+  const withDependencies = nonDone.filter(c =>
     (c.blockedBy && c.blockedBy.length > 0),
   ).length;
-  const blockedScore = nonDone.length > 0
-    ? Math.round(((nonDone.length - blockedCount) / nonDone.length) * 100)
+  const dependencyScore = nonDone.length > 0
+    ? Math.round(((nonDone.length - withDependencies) / nonDone.length) * 100)
     : 100;
 
   // Overdue ratio: % of cards with due dates that are NOT overdue
@@ -81,7 +86,7 @@ function scoreBoard(cards: AggregateCard[]): BoardHealth['breakdown'] {
     ? Math.round(((withDue.length - overdueCount) / withDue.length) * 100)
     : 100;
 
-  return { flow: flowScore, stale: staleScore, blocked: blockedScore, overdue: overdueScore };
+  return { flow: flowScore, stale: staleScore, dependencies: dependencyScore, overdue: overdueScore };
 }
 
 function computeHealth(name: string, cards: AggregateCard[]): BoardHealth {
@@ -89,7 +94,7 @@ function computeHealth(name: string, cards: AggregateCard[]): BoardHealth {
   const score = Math.round(
     breakdown.flow * 0.40 +
     breakdown.stale * 0.25 +
-    breakdown.blocked * 0.20 +
+    breakdown.dependencies * 0.20 +
     breakdown.overdue * 0.15,
   );
   const signal: BoardHealth['signal'] = score > 75 ? 'green' : score >= 50 ? 'yellow' : 'red';
@@ -104,7 +109,7 @@ function formatHuman(data: HealthResult): string {
   for (const b of data.boards) {
     const sig = b.signal === 'green' ? '●' : b.signal === 'yellow' ? '●' : '●';
     lines.push(`  ${sig} ${b.name}: ${b.score}/100 (${b.totalCards} cards)`);
-    lines.push(`     Flow: ${b.breakdown.flow}  Stale: ${b.breakdown.stale}  Blocked: ${b.breakdown.blocked}  Overdue: ${b.breakdown.overdue}`);
+    lines.push(`     Flow: ${b.breakdown.flow}  Stale: ${b.breakdown.stale}  Deps: ${b.breakdown.dependencies}  Overdue: ${b.breakdown.overdue}`);
   }
 
   return lines.join('\n');

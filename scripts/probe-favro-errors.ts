@@ -8,7 +8,14 @@
  * Favro documents neither the statuses nor the body format — so when a case
  * below starts printing UNRECOGNISED, that is the signal to widen the set.
  *
- * Every case is a READ with a bogus id. Nothing here writes.
+ * Every case is a READ with a bogus id, with ONE exception: the dependency
+ * case is a DELETE, because `404 "Dependency not found"` only exists on that
+ * verb. It is still inert — deleting an edge between two ids that do not exist
+ * removes nothing. To reproduce the RECORDED message rather than whatever
+ * Favro answers for an absent card, point it at a real card:
+ *
+ *   FAVRO_PROBE_CARD_ID=<a real cardId with no such edge> \
+ *     npx ts-node scripts/probe-favro-errors.ts
  *
  * Run:  npx ts-node scripts/probe-favro-errors.ts
  */
@@ -17,10 +24,15 @@ import { classifyFavroError, classifyThrownError } from '../src/lib/favro-error'
 
 const BOGUS = '000000000000000000000000';
 
+/** A real card with no edge to BOGUS, if you have one. See the header. */
+const PROBE_CARD_ID = process.env.FAVRO_PROBE_CARD_ID?.trim() || BOGUS;
+
 interface ProbeCase {
   name: string;
   path: string;
   params?: Record<string, string>;
+  /** Defaults to GET. Only the dependency case departs from that. */
+  method?: 'get' | 'delete';
 }
 
 const CASES: ProbeCase[] = [
@@ -34,12 +46,33 @@ const CASES: ProbeCase[] = [
   { name: 'custom field by id', path: `/customfields/${BOGUS}` },
   { name: 'tag by id', path: `/tags/${BOGUS}` },
   { name: 'user by id', path: `/users/${BOGUS}` },
+  // #58 — the by-id forms behind "Task/TaskList/Comment does not exist". The
+  // collection forms above answer differently and do not cover these.
+  { name: 'task by id', path: `/tasks/${BOGUS}` },
+  { name: 'tasklist by id', path: `/tasklists/${BOGUS}` },
+  { name: 'comment by id', path: `/comments/${BOGUS}` },
+  // #58 via #68 — "Dependency not found". DELETE, and inert: see the header.
+  {
+    name: 'dependency edge (DELETE)',
+    path: `/cards/${PROBE_CARD_ID}/dependencies/${BOGUS}`,
+    method: 'delete',
+  },
+  // #58 — the READ half of the same endpoint family. `getCardLinks`
+  // (`cards-api.ts:705`) routes this through the generic `escalateOnNotFound`,
+  // so if the GET can also answer "Dependency not found" the classification
+  // change turns a throw into an escalating retry inside `TxCards.liveEdge` —
+  // the pre-read for `removeBlockingEdge`. Probe it, do not assume.
+  { name: 'card dependencies (GET)', path: `/cards/${PROBE_CARD_ID}/dependencies` },
 ];
 
 async function probe(client: Awaited<ReturnType<typeof createFavroClient>>, probeCase: ProbeCase) {
   const axiosClient = client.getClient();
   try {
-    const response = await axiosClient.get(probeCase.path, { params: probeCase.params });
+    const response = await axiosClient.request({
+      method: probeCase.method ?? 'get',
+      url: probeCase.path,
+      params: probeCase.params,
+    });
     // A 2xx can still carry a denial message — classify it anyway.
     return {
       status: response.status,

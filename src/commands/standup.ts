@@ -8,7 +8,10 @@
  * Lists cards from the specified board grouped by status:
  *   ✅ Completed    — cards with done/closed/released status
  *   🚧 In Progress  — cards with in-progress/review status
- *   🚫 Blocked      — cards with blockers or blocked status
+ *   🚫 Blocked      — cards in a blocked/on-hold column
+ *
+ * Dependency edges are shown as a `deps:` count on the card line, never as a
+ * blocked state (#61) — nothing clears a Favro edge when the blocker finishes.
  *   ⏰ Due Soon     — cards due within 3 days
  */
 
@@ -25,7 +28,9 @@ function formatCardLine(card: StandupCard): string {
   const assignees = (card.assignees ?? []).length > 0
     ? ` — ${card.assignees!.join(', ')}`
     : '';
-  return `  ${id}  ${title}${assignees}`;
+  // An edge count, not a blocked state (#61).
+  const deps = card.dependencies > 0 ? `  [deps: ${card.dependencies}]` : '';
+  return `  ${id}  ${title}${assignees}${deps}`;
 }
 
 function printGroup(label: string, emoji: string, cards: StandupCard[]): void {
@@ -47,8 +52,11 @@ export function registerStandupCommand(program: Command): void {
       'Groups:\n' +
       '  ✅ Completed   — done, closed, released\n' +
       '  🚧 In Progress — in progress, in review\n' +
-      '  🚫 Blocked     — cards with blockers\n' +
+      '  🚫 Blocked     — blocked, on hold\n' +
       '  ⏰ Due Soon    — due within 3 days\n\n' +
+      'Cards carrying dependency edges show a `deps:` count. That is an edge\n' +
+      'count, not a blocked state — a Favro edge is never cleared when the\n' +
+      'blocker finishes. Use `favro unblocked` to see which edges are live.\n\n' +
       'Examples:\n' +
       '  favro standup\n' +
       '  favro standup --board "Sprint 42"\n' +

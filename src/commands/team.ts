@@ -19,7 +19,12 @@ interface TeamMember {
   totalCards: number;
   wipCount: number;
   doneCount: number;
-  blockedCount: number;
+  /**
+   * Cards carrying at least one dependency edge. An edge count, not a blocked
+   * count — nothing clears a Favro edge when the blocker finishes, and this
+   * path does not pay for `judgeBlockers` (#61).
+   */
+  dependencyCount: number;
   completionRate: number;
   effortSum: number;
 }
@@ -28,7 +33,8 @@ interface TeamResult {
   scope: string;
   members: TeamMember[];
   avgWip: number;
-  bottleneck?: { name: string; blockedCount: number };
+  /** The member carrying the most dependency edges — see `TeamMember.dependencyCount`. */
+  bottleneck?: { name: string; dependencyCount: number };
   totalMembers: number;
   generatedAt: string;
 }
@@ -51,12 +57,12 @@ function formatHuman(data: TeamResult): string {
   for (const m of data.members) {
     const rate = `${Math.round(m.completionRate * 100)}%`;
     lines.push(`  ${m.name} (${m.email})`);
-    lines.push(`    WIP: ${m.wipCount}  Done: ${m.doneCount}  Blocked: ${m.blockedCount}  Rate: ${rate}  Effort: ${m.effortSum}`);
+    lines.push(`    WIP: ${m.wipCount}  Done: ${m.doneCount}  Deps: ${m.dependencyCount}  Rate: ${rate}  Effort: ${m.effortSum}`);
     lines.push(`    Boards: ${m.activeBoards.join(', ')}`);
   }
 
   if (data.bottleneck) {
-    lines.push(`\n  Bottleneck: ${data.bottleneck.name} (${data.bottleneck.blockedCount} blocked cards)`);
+    lines.push(`\n  Bottleneck: ${data.bottleneck.name} (${data.bottleneck.dependencyCount} cards with dependencies)`);
   }
 
   return lines.join('\n');
@@ -106,7 +112,7 @@ export function registerTeamCommand(program: Command): void {
                 totalCards: 0,
                 wipCount: 0,
                 doneCount: 0,
-                blockedCount: 0,
+                dependencyCount: 0,
                 completionRate: 0,
                 effortSum: 0,
               });
@@ -120,7 +126,7 @@ export function registerTeamCommand(program: Command): void {
 
             if (ACTIVE_STAGES.includes(card.stage ?? '')) tm.wipCount++;
             if (DONE_STAGES.includes(card.stage ?? '')) tm.doneCount++;
-            if ((card.blockedBy && card.blockedBy.length > 0)) tm.blockedCount++;
+            if ((card.blockedBy && card.blockedBy.length > 0)) tm.dependencyCount++;
           }
         }
 
@@ -138,8 +144,8 @@ export function registerTeamCommand(program: Command): void {
           : 0;
 
         const bottleneck = members.reduce<TeamResult['bottleneck']>((worst, m) => {
-          if (!worst || m.blockedCount > worst.blockedCount) {
-            return { name: m.name, blockedCount: m.blockedCount };
+          if (!worst || m.dependencyCount > worst.dependencyCount) {
+            return { name: m.name, dependencyCount: m.dependencyCount };
           }
           return worst;
         }, undefined);
@@ -148,7 +154,7 @@ export function registerTeamCommand(program: Command): void {
           scope,
           members,
           avgWip,
-          bottleneck: bottleneck && bottleneck.blockedCount > 0 ? bottleneck : undefined,
+          bottleneck: bottleneck && bottleneck.dependencyCount > 0 ? bottleneck : undefined,
           totalMembers: members.length,
           generatedAt: new Date().toISOString(),
         };

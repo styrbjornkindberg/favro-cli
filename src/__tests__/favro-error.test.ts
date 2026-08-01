@@ -1,9 +1,19 @@
 /**
  * Tests for favro-error.ts — classification is on message, never on status.
  */
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { classifyFavroError, classifyThrownError, MISSING_WORDING } from '../lib/favro-error';
 import { logError } from '../lib/error-handler';
 import { stripAnsi } from '../lib/theme';
+
+// Never let a require below reach the real ~/.favro/config.json.
+process.env.FAVRO_CONFIG_DIR = mkdtempSync(join(tmpdir(), 'favro-error-test-'));
+
+// Required after the env is set, so dispatch's module graph cannot see a real config.
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { isRetryable } = require('../lib/dispatch') as typeof import('../lib/dispatch');
 
 describe('classifyFavroError — closed not-found set', () => {
   const notFound = [
@@ -13,6 +23,13 @@ describe('classifyFavroError — closed not-found set', () => {
     'Custom field does not exist',
     'Tag does not exist',
     'User does not exist',
+    // Probe-verified additions — #58. Same wire, same grammar, three by-id GETs.
+    'Task does not exist',
+    'TaskList does not exist',
+    'Comment does not exist',
+    // #58/#68 — measured on DELETE /cards/{id}/dependencies/{far}. Note the
+    // DIFFERENT grammatical form: "not found", not "does not exist".
+    'Dependency not found',
   ];
 
   test.each(notFound)('%s is a not-found on 403', (message) => {
@@ -38,6 +55,20 @@ describe('classifyFavroError — closed not-found set', () => {
 
   test('a classified not-found is escalatable for a read caller', () => {
     expect(classifyFavroError(403, 'Access Denied').escalatableOnRead).toBe(true);
+  });
+
+  // `isRetryable` is the single source of truth. A named not-found is a
+  // deterministic refusal: retrying the same request answers the same way.
+  test.each(notFound)('%s is never advertised as retryable', (message) => {
+    const error: any = new Error('Request failed with status code 404');
+    error.response = { status: 404, data: { message } };
+    expect(isRetryable('rolled-back', error)).toBe(false);
+  });
+
+  test('an unrecognised message on the same status is still retryable', () => {
+    const error: any = new Error('Request failed with status code 404');
+    error.response = { status: 404, data: { message: 'Some brand new 404' } };
+    expect(isRetryable('rolled-back', error)).toBe(true);
   });
 });
 

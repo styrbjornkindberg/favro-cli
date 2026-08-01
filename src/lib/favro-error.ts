@@ -58,6 +58,16 @@ const NOT_FOUND_MESSAGES = new Set([
   'custom field does not exist',
   'tag does not exist',
   'user does not exist',
+  // #58 — by-id GETs on /tasks, /tasklists, /comments. Identical grammar to the
+  // three above, from the same wire.
+  'task does not exist',
+  'tasklist does not exist',
+  'comment does not exist',
+  // #58 via #68 — DELETE /cards/{id}/dependencies/{far} once the edge is gone
+  // (measured; recorded at CardsAPI.unlinkCard). Different grammatical form
+  // from its neighbours on purpose: Favro says "not found" here, not "does not
+  // exist". Do not "tidy" it.
+  'dependency not found',
 ]);
 
 const CONFLICT_MESSAGES = new Set(['dependency already exists']);

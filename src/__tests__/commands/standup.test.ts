@@ -16,13 +16,13 @@ const MockStandupAPI = standupApi.StandupAPI as jest.MockedClass<typeof standupA
 const SAMPLE_RESULT: standupApi.StandupResult = {
   board: { id: 'boards-1234', name: 'Sprint 42' },
   completed: [
-    { id: 'c1', title: 'Fix login bug', status: 'Done', assignees: ['alice'], group: 'completed' },
+    { id: 'c1', title: 'Fix login bug', status: 'Done', assignees: ['alice'], dependencies: 0, group: 'completed' },
   ],
   inProgress: [
-    { id: 'c2', title: 'Add dashboard', status: 'In Progress', assignees: [], group: 'in-progress' },
+    { id: 'c2', title: 'Add dashboard', status: 'In Progress', assignees: [], dependencies: 0, group: 'in-progress' },
   ],
   blocked: [
-    { id: 'c3', title: 'API integration', status: 'Blocked', assignees: ['bob'], group: 'blocked' },
+    { id: 'c3', title: 'API integration', status: 'Blocked', assignees: ['bob'], dependencies: 1, group: 'blocked' },
   ],
   dueSoon: [],
   total: 10,
@@ -86,6 +86,15 @@ describe('favro standup', () => {
     expect(allCalls).toContain('Completed');
     expect(allCalls).toContain('In Progress');
     expect(allCalls).toContain('Blocked');
+  });
+
+  it('shows the dependency edge count on cards that carry one', async () => {
+    await runCli(['standup', '--board', 'Sprint 42']);
+
+    const lines = consoleSpy.mock.calls.map(c => c[0] as string);
+    // c3 carries one edge; c2 carries none and must stay clean.
+    expect(lines.find(l => l?.includes?.('API integration'))).toContain('[deps: 1]');
+    expect(lines.find(l => l?.includes?.('Add dashboard'))).not.toContain('deps');
   });
 
   it('exits with error when --board is missing', async () => {

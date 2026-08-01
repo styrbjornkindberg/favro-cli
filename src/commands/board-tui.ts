@@ -58,6 +58,15 @@ function snapshotToColumns(snapshot: BoardContextSnapshot): RenderColumn[] {
   return Array.from(columnMap.entries()).map(([name, cards]) => ({ name, cards }));
 }
 
+/**
+ * `blocked` is deliberately not set from `blockedBy` (#61). Nothing clears a
+ * Favro `isBefore` edge when the blocker finishes, so an edge count asserts
+ * "blocked" forever — and the badge sits ahead of the done marker, so a
+ * finished card carrying a stale edge rendered as blocked. Judging doneness
+ * costs a per-blocker sweep (`judgeBlockers`) that a board render does not pay
+ * for. The renderer still flags a genuinely blocked card off its column name
+ * (`board-renderer.ts:48`), the same evidence `favro standup` uses.
+ */
 function toRenderCard(card: ContextCard): RenderCard {
   return {
     id: card.id,
@@ -66,7 +75,6 @@ function toRenderCard(card: ContextCard): RenderCard {
     tags: card.tags,
     status: card.status,
     due: card.due,
-    blocked: (card.blockedBy?.length ?? 0) > 0,
   };
 }
 

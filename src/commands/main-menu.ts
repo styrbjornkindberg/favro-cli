@@ -96,7 +96,10 @@ function snapshotToColumns(snapshot: { columns: Array<{ id: string; name: string
 
   const allCards: ContextCard[] = [];
   for (const card of snapshot.cards) {
-    const rc: RenderCard = { id: card.id, title: card.title, assignee: card.owner, tags: card.tags, status: card.status, due: card.due, blocked: (card.blockedBy?.length ?? 0) > 0 };
+    // `blocked` is deliberately unset (#61) — see `board-tui.ts:toRenderCard`.
+    // An unjudged `blockedBy` edge never clears, so it cannot assert a state;
+    // the renderer flags a real blocked column off `status` instead.
+    const rc: RenderCard = { id: card.id, title: card.title, assignee: card.owner, tags: card.tags, status: card.status, due: card.due };
     let placed = false;
     if (card.columnId) {
       const col = snapshot.columns.find(co => co.id === card.columnId);
@@ -335,21 +338,26 @@ async function showMyWork(): Promise<void> {
     if (myCards.length === 0) {
       console.log(`  ${c.muted('No cards assigned to you.')}`);
     } else {
+      // A `blockedBy` edge is a dependency count, not a blocked state (#61).
+      // Nothing clears a Favro `isBefore` edge when the blocker finishes, and
+      // this path does not pay for `judgeBlockers`, so the edges are reported
+      // under an honest name and no longer partition the card list: `queued`
+      // keeps every card that is neither active nor done, edges or not.
       const active = myCards.filter((ca: any) => ['active', 'review', 'testing'].includes(ca.stage ?? ''));
-      const blocked = myCards.filter((ca: any) => ca.blockedBy?.length > 0);
-      const other = myCards.filter((ca: any) => !['active', 'review', 'testing', 'done', 'approved', 'archived'].includes(ca.stage ?? '') && !(ca.blockedBy?.length > 0));
+      const withDeps = myCards.filter((ca: any) => ca.blockedBy?.length > 0);
+      const other = myCards.filter((ca: any) => !['active', 'review', 'testing', 'done', 'approved', 'archived'].includes(ca.stage ?? ''));
 
-      console.log(`  ${c.success(`${myCards.length} cards`)}  ${c.info(`${active.length} active`)}  ${blocked.length > 0 ? c.error(`${blocked.length} blocked`) : ''}  ${c.muted(`${other.length} queued`)}`);
+      console.log(`  ${c.success(`${myCards.length} cards`)}  ${c.info(`${active.length} active`)}  ${withDeps.length > 0 ? c.muted(`${withDeps.length} with dependencies`) : ''}  ${c.muted(`${other.length} queued`)}`);
       console.log('');
       for (const card of active.slice(0, 10)) {
         const board = (card as any).boardName ? c.muted(` [${(card as any).boardName}]`) : '';
         console.log(`  ${c.brand('▸')} ${c.info(card.title)}${board}`);
       }
       if (active.length > 10) console.log(`  ${c.muted(`  … +${active.length - 10} more active cards`)}`);
-      if (blocked.length > 0) {
-        console.log(`\n  ${c.error('Blocked:')}`);
-        for (const card of blocked.slice(0, 5)) {
-          console.log(`  ${c.error('✗')} ${card.title}`);
+      if (withDeps.length > 0) {
+        console.log(`\n  ${c.muted('With dependencies:')}`);
+        for (const card of withDeps.slice(0, 5)) {
+          console.log(`  ${c.muted('↳')} ${card.title}`);
         }
       }
     }
@@ -379,17 +387,20 @@ async function showTeamDashboard(): Promise<void> {
     }
 
     // Per-member card counts
-    const memberCounts = new Map<string, { name: string; active: number; total: number; blocked: number }>();
+    // `dependencies` counts cards carrying at least one edge — an edge count,
+    // not a blocked count (#61). Same treatment as `favro team`'s
+    // `dependencyCount`; this path does not pay for `judgeBlockers` either.
+    const memberCounts = new Map<string, { name: string; active: number; total: number; dependencies: number }>();
     for (const card of snapshot.allCards) {
       for (const uid of (card.assignees ?? [])) {
         if (!memberCounts.has(uid)) {
           const m = snapshot.members.find((mem: any) => mem.id === uid);
-          memberCounts.set(uid, { name: m?.name ?? uid, active: 0, total: 0, blocked: 0 });
+          memberCounts.set(uid, { name: m?.name ?? uid, active: 0, total: 0, dependencies: 0 });
         }
         const mc = memberCounts.get(uid)!;
         mc.total++;
         if (['active', 'review', 'testing'].includes(card.stage ?? '')) mc.active++;
-        if (card.blockedBy?.length) mc.blocked++;
+        if (card.blockedBy?.length) mc.dependencies++;
       }
     }
 
@@ -398,8 +409,8 @@ async function showTeamDashboard(): Promise<void> {
     const sorted = Array.from(memberCounts.values()).sort((a, b) => b.active - a.active);
     for (const m of sorted.slice(0, 15)) {
       const overload = m.active > 8 ? c.error(' ⚠ overload') : '';
-      const blocked = m.blocked > 0 ? c.error(` ${m.blocked} blocked`) : '';
-      console.log(`  ${c.info(m.name.padEnd(20))} ${c.value(String(m.active).padStart(2))} active / ${c.muted(String(m.total))} total${blocked}${overload}`);
+      const deps = m.dependencies > 0 ? c.muted(` ${m.dependencies} with deps`) : '';
+      console.log(`  ${c.info(m.name.padEnd(20))} ${c.value(String(m.active).padStart(2))} active / ${c.muted(String(m.total))} total${deps}${overload}`);
     }
     if (sorted.length > 15) console.log(`  ${c.muted(`  … +${sorted.length - 15} more members`)}`);
   } catch (err: any) {

@@ -5,7 +5,8 @@
  * Groups board cards by status categories for daily standup overview:
  *   - completed: cards with status matching "done", "completed", "closed", "released"
  *   - in-progress: cards with status matching "in progress", "in-review", "review"
- *   - blocked: cards that have blockedBy links
+ *   - blocked: cards whose status says so (dependency edges are reported as a
+ *     count, not as a blocked state — #61)
  *   - due-soon: cards with dueDate within the next 3 days
  *
  * Uses ContextAPI for a single parallel fetch of all board data.
@@ -21,6 +22,11 @@ export interface StandupCard {
   title: string;
   status?: string;
   assignees?: string[];
+  /**
+   * How many unresolved-looking dependency edges the card carries. An edge
+   * count, NOT a blocked state — see `isBlocked` (#61).
+   */
+  dependencies: number;
   group: 'completed' | 'in-progress' | 'blocked' | 'due-soon';
 }
 
@@ -60,13 +66,20 @@ export function isInProgress(card: ContextCard): boolean {
 }
 
 /**
- * Returns true if the card is blocked (has blockedBy links OR blocked status).
+ * Returns true if the card is blocked, on the only evidence this snapshot has:
+ * its column. `status` IS the column name once `hydrateNames` has run; `column`
+ * is the same name resolved off the workflow, and is the fallback for a snapshot
+ * where the column-name cache came back empty.
+ *
+ * A `blockedBy` edge is deliberately NOT consulted (#61). Nothing clears a
+ * Favro `isBefore` edge when the blocker finishes, so counting edges reports a
+ * card as blocked forever. Proving a blocker done needs the per-blocker sweep in
+ * `judgeBlockers`, which this path does not pay for — so the edges are reported
+ * as a count (`StandupCard.dependencies`) rather than asserted as a state.
  */
 export function isBlocked(card: ContextCard): boolean {
-  const hasBlockedByLinks = (card.blockedBy ?? []).length > 0;
-  const status = (card.status ?? '').toLowerCase().trim();
-  const hasBlockedStatus = BLOCKED_STATUSES.some(s => status === s || status.includes(s));
-  return hasBlockedByLinks || hasBlockedStatus;
+  const status = (card.status ?? card.column ?? '').toLowerCase().trim();
+  return BLOCKED_STATUSES.some(s => status === s || status.includes(s));
 }
 
 /**
@@ -94,6 +107,7 @@ export function classifyCard(card: ContextCard, withinDays: number = 3): Standup
     title: card.title,
     status: card.status,
     assignees: card.assignees ?? [],
+    dependencies: (card.blockedBy ?? []).length,
   };
 
   if (isBlocked(card)) {

@@ -18,7 +18,12 @@ interface MemberWorkload {
   activeCards: number;
   totalCards: number;
   totalEffort: number;
-  blockedCards: number;
+  /**
+   * Cards carrying at least one dependency edge. An edge count, not a blocked
+   * count — nothing clears a Favro edge when the blocker finishes, and this
+   * path does not pay for `judgeBlockers` (#61).
+   */
+  dependencyCards: number;
   overloaded: boolean;
   cards: Array<{ id: string; title: string; stage?: string; board?: string }>;
 }
@@ -49,7 +54,7 @@ function formatHuman(data: WorkloadResult): string {
   for (const m of data.members) {
     const flag = m.overloaded ? ' ⚠ OVERLOADED' : '';
     lines.push(`  ${m.name} (${m.email})${flag}`);
-    lines.push(`    Active: ${m.activeCards}  Total: ${m.totalCards}  Effort: ${m.totalEffort}  Blocked: ${m.blockedCards}`);
+    lines.push(`    Active: ${m.activeCards}  Total: ${m.totalCards}  Effort: ${m.totalEffort}  Deps: ${m.dependencyCards}`);
   }
 
   if (data.alerts.length > 0) {
@@ -120,7 +125,7 @@ export function registerWorkloadCommand(program: Command): void {
                 activeCards: 0,
                 totalCards: 0,
                 totalEffort: 0,
-                blockedCards: 0,
+                dependencyCards: 0,
                 overloaded: false,
                 cards: [],
               });
@@ -129,7 +134,7 @@ export function registerWorkloadCommand(program: Command): void {
             mw.totalCards++;
             mw.totalEffort += extractEffort(card);
             if (ACTIVE_STAGES.includes(card.stage ?? '')) mw.activeCards++;
-            if ((card.blockedBy && card.blockedBy.length > 0)) mw.blockedCards++;
+            if ((card.blockedBy && card.blockedBy.length > 0)) mw.dependencyCards++;
             mw.cards.push({
               id: card.id,
               title: card.title,
