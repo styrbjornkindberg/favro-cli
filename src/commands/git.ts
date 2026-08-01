@@ -92,6 +92,7 @@ export function registerGitCommands(program: Command): void {
     .description('Create a git branch from a Favro card')
     .option('--no-move', 'Do not move the card to In Progress')
     .option('-y, --yes', 'Skip confirmation')
+    .option('--force', 'Bypass scope check')
     .action(async (cardId: string, options) => {
       try {
         if (!isGitRepo()) {
@@ -104,7 +105,27 @@ export function registerGitCommands(program: Command): void {
         const cardsApi = new CardsAPI(client);
 
         process.stderr.write('Fetching card...\n');
-        const card = await cardsApi.getCard(cardId);
+        // The card GET is here for the branch name; it also answers "which
+        // board does the move write to?", so the lock costs no extra request.
+        // Wrapped, because an unwrapped GET would skip the check entirely on a
+        // stale id rather than handing it to the shared refusal.
+        let card: Awaited<ReturnType<CardsAPI['getCard']>> | undefined;
+        let cardError: unknown;
+        try {
+          card = await cardsApi.getCard(cardId);
+        } catch (err) {
+          cardError = err;
+        }
+
+        // Only the move writes to Favro — `--no-move` creates a local branch and
+        // nothing else, so it has no board for the lock to hold. Checked before
+        // the confirm and before the branch exists: a batch of one still refuses
+        // as a whole. An unreadable card resolves to '' and refuses through the
+        // shared check, which is a no-op when no lock is configured.
+        if (options.move !== false) {
+          await checkScope(card?.boardId ?? '', client, await readConfig(), options.force);
+        }
+        if (!card) throw cardError;
 
         const branchName = generateBranchName(cardId, card.name, config?.branchPattern);
 
@@ -150,6 +171,7 @@ export function registerGitCommands(program: Command): void {
     .option('--card <card>', 'Card ID to reference (auto-detected from branch if omitted)')
     .option('--comment', 'Add a comment to the Favro card with commit details')
     .option('--no-prefix', 'Do not add card ID prefix to commit message')
+    .option('--force', 'Bypass scope check')
     .action(async (options) => {
       try {
         if (!isGitRepo()) {
@@ -192,6 +214,22 @@ export function registerGitCommands(program: Command): void {
         if (options.comment && cardId) {
           try {
             const client = await createFavroClient();
+
+            // The comment is the only Favro write on this path, and a commentId
+            // carries no board — so the board has to be resolved from the card,
+            // one extra GET on the --comment path only. Wrapped: a stale card
+            // reference must reach the shared refusal as '', not kill the
+            // command. `checkScope` exits the process on a violation rather than
+            // returning, so the surrounding catch never dresses a refusal up as
+            // "could not add comment".
+            let boardId = '';
+            try {
+              boardId = (await new CardsAPI(client).getCard(cardId))?.boardId ?? '';
+            } catch {
+              boardId = '';
+            }
+            await checkScope(boardId, client, await readConfig(), options.force);
+
             const commentsApi = new CommentsApiClient(client);
             await commentsApi.addComment(cardId, `Commit \`${hash}\`: ${options.message}`);
             console.log('✓ Comment added to card');
