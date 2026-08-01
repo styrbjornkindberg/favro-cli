@@ -9,6 +9,7 @@ import { registerAttachmentsCommands } from '../../commands/attachments';
 import * as config from '../../lib/config';
 import * as safety from '../../lib/safety';
 import CardsAPI from '../../lib/cards-api';
+import { passThroughScopeResolution } from '../../test-support/scope-passthrough';
 import AttachmentsAPI from '../../lib/attachments-api';
 import { CommentsApiClient } from '../../api/comments';
 
@@ -40,6 +41,7 @@ beforeEach(() => {
 
   (config.resolveApiKey as jest.Mock).mockResolvedValue('test-token');
   (config.readConfig as jest.Mock).mockResolvedValue({ scopeCollectionId: 'coll-a' });
+  passThroughScopeResolution(safety, config, MockCardsAPI, MockComments);
   (safety.checkScope as jest.Mock).mockResolvedValue(undefined);
   (safety.confirmAction as jest.Mock).mockResolvedValue(true);
 

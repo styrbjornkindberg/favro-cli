@@ -10,7 +10,7 @@ import CardsAPI from '../lib/cards-api';
 import { CommentsApiClient } from '../api/comments';
 import { createFavroClient } from '../lib/client-factory';
 import { logError } from '../lib/error-handler';
-import { checkScope, confirmAction, dryRunLog } from '../lib/safety';
+import { boardOfCard, boardOfComment, checkResolvedScope, confirmAction, dryRunLog } from '../lib/safety';
 import { readConfig } from '../lib/config';
 
 export function registerAttachmentsCommands(program: Command): void {
@@ -27,13 +27,10 @@ export function registerAttachmentsCommands(program: Command): void {
     .action(async (cardCommonId: string, options) => {
       const verbose = attachmentsCmd.opts()?.verbose ?? false;
       try {
-        const config = await readConfig();
         const client = await createFavroClient();
-        
-        // Safety bound: check scope for target card
-        const api = new CardsAPI(client);
-        const card = await api.getCard(cardCommonId);
-        await checkScope(card?.boardId ?? '', client, config, options.force);
+
+        // Safety bound: check scope for target card. Lazy, so no lock means no GET.
+        await checkResolvedScope(client, () => boardOfCard(client, cardCommonId), options.force);
 
         if (options.dryRun) {
           dryRunLog('uploading', 'attachment', `${options.file} to card ${cardCommonId}`);
@@ -69,21 +66,13 @@ export function registerAttachmentsCommands(program: Command): void {
     .action(async (commentId: string, options) => {
       const verbose = attachmentsCmd.opts()?.verbose ?? false;
       try {
-        const config = await readConfig();
         const client = await createFavroClient();
 
         // Safety bound: a commentId carries no board, so resolve it through the
         // comment's card. A stale/deleted comment resolves to '' — UNCHECKABLE,
-        // not exempt — and checkScope refuses it under a lock (#102).
-        let boardId = '';
-        try {
-          const comment = await new CommentsApiClient(client).getComment(commentId);
-          const card = await new CardsAPI(client).getCard(comment.cardId);
-          boardId = card?.boardId ?? '';
-        } catch {
-          boardId = '';
-        }
-        await checkScope(boardId, client, config, options.force);
+        // not exempt — and the shared check refuses it under a lock (#102).
+        // Resolved lazily, so an unlocked user pays neither GET.
+        await checkResolvedScope(client, () => boardOfComment(client, commentId), options.force);
 
         if (options.dryRun) {
           dryRunLog('uploading', 'attachment', `${options.file} to comment ${commentId}`);

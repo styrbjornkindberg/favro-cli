@@ -66,6 +66,9 @@ export function buildFilterFn(filters: string[]): (card: Card) => boolean {
 // verbatim, so the dedupe below compared a display name against `userId`s and
 // never matched, and composed that name into the id array the write sends.
 
+/** Sentinel: this row's card was deliberately not fetched, not failed to fetch. */
+class SkipFetch extends Error {}
+
 // ---------------------------------------------------------------------------
 // Command Registration
 // ---------------------------------------------------------------------------
@@ -161,6 +164,16 @@ export function registerBatchUpdateCommand(batch: Command): void {
         const client = await createFavroClient();
         const api = new CardsAPI(client);
 
+        // The write path fetches each card anyway, for the rollback snapshot. The
+        // PREVIEW path fetches only to learn the board — so when nothing is
+        // locked there is no board to check and no reason to ask (#102/#104: "no
+        // extra requests on that path"). A locked preview still pays, which is
+        // the price #103 accepted for a preview that tells the truth.
+        const { readConfig } = await import('../lib/config');
+        const { checkScope } = await import('../lib/safety');
+        const scopeConfig = await readConfig();
+        const locked = !!scopeConfig?.scopeCollectionId;
+
         const ops: BulkOperation[] = [];
         // The rollback GET below also answers "which board does this row write
         // to?" — the scope lock needs that, and a second round of GETs to learn
@@ -172,6 +185,7 @@ export function registerBatchUpdateCommand(batch: Command): void {
           // write-path-only, because a preview has nothing to roll back.
           let boardId = '';
           try {
+            if (options.dryRun && !locked) throw new SkipFetch();
             const card = await api.getCard(row.card_id);
             boardId = card?.boardId ?? '';
             if (!options.dryRun) {
@@ -184,9 +198,11 @@ export function registerBatchUpdateCommand(batch: Command): void {
                 boardId: card.boardId,
               };
             }
-          } catch {
+          } catch (error) {
             // Card not found or unreachable — previousState stays empty;
-            // rollback will send a no-op, which is safe
+            // rollback will send a no-op, which is safe. A deliberately skipped
+            // fetch is not a failure and leaves no board behind to check.
+            if (error instanceof SkipFetch) { ops.push(csvRowToBulkOperation(row, previousState)); continue; }
             if (!options.dryRun) previousState = {};
           }
           // A row whose card could not be read has an UNKNOWN board, which is
@@ -208,9 +224,6 @@ export function registerBatchUpdateCommand(batch: Command): void {
         // ahead of a preview by design, so a preview is not a way around it — and
         // a dry-run that cheerfully reports "would update CLA-999" when the real
         // run will refuse is misinformation about the write it exists to describe.
-        const { readConfig } = await import('../lib/config');
-        const { checkScope } = await import('../lib/safety');
-        const scopeConfig = await readConfig();
         for (const boardId of targetBoards) {
           await checkScope(boardId, client, scopeConfig, options.force);
         }

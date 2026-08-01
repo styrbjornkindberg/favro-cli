@@ -718,11 +718,24 @@ cards
         // The same GET also answers "which board does this row write to?" — the
         // scope lock needs that, and paying for a second round of GETs to learn
         // it would double the wire cost of every batch.
+        // The write path fetches every row anyway, for the rollback snapshot. The
+        // PREVIEW fetches only to learn the board — so with nothing locked there
+        // is no board to check and no reason to ask. #102/#104 make that a
+        // criterion ("no extra requests on that path"); #103's price is paid by
+        // locked previews, which are the ones that can be wrong.
+        const { readConfig: readScopeConfig } = await import('./lib/config');
+        const scopeConfig = await readScopeConfig();
+        const scopeLocked = !!scopeConfig?.scopeCollectionId;
+
         const ops = [];
         const targetBoards = new Set<string>();
         for (const row of rows) {
           let previousState: Record<string, unknown> | undefined;
           let card: Card | undefined;
+          if (options.dryRun && !scopeLocked) {
+            ops.push(csvRowToBulkOperation(row, previousState as any));
+            continue;
+          }
           try {
             card = await api.getCard(row.card_id);
             if (!options.dryRun) {
@@ -759,9 +772,7 @@ cards
         // a whole: checking board-by-board mid-execution would leave the rows
         // before the violation already written and the compensation log doing
         // work the lock should have prevented. No-op when no lock is configured.
-        const { readConfig } = await import('./lib/config');
         const { checkScope } = await import('./lib/safety');
-        const scopeConfig = await readConfig();
         for (const boardId of targetBoards) {
           await checkScope(boardId, client, scopeConfig, options.force);
         }

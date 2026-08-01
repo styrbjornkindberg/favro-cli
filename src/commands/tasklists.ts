@@ -13,30 +13,19 @@ import CardsAPI from '../lib/cards-api';
 import { createFavroClient } from '../lib/client-factory';
 import { readConfig } from '../lib/config';
 import { logError } from '../lib/error-handler';
-import { checkScope, confirmAction, dryRunLog } from '../lib/safety';
+import { boardOfCard, checkResolvedScope, confirmAction, dryRunLog } from '../lib/safety';
 
 type Client = ConstructorParameters<typeof CardsAPI>[0];
 
 /**
- * Board for a card reference. Unreadable → `''`, which the shared check refuses
- * under a lock and ignores without one.
- */
-async function boardOfCard(cardRef: string, client: Client): Promise<string> {
-  try {
-    return (await new CardsAPI(client).getCard(cardRef))?.boardId ?? '';
-  } catch {
-    return '';
-  }
-}
-
-/**
- * Board for a task list — two hops (task list → card → board), both inside the
- * try so a stale id refuses through the check rather than killing the command.
+ * Board for a task list — two hops (task list → card → board). The card hop is
+ * the shared `boardOfCard`, which owns the wrap-report-fail-closed policy; only
+ * the extra hop lives here, wrapped for the same reason.
  */
 async function boardOfTaskList(taskListId: string, client: Client): Promise<string> {
   try {
     const list = await new TaskListsAPI(client).getTaskList(taskListId);
-    return (await new CardsAPI(client).getCard(list.cardCommonId))?.boardId ?? '';
+    return await boardOfCard(client, list.cardCommonId);
   } catch {
     return '';
   }
@@ -109,13 +98,13 @@ export function registerTaskListsCommands(program: Command): void {
     .action(async (cardCommonId: string, options) => {
       const verbose = cmd.opts()?.verbose ?? false;
       try {
+        const client = await createFavroClient();
+        await checkResolvedScope(client, () => boardOfCard(client, cardCommonId), options.force);
+
         if (options.dryRun) {
           dryRunLog('creating', 'task list', `"${options.name}" on card ${cardCommonId}`);
           return;
         }
-
-        const client = await createFavroClient();
-        await checkScope(await boardOfCard(cardCommonId, client), client, await readConfig(), options.force);
 
         if (!(await confirmAction(`Create task list "${options.name}" on card ${cardCommonId}?`, { yes: options.yes }))) {
           return;
@@ -157,13 +146,13 @@ export function registerTaskListsCommands(program: Command): void {
           process.exit(1);
         }
 
+        const client = await createFavroClient();
+        await checkResolvedScope(client, () => boardOfTaskList(taskListId, client), options.force);
+
         if (options.dryRun) {
           dryRunLog('updating', 'task list', taskListId, updateData);
           return;
         }
-
-        const client = await createFavroClient();
-        await checkScope(await boardOfTaskList(taskListId, client), client, await readConfig(), options.force);
 
         if (!(await confirmAction(`Update task list ${taskListId}?`, { yes: options.yes }))) {
           return;
@@ -192,13 +181,13 @@ export function registerTaskListsCommands(program: Command): void {
     .action(async (taskListId: string, options) => {
       const verbose = cmd.opts()?.verbose ?? false;
       try {
+        const client = await createFavroClient();
+        await checkResolvedScope(client, () => boardOfTaskList(taskListId, client), options.force);
+
         if (options.dryRun) {
           dryRunLog('deleting', 'task list', taskListId);
           return;
         }
-
-        const client = await createFavroClient();
-        await checkScope(await boardOfTaskList(taskListId, client), client, await readConfig(), options.force);
 
         if (!(await confirmAction(`Delete task list ${taskListId}? This cannot be undone.`, { yes: options.yes }))) {
           return;

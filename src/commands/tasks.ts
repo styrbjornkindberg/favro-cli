@@ -12,25 +12,7 @@ import CardsAPI from '../lib/cards-api';
 import { createFavroClient } from '../lib/client-factory';
 import { readConfig } from '../lib/config';
 import { logError } from '../lib/error-handler';
-import { checkScope, confirmAction, dryRunLog } from '../lib/safety';
-
-/**
- * Resolve a card reference to its board id for the scope check.
- * An unreadable card resolves to `''` — the shared check refuses that under a
- * lock and is a no-op without one, so a stale reference never fails OPEN and
- * never kills the command with an unwrapped GET.
- */
-async function resolveBoardId(
-  cardRef: string,
-  client: ConstructorParameters<typeof CardsAPI>[0]
-): Promise<string> {
-  if (!cardRef) return '';
-  try {
-    return (await new CardsAPI(client).getCard(cardRef))?.boardId ?? '';
-  } catch {
-    return '';
-  }
-}
+import { boardOfCard, checkResolvedScope, confirmAction, dryRunLog } from '../lib/safety';
 
 export function registerTasksCommands(program: Command): void {
   const tasksCommand = program.command('tasks').description('Manage granular checklists inside a single card');
@@ -74,13 +56,13 @@ export function registerTasksCommands(program: Command): void {
     .action(async (cardCommonId: string, name: string, options) => {
       const verbose = tasksCommand.opts()?.verbose ?? false;
       try {
+        const client = await createFavroClient();
+        await checkResolvedScope(client, () => boardOfCard(client, cardCommonId), options.force);
+
         if (options.dryRun) {
           dryRunLog('adding', 'task', `"${name}" to card ${cardCommonId}`);
           process.exit(0);
         }
-
-        const client = await createFavroClient();
-        await checkScope(await resolveBoardId(cardCommonId, client), client, await readConfig(), options.force);
 
         if (!(await confirmAction(`Add task "${name}" to card ${cardCommonId}?`, { yes: options.yes }))) {
           process.exit(0);
@@ -154,13 +136,13 @@ export function registerTasksCommands(program: Command): void {
           process.exit(1);
         }
 
+        const client = await createFavroClient();
+        await checkResolvedScope(client, () => boardOfCard(client, options.card), options.force);
+
         if (options.dryRun) {
           dryRunLog('updating', 'task', taskId, updateData);
           return;
         }
-
-        const client = await createFavroClient();
-        await checkScope(await resolveBoardId(options.card, client), client, await readConfig(), options.force);
 
         if (!(await confirmAction(`Update task ${taskId}?`, { yes: options.yes }))) {
           return;
@@ -191,13 +173,13 @@ export function registerTasksCommands(program: Command): void {
     .action(async (taskId: string, options) => {
       const verbose = tasksCommand.opts()?.verbose ?? false;
       try {
+        const client = await createFavroClient();
+        await checkResolvedScope(client, () => boardOfCard(client, options.card), options.force);
+
         if (options.dryRun) {
           dryRunLog('completing', 'task', taskId);
           process.exit(0);
         }
-
-        const client = await createFavroClient();
-        await checkScope(await resolveBoardId(options.card, client), client, await readConfig(), options.force);
 
         if (!(await confirmAction(`Complete task ${taskId}?`, { yes: options.yes }))) {
           process.exit(0);
@@ -227,13 +209,13 @@ export function registerTasksCommands(program: Command): void {
     .action(async (taskId: string, options) => {
       const verbose = tasksCommand.opts()?.verbose ?? false;
       try {
+        const client = await createFavroClient();
+        await checkResolvedScope(client, () => boardOfCard(client, options.card), options.force);
+
         if (options.dryRun) {
           dryRunLog('deleting', 'task', taskId);
           return;
         }
-
-        const client = await createFavroClient();
-        await checkScope(await resolveBoardId(options.card, client), client, await readConfig(), options.force);
 
         if (!(await confirmAction(`Delete task ${taskId}? This cannot be undone.`, { yes: options.yes }))) {
           return;

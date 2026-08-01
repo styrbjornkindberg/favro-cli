@@ -10,7 +10,7 @@
 import { Command } from 'commander';
 import { logError } from '../lib/error-handler';
 import { createFavroClient } from '../lib/client-factory';
-import { checkScope, confirmAction, dryRunLog } from '../lib/safety';
+import { boardOfCard, checkResolvedScope, checkScope, confirmAction, dryRunLog } from '../lib/safety';
 import { readConfig } from '../lib/config';
 import CardsAPI from '../lib/cards-api';
 import BoardsAPI from '../lib/boards-api';
@@ -217,18 +217,13 @@ export function registerGitCommands(program: Command): void {
 
             // The comment is the only Favro write on this path, and a commentId
             // carries no board — so the board has to be resolved from the card,
-            // one extra GET on the --comment path only. Wrapped: a stale card
+            // one extra GET on the --comment path only, and only under a lock.
+            // The shared resolver wraps it: a stale card
             // reference must reach the shared refusal as '', not kill the
             // command. `checkScope` exits the process on a violation rather than
             // returning, so the surrounding catch never dresses a refusal up as
             // "could not add comment".
-            let boardId = '';
-            try {
-              boardId = (await new CardsAPI(client).getCard(cardId))?.boardId ?? '';
-            } catch {
-              boardId = '';
-            }
-            await checkScope(boardId, client, await readConfig(), options.force);
+            await checkResolvedScope(client, () => boardOfCard(client, cardId), options.force);
 
             const commentsApi = new CommentsApiClient(client);
             await commentsApi.addComment(cardId, `Commit \`${hash}\`: ${options.message}`);

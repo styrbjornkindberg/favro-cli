@@ -19,6 +19,7 @@ import * as safety from '../../lib/safety';
 import * as gitIntegration from '../../lib/git-integration';
 import * as fsPromises from 'fs/promises';
 import CardsAPI from '../../lib/cards-api';
+import { passThroughScopeResolution } from '../../test-support/scope-passthrough';
 import { CommentsApiClient } from '../../api/comments';
 
 jest.mock('../../lib/http-client');
@@ -60,6 +61,7 @@ beforeEach(() => {
 
   (config.resolveApiKey as jest.Mock).mockResolvedValue('test-token');
   (config.readConfig as jest.Mock).mockResolvedValue({ scopeCollectionId: 'col-1' });
+  passThroughScopeResolution(safety, config, MockCardsAPI);
   (safety.checkScope as jest.Mock).mockResolvedValue(undefined);
   (safety.confirmAction as jest.Mock).mockResolvedValue(true);
 

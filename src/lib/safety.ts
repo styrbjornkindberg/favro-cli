@@ -55,6 +55,90 @@ export class ScopeError extends Error {
 }
 
 /**
+ * The board a card sits on, for the scope check — or `''` when it cannot be read.
+ *
+ * One helper rather than the six near-identical copies the #102/#103/#104 pass
+ * first grew across `src/commands/`, because all three of its properties are
+ * policy and policy repeated six times is policy that will drift on the seventh:
+ *
+ *   - It WRAPS the resolving GET. An unwrapped one turns a stale reference into
+ *     a dead command instead of a clean refusal (the #78 regression).
+ *   - It resolves to `''`, never to a skipped check. A board that cannot be read
+ *     is UNCHECKABLE, not exempt — `assertScope` refuses `''` under a lock and
+ *     ignores it without one, so `?? ''` is the fail-CLOSED answer.
+ *   - It REPORTS the cause. `assertScope`'s own refusal tells the user the
+ *     underlying error "is reported separately"; six silent `catch { return '' }`
+ *     blocks made that a promise nothing kept, leaving a typo'd id looking
+ *     identical to a card with no board.
+ *
+ * Callers needing the whole card (a rollback snapshot, say) still fetch it
+ * themselves and take `card?.boardId ?? ''` — this is for the callers that want
+ * only the board.
+ */
+export async function boardOfCard(client: FavroHttpClient, cardRef: string): Promise<string> {
+  if (!cardRef) return '';
+  const { default: CardsAPI } = await import('./cards-api');
+  try {
+    return (await new CardsAPI(client).getCard(cardRef))?.boardId ?? '';
+  } catch (error: any) {
+    console.error(`${c.fail} Could not read card ${cardRef}: ${error?.message ?? String(error)}`);
+    return '';
+  }
+}
+
+/**
+ * The board behind a write named only by a `commentId` — comment → card → board.
+ *
+ * The second hop is `boardOfCard`, which owns the wrap/report/fail-closed
+ * policy; this wraps the first for the same reason. Shared rather than copied
+ * into `comments.ts` and `attachments.ts` because an unwrapped copy is not a
+ * cosmetic difference: it rejects instead of resolving `''`, and a rejecting
+ * resolver never reaches the lock at all.
+ */
+export async function boardOfComment(client: FavroHttpClient, commentId: string): Promise<string> {
+  const { CommentsApiClient } = await import('../api/comments');
+  let cardRef = '';
+  try {
+    // The normaliser puts cardCommonId on `cardId`.
+    cardRef = (await new CommentsApiClient(client).getComment(commentId))?.cardId ?? '';
+  } catch (error: any) {
+    console.error(`${c.fail} Could not read comment ${commentId}: ${error?.message ?? String(error)}`);
+    return '';
+  }
+  return boardOfCard(client, cardRef);
+}
+
+/**
+ * Take the scope lock on a board that has to be RESOLVED first, paying for the
+ * resolution only when there is a lock to check it against.
+ *
+ * `checkScope` is already free when nothing is locked, but `checkScope(await
+ * resolve(), …)` is not: the argument evaluates first, so every guarded command
+ * billed an unlocked user a GET for an answer nobody was going to read. #102 and
+ * #104 both make that a criterion — *"no behaviour change when no lock is
+ * configured, and no extra requests on that path"* — and an eager resolve breaks
+ * it at every site at once.
+ *
+ * Taking a THUNK rather than a board id is what makes the saving possible, and
+ * it is why the two-hop resolvers (task list → card, comment → card) fit here
+ * too: the caller says how to find the board, this decides whether to ask.
+ *
+ * Callers that must fetch the card anyway — a CSV row needs it for the rollback
+ * snapshot — resolve eagerly and call `checkScope` directly; there is no second
+ * request for them to save.
+ */
+export async function checkResolvedScope(
+  client: FavroHttpClient,
+  resolve: () => Promise<string>,
+  force: boolean = false,
+): Promise<void> {
+  const { readConfig } = await import('./config');
+  const config = await readConfig();
+  if (!config?.scopeCollectionId) return;
+  await checkScope(await resolve(), client, config, force);
+}
+
+/**
  * Assert the board is inside the locked scope collection. Throws `ScopeError`
  * when it is not. A no-op when no lock is configured, and a warning-only
  * pass-through under `force`.

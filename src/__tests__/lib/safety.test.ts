@@ -78,3 +78,112 @@ describe('assertScope', () => {
     await expect(assertScope('board-1', client, LOCKED, true)).resolves.toBeUndefined();
   });
 });
+
+/**
+ * `checkResolvedScope` — the lazy check (#102/#104).
+ *
+ * `checkScope` is already free when nothing is locked, but `checkScope(await
+ * resolve(), …)` is NOT: the argument evaluates first, so every guarded command
+ * billed an unlocked user a GET for an answer nobody was going to read. Both
+ * issues make that a criterion — "no behaviour change when no lock is
+ * configured, and no extra requests on that path" — so the saving is asserted
+ * on the thing that spends the request: whether the resolver runs at all.
+ */
+describe('checkResolvedScope', () => {
+  const UNLOCKED = {} as any;
+
+  beforeEach(() => {
+    jest.resetModules();
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  const load = async (config: any) => {
+    jest.doMock('../../lib/config', () => ({ readConfig: jest.fn().mockResolvedValue(config) }));
+    return import('../../lib/safety');
+  };
+
+  it('never invokes the resolver when no lock is configured', async () => {
+    const { checkResolvedScope } = await load(UNLOCKED);
+    const resolve = jest.fn().mockResolvedValue('board-1');
+
+    await expect(checkResolvedScope(makeClient(), resolve)).resolves.toBeUndefined();
+
+    // The whole point: no lock, no resolution, no request.
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
+  it('invokes the resolver and checks the board it returns when a lock IS configured', async () => {
+    const { checkResolvedScope } = await load(LOCKED);
+    const client = makeClient(['col-1']);
+    const resolve = jest.fn().mockResolvedValue('board-1');
+
+    await expect(checkResolvedScope(client, resolve)).resolves.toBeUndefined();
+
+    expect(resolve).toHaveBeenCalledTimes(1);
+    expect(client.get).toHaveBeenCalledWith('/widgets/board-1');
+  });
+});
+
+/**
+ * `boardOfCard` — the one resolver the guarded commands share.
+ *
+ * Three properties, all policy, and the reason six copies became one: it wraps
+ * the GET, it fails CLOSED to `''`, and it REPORTS the cause. `assertScope`'s
+ * own refusal promises the underlying error "is reported separately", and six
+ * silent `catch { return '' }` blocks made that a promise nothing kept.
+ */
+describe('boardOfCard', () => {
+  beforeEach(() => {
+    jest.resetModules();
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+  });
+  afterEach(() => jest.restoreAllMocks());
+
+  const loadWith = async (getCard: jest.Mock) => {
+    jest.doMock('../../lib/cards-api', () => ({
+      __esModule: true,
+      default: class { getCard = getCard; },
+    }));
+    return import('../../lib/safety');
+  };
+
+  it('returns the board of a readable card', async () => {
+    const { boardOfCard } = await loadWith(jest.fn().mockResolvedValue({ boardId: 'board-1' }));
+
+    await expect(boardOfCard(makeClient(), 'card-1')).resolves.toBe('board-1');
+  });
+
+  it('resolves an unreadable card to the empty string rather than throwing', async () => {
+    // Fail-CLOSED, and alive: an unwrapped GET here turns a stale reference into
+    // a dead command instead of a clean refusal (#78).
+    const { boardOfCard } = await loadWith(jest.fn().mockRejectedValue(new Error('404 Not Found')));
+
+    await expect(boardOfCard(makeClient(), 'gone')).resolves.toBe('');
+  });
+
+  it('reports WHY the card could not be read', async () => {
+    const { boardOfCard } = await loadWith(jest.fn().mockRejectedValue(new Error('404 Not Found')));
+
+    await boardOfCard(makeClient(), 'gone');
+
+    // Without this the user gets "this write names no board" and no hint that
+    // the real cause was a typo'd id.
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining('404 Not Found'));
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining('gone'));
+  });
+
+  it('resolves a card with no board instance to the empty string, making no claim', async () => {
+    const { boardOfCard } = await loadWith(jest.fn().mockResolvedValue({ boardId: undefined }));
+
+    await expect(boardOfCard(makeClient(), 'fork')).resolves.toBe('');
+  });
+
+  it('spends no request at all on an empty reference', async () => {
+    const getCard = jest.fn();
+    const { boardOfCard } = await loadWith(getCard);
+
+    await expect(boardOfCard(makeClient(), '')).resolves.toBe('');
+    expect(getCard).not.toHaveBeenCalled();
+  });
+});
