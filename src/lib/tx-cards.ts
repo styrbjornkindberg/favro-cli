@@ -333,6 +333,15 @@ export class TxCards {
     return this.api.getCardLinks(cardRef);
   }
 
+  /**
+   * One board's cards, paginated to completion. `read`'s children listing is a
+   * client-side pass over this: `parentCardId` is not a proven `GET /cards`
+   * filter, and hierarchy is same-board only, so one board read answers it.
+   */
+  listCards(boardId?: string): Promise<Card[]> {
+    return this.api.listCards(boardId);
+  }
+
   resolveCardId(cardRef: string, options?: { widgetCommonId?: string }): Promise<string> {
     return this.api.resolveCardId(cardRef, options);
   }

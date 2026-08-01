@@ -27,6 +27,7 @@ import { classifyThrownError } from './favro-error';
 import { CompensationLog, Orphan, TxCards, TxOutcome } from './tx-cards';
 import { CATEGORY_TAGS, STATE_TAGS, VerifiedTracker } from './tracker-config';
 import { RefusalError } from './refusal';
+import { capRows, ListEnvelope } from './read-shape';
 
 // ─── contract ────────────────────────────────────────────────────────────────
 
@@ -79,8 +80,12 @@ export interface Intent<A = any, R = unknown> {
   /**
    * The board this write lands on, for the mandatory scope lock. `undefined`
    * when the intent touches no board (the lock then has nothing to check).
+   *
+   * An array when one invocation writes to several boards — a multi-create with
+   * per-entry boards. EVERY board is checked; taking the first would let one
+   * in-scope entry smuggle the rest of the batch past the lock.
    */
-  board(args: A, tx: TxCards): Promise<string | undefined>;
+  board(args: A, tx: TxCards): Promise<string | string[] | undefined>;
   run(args: A, tx: TxCards): Promise<R>;
 }
 
@@ -153,7 +158,11 @@ export async function dispatch<T = unknown>(
   // The mandatory guardrail, inside the table, on every path — including the
   // skill engine's and the MCP passthrough's.
   const board = await intent.board(args as never, tx);
-  if (board) await assertScope(board, ctx.client, ctx.config, ctx.force);
+  // Every distinct board, not just the first: a batch that straddles the lock
+  // must refuse as a whole, before anything is written.
+  for (const one of new Set(typeof board === 'string' ? [board] : board ?? [])) {
+    await assertScope(one, ctx.client, ctx.config, ctx.force);
+  }
 
   if (ctx.dryRun) {
     // A preview, and only a preview: nothing is written, and whatever this
@@ -211,40 +220,243 @@ export interface CreateArgs {
   board?: string;
   status?: string;
   description?: string;
-  tags?: string[];
-  assignees?: string[];
+  /** A bare string is one item, never a string to iterate. See `oneOrMany`. */
+  tags?: string[] | string;
+  assignees?: string[] | string;
   parent?: string;
-  blockedBy?: string[];
-  blocks?: string[];
+  blockedBy?: string[] | string;
+  blocks?: string[] | string;
 }
 
-// Returns the WHOLE card: the JSON a caller pipes out of `cards create --json`
-// carries `cardCommonId`, `columnId` and `sequentialId`, and narrowing it here
-// would break every reader of those. The CLI projects what it prints.
-registerIntent<CreateArgs, Card>({
+/** `CreateArgs` after `createEntries` has settled every list-shaped field. */
+type NormalCreateArgs = Omit<CreateArgs, 'tags' | 'assignees' | 'blockedBy' | 'blocks'> & {
+  tags?: string[];
+  assignees?: string[];
+  blockedBy?: string[];
+  blocks?: string[];
+};
+
+/**
+ * A string in a list-shaped field is ONE item, not a sequence of characters.
+ *
+ * The skill engine passes `Record<string, string>` straight into
+ * `dispatch('create', …)`, so `blockedBy: "CLA-1804"` arrives as a string. It
+ * passes the `.length` check in `createRequest` and `cards-api` then spreads it —
+ * `...("bug")` is `'b','u','g'`, three `toCardId` calls, a silent wrong answer.
+ * (`tags` was only luckier, not safer: `validateTagNames` calls `.some()` and
+ * TypeErrors.)
+ *
+ * Wrapped rather than comma-split ON PURPOSE. The CLI already comma-splits
+ * before it gets here, and splitting again at the chokepoint would corrupt any
+ * value that legitimately contains a comma; a wrapped `"a,b"` instead refuses
+ * loudly downstream as an unknown tag or an unresolvable card.
+ */
+const oneOrMany = (v: string[] | string | undefined): string[] | undefined =>
+  typeof v === 'string' ? (v === '' ? undefined : [v]) : v;
+
+/**
+ * The multi form: an ENUMERATED list, never a derived one.
+ *
+ * The fan-out ban is reframed as derived N vs enumerated N. A caller that
+ * already holds the N cards it wants may create them in one transaction; a
+ * caller that would *compute* N from a read may not.
+ */
+export interface MultiCreateArgs {
+  cards: CreateArgs[];
+}
+
+/**
+ * How many cards one multi-create may make. Over the cap the intent REFUSES —
+ * it never creates the first 20 and drops the rest, because a partial create
+ * that reports success is exactly the silent-wrong-answer class this build
+ * exists to close.
+ */
+export const MULTI_CREATE_CAP = 20;
+
+const isMulti = (a: CreateArgs | MultiCreateArgs): a is MultiCreateArgs =>
+  Array.isArray((a as MultiCreateArgs).cards);
+
+/** Every list-shaped field settled to an array. Returns a new object. */
+const normalize = (c: CreateArgs): NormalCreateArgs => ({
+  ...c,
+  tags: oneOrMany(c.tags),
+  assignees: oneOrMany(c.assignees),
+  blockedBy: oneOrMany(c.blockedBy),
+  blocks: oneOrMany(c.blocks),
+});
+
+/**
+ * The entries this invocation will create, bounded and normalised, or a refusal.
+ *
+ * `preview`, `board` and `run` all route through here, so the normalisation
+ * cannot be reached around — which is why it lives here and not in the CLI.
+ */
+function createEntries(a: CreateArgs | MultiCreateArgs): NormalCreateArgs[] {
+  if (!isMulti(a)) return [normalize(a)];
+  if (a.cards.length === 0) {
+    throw new RefusalError('Nothing to create: the enumerated card list is empty.');
+  }
+  if (a.cards.length > MULTI_CREATE_CAP) {
+    throw new RefusalError(
+      `Refusing to create ${a.cards.length} cards in one call — a multi-create is capped at ` +
+        `${MULTI_CREATE_CAP}.\n` +
+        `The cap is not a page size: the whole batch is one transaction, so creating the first ` +
+        `${MULTI_CREATE_CAP} and dropping the rest would report success for cards that do not exist. ` +
+        `Split the list into batches of ${MULTI_CREATE_CAP} or fewer and run them one at a time.`,
+    );
+  }
+  return a.cards.map(normalize);
+}
+
+const createRequest = (a: NormalCreateArgs) => ({
+  name: a.name,
+  description: a.description,
+  status: a.status,
+  boardId: a.board,
+  tags: a.tags?.length ? a.tags : undefined,
+  assignees: a.assignees?.length ? a.assignees : undefined,
+  parentCardId: a.parent,
+  blockedBy: a.blockedBy?.length ? a.blockedBy : undefined,
+  blocks: a.blocks?.length ? a.blocks : undefined,
+});
+
+/**
+ * `create` — one card, or an enumerated batch of at most `MULTI_CREATE_CAP`.
+ *
+ * There is no bulk route to reach for: `POST /cards/bulk` does not exist (it
+ * falls through to Favro's web app and answers 200 with an HTML page, so the old
+ * `response.cards` read silently created nothing), and a half-successful bulk
+ * gives no per-card undo handle. So the batch is a LOOP over `txCards.create`,
+ * which is what gives every created card its own compensation entry — a failure
+ * on card 4 of 6 unwinds cards 1–3 as well, LIFO, and the whole thing reports
+ * `rolled-back`.
+ *
+ * Returns the WHOLE card (or cards): the JSON a caller pipes out of
+ * `cards create --json` carries `cardCommonId`, `columnId` and `sequentialId`,
+ * and narrowing it here would break every reader of those. The CLI projects what
+ * it prints.
+ */
+registerIntent<CreateArgs | MultiCreateArgs, Card | Card[]>({
   name: 'create',
-  summary: 'Create a card, with tag / parent / blocking / assignee / column on the one call',
-  preview: (a) => [
-    `create card "${a.name}"${a.board ? ` on board ${a.board}` : ''}${a.status ? ` in column "${a.status}"` : ''}`,
-    ...(a.tags?.length ? [`  tags: ${a.tags.join(', ')}`] : []),
-    ...(a.assignees?.length ? [`  assignees: ${a.assignees.join(', ')}`] : []),
-    ...(a.parent ? [`  parent: ${a.parent}`] : []),
-    ...(a.blockedBy?.length ? [`  blocked by: ${a.blockedBy.join(', ')}`] : []),
-    ...(a.blocks?.length ? [`  blocks: ${a.blocks.join(', ')}`] : []),
-  ],
-  board: async (a) => a.board,
-  run: async (a, tx) =>
-    tx.create({
-      name: a.name,
-      description: a.description,
-      status: a.status,
-      boardId: a.board,
-      tags: a.tags?.length ? a.tags : undefined,
-      assignees: a.assignees?.length ? a.assignees : undefined,
-      parentCardId: a.parent,
-      blockedBy: a.blockedBy?.length ? a.blockedBy : undefined,
-      blocks: a.blocks?.length ? a.blocks : undefined,
-    }),
+  summary: 'Create a card, or an enumerated batch of at most 20, in one transaction',
+  preview: (a) =>
+    createEntries(a).flatMap((c) => [
+      `create card "${c.name}"${c.board ? ` on board ${c.board}` : ''}${c.status ? ` in column "${c.status}"` : ''}`,
+      ...(c.tags?.length ? [`  tags: ${c.tags.join(', ')}`] : []),
+      ...(c.assignees?.length ? [`  assignees: ${c.assignees.join(', ')}`] : []),
+      ...(c.parent ? [`  parent: ${c.parent}`] : []),
+      ...(c.blockedBy?.length ? [`  blocked by: ${c.blockedBy.join(', ')}`] : []),
+      ...(c.blocks?.length ? [`  blocks: ${c.blocks.join(', ')}`] : []),
+    ]),
+  board: async (a) =>
+    createEntries(a)
+      .map((c) => c.board)
+      .filter((b): b is string => Boolean(b)),
+  run: async (a, tx) => {
+    const entries = createEntries(a);
+    if (!isMulti(a)) return tx.create(createRequest(entries[0]));
+    const made: Card[] = [];
+    // Sequential on purpose. No added concurrency: the cap is what bounds this,
+    // and a parallel batch would make "which cards exist now" a race with the
+    // compensation log.
+    for (const entry of entries) made.push(await tx.create(createRequest(entry)));
+    return made;
+  },
+});
+
+/**
+ * `read` — one card, and optionally its children.
+ *
+ * List-children is FOLDED IN here rather than being an intent of its own, and
+ * frontier-listing was cut entirely: `--filter` subsumes it, and a second read
+ * intent would be a second place for the read shape to drift.
+ *
+ * The children listing is a client-side pass over ONE board read. There is no
+ * proven `parentCardId` filter on `GET /cards` — an unproven parameter is
+ * ignored without complaint by this API, which would answer "every card on the
+ * board" as if it were "the children" — and hierarchy is same-board only
+ * (`parentCardId` is never cross-board), so the board read is complete by
+ * construction **provided the card has a board instance at all**. That
+ * precondition is not decoration: `listCards(undefined)` omits `widgetCommonId`
+ * from the query and paginates the whole ORGANISATION to completion, which is
+ * exactly the unbounded sweep this build refuses. A card with no
+ * `widgetCommonId` — a fork — therefore refuses before the list.
+ *
+ * Skill args are STRINGS, and `read` is reachable as a skill step, so `children`
+ * and `limit` are coerced rather than trusted: `children: "false"` is truthy in
+ * JS and would have listed children anyway — a silent wrong answer — and `limit`
+ * only ever worked by accident, via coercion inside `capRows`.
+ *
+ * The card comes back BARE and the children come back in the envelope: singles
+ * are bare, list reads are always an envelope. `children` is present exactly
+ * when it was asked for, so the shape follows the REQUEST and never the data.
+ */
+export interface ReadArgs {
+  card: string;
+  /** Also list the cards whose `parentCardId` is this card. */
+  children?: boolean | string;
+  /** Output cap on the children rows only. Never truncates the fetch. */
+  limit?: number | string;
+}
+
+/**
+ * A skill step spells every arg as a string, so `"false"`, `"0"` and `""` must
+ * all mean false — in JS they are all truthy as strings. Anything else that is
+ * present means true, which is what a bare CLI flag already means.
+ */
+const wantsChildren = (v: boolean | string | undefined): boolean =>
+  typeof v === 'string' ? !['', 'false', '0', 'no'].includes(v.trim().toLowerCase()) : v === true;
+
+/** `"2"` is a limit of 2. Anything that is not a positive integer is no cap. */
+function readLimit(v: number | string | undefined): number | undefined {
+  if (v === undefined || v === '') return undefined;
+  const n = Number(v);
+  if (!Number.isInteger(n) || n < 1) {
+    throw new RefusalError(
+      `--limit must be a positive whole number; got "${v}". ` +
+        `It caps the printed rows, never the fetch — omit it to print every row.`,
+    );
+  }
+  return n;
+}
+
+export interface ReadResult {
+  card: Card;
+  children?: ListEnvelope<Card>;
+}
+
+registerIntent<ReadArgs, ReadResult>({
+  name: 'read',
+  summary: 'Read one card, optionally with its children',
+  preview: (a) => [`read ${a.card}${wantsChildren(a.children) ? ' and list its children' : ''}`],
+  // A read lands no write, so the scope lock has nothing to check. The lock
+  // guards mutation; making it guard reads would break `read` on any card
+  // outside the locked collection, which is the opposite of honest failure.
+  board: async () => undefined,
+  run: async (a, tx) => {
+    const limit = readLimit(a.limit);
+    const card = await tx.getCard(a.card);
+    if (!wantsChildren(a.children)) return { card };
+    if (!card.boardId) {
+      // `boardId` is our alias for `widgetCommonId`, and a fork has none. Listing
+      // without it is not "the board" — it is every card in the organisation,
+      // paginated to completion, then filtered client-side. Refuse instead, and
+      // lose nothing: a card with no board instance has no children by
+      // construction, because `parentCardId` is same-board only.
+      throw new RefusalError(
+        `Cannot list the children of ${a.card}: it has no board instance (no widgetCommonId), ` +
+          `which is what an assignment fork looks like.\n` +
+          `Hierarchy is same-board only, so a card off every board has no children to list. ` +
+          `Read the board-resident instance of this card instead — 'favro cards get <cardCommonId>' ` +
+          `names the instances — or drop --children.`,
+      );
+    }
+    // A single-call read THROWS on failure rather than answering empty, so an
+    // empty `rows` here unambiguously means the card has no children.
+    const onBoard = await tx.listCards(card.boardId);
+    const children = onBoard.filter((c) => c.parentCardId === card.cardId);
+    return { card, children: capRows(children, limit) };
+  },
 });
 
 /**

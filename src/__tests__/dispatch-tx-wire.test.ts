@@ -28,7 +28,11 @@ import {
   intentNames,
   UnknownIntentError,
   DispatchContext,
+  MULTI_CREATE_CAP,
+  ReadResult,
+  RefusalError,
 } from '../lib/dispatch';
+import { Card } from '../lib/cards-api';
 import { CompensationLog, TxCards } from '../lib/tx-cards';
 import { ScopeError } from '../lib/safety';
 import { TrackerMapping, renderTrackerBlock } from '../lib/tracker-config';
@@ -441,10 +445,12 @@ afterEach(async () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('the table is the single home for every write intent', () => {
-  it('the seven intents named by the spec are either registered or explicitly pending', () => {
-    // A registry, not a hand list: #55 adds `read` against this same table.
+  it('the seven intents named by the spec are all registered', () => {
+    // All seven. Frontier-listing was cut (subsumed by `--filter`) and
+    // list-children folded into `read`, so there is no eighth.
     for (const name of [
       'create',
+      'read',
       'claim',
       'resolve',
       'add-blocking-edge',
@@ -474,6 +480,40 @@ describe('the table is the single home for every write intent', () => {
     const posts = writes(stand.received).filter((r) => r.path === '/cards');
     expect(posts).toHaveLength(1);
     expect(posts[0].body.columnId).toBe(DOING);
+  });
+
+  it('a BARE STRING in a list-shaped field is one item, never a string of characters', async () => {
+    // The skill engine hands `Record<string, string>` straight to `dispatch`, so
+    // every one of these arrives as a string. `blockedBy` was the silent one:
+    // it passes a `.length` check and then gets spread, so `"…cc02"` became one
+    // `toCardId` call per CHARACTER and the wire got a card that isn't there.
+    const stand = await startServer();
+
+    const result = await dispatch(
+      'create',
+      { name: 'From a skill', board: BOARD, tags: 'bug', assignees: ALICE, blockedBy: FAR, blocks: CARD },
+      ctx(stand),
+    );
+
+    expect(result.outcome).toBe('ok');
+    const posts = writes(stand.received).filter((r) => r.path === '/cards');
+    expect(posts).toHaveLength(1);
+    // What the wire received, field by field — one element each, not N.
+    expect(posts[0].body.tags).toEqual(['bug']);
+    expect(posts[0].body.assignmentIds).toEqual([ALICE]);
+    expect(posts[0].body.dependencies).toEqual([
+      { cardId: FAR, isBefore: true },
+      { cardId: CARD, isBefore: false },
+    ]);
+  });
+
+  it('an empty string in a list-shaped field is absent, not an empty-named item', async () => {
+    const stand = await startServer();
+    const result = await dispatch('create', { name: 'Bare', board: BOARD, tags: '' }, ctx(stand));
+
+    expect(result.outcome).toBe('ok');
+    const posts = writes(stand.received).filter((r) => r.path === '/cards');
+    expect(posts[0].body.tags).toBeUndefined();
   });
 });
 
@@ -1104,6 +1144,245 @@ describe('there is no fourth outcome', () => {
     seen.add((await dispatch('probe-move', { card: CARD, to: 'Doing', thenFail: true }, ctx(hostile))).outcome);
 
     expect([...seen].sort()).toEqual(['ok', 'rollback-incomplete', 'rolled-back']);
+  });
+});
+
+// ─── #55: read, and bounded multi-create ─────────────────────────────────────
+
+describe('read is one intent, and it folds in list-children', () => {
+  it('a single read answers the bare card and writes nothing', async () => {
+    const stand = await startServer();
+    const result = await dispatch<ReadResult>('read', { card: CARD }, ctx(stand));
+
+    expect(result.outcome).toBe('ok');
+    expect(result.value?.card.cardId).toBe(CARD);
+    // Singles stay bare — the envelope belongs to list reads only.
+    expect(result.value?.children).toBeUndefined();
+    expect(writes(stand.received)).toHaveLength(0);
+  });
+
+  it('children come back in the envelope, filtered on parentCardId', async () => {
+    const stand = await startServer();
+    stand.cards.set('kid-1', card({ cardId: 'kid-1', name: 'Child one', parentCardId: CARD }));
+    stand.cards.set('kid-2', card({ cardId: 'kid-2', name: 'Child two', parentCardId: CARD }));
+    stand.cards.set('other', card({ cardId: 'other', name: 'Someone else’s child', parentCardId: FAR }));
+
+    const result = await dispatch<ReadResult>('read', { card: CARD, children: true }, ctx(stand));
+
+    expect(result.outcome).toBe('ok');
+    expect(result.value?.children?.rows.map((c: Card) => c.cardId).sort()).toEqual(['kid-1', 'kid-2']);
+    // Nothing was cut, so no marker — `truncated` must never be present-but-false.
+    expect(result.value?.children?.truncated).toBeUndefined();
+  });
+
+  it('a card with no children answers an empty envelope, not a missing one', async () => {
+    // Unavailable ≠ empty: the read is a single call, so a failure would THROW.
+    // An empty `rows` therefore means true-empty, and the agent can act on it.
+    const stand = await startServer();
+    const result = await dispatch<ReadResult>('read', { card: CARD, children: true }, ctx(stand));
+
+    expect(result.value?.children).toEqual({ rows: [] });
+  });
+
+  it('--limit caps the ROWS and says so; it never caps the fetch', async () => {
+    const stand = await startServer();
+    for (const n of [1, 2, 3]) {
+      stand.cards.set(`kid-${n}`, card({ cardId: `kid-${n}`, name: `Child ${n}`, parentCardId: CARD }));
+    }
+
+    const result = await dispatch<ReadResult>('read', { card: CARD, children: true, limit: 2 }, ctx(stand));
+
+    expect(result.value?.children?.rows).toHaveLength(2);
+    expect(result.value?.children?.truncated).toBe(true);
+    // The fetch ran to completion: the wire was asked for the whole board, with
+    // no `limit` on it, so the filter above ran over every card and not a page.
+    const listed = stand.received.filter((r) => r.method === 'GET' && r.path === '/cards');
+    expect(listed).toHaveLength(1);
+    expect(listed[0].url).toContain(`widgetCommonId=${BOARD}`);
+  });
+
+  it('a read outside the locked collection is not blocked by the scope lock', async () => {
+    // The lock guards MUTATION. Making it guard reads would refuse `read` on any
+    // card outside the lock, which is the opposite of what the lock is for.
+    const stand = await startServer();
+    stand.cards.set('elsewhere', card({ cardId: 'elsewhere', widgetCommonId: OTHER_BOARD }));
+
+    const result = await dispatch<ReadResult>('read', { card: 'elsewhere' }, ctx(stand, {
+      config: { scopeCollectionId: 'coll-a', scopeCollectionName: 'Collection A' },
+    }));
+    expect(result.outcome).toBe('ok');
+  });
+
+  it('a card with no board instance REFUSES --children, and no unfiltered list is sent', async () => {
+    // A fork has no `widgetCommonId`, so `card.boardId` is undefined and
+    // `listCards(undefined)` would omit the board filter and paginate the whole
+    // ORGANISATION. The assertion is on the request URLs and not on a mock call
+    // count on purpose: a test that only checked the throw would still pass if
+    // the sweep had already gone out.
+    const stand = await startServer();
+    const fork = stand.cards.get(CARD)!;
+    fork.widgetCommonId = undefined;
+    fork.columnId = undefined;
+
+    await expect(
+      dispatch<ReadResult>('read', { card: CARD, children: true }, ctx(stand)),
+    ).rejects.toThrow(RefusalError);
+
+    const listed = stand.received.filter((r) => r.method === 'GET' && r.path === '/cards');
+    expect(listed).toEqual([]);
+  });
+});
+
+describe('read is reachable as a skill step, where every arg is a STRING', () => {
+  it('children:"false" lists nothing — a truthy string is not a yes', async () => {
+    const stand = await startServer();
+    stand.cards.set('kid-1', card({ cardId: 'kid-1', parentCardId: CARD }));
+
+    const result = await dispatch<ReadResult>('read', { card: CARD, children: 'false' }, ctx(stand));
+
+    expect(result.value?.children).toBeUndefined();
+    // And the board sweep the flag would have triggered never left.
+    expect(stand.received.filter((r) => r.method === 'GET' && r.path === '/cards')).toEqual([]);
+  });
+
+  it('children:"true" lists them — the string form is honoured, not merely tolerated', async () => {
+    const stand = await startServer();
+    stand.cards.set('kid-1', card({ cardId: 'kid-1', parentCardId: CARD }));
+
+    const result = await dispatch<ReadResult>('read', { card: CARD, children: 'true' }, ctx(stand));
+
+    expect(result.value?.children?.rows.map((c: Card) => c.cardId)).toEqual(['kid-1']);
+  });
+
+  it('limit:"2" caps at two rows and marks truncated', async () => {
+    const stand = await startServer();
+    for (const n of [1, 2, 3]) {
+      stand.cards.set(`kid-${n}`, card({ cardId: `kid-${n}`, parentCardId: CARD }));
+    }
+
+    const result = await dispatch<ReadResult>(
+      'read',
+      { card: CARD, children: 'true', limit: '2' },
+      ctx(stand),
+    );
+
+    expect(result.value?.children?.rows).toHaveLength(2);
+    expect(result.value?.children?.truncated).toBe(true);
+  });
+
+  it('a limit that is not a positive whole number refuses instead of silently not capping', async () => {
+    const stand = await startServer();
+    await expect(
+      dispatch<ReadResult>('read', { card: CARD, children: 'true', limit: 'two' }, ctx(stand)),
+    ).rejects.toThrow(/positive whole number/);
+  });
+});
+
+describe('multi-create is one bounded transaction over an enumerated list', () => {
+  it('creates one card per POST /cards — never the route that does not exist', async () => {
+    const stand = await startServer();
+    const result = await dispatch<Card[]>('create', {
+      cards: [
+        { name: 'One', board: BOARD },
+        { name: 'Two', board: BOARD, status: 'Doing' },
+        { name: 'Three', board: BOARD },
+      ],
+    }, ctx(stand));
+
+    expect(result.outcome).toBe('ok');
+    expect(result.value?.map((c) => c.name)).toEqual(['One', 'Two', 'Three']);
+    const posts = writes(stand.received).filter((r) => r.method === 'POST');
+    expect(posts.map((r) => r.path)).toEqual(['/cards', '/cards', '/cards']);
+    // `POST /cards/bulk` is refused by never being reachable: it does not exist,
+    // it answers 200 with an HTML page, and a half-success gives no undo handle.
+    expect(stand.received.some((r) => r.path.includes('bulk'))).toBe(false);
+    // Composites still ride the one call Favro validates.
+    expect(posts[1].body.columnId).toBe(DOING);
+    // And the wire really holds them, which a mock could not tell from a no-op.
+    expect([...stand.cards.values()].filter((c) => c.name === 'Two')).toHaveLength(1);
+  });
+
+  it('a failure part-way through rolls the WHOLE batch back', async () => {
+    let posts = 0;
+    const stand = await startServer({
+      fail: (r) => {
+        if (r.method !== 'POST' || r.path !== '/cards') return undefined;
+        posts += 1;
+        return posts === 3 ? { status: 403, message: 'Invalid column' } : undefined;
+      },
+    });
+    const before = stand.cards.size;
+
+    const result = await dispatch<Card[]>('create', {
+      cards: [{ name: 'One', board: BOARD }, { name: 'Two', board: BOARD }, { name: 'Three', board: BOARD }],
+    }, ctx(stand));
+
+    expect(result.outcome).toBe('rolled-back');
+    expect(result.retryable).toBe(true);
+    // Every card created before the failure has its own undo handle, so the
+    // wire is back where it started — read back, not counted.
+    expect(stand.cards.size).toBe(before);
+    expect([...stand.cards.values()].some((c) => c.name === 'One' || c.name === 'Two')).toBe(false);
+    expect(writes(stand.received).filter((r) => r.method === 'DELETE')).toHaveLength(2);
+  });
+
+  it(`over ${MULTI_CREATE_CAP} refuses, and creates nothing at all`, async () => {
+    const stand = await startServer();
+    const cards = Array.from({ length: MULTI_CREATE_CAP + 1 }, (_, i) => ({ name: `Card ${i}`, board: BOARD }));
+
+    // A refusal, not a fourth outcome, and not a truncation: creating the first
+    // 20 and dropping the 21st would report success for a card that is missing.
+    await expect(dispatch('create', { cards }, ctx(stand))).rejects.toThrow(RefusalError);
+    expect(writes(stand.received)).toHaveLength(0);
+  });
+
+  it('exactly the cap is allowed — the boundary is inclusive', async () => {
+    const stand = await startServer();
+    const cards = Array.from({ length: MULTI_CREATE_CAP }, (_, i) => ({ name: `Card ${i}`, board: BOARD }));
+
+    const result = await dispatch<Card[]>('create', { cards }, ctx(stand));
+    expect(result.outcome).toBe('ok');
+    expect(result.value).toHaveLength(MULTI_CREATE_CAP);
+  });
+
+  it('an empty list refuses rather than reporting a successful nothing', async () => {
+    const stand = await startServer();
+    await expect(dispatch('create', { cards: [] }, ctx(stand))).rejects.toThrow(RefusalError);
+    expect(writes(stand.received)).toHaveLength(0);
+  });
+
+  it('the scope lock is checked on EVERY board in the batch, before anything is written', async () => {
+    const stand = await startServer();
+
+    await expect(
+      dispatch('create', {
+        cards: [{ name: 'In scope', board: BOARD }, { name: 'Out of scope', board: OTHER_BOARD }],
+      }, ctx(stand, { config: { scopeCollectionId: 'coll-a', scopeCollectionName: 'Collection A' } })),
+    ).rejects.toThrow(ScopeError);
+
+    // Not one card: an in-scope first entry must not smuggle the batch past.
+    expect(writes(stand.received)).toHaveLength(0);
+  });
+
+  it('--dry-run previews every card in the batch and writes nothing', async () => {
+    const stand = await startServer();
+    const result = await dispatch('create', {
+      cards: [{ name: 'One', board: BOARD }, { name: 'Two', board: BOARD }],
+    }, ctx(stand, { dryRun: true }));
+
+    expect(result.preview).toEqual([
+      `create card "One" on board ${BOARD}`,
+      `create card "Two" on board ${BOARD}`,
+    ]);
+    expect(writes(stand.received)).toHaveLength(0);
+  });
+
+  it('the single form is unchanged — one card in, one bare card out', async () => {
+    const stand = await startServer();
+    const result = await dispatch<Card>('create', { name: 'Solo', board: BOARD }, ctx(stand));
+    expect(result.outcome).toBe('ok');
+    expect(Array.isArray(result.value)).toBe(false);
+    expect(result.value?.name).toBe('Solo');
   });
 });
 

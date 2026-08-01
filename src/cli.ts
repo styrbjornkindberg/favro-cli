@@ -466,6 +466,8 @@ cards
     '  "Fix bug","Safari issue","In Progress"\n' +
     '  "Add feature","User request","Backlog"\n\n' +
     'Tip: Always test with --dry-run before bulk importing.\n\n' +
+    '--csv/--bulk create an ENUMERATED list of at most 20 cards as ONE transaction: a failure\n' +
+    'part-way through rolls the whole batch back. A longer list is refused, not truncated.\n\n' +
     'Composites (--tag/--assignee/--parent/--blocked-by/--blocks/--status) all ride the ONE\n' +
     'create call Favro validates, so a bad value fails the whole create and leaves no card behind.'
   )
@@ -484,7 +486,7 @@ cards
     'Print what would be created without making API calls.\n' +
       '                         Note: for a SINGLE card this still needs credentials — the scope lock runs\n' +
       '                         before the preview, by design, so a preview cannot be a way around it.\n' +
-      '                         --csv/--bulk --dry-run read only the file and need none.',
+      '                         --csv/--bulk go through the same table, so they need credentials too.',
   )
   .option('-y, --yes', 'Skip confirmation prompt')
   .option('--force', 'Bypass scope check')
@@ -497,66 +499,63 @@ cards
     try {
       const fs = await import('fs/promises');
 
-      // ── CSV import ──────────────────────────────────────────────────────────
-      if (options.csv) {
-        const content = await fs.readFile(options.csv, 'utf-8');
-        const rows = parseCSV(content);
-        if (rows.length === 0) {
-          console.error('Error: CSV file is empty or has no data rows');
+      // ── Multi-create: CSV or JSON, one bounded transaction ──────────────────
+      // An ENUMERATED list — the file names every card — dispatched as ONE
+      // `create` invocation, which loops `txCards.create` so every card made
+      // carries its own undo handle. A failure part-way through unwinds the
+      // whole batch, LIFO, and reports `rolled-back`. There is no bulk route to
+      // reach for: `POST /cards/bulk` does not exist (200 + HTML), and a
+      // half-successful bulk would give no per-card undo handle at all.
+      if (options.csv || options.bulk) {
+        const source = options.csv ?? options.bulk;
+        const raw = await fs.readFile(source, 'utf-8');
+        const entries: Array<Record<string, any>> = options.csv
+          ? parseCSV(raw)
+          : (() => { const d = JSON.parse(raw); return Array.isArray(d) ? d : [d]; })();
+
+        // A CSV cell is always a string, a JSON field may already be an array —
+        // and `tags: "bug"` reaching the intent as a string would be resolved
+        // character by character. One coercion, both sources.
+        const list = (v: unknown): string[] | undefined => {
+          if (Array.isArray(v)) return v.map(String);
+          if (typeof v === 'string' && v.trim()) return v.split(',').map((s) => s.trim()).filter(Boolean);
+          return undefined;
+        };
+        const cards = entries
+          .map((row) => ({
+            name: row.name || row.title || row.Name || row.Title || '',
+            description: row.description || row.Description || undefined,
+            status: row.status || row.Status || undefined,
+            board: row.board || row.boardId || options.board,
+            tags: list(row.tags),
+            assignees: list(row.assignees),
+            // `||`, not `??`, exactly like every sibling: `parseCSV` gives every
+            // declared header a key, `''` when the cell is blank, and `''` would
+            // reach the wire as `parentCardId: ""` and 403 the whole atomic batch.
+            parent: row.parent || row.parentCardId || undefined,
+            blockedBy: list(row.blockedBy),
+            blocks: list(row.blocks),
+          }))
+          .filter((c) => c.name);
+
+        if (cards.length === 0) {
+          console.error(`Error: ${source} has no rows with a name`);
           process.exit(1);
         }
-        const cards = rows.map(row => ({
-          name: row.name || row.title || row.Name || row.Title || '',
-          description: row.description || row.Description || undefined,
-          status: row.status || row.Status || undefined,
-          boardId: options.board,
-        })).filter(c => c.name);
-
-        if (options.dryRun) {
-          console.log(`[dry-run] Would create ${cards.length} cards from CSV:`);
-          cards.forEach(c => console.log(`  - ${c.name}`));
-          return;
-        }
 
         const client = await createFavroClient();
-        if (options.board) {
-          const { readConfig } = await import('./lib/config');
-          const { checkScope } = await import('./lib/safety');
-          await checkScope(options.board, client, await readConfig(), options.force);
+        const { readConfig } = await import('./lib/config');
+        const result = await dispatch<Card[]>('create', { cards }, {
+          client,
+          config: (await readConfig()) ?? {},
+          force: options.force,
+          dryRun: options.dryRun,
+        });
+        if (reportDispatch(result, options.json)) process.exit(1);
+        if (result.outcome === 'ok' && result.value) {
+          console.log(`✓ Created ${result.value.length} cards`);
+          if (options.json) console.log(JSON.stringify(result.value));
         }
-
-        const api = new CardsAPI(client);
-        const progress = new ProgressBar('Creating cards', cards.length);
-        progress.update(0);
-        const createdCards = await api.createCards(cards);
-        progress.update(createdCards.length);
-        progress.done(`Created ${createdCards.length} cards from CSV`);
-        if (options.json) console.log(JSON.stringify(createdCards, null, 2));
-        return;
-      }
-
-      // ── Bulk JSON import ────────────────────────────────────────────────────
-      if (options.bulk) {
-        const data = JSON.parse(await fs.readFile(options.bulk, 'utf-8'));
-        if (options.dryRun) {
-          const count = Array.isArray(data) ? data.length : 1;
-          console.log(`[dry-run] Would create ${count} cards from bulk JSON`);
-          return;
-        }
-        const client = await createFavroClient();
-        if (options.board) { // Note: bulk import JSON doesn't directly use --board as much, but if it does
-          const { readConfig } = await import('./lib/config');
-          const { checkScope } = await import('./lib/safety');
-          await checkScope(options.board, client, await readConfig(), options.force);
-        }
-        const api = new CardsAPI(client);
-        const total = Array.isArray(data) ? data.length : 1;
-        const progress = new ProgressBar('Creating cards', total);
-        progress.update(0);
-        const createdCards = await api.createCards(data);
-        progress.update(createdCards.length);
-        progress.done(`Created ${createdCards.length} cards`);
-        if (options.json) console.log(JSON.stringify(createdCards));
         return;
       }
 

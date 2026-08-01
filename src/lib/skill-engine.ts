@@ -62,6 +62,12 @@ export interface SkillRunOptions {
   onStepComplete?: (result: StepResult) => void;
 }
 
+/** What a step produced: the line(s) to show, and the object `as:` captures. */
+interface StepOutcome {
+  output: string;
+  value?: unknown;
+}
+
 /**
  * A write step whose intent failed. Carries the table's own result — including
  * what the unwind left behind — so `runSkill` reports it without re-deriving it.
@@ -76,22 +82,82 @@ class StepDispatchFailure extends Error {
 // ─── Variable Interpolation ───────────────────────────────────────────────────
 
 /**
- * Replace {{variable}} placeholders in a string with resolved values.
+ * Walk a captured step result down `path`. Every miss THROWS.
+ *
+ * A chain reference that silently degrades into the literal `{{c.cardId}}` is
+ * exactly the silent-wrong-answer this build exists to kill: the literal would
+ * go to the wire as a card reference and come back as somebody else's refusal,
+ * several turns later. A capture that does not carry the field says so here.
  */
-export function interpolate(template: string, vars: Record<string, string>): string {
-  return template.replace(/\{\{(\w+(?:\.\w+)*)\}\}/g, (_match, key) => {
-    return vars[key] ?? `{{${key}}}`;
+function readCapture(captured: unknown, name: string, path: string[]): unknown {
+  let cursor = captured;
+  const walked: string[] = [];
+  for (const field of path) {
+    if (cursor === null || typeof cursor !== 'object') {
+      throw new Error(
+        `{{${[name, ...path].join('.')}}} — step captured as "${name}" has no "${field}" ` +
+          `under ${[name, ...walked].join('.')}: that is a ${cursor === null ? 'null' : typeof cursor}, not an object.`,
+      );
+    }
+    cursor = (cursor as Record<string, unknown>)[field];
+    walked.push(field);
+    if (cursor === undefined) {
+      throw new Error(
+        `{{${[name, ...path].join('.')}}} — step captured as "${name}" carries no ${walked.join('.')}.`,
+      );
+    }
+  }
+  return cursor;
+}
+
+/** A captured value is only usable as an argument if it renders as a scalar. */
+function renderCapture(reference: string, value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  throw new Error(
+    `{{${reference}}} resolves to ${Array.isArray(value) ? 'an array' : 'an object'}, not a value. ` +
+      `Reference a scalar field of it instead.`,
+  );
+}
+
+/**
+ * Replace {{variable}} placeholders in a string with resolved values.
+ *
+ * A plain `{{name}}` — and a flat key that happens to hold a dot, such as the
+ * `{{scope.board}}` a skill template writes — is a variable. Anything else with
+ * a dot whose HEAD names a step captured with `as:` is a chain reference, read
+ * out of that step's structured result.
+ */
+export function interpolate(
+  template: string,
+  vars: Record<string, string>,
+  captures: Record<string, unknown> = {},
+): string {
+  return template.replace(/\{\{(\w+(?:\.\w+)*)\}\}/g, (_match, key: string) => {
+    if (vars[key] !== undefined) return vars[key];
+    const [name, ...path] = key.split('.');
+    // `hasOwnProperty`, not `in`: `in` walks `Object.prototype`, so
+    // `{{constructor.name}}` and `{{toString.x}}` would be read as chain
+    // references and throw, where an unknown head must stay literal.
+    if (path.length > 0 && Object.prototype.hasOwnProperty.call(captures, name)) {
+      return renderCapture(key, readCapture(captures[name], name, path));
+    }
+    return `{{${key}}}`;
   });
 }
 
 /**
  * Recursively interpolate all string values in an args object.
  */
-function interpolateArgs(args: Record<string, string> | undefined, vars: Record<string, string>): Record<string, string> {
+function interpolateArgs(
+  args: Record<string, string> | undefined,
+  vars: Record<string, string>,
+  captures: Record<string, unknown> = {},
+): Record<string, string> {
   if (!args) return {};
   const result: Record<string, string> = {};
   for (const [key, val] of Object.entries(args)) {
-    result[key] = typeof val === 'string' ? interpolate(val, vars) : val;
+    result[key] = typeof val === 'string' ? interpolate(val, vars, captures) : val;
   }
   return result;
 }
@@ -123,16 +189,20 @@ export function resolveVariables(
 
 /**
  * Execute a single skill step by dispatching to the appropriate API.
- * Returns the output as a string for display/chaining.
+ *
+ * Returns BOTH the display string and the step's structured result. `as:`
+ * captures the latter: a chain reads `{{name.cardId}}` off the object the API
+ * actually returned, never off a re-parse of what we printed.
  */
 async function executeStep(
   step: SkillStep,
   vars: Record<string, string>,
+  captures: Record<string, unknown>,
   client: FavroHttpClient,
   options: SkillRunOptions,
   tx: { config: FavroConfig; log: CompensationLog },
-): Promise<string> {
-  const args = interpolateArgs(step.args, vars);
+): Promise<StepOutcome> {
+  const args = interpolateArgs(step.args, vars, captures);
 
   switch (step.command) {
     case 'context': {
@@ -140,7 +210,7 @@ async function executeStep(
       if (!board) throw new Error('Step requires "board" argument');
       const contextApi = new ContextAPI(client);
       const snapshot = await contextApi.getSnapshot(board, parseInt(args.limit ?? '1000', 10));
-      return JSON.stringify(snapshot, null, 2);
+      return { output: JSON.stringify(snapshot, null, 2), value: snapshot };
     }
 
     case 'standup': {
@@ -153,7 +223,7 @@ async function executeStep(
       if (result.inProgress.length) lines.push(`⏳ In Progress (${result.inProgress.length}): ${result.inProgress.map(c => c.title).join(', ')}`);
       if (result.dueSoon.length) lines.push(`📅 Due Soon (${result.dueSoon.length}): ${result.dueSoon.map(c => c.title).join(', ')}`);
       if (result.completed.length) lines.push(`✅ Completed (${result.completed.length}): ${result.completed.map(c => c.title).join(', ')}`);
-      return lines.join('\n');
+      return { output: lines.join('\n'), value: result };
     }
 
     case 'sprint-plan': {
@@ -162,8 +232,9 @@ async function executeStep(
       const sprintApi = new SprintPlanAPI(client);
       const budget = args.budget ? parseInt(args.budget, 10) : undefined;
       const result = await sprintApi.getSuggestions(board, budget);
-      return `Sprint plan for ${result.board.name} (budget: ${result.budget}):\n` +
+      const output = `Sprint plan for ${result.board.name} (budget: ${result.budget}):\n` +
         result.suggestions.map((c: any) => `  [${c.priority}] ${c.title} (effort: ${c.effort})`).join('\n');
+      return { output, value: result };
     }
 
     case 'query': {
@@ -173,8 +244,9 @@ async function executeStep(
       const { QueryAPI } = await import('../api/query');
       const queryApi = new QueryAPI(client);
       const result = await queryApi.execute(board, q);
-      return `Found ${result.matches.length} cards:\n` +
+      const output = `Found ${result.matches.length} cards:\n` +
         result.matches.map((m: any) => `  - [${m.card.id}] ${m.card.title} (${m.card.status ?? 'no status'})`).join('\n');
+      return { output, value: result };
     }
 
     default: {
@@ -198,9 +270,12 @@ async function executeStep(
         dryRun: options.dryRun,
         log: tx.log,
       });
-      if (result.preview) return result.preview.map((line) => `[dry-run] ${line}`).join('\n');
+      // A preview wrote nothing, so it has no structured result to capture: a
+      // later `{{name.field}}` stays literal under --dry-run rather than
+      // inventing an id the run never obtained.
+      if (result.preview) return { output: result.preview.map((line) => `[dry-run] ${line}`).join('\n') };
       if (result.outcome !== 'ok') throw new StepDispatchFailure(result);
-      return JSON.stringify(result.value ?? {}, null, 2);
+      return { output: JSON.stringify(result.value ?? {}, null, 2), value: result.value };
     }
   }
 }
@@ -223,6 +298,24 @@ export async function runSkill(
   // unwinds the early writes too.
   const log = new CompensationLog();
 
+  // What the steps so far captured with `as:`, keyed by capture name. Read by
+  // `{{name.field}}` in every later step's args. Only a SUCCEEDING step
+  // captures: a chain must never read a field off a step that did not run.
+  const captures: Record<string, unknown> = {};
+
+  // Checked before the first step, so a name no reference could ever match
+  // costs nothing. `{{name.field}}` only matches word characters, so `as: my-cap`
+  // would leave every reference to it standing as a literal and send THAT to the
+  // wire — a silent wrong answer rather than a broken skill.
+  for (const step of skill.steps) {
+    if (step.as !== undefined && !/^\w+$/.test(step.as)) {
+      throw new Error(
+        `Invalid capture name "${step.as}" on step "${step.command}": ` +
+          `an "as:" name must be letters, digits or underscores, so that {{${step.as}.field}} can reference it.`,
+      );
+    }
+  }
+
   const results: StepResult[] = [];
   let hasFailure = false;
   // Whether a failure ENDED the run. The transaction is unwound if and only if
@@ -236,28 +329,36 @@ export async function runSkill(
     const step = skill.steps[i];
     const stepNum = i + 1;
 
-    // Confirmation check
-    if (step.confirm && !options.dryRun) {
-      const interpolatedCmd = `${step.command} ${Object.entries(interpolateArgs(step.args, vars)).map(([k, v]) => `${k}="${v}"`).join(' ')}`;
-      if (!(await confirmAction(`Execute step ${stepNum}: ${interpolatedCmd}?`, { yes: options.yes }))) {
-        results.push({ step: stepNum, command: step.command, status: 'skipped' });
-        options.onStepComplete?.({ step: stepNum, command: step.command, status: 'skipped' });
-        continue;
-      }
-    }
-
-    // Before-step callback
-    if (options.onBeforeStep) {
-      const proceed = await options.onBeforeStep(step, i);
-      if (!proceed) {
-        results.push({ step: stepNum, command: step.command, status: 'skipped' });
-        options.onStepComplete?.({ step: stepNum, command: step.command, status: 'skipped' });
-        continue;
-      }
-    }
-
+    // Inside the try from here on: interpolating a chain reference can itself
+    // fail (a capture that carries no such field), and a throw that escaped the
+    // loop would skip the end-of-run unwind and leave the run half-applied.
     try {
-      const output = await executeStep(step, vars, client, options, { config, log });
+      // Confirmation check
+      if (step.confirm && !options.dryRun) {
+        const interpolatedCmd = `${step.command} ${Object.entries(interpolateArgs(step.args, vars, captures)).map(([k, v]) => `${k}="${v}"`).join(' ')}`;
+        if (!(await confirmAction(`Execute step ${stepNum}: ${interpolatedCmd}?`, { yes: options.yes }))) {
+          results.push({ step: stepNum, command: step.command, status: 'skipped' });
+          options.onStepComplete?.({ step: stepNum, command: step.command, status: 'skipped' });
+          continue;
+        }
+      }
+
+      // Before-step callback
+      if (options.onBeforeStep) {
+        const proceed = await options.onBeforeStep(step, i);
+        if (!proceed) {
+          results.push({ step: stepNum, command: step.command, status: 'skipped' });
+          options.onStepComplete?.({ step: stepNum, command: step.command, status: 'skipped' });
+          continue;
+        }
+      }
+
+      const { output, value } = await executeStep(step, vars, captures, client, options, { config, log });
+      // The capture lands only now, after the step succeeded — and only if the
+      // step actually produced structured data. A `--dry-run` step wrote
+      // nothing and fetched nothing, so it captures nothing, and the references
+      // to it stay literal in the preview instead of resolving to `undefined`.
+      if (step.as && value !== undefined) captures[step.as] = value;
       const result: StepResult = { step: stepNum, command: step.command, status: 'success', output };
       results.push(result);
       options.onStepComplete?.(result);

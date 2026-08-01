@@ -25,6 +25,11 @@ export interface SkillStep {
   confirm?: boolean;
   /** If true, continue even if this step fails */
   continueOnError?: boolean;
+  /**
+   * Capture this step's STRUCTURED result under this name, for a later step to
+   * read as `{{<name>.<field>}}`. Without it the result is display output only.
+   */
+  as?: string;
 }
 
 export interface SkillDefinition {
@@ -162,6 +167,7 @@ export function loadSkillFromFile(filePath: string): SkillDefinition {
       args: s.args,
       confirm: s.confirm ?? false,
       continueOnError: s.continueOnError ?? false,
+      ...(s.as ? { as: s.as } : {}),
     })),
     variables: parsed.variables,
   };
@@ -183,6 +189,7 @@ export function saveSkill(skill: SkillDefinition): string {
       ...(s.args ? { args: s.args } : {}),
       ...(s.confirm ? { confirm: true } : {}),
       ...(s.continueOnError ? { continueOnError: true } : {}),
+      ...(s.as ? { as: s.as } : {}),
     })),
     ...(skill.variables ? { variables: skill.variables } : {}),
   });
@@ -228,6 +235,7 @@ export function importSkill(yamlContent: string): SkillDefinition {
       args: s.args,
       confirm: s.confirm ?? false,
       continueOnError: s.continueOnError ?? false,
+      ...(s.as ? { as: s.as } : {}),
     })),
     variables: parsed.variables,
   };
