@@ -4,16 +4,17 @@
  * No wire seam here on purpose: the defect is entirely in-process ranking over
  * a snapshot that has already been fetched, so there is no 200-vs-silent-200
  * ambiguity for a stand-in to expose. What the caller observes IS this return
- * value — it is emitted verbatim as `topBlockers` / `unreachableBlockers`.
+ * value — it is emitted verbatim as `topBlockers` / `unreachable`.
  */
 import { findTopBlockers, formatHuman, OverviewResult } from '../../commands/overview';
 import { AggregateCard } from '../../api/aggregate';
+import { SWEEP_CAP } from '../../lib/read-shape';
 
 const card = (over: Partial<AggregateCard> & { id: string }): AggregateCard =>
   ({ title: `card ${over.id}`, ...over }) as AggregateCard;
 
 describe('findTopBlockers', () => {
-  it('ranks blockers that are in the fetched set, by edge count', () => {
+  it('ranks blockers that are in the fetched set, by edge count', async () => {
     const cards = [
       card({ id: 'id-A', commonId: 'A', boardName: 'Board A' }),
       card({ id: 'id-B', commonId: 'B', boardName: 'Board A' }),
@@ -21,7 +22,7 @@ describe('findTopBlockers', () => {
       card({ id: 'id-2', commonId: '2', blockedBy: ['A', 'B'] }),
     ];
 
-    const { topBlockers, unreachable } = findTopBlockers(cards);
+    const { topBlockers, unreachable } = await findTopBlockers(cards);
 
     expect(topBlockers).toEqual([
       { id: 'id-A', title: 'card id-A', board: 'Board A', blockingCount: 2 },
@@ -30,14 +31,14 @@ describe('findTopBlockers', () => {
     expect(unreachable).toEqual([]);
   });
 
-  it('reports a blocker outside the fetched set instead of dropping it', () => {
+  it('reports a blocker outside the fetched set instead of dropping it', async () => {
     const cards = [
       card({ id: 'id-1', commonId: '1', blockedBy: ['off-board'] }),
       card({ id: 'id-2', commonId: '2', blockedBy: ['off-board'] }),
       card({ id: 'id-3', commonId: '3', blockedBy: ['off-board'] }),
     ];
 
-    const { topBlockers, unreachable } = findTopBlockers(cards);
+    const { topBlockers, unreachable } = await findTopBlockers(cards);
 
     // Nothing rankable — and the caller is told that is not the same as none.
     expect(topBlockers).toEqual([]);
@@ -46,7 +47,7 @@ describe('findTopBlockers', () => {
     expect(unreachable[0].reason).toContain('blocks 3 card(s)');
   });
 
-  it('a cross-board blocker outranking every local one is named, not silently ignored', () => {
+  it('a cross-board blocker outranking every local one is named, not silently ignored', async () => {
     const cards = [
       card({ id: 'id-A', commonId: 'A', boardName: 'Board A' }),
       card({ id: 'id-1', commonId: '1', blockedBy: ['A'] }),
@@ -55,14 +56,14 @@ describe('findTopBlockers', () => {
       card({ id: 'id-4', commonId: '4', blockedBy: ['cross'] }),
     ];
 
-    const { topBlockers, unreachable } = findTopBlockers(cards);
+    const { topBlockers, unreachable } = await findTopBlockers(cards);
 
     expect(topBlockers.map(b => b.id)).toEqual(['id-A']);
     expect(unreachable.map(u => u.id)).toEqual(['cross']);
   });
 
-  it('an empty unreachable list with an empty ranking means there really are no blockers', () => {
-    const { topBlockers, unreachable } = findTopBlockers([
+  it('an empty unreachable list with an empty ranking means there really are no blockers', async () => {
+    const { topBlockers, unreachable } = await findTopBlockers([
       card({ id: 'id-1', commonId: '1' }),
       card({ id: 'id-2', commonId: '2' }),
     ]);
@@ -71,17 +72,33 @@ describe('findTopBlockers', () => {
     expect(unreachable).toEqual([]);
   });
 
-  it('caps the ranking at `count`; every unreachable blocker is still reported', () => {
+  it('caps the ranking at `count`; every unreachable blocker is still reported', async () => {
     const cards: AggregateCard[] = [];
     for (let i = 0; i < 3; i += 1) cards.push(card({ id: `id-B${i}`, commonId: `B${i}` }));
     // Six blocked cards: three name a present blocker, three name absent ones.
     for (let i = 0; i < 3; i += 1) cards.push(card({ id: `id-x${i}`, commonId: `x${i}`, blockedBy: [`B${i}`] }));
     for (let i = 0; i < 3; i += 1) cards.push(card({ id: `id-y${i}`, commonId: `y${i}`, blockedBy: [`gone-${i}`] }));
 
-    const { topBlockers, unreachable } = findTopBlockers(cards, 2);
+    const { topBlockers, unreachable } = await findTopBlockers(cards, 2);
 
     expect(topBlockers).toHaveLength(2);
     expect(unreachable.map(u => u.id).sort()).toEqual(['gone-0', 'gone-1', 'gone-2']);
+  });
+
+  it('reports every hole past SWEEP_CAP too — the cap changes the wording, not the count', async () => {
+    // The holes come from `boundedSweep` now (#86), so its 20-cap applies. What
+    // must not change is that no hole disappears: across ~20 boards cross-board
+    // edges are routine, and a count that stops at 20 would read as a smaller
+    // problem than it is. Past the cap the reason is the sweep's own.
+    const cards: AggregateCard[] = [];
+    for (let i = 0; i < SWEEP_CAP + 5; i += 1) {
+      cards.push(card({ id: `id-y${i}`, commonId: `y${i}`, blockedBy: [`gone-${i}`] }));
+    }
+
+    const { unreachable } = await findTopBlockers(cards);
+
+    expect(unreachable).toHaveLength(SWEEP_CAP + 5);
+    for (const hole of unreachable) expect(hole.reason).toBeTruthy();
   });
 });
 
@@ -102,7 +119,7 @@ describe('formatHuman — the unreachable list', () => {
     stageDistribution: {},
     topBlockers: [],
     ...(ids.length > 0
-      ? { unreachableBlockers: ids.map(id => ({ id, reason: 'blocks 1 card(s) in this scope, …' })) }
+      ? { unreachable: ids.map(id => ({ id, reason: 'blocks 1 card(s) in this scope, …' })) }
       : {}),
     dueSummary: { overdue: 0, dueThisWeek: 0, dueNextWeek: 0, noDueDate: 400 },
     generatedAt: '2026-01-01T00:00:00.000Z',

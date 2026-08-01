@@ -91,7 +91,9 @@ ERRORS AND RETRY
 
 WIRE NOTES THAT CHANGE WHAT YOU SEND
   List reads answer an envelope, '{rows, truncated?, unreachable?}', a single read
-  the bare entity. Card bodies are out of output by default — '--body' returns
+  the bare entity. 'unreachable' is ALWAYS objects — '{id, reason}', never bare
+  strings — under that one key on every command that reports one.
+  Card bodies are out of output by default — '--body' returns
   them — and '--json' prints THIS CLI's answer, never Favro's raw entity. Write
   tags BY NAME; an unknown name is refused, never created. Assignment is by
   userId and ADDED, never replaced; '--assignee' takes a name, an email, a userId
