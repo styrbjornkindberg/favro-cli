@@ -24,6 +24,7 @@ import FavroHttpClient from './http-client';
 import ColumnsAPI from './columns-api';
 import { readConfig } from './config';
 import { MISSING_WORDING } from './favro-error';
+import { RefusalError } from './refusal';
 
 export interface TrackerMapping {
   collectionId: string;
@@ -44,7 +45,7 @@ export interface StoredTracker {
 export type TrackerFailure = 'missing' | 'malformed' | 'drift' | 'ambiguous';
 
 /** A structured refusal. `columns` lists the board's real columns on 'drift'. */
-export class TrackerConfigError extends Error {
+export class TrackerConfigError extends RefusalError {
   constructor(
     message: string,
     readonly kind: TrackerFailure,
@@ -58,16 +59,26 @@ export class TrackerConfigError extends Error {
 /**
  * The triage vocabulary (docs/agents/triage-labels.md), carried by tags rather
  * than by the column — the column already carries open/closed and cannot carry
- * both. `tracker init` provisions all five so a later `retag` can refuse an
+ * both. `tracker init` provisions all seven so a later `retag` can refuse an
  * unknown tag instead of quietly creating one.
  */
-export const TRIAGE_TAGS = [
+export const CATEGORY_TAGS = ['bug', 'enhancement'] as const;
+
+export const STATE_TAGS = [
   'needs-triage',
   'needs-info',
   'ready-for-agent',
   'ready-for-human',
   'wontfix',
 ] as const;
+
+/**
+ * Seven roles on two axes, not five on one: `retag` enforces exactly one
+ * CATEGORY and exactly one STATE, so provisioning the state half alone would
+ * leave `retag --category bug` refusing on a freshly initialised tracker with
+ * no reachable fix — the same class of unusable advice #48 caught.
+ */
+export const TRIAGE_TAGS = [...CATEGORY_TAGS, ...STATE_TAGS] as const;
 
 const BEGIN = '<!-- favro-tracker -->';
 const END = '<!-- /favro-tracker -->';

@@ -44,8 +44,15 @@
  * would be a licence to clobber in silence.
  */
 import CardsAPI, { Card, CardLink, CreateCardRequest } from './cards-api';
+import FavroHttpClient from './http-client';
 import { classifyThrownError } from './favro-error';
 import { isUserId } from './users-api';
+import { resolveAssignee } from './assignee';
+import { requireTrackerMapping, verifyTrackerMapping, VerifiedTracker } from './tracker-config';
+// Every guard below that DECLINES to write throws this rather than a bare
+// `Error`, so the dispatch table's one structural test covers it: a deterministic
+// refusal must never be reported as a retryable `rolled-back`.
+import { RefusalError } from './refusal';
 
 // ─── the three outcomes ──────────────────────────────────────────────────────
 
@@ -304,7 +311,17 @@ const setDiff = (current: readonly string[], desired: readonly string[]) => ({
  * intent is unrepresentable, not merely discouraged.
  */
 export class TxCards {
-  constructor(private readonly api: CardsAPI, private readonly log: CompensationLog) {}
+  /**
+   * The `client` is held for the READS an intent cannot express through
+   * `CardsAPI` — the tracker mapping and assignee resolution. It stays
+   * `private`, and no method hands it out, so the guarantee that an intent
+   * cannot build its own un-instrumented writer is unchanged.
+   */
+  constructor(
+    private readonly api: CardsAPI,
+    private readonly log: CompensationLog,
+    private readonly client: FavroHttpClient,
+  ) {}
 
   // ── reads (uninstrumented on purpose — a read has nothing to compensate) ──
 
@@ -327,6 +344,26 @@ export class TxCards {
   resolveColumnId(value: string, boardId?: string): Promise<string> {
     return this.api.resolveColumnId(value, boardId);
   }
+
+  /** One `userId`, from a name, an email, a `userId` or `@me`. One home (#42). */
+  resolveAssignee(value: string): Promise<string> {
+    return resolveAssignee(this.client, value);
+  }
+
+  /**
+   * The tracker mapping, verified against the board.
+   *
+   * Verified once per transaction: within one dispatch invocation a second
+   * check buys nothing, and a mapped column that is gone REFUSES rather than
+   * self-healing, so the answer cannot change mid-flight either way.
+   */
+  tracker(): Promise<VerifiedTracker> {
+    this.verifiedTracker ??= (async () =>
+      verifyTrackerMapping(this.client, await requireTrackerMapping()))();
+    return this.verifiedTracker;
+  }
+
+  private verifiedTracker?: Promise<VerifiedTracker>;
 
   // ── 1. create ─────────────────────────────────────────────────────────────
 
@@ -389,7 +426,7 @@ export class TxCards {
     const before = await this.api.getCard(cardRef);
     const delta = await this.api.tagReplacement(before, desired);
     if ((delta.addTags ?? []).length > 0) {
-      throw new Error(
+      throw new RefusalError(
         `Unknown tag ${(delta.addTags ?? []).map((n) => `"${n}"`).join(', ')} — no workspace tag has that name. ` +
           `Refusing to create it: on a write Favro treats an unknown name as a new tag, so a typo either ` +
           `invents a tag or 403s depending on this key's permissions. ` +
@@ -433,7 +470,7 @@ export class TxCards {
   async setAssignees(cardRef: string, desired: string[]): Promise<Card> {
     const notIds = desired.filter((v) => !isUserId(v));
     if (notIds.length > 0) {
-      throw new Error(
+      throw new RefusalError(
         `setAssignees takes userIds, got ${notIds.map((v) => `"${v}"`).join(', ')}. ` +
           `A whole-array assignee write is diffed against the card's current userIds, so a name would ` +
           `unassign everyone. Resolve names first with resolveAssignees().`,
@@ -528,8 +565,12 @@ export class TxCards {
    * semantics. An inlined edge carries only `cardCommonId`, one read from
    * `/dependencies` carries `cardId`; take whichever is there rather than faking
    * the ambiguous reverse lookup.
+   *
+   * Public because `add-blocking-edge`'s pre-read asks exactly this question,
+   * and its answer has to be the same one the rollback's detecting read gets —
+   * a second edge reader would be a second definition of "the edge is there".
    */
-  private async liveEdge(cardId: string, farId: string): Promise<LiveEdge | null> {
+  async liveEdge(cardId: string, farId: string): Promise<LiveEdge | null> {
     const links = await this.api.getCardLinks(cardId);
     const found = links.find((l) => l.cardId === farId || l.cardCommonId === farId);
     return found ? { far: farId, isBefore: found.isBefore } : null;

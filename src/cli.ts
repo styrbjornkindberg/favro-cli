@@ -20,6 +20,10 @@
 import { Command } from 'commander';
 import * as path from 'path';
 import CardsAPI, { UpdateCardRequest } from './lib/cards-api';
+// The shared dispatch table. Importing it here is what makes the CLI a caller of
+// the one table rather than a second, drifting write path — and it registers
+// every intent, so intents added by later tickets are reachable with no change.
+import { dispatch, DispatchResult } from './lib/dispatch';
 import { writeCardsCSV, writeCardsJSON, normalizeCard, cardsToCSV } from './lib/csv';
 import { applyFilters, ExportFormat } from './commands/cards-export';
 import { Card } from './lib/cards-api';
@@ -413,6 +417,34 @@ function parseCSV(content: string): Record<string, string>[] {
   });
 }
 
+/**
+ * Render one `DispatchResult` for a terminal, and say whether to exit non-zero.
+ *
+ * Reads the RESULT, never the intent name — so a commander action for an intent
+ * registered by a later ticket renders correctly with no change here. A refusal
+ * (scope lock, resolver, unknown intent) never arrives as a result: it throws,
+ * and each action's catch is where the throw becomes an exit code.
+ */
+function reportDispatch(result: DispatchResult<unknown>, json?: boolean): boolean {
+  if (result.preview) {
+    // A preview of the whole chain, and only a preview. The lock, not this flag,
+    // is what stopped anything unsafe.
+    result.preview.forEach((line) => console.log(`[dry-run] ${line}`));
+    return false;
+  }
+  if (result.outcome === 'ok') return false;
+
+  console.error(`✗ ${result.intent} failed: ${result.error}`);
+  if (result.retryable) {
+    console.error('  Rolled back — nothing was left behind, so the same call is safe to retry.');
+  } else {
+    console.error('  Rollback incomplete — do NOT retry. Left behind:');
+    for (const orphan of result.orphans ?? []) console.error(`    - ${orphan.reason}`);
+  }
+  if (json) console.log(JSON.stringify(result));
+  return true;
+}
+
 // ─── cards create ─────────────────────────────────────────────────────────────
 /** Commander reducer for a repeatable flag. */
 const collect = (value: string, acc: string[]): string[] => [...acc, value];
@@ -447,7 +479,13 @@ cards
   .option('--blocks <card>', 'Card this one comes before — sequentialId or cardId (repeatable)', collect, [])
   .option('--bulk <file>', 'Bulk create from JSON file')
   .option('--csv <file>', 'Bulk import from CSV file (columns: name, description, status)')
-  .option('--dry-run', 'Print what would be created without making API calls')
+  .option(
+    '--dry-run',
+    'Print what would be created without making API calls.\n' +
+      '                         Note: for a SINGLE card this still needs credentials — the scope lock runs\n' +
+      '                         before the preview, by design, so a preview cannot be a way around it.\n' +
+      '                         --csv/--bulk --dry-run read only the file and need none.',
+  )
   .option('-y, --yes', 'Skip confirmation prompt')
   .option('--force', 'Bypass scope check')
   .option('--json', 'Output as JSON')
@@ -523,35 +561,46 @@ cards
       }
 
       // ── Single card ─────────────────────────────────────────────────────────
-      if (options.dryRun) {
-        console.log(`[dry-run] Would create card: "${title}" on board ${options.board}`);
-        return;
-      }
-
-      const client = await createFavroClient();
-      if (options.board) {
-        const { readConfig } = await import('./lib/config');
-        const { checkScope } = await import('./lib/safety');
-        await checkScope(options.board, client, await readConfig(), options.force);
-      }
-      
-      const api = new CardsAPI(client);
+      // Through the SHARED dispatch table, never `CardsAPI` directly. The scope
+      // lock, the compensation log and the whole-chain `--dry-run` preview all
+      // live inside the table, so this commander action and the skill engine
+      // cannot drift apart on guardrails.
+      //
       // Every composite below rides the ONE POST Favro validates: a bad tag,
       // assignee, column or dependency target 403s the whole create and leaves
-      // no card behind, so there is nothing to undo and no follow-up write.
-      const card = await api.createCard({
-        name: title ?? '',
-        description: options.description ? options.description.replace(/\\n/g, '\n') : undefined,
-        status: options.status,
-        boardId: options.board,
-        assignees: options.assignee.length > 0 ? options.assignee : undefined,
-        parentCardId: options.parent,
-        tags: options.tag.length > 0 ? options.tag : undefined,
-        blockedBy: options.blockedBy.length > 0 ? options.blockedBy : undefined,
-        blocks: options.blocks.length > 0 ? options.blocks : undefined,
-      });
-      console.log(`✓ Card created: ${card.cardId}`);
-      if (options.json) console.log(JSON.stringify(card));
+      // no card behind.
+      const client = await createFavroClient();
+      const { readConfig } = await import('./lib/config');
+      const result = await dispatch<Card>(
+        'create',
+        {
+          name: title ?? '',
+          description: options.description ? options.description.replace(/\\n/g, '\n') : undefined,
+          status: options.status,
+          board: options.board,
+          assignees: options.assignee,
+          parent: options.parent,
+          tags: options.tag,
+          blockedBy: options.blockedBy,
+          blocks: options.blocks,
+        },
+        {
+          client,
+          config: (await readConfig()) ?? {},
+          force: options.force,
+          dryRun: options.dryRun,
+        },
+      );
+      // A refusal (scope lock, resolver, unknown intent) never reaches here — it
+      // throws, and the catch below is the one place a throw becomes an exit code.
+      if (reportDispatch(result, options.json)) process.exit(1);
+      if (result.outcome === 'ok' && result.value) {
+        // The intent returns the WHOLE card and this projects what it prints, so
+        // the `--json` contract (`cardCommonId`, `columnId`, `sequentialId`, …)
+        // is whatever `POST /cards` answered — unchanged by going through the table.
+        console.log(`✓ Card created: ${result.value.cardId}`);
+        if (options.json) console.log(JSON.stringify(result.value));
+      }
     } catch (error) {
       logError(error, program.opts().verbose);
       process.exit(1);

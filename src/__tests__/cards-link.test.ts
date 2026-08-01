@@ -229,37 +229,23 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
     expect(mockLinkCard).toHaveBeenCalled();
   });
 
-  // ─── Circular dependency detection ─────────────────────────────────────────
+  // ─── No cycle walk (#53) ───────────────────────────────────────────────────
 
-  test('detects circular dependency and rejects link', async () => {
-    // A depends-on B, and B depends-on A would be a cycle
-    // We're linking B → A (depends-on), and A already depends-on B
-    const mockLinks: CardLink[] = [
-      { cardId: 'card-b', isBefore: true }  // A depends-on B
-    ];
-    const mockGetCardLinks = jest.fn().mockResolvedValue(mockLinks);
-    buildMockApi({ getCardLinks: mockGetCardLinks });
+  test('link does not walk the dependency graph looking for a cycle', async () => {
+    // `wouldCreateCycle` is deleted: an unbounded BFS over derived N, following
+    // `depends-on` only, with a bare `catch {}` around every read. The one real
+    // thing it caught — a pair linked both ways round — is settled by the
+    // `add-blocking-edge` intent's bounded pre-read, for BOTH directions in one
+    // call, and by Favro's own `403 Dependency already exists`.
+    const mockGetCardLinks = jest.fn().mockResolvedValue([{ cardId: 'card-b', isBefore: true }]);
+    const { mockLinkCard } = buildMockApi({ getCardLinks: mockGetCardLinks });
 
     const cardsCmd = new Command('cards');
     registerCardsLinkCommands(cardsCmd);
+    await cardsCmd.parseAsync(['node', 'cards', 'link', 'card-b', 'card-a', '--type', 'depends-on']);
 
-    // Trying to link B → A (depends-on) when A already depends-on B
-    await expect(
-      cardsCmd.parseAsync(['node', 'cards', 'link', 'card-b', 'card-a', '--type', 'depends-on'])
-    ).rejects.toThrow('process.exit');
-
-    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining("circular dependency"));
-    expect(exitSpy).toHaveBeenCalledWith(1);
-  });
-
-  test('circular detection skips non-depends-on link types', async () => {
-    // 'blocks' type should NOT trigger circular detection
-    const { mockLinkCard } = buildMockApi({ getCardLinks: jest.fn().mockResolvedValue([]) });
-    const cardsCmd = new Command('cards');
-    registerCardsLinkCommands(cardsCmd);
-
-    await cardsCmd.parseAsync(['node', 'cards', 'link', 'card-a', 'card-b', '--type', 'blocks']);
-    expect(mockLinkCard).toHaveBeenCalled();
+    expect(mockGetCardLinks).not.toHaveBeenCalled();
+    expect(mockLinkCard).toHaveBeenCalledWith('card-b', { toCardId: 'card-a', isBefore: true });
   });
 
   // ─── JSON output ──────────────────────────────────────────────────────────

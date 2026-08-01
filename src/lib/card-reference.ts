@@ -19,6 +19,7 @@
 import FavroHttpClient from './http-client';
 import { classifyThrownError } from './favro-error';
 import { MISSING_WORDING } from './favro-error';
+import { RefusalError } from './refusal';
 
 /** A card as the resolver needs to see it — the wire shape, not a normalized Card. */
 export interface CardInstance {
@@ -35,7 +36,7 @@ export interface CardInstance {
  * A refusal a caller can act on: what could not be settled, which candidates
  * exist, and the exact flag that disambiguates. Never a prose guess.
  */
-export class CardResolutionError extends Error {
+export class CardResolutionError extends RefusalError {
   constructor(
     message: string,
     readonly reference: string,

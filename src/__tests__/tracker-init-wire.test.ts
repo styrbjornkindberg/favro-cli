@@ -241,7 +241,12 @@ describe('tracker init on the wire', () => {
     const { client, received } = await startServer({ tags: ['needs-triage', 'wontfix'] });
     const result = await initTracker(client, { collectionId: COLL });
 
+    // Seven roles on two axes, not five on one: `retag` (#54) requires exactly
+    // one CATEGORY role and one STATE role, so provisioning only the state half
+    // left `retag --category bug` refusing on a freshly initialised tracker.
     expect(posts(received, 'tags').map((r) => r.body.name).sort()).toEqual([
+      'bug',
+      'enhancement',
       'needs-info',
       'ready-for-agent',
       'ready-for-human',

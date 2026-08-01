@@ -14,11 +14,12 @@
 import FavroHttpClient from './http-client';
 import UsersAPI, { User, UserLookupError } from './users-api';
 import { resolveUserId } from './config';
+import { RefusalError } from './refusal';
 
 export type AssigneeFailure = 'unknown' | 'ambiguous';
 
 /** Structured refusal. `candidates` holds ONLY the collided entries. */
-export class AssigneeError extends Error {
+export class AssigneeError extends RefusalError {
   constructor(
     message: string,
     readonly kind: AssigneeFailure,

@@ -14,40 +14,6 @@ export const VALID_LINK_TYPES = [...LINK_TYPES];
 const VALID_POSITIONS = ['top', 'bottom'];
 
 /**
- * Detect if linking cardId → toCardId would create a cycle in the depends-on graph.
- * Simple BFS: starting from toCardId, check if cardId is reachable via depends-on links.
- */
-async function wouldCreateCycle(
-  api: CardsAPI,
-  cardId: string,
-  toCardId: string
-): Promise<boolean> {
-  const visited = new Set<string>();
-  const queue = [toCardId];
-  while (queue.length > 0) {
-    const current = queue.shift()!;
-    if (visited.has(current)) continue;
-    visited.add(current);
-    try {
-      const links = await api.getCardLinks(current);
-      // isBefore === true: the linked card comes before `current`, i.e. `current`
-      // depends on it. Those are the edges a cycle would travel along.
-      for (const link of links) {
-        // `/cards/:id/dependencies` carries `cardId`; an inlined edge does not,
-        // and a cycle can only be walked along an edge whose far end has one.
-        if (link.isBefore && link.cardId) {
-          if (link.cardId === cardId) return true;
-          if (!visited.has(link.cardId)) queue.push(link.cardId);
-        }
-      }
-    } catch {
-      // best effort — if we can't fetch links, skip
-    }
-  }
-  return false;
-}
-
-/**
  * Register link / unlink / move / show / dependencies / blocking / blocked-by
  * subcommands on the `cards` parent command.
  */
@@ -97,15 +63,12 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
           process.exit(0);
         }
 
-        // Circular dependency detection for depends-on
-        if (type === 'depends-on') {
-          const hasCycle = await wouldCreateCycle(api, cardId, toCardId);
-          if (hasCycle) {
-            console.error(`Error: Linking would create a circular dependency. Aborting.`);
-            process.exit(1);
-          }
-        }
-
+        // No cycle walk here. The old `wouldCreateCycle` BFS was unbounded
+        // (derived N), followed `depends-on` only, and swallowed every read
+        // failure — and the one real thing it caught, a pair linked both ways
+        // round, is what the `add-blocking-edge` intent's bounded pre-read now
+        // settles for BOTH directions in one call. Favro itself refuses a
+        // second edge on a pair with `403 Dependency already exists`, loudly.
         const link = await api.linkCard(cardId, { toCardId, isBefore: linkTypeToIsBefore(type) });
 
         console.log(`✓ Linked card ${cardId} → ${toCardId} (${type})`);

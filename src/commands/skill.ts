@@ -87,6 +87,7 @@ export function registerSkillCommands(program: Command): void {
     .option('--dry-run', 'Preview steps without executing')
     .option('-y, --yes', 'Skip confirmation prompts')
     .option('--var <vars...>', 'Set variables: key=value')
+    .option('--force', 'Bypass the scope lock on write steps')
     .option('--json', 'Output results as JSON')
     .action(async (name: string, options) => {
       try {
@@ -110,6 +111,7 @@ export function registerSkillCommands(program: Command): void {
         const result = await runSkill(skill, {
           dryRun: options.dryRun,
           yes: options.yes,
+          force: options.force,
           variables,
           onStepComplete: (stepResult: StepResult) => {
             if (options.json) return;
@@ -130,6 +132,13 @@ export function registerSkillCommands(program: Command): void {
           const completed = result.steps.filter(s => s.status === 'success').length;
           const total = result.steps.length;
           console.log(`\n${result.status === 'completed' ? '✓' : '✗'} Skill "${result.skill}" ${result.status} (${completed}/${total} steps)`);
+          // The run is one transaction: report the whole-run unwind, not per step.
+          if (result.rollback?.outcome === 'rolled-back') {
+            console.log('  Rolled back — the whole run was undone, so it is safe to retry.');
+          } else if (result.rollback) {
+            console.error('  Rollback incomplete — do NOT retry. Left behind:');
+            for (const orphan of result.rollback.orphans) console.error(`    - ${orphan.reason}`);
+          }
         }
 
         if (result.status === 'failed') process.exit(1);

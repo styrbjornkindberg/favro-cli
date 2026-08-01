@@ -31,6 +31,7 @@ import {
 } from '../lib/dispatch';
 import { CompensationLog, TxCards } from '../lib/tx-cards';
 import { ScopeError } from '../lib/safety';
+import { TrackerMapping, renderTrackerBlock } from '../lib/tracker-config';
 
 const ORG = 'org-1';
 const BOARD = 'board-a';
@@ -42,8 +43,42 @@ const ALICE = 'aaaaaaaaaaaaaaaaa';
 const BOB = 'bbbbbbbbbbbbbbbbb';
 const TAG_BUG = 'tag-bug';
 const TAG_P1 = 'tag-p1';
+const TAG_ENHANCEMENT = 'tag-enhancement';
+const TAG_TRIAGE = 'tag-needs-triage';
+const TAG_AGENT = 'tag-ready-for-agent';
+const TAG_MAP = 'tag-wayfinder-map';
 const CARD = '00000000000000000000cc01';
 const FAR = '00000000000000000000cc02';
+
+/** The two boards, with their columns inlined exactly as `GET /widgets` does. */
+const BOARDS = [
+  {
+    widgetCommonId: BOARD,
+    name: 'Board A',
+    collectionIds: ['coll-a'],
+    columns: [
+      { columnId: TODO, name: 'To Do', position: 0 },
+      { columnId: DOING, name: 'Doing', position: 1 },
+      { columnId: DONE, name: 'Done', position: 2 },
+    ],
+  },
+  {
+    widgetCommonId: OTHER_BOARD,
+    name: 'Board B',
+    collectionIds: ['coll-b'],
+    columns: [{ columnId: 'col-b-1', name: 'Inbox', position: 0 }],
+  },
+];
+
+/** The org's tags: the two triage axes, plus two outside the vocabulary. */
+const TAGS = [
+  { tagId: TAG_BUG, name: 'bug' },
+  { tagId: TAG_ENHANCEMENT, name: 'enhancement' },
+  { tagId: TAG_TRIAGE, name: 'needs-triage' },
+  { tagId: TAG_AGENT, name: 'ready-for-agent' },
+  { tagId: TAG_MAP, name: 'wayfinder:map' },
+  { tagId: TAG_P1, name: 'P1' },
+];
 
 interface Received { method: string; url: string; path: string; body?: any }
 
@@ -232,7 +267,11 @@ function startServer(opts: { fail?: FailHook; afterWrite?: ConcurrentEdit } = {}
         const query = new URLSearchParams(url.split('?')[1] ?? '');
         const commonId = query.get('cardCommonId');
         const seq = query.get('cardSequentialId');
+        const widget = query.get('widgetCommonId');
         const entities = [...cards.values()].filter((c) => {
+          // `widgetCommonId` narrows a card that lives on several boards — the
+          // whole point of threading a board into a resolution.
+          if (widget && c.widgetCommonId !== widget) return false;
           if (commonId) return c.cardCommonId === commonId;
           if (seq) return false;
           return true;
@@ -241,59 +280,28 @@ function startServer(opts: { fail?: FailHook; afterWrite?: ConcurrentEdit } = {}
       }
 
       // ── directories ───────────────────────────────────────────────────────
+      if (pathOnly.startsWith('/columns')) {
+        // `verifyTrackerMapping` asks this one, per call, by board.
+        const board = new URLSearchParams(url.split('?')[1] ?? '').get('widgetCommonId');
+        const found = BOARDS.find((w) => w.widgetCommonId === board);
+        return send(200, {
+          entities: (found?.columns ?? []).map((c) => ({ ...c, widgetCommonId: board })),
+        });
+      }
       if (pathOnly.startsWith('/widgets')) {
         // A by-id widget GET answers the bare entity; only the list answers an
         // `entities` envelope. `assertScope` reads `collectionIds` off the
         // former, so serving the envelope for both would make the lock
         // unenforceable against a board that is genuinely in scope.
         const byId = pathOnly.slice('/widgets'.length).replace(/^\//, '');
-        const all = [
-          {
-            widgetCommonId: BOARD,
-            name: 'Board A',
-            collectionIds: ['coll-a'],
-            columns: [
-              { columnId: TODO, name: 'To Do', position: 0 },
-              { columnId: DOING, name: 'Doing', position: 1 },
-              { columnId: DONE, name: 'Done', position: 2 },
-            ],
-          },
-          {
-            widgetCommonId: OTHER_BOARD,
-            name: 'Board B',
-            collectionIds: ['coll-b'],
-            columns: [{ columnId: 'col-b-1', name: 'Inbox', position: 0 }],
-          },
-        ];
         if (byId) {
-          const found = all.find((w) => w.widgetCommonId === byId);
+          const found = BOARDS.find((w) => w.widgetCommonId === byId);
           return found ? send(200, found) : send(404, { message: 'Widget not found' });
         }
-        return send(200, {
-          entities: [
-            {
-              widgetCommonId: BOARD,
-              name: 'Board A',
-              collectionIds: ['coll-a'],
-              columns: [
-                { columnId: TODO, name: 'To Do', position: 0 },
-                { columnId: DOING, name: 'Doing', position: 1 },
-                { columnId: DONE, name: 'Done', position: 2 },
-              ],
-            },
-            {
-              widgetCommonId: OTHER_BOARD,
-              name: 'Board B',
-              collectionIds: ['coll-b'],
-              columns: [{ columnId: 'col-b-1', name: 'Inbox', position: 0 }],
-            },
-          ],
-        });
+        return send(200, { entities: BOARDS });
       }
       if (pathOnly.startsWith('/tags')) {
-        return send(200, {
-          entities: [{ tagId: TAG_BUG, name: 'bug' }, { tagId: TAG_P1, name: 'P1' }],
-        });
+        return send(200, { entities: TAGS });
       }
       if (pathOnly.startsWith('/users')) {
         return send(200, {
@@ -331,6 +339,23 @@ const puts = (received: Received[]) => received.filter((r) => r.method === 'PUT'
 const originalConfigDir = process.env.FAVRO_CONFIG_DIR;
 const originalTrackerDoc = process.env.FAVRO_TRACKER_DOC;
 let tmpDir: string;
+
+/**
+ * Designate a tracker the way `tracker init` does — a pasted block in the repo
+ * doc — and point the CLI at it. Written per test into that test's own tmpdir,
+ * so nothing reads the developer's real `docs/agents/issue-tracker.md`.
+ */
+async function useTracker(columns?: TrackerMapping['columns']): Promise<TrackerMapping> {
+  const mapping: TrackerMapping = {
+    collectionId: 'coll-a',
+    boardId: BOARD,
+    columns: columns ?? { active: DOING, done: DONE },
+  };
+  const doc = path.join(tmpDir, 'issue-tracker.md');
+  await fs.writeFile(doc, renderTrackerBlock(mapping));
+  process.env.FAVRO_TRACKER_DOC = doc;
+  return mapping;
+}
 
 /** No scope lock configured — the table's guardrail is exercised separately. */
 function ctx(stand: Stand, extra: Partial<DispatchContext> = {}): DispatchContext {
@@ -417,9 +442,17 @@ afterEach(async () => {
 
 describe('the table is the single home for every write intent', () => {
   it('the seven intents named by the spec are either registered or explicitly pending', () => {
-    // A registry, not a hand list: #53–#55 add theirs against this same table.
-    expect(intentNames()).toContain('create');
-    expect(intentNames()).toContain('remove-blocking-edge');
+    // A registry, not a hand list: #55 adds `read` against this same table.
+    for (const name of [
+      'create',
+      'claim',
+      'resolve',
+      'add-blocking-edge',
+      'remove-blocking-edge',
+      'retag',
+    ]) {
+      expect(intentNames()).toContain(name);
+    }
   });
 
   it('an unknown intent refuses with the table contents, and writes nothing', async () => {
@@ -732,6 +765,324 @@ describe('remove-blocking-edge is tx-instrumented over the verified unlink', () 
       }),
     ]);
     expect(stand.edges).toEqual([{ near: CARD, far: FAR, isBefore: false }]);
+  });
+});
+
+describe('add-blocking-edge is idempotent by verification', () => {
+  const deps = (received: Received[]) =>
+    received.filter((r) => r.method === 'GET' && r.path === `/cards/${CARD}/dependencies`);
+
+  it('writes the edge once when the pair holds none, after one bounded pre-read', async () => {
+    const stand = await startServer();
+
+    const result = await dispatch<{ created: boolean }>(
+      'add-blocking-edge',
+      { card: CARD, blockedBy: FAR },
+      ctx(stand),
+    );
+
+    expect(result.outcome).toBe('ok');
+    expect(result.value?.created).toBe(true);
+    // One pre-read on ONE card: Favro mirrors the edge set, so the far card
+    // needs no read of its own.
+    expect(deps(stand.received)).toHaveLength(1);
+    const posts = writes(stand.received);
+    expect(posts).toHaveLength(1);
+    expect(posts[0].path).toBe(`/cards/${CARD}/dependencies`);
+    expect(posts[0].body).toEqual({ dependencies: [{ cardId: FAR, isBefore: true }] });
+    expect(stand.edges).toEqual([{ near: CARD, far: FAR, isBefore: true }]);
+  });
+
+  it('an edge already there is ok with created:false, and NOTHING is written', async () => {
+    // Also the retry contract: after a `rollback-incomplete` left this edge
+    // behind as an orphan, running the same call again has to reach `ok`
+    // instead of compounding the wreckage.
+    const stand = await startServer();
+    stand.edges.push({ near: CARD, far: FAR, isBefore: true });
+
+    const result = await dispatch<{ created: boolean }>(
+      'add-blocking-edge',
+      { card: CARD, blockedBy: FAR },
+      ctx(stand),
+    );
+
+    expect(result.outcome).toBe('ok');
+    // The marker that separates "created" from "already there".
+    expect(result.value?.created).toBe(false);
+    expect(writes(stand.received)).toHaveLength(0);
+  });
+
+  it('the REVERSE edge refuses, names the live direction, and writes nothing', async () => {
+    // The pair holds `CARD blocks FAR`; we are asked for `FAR blocks CARD`.
+    const stand = await startServer();
+    stand.edges.push({ near: CARD, far: FAR, isBefore: false });
+
+    // ONE dispatch, so the "writes nothing" check below covers exactly the one
+    // attempt it reads as.
+    const refusal = await dispatch('add-blocking-edge', { card: CARD, blockedBy: FAR }, ctx(stand))
+      .then(() => undefined, (e: Error) => e);
+    expect(refusal?.message).toMatch(/already holds the REVERSE edge/);
+    expect(refusal?.message).toMatch(/remove-blocking-edge/);
+
+    // A flipped write is never applied — the pair is exactly as it was.
+    expect(writes(stand.received)).toHaveLength(0);
+    expect(stand.edges).toEqual([{ near: CARD, far: FAR, isBefore: false }]);
+  });
+
+  it('the race window falls through to exactly ONE re-read', async () => {
+    // The pair is empty at the pre-read and exists by the time we write — the
+    // 403 is not success, so the re-read is what says which direction won.
+    let racing: Stand | undefined;
+    const stand = await startServer({
+      fail: (r) => {
+        if (r.method !== 'POST' || !r.path.endsWith('/dependencies')) return undefined;
+        racing!.edges.push({ near: CARD, far: FAR, isBefore: true });
+        return { status: 403, message: 'Dependency already exists' };
+      },
+    });
+    racing = stand;
+
+    const result = await dispatch<{ created: boolean }>(
+      'add-blocking-edge',
+      { card: CARD, blockedBy: FAR },
+      ctx(stand),
+    );
+
+    expect(result.outcome).toBe('ok');
+    expect(result.value?.created).toBe(false);
+    // Pre-read plus one re-read. Not two, not a retry loop.
+    expect(deps(stand.received)).toHaveLength(2);
+    expect(writes(stand.received)).toHaveLength(1);
+  });
+
+  it('a race that lands the pair FLIPPED refuses instead of reporting success', async () => {
+    let racing: Stand | undefined;
+    const stand = await startServer({
+      fail: (r) => {
+        if (r.method !== 'POST' || !r.path.endsWith('/dependencies')) return undefined;
+        racing!.edges.push({ near: CARD, far: FAR, isBefore: false });
+        return { status: 403, message: 'Dependency already exists' };
+      },
+    });
+    racing = stand;
+
+    await expect(
+      dispatch('add-blocking-edge', { card: CARD, blockedBy: FAR }, ctx(stand)),
+    ).rejects.toThrow(/already holds the REVERSE edge/);
+    expect(stand.edges).toEqual([{ near: CARD, far: FAR, isBefore: false }]);
+  });
+});
+
+describe('claim and resolve act on the tracker-board instance', () => {
+  it('claim assigns and moves to the mapped active column in one call', async () => {
+    const stand = await startServer();
+    await useTracker();
+
+    const result = await dispatch<{ columnId?: string }>(
+      'claim',
+      { card: CARD, assignee: 'Alice Ahlberg' },
+      ctx(stand),
+    );
+
+    expect(result.outcome).toBe('ok');
+    expect(result.value?.columnId).toBe(DOING);
+    // What the wire received: an add-only assignment write, then the move.
+    // `assignees` is a silent no-op on both verbs, and a whole-array write
+    // would unassign whoever else is on the card.
+    expect(puts(stand.received).map((r) => r.body)).toEqual([
+      { addAssignmentIds: [ALICE] },
+      { columnId: DOING },
+    ]);
+    expect(stand.cards.get(CARD)!.assignments).toEqual([{ userId: ALICE }]);
+    expect(stand.cards.get(CARD)!.columnId).toBe(DOING);
+  });
+
+  it('resolve moves the card to the mapped done column in one call', async () => {
+    const stand = await startServer();
+    await useTracker();
+
+    const result = await dispatch<{ columnId?: string }>('resolve', { card: CARD }, ctx(stand));
+
+    expect(result.outcome).toBe('ok');
+    expect(puts(stand.received).map((r) => r.body)).toEqual([{ columnId: DONE }]);
+    expect(stand.cards.get(CARD)!.columnId).toBe(DONE);
+  });
+
+  it('a card that is not on the tracker board refuses, and nothing is written', async () => {
+    const stand = await startServer();
+    stand.cards.get(CARD)!.widgetCommonId = OTHER_BOARD;
+    await useTracker();
+
+    await expect(dispatch('resolve', { card: CARD }, ctx(stand))).rejects.toThrow(
+      /not on the tracker board/,
+    );
+    expect(writes(stand.received)).toHaveLength(0);
+  });
+
+  it('a FORK never absorbs a claim — no widgetCommonId means no column to move to', async () => {
+    // What `addAssignmentIds` produces: a second to-do-list entity with no
+    // `widgetCommonId` and no `columnId`. Handed one, we refuse rather than
+    // write to it.
+    // CEILING, stated so a later reader does not over-trust this: the stand-in
+    // never actually forks on `addAssignmentIds` — the fork is planted by hand.
+    // What this pins is that a card WITHOUT a `widgetCommonId` is refused, not
+    // that Favro produces one where we think it does. That half is probe
+    // knowledge (#54), not something this seam can observe.
+    const stand = await startServer();
+    const fork = stand.cards.get(CARD)!;
+    fork.widgetCommonId = undefined;
+    fork.columnId = undefined;
+    await useTracker();
+
+    await expect(
+      dispatch('claim', { card: CARD, assignee: ALICE }, ctx(stand)),
+    ).rejects.toThrow(/fork/);
+    expect(writes(stand.received)).toHaveLength(0);
+  });
+
+  it('a cardCommonId on two boards settles on the tracker instance, not a dead end', async () => {
+    // `resolveCardId` returns a non-sequential reference UNCHANGED, so the board
+    // has to be threaded into the READ as well. Without it this escalates
+    // unscoped, finds both instances and refuses with "pass --board <board>" —
+    // a flag `claim` does not have.
+    const stand = await startServer();
+    stand.cards.set('other-instance', card({
+      cardId: 'other-instance',
+      cardCommonId: `ccid-${CARD}`,
+      widgetCommonId: OTHER_BOARD,
+      columnId: 'col-b-1',
+    }));
+    await useTracker();
+
+    const result = await dispatch<{ cardId: string; columnId?: string }>(
+      'claim',
+      { card: `ccid-${CARD}`, assignee: ALICE },
+      ctx(stand),
+    );
+
+    expect(result.outcome).toBe('ok');
+    expect(result.value?.cardId).toBe(CARD);
+    expect(stand.cards.get(CARD)!.columnId).toBe(DOING);
+    // The other board's instance is untouched.
+    expect(stand.cards.get('other-instance')!.columnId).toBe('col-b-1');
+    expect(stand.cards.get('other-instance')!.assignments).toEqual([]);
+  });
+
+  it('a mapped column that is gone refuses per call, and never re-points', async () => {
+    const stand = await startServer();
+    await useTracker({ active: 'col-deleted', done: DONE });
+
+    await expect(dispatch('claim', { card: CARD }, ctx(stand))).rejects.toThrow(
+      /Refusing to re-point it/,
+    );
+    expect(writes(stand.received)).toHaveLength(0);
+  });
+});
+
+describe('retag keeps the triage vocabulary coherent', () => {
+  it('swaps the state role, leaves the category and everything outside the axes alone', async () => {
+    const stand = await startServer();
+    stand.cards.get(CARD)!.tags = [TAG_MAP, TAG_BUG, TAG_TRIAGE];
+
+    const result = await dispatch<{ category: string; state: string }>(
+      'retag',
+      { card: CARD, state: 'ready-for-agent' },
+      ctx(stand),
+    );
+
+    expect(result.outcome).toBe('ok');
+    expect(result.value).toMatchObject({ category: 'bug', state: 'ready-for-agent' });
+    expect(puts(stand.received).map((r) => r.body)).toEqual([
+      { addTagIds: [TAG_AGENT], removeTagIds: [TAG_TRIAGE] },
+    ]);
+    // The `wayfinder:map` tag is not on either axis and survives untouched.
+    expect(stand.cards.get(CARD)!.tags).toEqual([TAG_MAP, TAG_BUG, TAG_AGENT]);
+  });
+
+  it('an unknown role is refused in CLI code — no tag is created, no write is made', async () => {
+    const stand = await startServer();
+    stand.cards.get(CARD)!.tags = [TAG_BUG, TAG_TRIAGE];
+
+    await expect(
+      dispatch('retag', { card: CARD, state: 'in-progress' }, ctx(stand)),
+    ).rejects.toThrow(/not a state role/);
+    expect(writes(stand.received)).toHaveLength(0);
+  });
+
+  it('refuses to leave a card with two category tags', async () => {
+    const stand = await startServer();
+    stand.cards.get(CARD)!.tags = [TAG_BUG, TAG_ENHANCEMENT, TAG_TRIAGE];
+
+    await expect(dispatch('retag', { card: CARD, state: 'ready-for-agent' }, ctx(stand)))
+      .rejects.toThrow(/2 category tags/);
+    expect(writes(stand.received)).toHaveLength(0);
+  });
+
+  it('refuses when an axis would be left empty', async () => {
+    const stand = await startServer();
+    stand.cards.get(CARD)!.tags = [TAG_BUG];
+
+    await expect(dispatch('retag', { card: CARD, category: 'enhancement' }, ctx(stand)))
+      .rejects.toThrow(/carries no state tag/);
+    expect(writes(stand.received)).toHaveLength(0);
+  });
+});
+
+describe('a deterministic refusal is never dressed up as a retryable rollback', () => {
+  it('a refusal in step 2 of a threaded transaction stays a refusal, and step 1 still undoes', async () => {
+    // The skill engine's shape: ONE log threaded through several dispatches. The
+    // log's depth counts what EARLIER steps wrote, so "have I written yet?" can
+    // only be answered against the depth this invocation started at.
+    const stand = await startServer();
+    stand.cards.get(CARD)!.tags = [TAG_BUG, TAG_TRIAGE];
+    const log = new CompensationLog();
+
+    const first = await dispatch('probe-move', { card: CARD, to: 'Doing' }, ctx(stand, { log }));
+    expect(first.outcome).toBe('ok');
+
+    // Step 2 refuses deterministically. Reported as `rolled-back / retryable`,
+    // an agent would re-run the whole thing and refuse identically, forever.
+    await expect(
+      dispatch('retag', { card: CARD, state: 'in-progress' }, ctx(stand, { log })),
+    ).rejects.toThrow(/not a state role/);
+
+    // The refusal did not unwind on its way out: the transaction is still open,
+    // which is what lets the caller that OWNS the log decide the run is over.
+    expect(log.depth).toBe(1);
+    expect(stand.cards.get(CARD)!.columnId).toBe(DOING);
+
+    const { outcome, orphans } = await log.unwind();
+    expect(outcome).toBe('rolled-back');
+    expect(orphans).toEqual([]);
+    expect(stand.cards.get(CARD)!.columnId).toBe(TODO);
+  });
+
+  it('an unknown assignee on claim refuses, and writes nothing', async () => {
+    // The headline command's headline failure. `AssigneeError` is a refusal
+    // because it is one — the retry looks up the same missing name.
+    const stand = await startServer();
+    await useTracker();
+
+    await expect(
+      dispatch('claim', { card: CARD, assignee: 'Nobody Here' }, ctx(stand)),
+    ).rejects.toThrow(/Unknown assignee "Nobody Here"/);
+    expect(writes(stand.received)).toHaveLength(0);
+    expect(stand.cards.get(CARD)!.columnId).toBe(TODO);
+  });
+
+  it('a vocabulary role the workspace has no tag for refuses, and writes nothing', async () => {
+    // Reachable on any workspace that never ran `tracker init`: the role is in
+    // the vocabulary, so `settleAxis` passes it, and `setTags` is where the org
+    // turns out not to hold the tag. On a write an unknown name is a tag
+    // CREATION, so this must refuse rather than go out as `addTags`.
+    const stand = await startServer();
+    stand.cards.get(CARD)!.tags = [TAG_BUG, TAG_TRIAGE];
+
+    await expect(
+      dispatch('retag', { card: CARD, state: 'wontfix' }, ctx(stand)),
+    ).rejects.toThrow(/Unknown tag "wontfix"/);
+    expect(writes(stand.received)).toHaveLength(0);
+    expect(stand.cards.get(CARD)!.tags).toEqual([TAG_BUG, TAG_TRIAGE]);
   });
 });
 
