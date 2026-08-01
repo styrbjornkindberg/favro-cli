@@ -155,13 +155,121 @@ describe('cards update --from-csv — scope lock (#79)', () => {
     expect(mockCheckScope).toHaveBeenCalledWith('board-A', expect.anything(), LOCKED_CONFIG, true);
   });
 
-  it('leaves the dry-run preview alone — no GETs, no scope check', async () => {
+});
+
+/**
+ * The dry-run arm of the same path must take the lock too (#103).
+ *
+ * `dispatch.ts` runs its scope loop before the `dryRun` return, and `cards
+ * create --dry-run` says so in its own help text. This branch used to be the
+ * one exception: it resolved no boards and checked nothing, so a preview
+ * happily printed "would update CLA-999" for a card the real run refuses.
+ */
+describe('cards update --from-csv --dry-run — scope lock (#103)', () => {
+  let program: Command;
+  let mockApi: jest.Mocked<CardsAPI>;
+  let calls: string[];
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    process.env.FAVRO_API_KEY = 'test-token';
+    mockResolveApiKey.mockResolvedValue('test-token');
+    mockReadConfig.mockResolvedValue(LOCKED_CONFIG);
+
+    const mockClient = new FavroHttpClient() as jest.Mocked<FavroHttpClient>;
+    mockApi = new CardsAPI(mockClient) as jest.Mocked<CardsAPI>;
+    (CardsAPI as jest.MockedClass<typeof CardsAPI>).mockImplementation(() => mockApi);
+
+    calls = [];
+    mockCheckScope.mockImplementation(async (boardId: string) => {
+      calls.push(`scope:${boardId}`);
+    });
+    mockApi.updateCard.mockImplementation(async (cardId: string) => {
+      calls.push(`write:${cardId}`);
+      return makeCard({ cardId });
+    });
+
+    jest.spyOn(console, 'log').mockImplementation((line?: any) => {
+      calls.push(`print:${String(line).slice(0, 20)}`);
+    });
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+    jest.spyOn(process, 'exit').mockImplementation((() => {}) as any);
+
+    program = buildProgram();
+    program.exitOverride();
+  });
+
+  afterEach(() => {
+    delete process.env.FAVRO_API_KEY;
+    jest.restoreAllMocks();
+  });
+
+  it('checks the resolved board BEFORE printing the preview', async () => {
     mockFsReadFile.mockResolvedValue('card_id,status\ncard-1,Done' as any);
+    mockApi.getCard.mockResolvedValue(makeCard({ cardId: 'card-1', boardId: 'board-A' }));
 
     await program.parseAsync(['node', 'favro', 'cards', 'update', '--from-csv', 'bulk.csv', '--dry-run']);
 
-    expect(mockApi.getCard).not.toHaveBeenCalled();
-    expect(mockCheckScope).not.toHaveBeenCalled();
+    expect(mockCheckScope).toHaveBeenCalledWith('board-A', expect.anything(), LOCKED_CONFIG, undefined);
+    expect(calls[0]).toBe('scope:board-A');
+    expect(calls.some((c) => c.startsWith('print:'))).toBe(true);
+  });
+
+  it('refuses an out-of-scope row with ZERO writes — no transaction, no updateCard', async () => {
+    mockFsReadFile.mockResolvedValue('card_id,status\ncard-1,Done' as any);
+    mockApi.getCard.mockResolvedValue(makeCard({ cardId: 'card-1', boardId: 'board-OUTSIDE' }));
+    mockCheckScope.mockImplementation(async (boardId: string) => {
+      calls.push(`scope:${boardId}`);
+      throw new Error('Scope violation');
+    });
+
+    await program.parseAsync(['node', 'favro', 'cards', 'update', '--from-csv', 'bulk.csv', '--dry-run']);
+
     expect(mockApi.updateCard).not.toHaveBeenCalled();
+    expect(calls.filter((c) => c.startsWith('write:'))).toEqual([]);
+    expect(calls.filter((c) => c.startsWith('print:'))).toEqual([]);
+  });
+
+  it('collapses two rows on the same board to ONE check, and splits two boards into two', async () => {
+    mockFsReadFile.mockResolvedValue('card_id,status\ncard-1,Done\ncard-2,Done' as any);
+    mockApi.getCard.mockImplementation(async (cardId: string) => makeCard({ cardId, boardId: 'board-A' }));
+
+    await program.parseAsync(['node', 'favro', 'cards', 'update', '--from-csv', 'bulk.csv', '--dry-run']);
+    expect(mockCheckScope.mock.calls.map((c) => c[0])).toEqual(['board-A']);
+
+    jest.clearAllMocks();
+    mockReadConfig.mockResolvedValue(LOCKED_CONFIG);
+    mockFsReadFile.mockResolvedValue('card_id,status\ncard-1,Done\ncard-2,Done' as any);
+    mockApi.getCard.mockImplementation(async (cardId: string) =>
+      makeCard({ cardId, boardId: cardId === 'card-2' ? 'board-B' : 'board-A' })
+    );
+
+    program = buildProgram();
+    program.exitOverride();
+    await program.parseAsync(['node', 'favro', 'cards', 'update', '--from-csv', 'bulk.csv', '--dry-run']);
+    expect(mockCheckScope.mock.calls.map((c) => c[0])).toEqual(['board-A', 'board-B']);
+  });
+
+  it('sends an unreadable row to the check as "" and still names the fetch error', async () => {
+    mockFsReadFile.mockResolvedValue('card_id,status\ncard-1,Done' as any);
+    mockApi.getCard.mockRejectedValue(new Error('404 Not Found'));
+
+    await program.parseAsync(['node', 'favro', 'cards', 'update', '--from-csv', 'bulk.csv', '--dry-run']);
+
+    expect(mockCheckScope).toHaveBeenCalledWith('', expect.anything(), LOCKED_CONFIG, undefined);
+    const stderr = (console.error as jest.Mock).mock.calls.map((c) => String(c[0])).join('\n');
+    expect(stderr).toContain('Could not read card card-1');
+    expect(stderr).toContain('404 Not Found');
+  });
+
+  it('forwards --force as the 4th argument on the dry-run path', async () => {
+    mockFsReadFile.mockResolvedValue('card_id,status\ncard-1,Done' as any);
+    mockApi.getCard.mockResolvedValue(makeCard({ cardId: 'card-1', boardId: 'board-A' }));
+
+    await program.parseAsync([
+      'node', 'favro', 'cards', 'update', '--from-csv', 'bulk.csv', '--dry-run', '--force',
+    ]);
+
+    expect(mockCheckScope).toHaveBeenCalledWith('board-A', expect.anything(), LOCKED_CONFIG, true);
   });
 });
