@@ -9,9 +9,38 @@
  */
 import { Command } from 'commander';
 import TaskListsAPI from '../lib/tasklists-api';
+import CardsAPI from '../lib/cards-api';
 import { createFavroClient } from '../lib/client-factory';
+import { readConfig } from '../lib/config';
 import { logError } from '../lib/error-handler';
-import { confirmAction, dryRunLog } from '../lib/safety';
+import { checkScope, confirmAction, dryRunLog } from '../lib/safety';
+
+type Client = ConstructorParameters<typeof CardsAPI>[0];
+
+/**
+ * Board for a card reference. Unreadable → `''`, which the shared check refuses
+ * under a lock and ignores without one.
+ */
+async function boardOfCard(cardRef: string, client: Client): Promise<string> {
+  try {
+    return (await new CardsAPI(client).getCard(cardRef))?.boardId ?? '';
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Board for a task list — two hops (task list → card → board), both inside the
+ * try so a stale id refuses through the check rather than killing the command.
+ */
+async function boardOfTaskList(taskListId: string, client: Client): Promise<string> {
+  try {
+    const list = await new TaskListsAPI(client).getTaskList(taskListId);
+    return (await new CardsAPI(client).getCard(list.cardCommonId))?.boardId ?? '';
+  } catch {
+    return '';
+  }
+}
 
 export function registerTaskListsCommands(program: Command): void {
   const cmd = program.command('tasklists').description('Manage checklist groups (task lists) on cards');
@@ -76,6 +105,7 @@ export function registerTaskListsCommands(program: Command): void {
     .option('--json', 'Output as JSON')
     .option('--dry-run', 'Preview without making API calls')
     .option('-y, --yes', 'Skip confirmation prompt')
+    .option('--force', 'Bypass scope check')
     .action(async (cardCommonId: string, options) => {
       const verbose = cmd.opts()?.verbose ?? false;
       try {
@@ -84,11 +114,13 @@ export function registerTaskListsCommands(program: Command): void {
           return;
         }
 
+        const client = await createFavroClient();
+        await checkScope(await boardOfCard(cardCommonId, client), client, await readConfig(), options.force);
+
         if (!(await confirmAction(`Create task list "${options.name}" on card ${cardCommonId}?`, { yes: options.yes }))) {
           return;
         }
 
-        const client = await createFavroClient();
         const api = new TaskListsAPI(client);
         const pos = options.position !== undefined ? parseInt(options.position, 10) : undefined;
         const list = await api.createTaskList(cardCommonId, options.name, pos);
@@ -112,6 +144,7 @@ export function registerTaskListsCommands(program: Command): void {
     .option('--json', 'Output as JSON')
     .option('--dry-run', 'Preview without making API calls')
     .option('-y, --yes', 'Skip confirmation prompt')
+    .option('--force', 'Bypass scope check')
     .action(async (taskListId: string, options) => {
       const verbose = cmd.opts()?.verbose ?? false;
       try {
@@ -129,11 +162,13 @@ export function registerTaskListsCommands(program: Command): void {
           return;
         }
 
+        const client = await createFavroClient();
+        await checkScope(await boardOfTaskList(taskListId, client), client, await readConfig(), options.force);
+
         if (!(await confirmAction(`Update task list ${taskListId}?`, { yes: options.yes }))) {
           return;
         }
 
-        const client = await createFavroClient();
         const api = new TaskListsAPI(client);
         const list = await api.updateTaskList(taskListId, updateData);
 
@@ -153,6 +188,7 @@ export function registerTaskListsCommands(program: Command): void {
     .description('Delete a task list')
     .option('--dry-run', 'Preview without making API calls')
     .option('-y, --yes', 'Skip confirmation prompt')
+    .option('--force', 'Bypass scope check')
     .action(async (taskListId: string, options) => {
       const verbose = cmd.opts()?.verbose ?? false;
       try {
@@ -161,11 +197,13 @@ export function registerTaskListsCommands(program: Command): void {
           return;
         }
 
+        const client = await createFavroClient();
+        await checkScope(await boardOfTaskList(taskListId, client), client, await readConfig(), options.force);
+
         if (!(await confirmAction(`Delete task list ${taskListId}? This cannot be undone.`, { yes: options.yes }))) {
           return;
         }
 
-        const client = await createFavroClient();
         const api = new TaskListsAPI(client);
         await api.deleteTaskList(taskListId);
 
