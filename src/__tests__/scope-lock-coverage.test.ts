@@ -97,16 +97,19 @@ const ALLOWLIST: Record<string, string> = {
   // Its sibling `attachments upload` was locked in 32e6b93.
   'src/commands/attachments.ts attachments upload-to-comment': '#102',
 
-  // UNFILED — found by this test, not previously known. All three are the
-  // half-locked-sibling shape the file's header describes.
+  // #104 — found by this test, not previously known, filed onto #104 after the
+  // sweep. All three are the half-locked-sibling shape the file's header
+  // describes, which is why they were missed: each sits next to a command that
+  // WAS fixed, and a reader who checked the sibling concluded the group was
+  // covered.
   //   `cards update --from-csv` took the lock in 32e6b93 (#79); `batch update
   //   --from-csv` is the same CSV write through BulkTransaction and did not.
-  'src/commands/batch.ts update': 'UNFILED — sibling of the #79 fix',
+  'src/commands/batch.ts update': '#104 (sibling of the #79 fix)',
   //   `git sync` and `git todos --create` took the lock in 32e6b93 (#78);
   //   `git branch` moves the card to In Progress and `git commit --comment`
   //   comments on it, both unlocked.
-  'src/commands/git.ts git branch': 'UNFILED — sibling of the #78 fix',
-  'src/commands/git.ts git commit': 'UNFILED — sibling of the #78 fix',
+  'src/commands/git.ts git branch': '#104 (sibling of the #78 fix)',
+  'src/commands/git.ts git commit': '#104 (sibling of the #78 fix)',
 };
 
 // ─── the program ─────────────────────────────────────────────────────────────
