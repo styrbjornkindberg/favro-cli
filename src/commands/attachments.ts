@@ -7,6 +7,7 @@
 import { Command } from 'commander';
 import AttachmentsAPI from '../lib/attachments-api';
 import CardsAPI from '../lib/cards-api';
+import { CommentsApiClient } from '../api/comments';
 import { createFavroClient } from '../lib/client-factory';
 import { logError } from '../lib/error-handler';
 import { checkScope, confirmAction, dryRunLog } from '../lib/safety';
@@ -64,9 +65,26 @@ export function registerAttachmentsCommands(program: Command): void {
     .option('--json', 'Output as JSON')
     .option('--dry-run', 'Preview without making API calls')
     .option('-y, --yes', 'Skip confirmation prompt')
+    .option('--force', 'Bypass scope check')
     .action(async (commentId: string, options) => {
       const verbose = attachmentsCmd.opts()?.verbose ?? false;
       try {
+        const config = await readConfig();
+        const client = await createFavroClient();
+
+        // Safety bound: a commentId carries no board, so resolve it through the
+        // comment's card. A stale/deleted comment resolves to '' — UNCHECKABLE,
+        // not exempt — and checkScope refuses it under a lock (#102).
+        let boardId = '';
+        try {
+          const comment = await new CommentsApiClient(client).getComment(commentId);
+          const card = await new CardsAPI(client).getCard(comment.cardId);
+          boardId = card?.boardId ?? '';
+        } catch {
+          boardId = '';
+        }
+        await checkScope(boardId, client, config, options.force);
+
         if (options.dryRun) {
           dryRunLog('uploading', 'attachment', `${options.file} to comment ${commentId}`);
           process.exit(0);
@@ -76,7 +94,6 @@ export function registerAttachmentsCommands(program: Command): void {
           process.exit(0);
         }
 
-        const client = await createFavroClient();
         const attachApi = new AttachmentsAPI(client);
         const attachRes = await attachApi.uploadAttachmentToComment(commentId, options.file);
 
