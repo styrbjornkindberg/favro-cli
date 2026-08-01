@@ -61,7 +61,7 @@ describeOrSkip('Cards — real Favro board', () => {
 
       // Verify via API
       const api = makeAPI();
-      const cards = await api.listCards(TEST_BOARD_ID, 10);
+      const cards = await api.listCards(TEST_BOARD_ID);
       const found = cards.find(c => c.name === title);
       expect(found).toBeDefined();
       if (found) createdCardIds.push(found.cardId);
@@ -81,7 +81,7 @@ describeOrSkip('Cards — real Favro board', () => {
       expect(result.stdout).toContain('✓ Card created:');
 
       const api = makeAPI();
-      const cards = await api.listCards(TEST_BOARD_ID, 20);
+      const cards = await api.listCards(TEST_BOARD_ID);
       const found = cards.find(c => c.name === title);
       expect(found).toBeDefined();
       if (found) createdCardIds.push(found.cardId);
@@ -180,7 +180,7 @@ describeOrSkip('Cards — real Favro board', () => {
 
       // Cross-check count via API
       const api = makeAPI();
-      const apiCards = await api.listCards(TEST_BOARD_ID, 20);
+      const apiCards = await api.listCards(TEST_BOARD_ID);
       // CLI and API should return same number (both fetching 20)
       expect(cliCards.length).toBe(apiCards.length);
     }, 30000);
@@ -276,7 +276,7 @@ describeOrSkip('Cards — real Favro board', () => {
 
       const exported = JSON.parse(await fs.readFile(outFile, 'utf-8'));
       const api = makeAPI();
-      const apiCards = await api.listCards(TEST_BOARD_ID, 10);
+      const apiCards = await api.listCards(TEST_BOARD_ID);
 
       expect(exported.length).toBe(apiCards.length);
       // Check IDs match (same cards)
