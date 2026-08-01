@@ -344,6 +344,67 @@ describe('updateCard status writes are a column move (no client mock)', () => {
   });
 });
 
+describe('updateCard archive writes send `archive`, never `archived` (#75)', () => {
+  // The trap this suite exists for. Measured live: `PUT {archive:true}` is
+  // honoured, `PUT {archived:true}` — the spelling a card reads BACK, and so the
+  // one a future reader reaches for — answers 200 and writes nothing. Every
+  // assertion below is on the SERIALISED body, not on a call shape, because a
+  // mock cannot tell Favro's honoured 200 from Favro's silent one.
+  test('sends the `archive` field and nothing named `archived`', async () => {
+    const { api, received, close } = await startServer(favro());
+    try {
+      await api.updateCard(CARD, { archive: true });
+      const put = putRequest(received);
+      expect(JSON.parse(put.body)).toEqual({ archive: true });
+      // On the raw bytes: `archived` must not appear at all. `toEqual` above
+      // already excludes the key, but the substring check is what fails loudly
+      // if someone "helpfully" forwards both spellings.
+      expect(put.body).not.toContain('archived');
+    } finally {
+      await close();
+    }
+  });
+
+  test('un-archiving sends `archive:false` — false is a value, not an omission', async () => {
+    const { api, received, close } = await startServer(favro({ archived: true }));
+    try {
+      await api.updateCard(CARD, { archive: false });
+      expect(JSON.parse(putRequest(received).body)).toEqual({ archive: false });
+    } finally {
+      await close();
+    }
+  });
+
+  test('neither spelling rides the QUERY string — unlike descriptionFormat (#17)', async () => {
+    const { api, received, close } = await startServer(favro());
+    try {
+      await api.updateCard(CARD, { archive: true });
+      const put = putRequest(received);
+      // `descriptionFormat` is the one parameter this PUT carries, and it is
+      // there because Favro genuinely only reads it from the query string. The
+      // archive flag is NOT in that family: probed as a body field only, so a
+      // query parameter here would be a silent no-op.
+      expect(put.url).not.toContain('archive=');
+      expect(put.url).toBe(`/api/v1/cards/${CARD}?descriptionFormat=markdown`);
+    } finally {
+      await close();
+    }
+  });
+
+  test('composes with another field in ONE PUT, and needs no card read of its own', async () => {
+    const { api, received, close } = await startServer(favro());
+    try {
+      await api.updateCard(CARD, { archive: true, name: 'renamed' });
+      expect(JSON.parse(putRequest(received).body)).toEqual({ archive: true, name: 'renamed' });
+      // `archive` is a straight pass-through, so unlike status/assignees/tags it
+      // buys no read.
+      expect(cardReads(received)).toHaveLength(0);
+    } finally {
+      await close();
+    }
+  });
+});
+
 describe('updateCard shared read and description bytes', () => {
   test('status, assignees and tags together cost exactly one card read', async () => {
     const { api, received, close } = await startServer(favro());

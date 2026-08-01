@@ -301,6 +301,37 @@ export interface UpdateCardRequest {
   boardId?: string;
   /** Target column ID when moving a card between columns on a board. */
   columnId?: string;
+  /**
+   * Move the card across the archive line. `true` archives, `false` un-archives.
+   *
+   * **The write field is `archive`. The field a card reads BACK is `archived`.**
+   * That asymmetry is the whole hazard here, because the read-side spelling is
+   * the one a future reader reaches for — and it silently does nothing. Probed
+   * live (#75):
+   *
+   * - `PUT {archive: true}`   → **honoured.** The card crosses the archive line
+   *                             and the response echoes `archived: true`.
+   * - `PUT {archive: false}`  → **honoured.** Genuinely reversible in both
+   *                             directions, which is what lets `TxCards
+   *                             .setArchived` carry a real compensation entry
+   *                             where `deleteCard` can carry none.
+   * - `PUT {archived: true}`  → **200 and a silent no-op.** Same family as
+   *                             `status`, `assignees` and a whole-array `tags`:
+   *                             a green write that changed nothing. NEVER send
+   *                             it, and never "helpfully" forward a caller's
+   *                             `archived` here.
+   * - `?archive=true` / `?archived=true` with an empty body → 200, silent no-op.
+   *   Unlike `descriptionFormat` (#17), this one does **not** ride the query
+   *   string; it is a body field only.
+   *
+   * Unlike `status` / `assignees` / `tags` it needs no translation — it passes
+   * straight through, and it composes: `{archive: true, name: '…'}` in one PUT is
+   * honoured for both fields.
+   *
+   * Read the archive line back with `Card.archived`, or select a side of it with
+   * `listCards({ archived })` — both are read-side only (#14).
+   */
+  archive?: boolean;
 }
 
 /**

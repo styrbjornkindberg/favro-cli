@@ -313,7 +313,7 @@ export class CompensationLog {
   }
 }
 
-// ─── the six reversible ops, plus one that is not ────────────────────────────
+// ─── the seven reversible ops, plus one that is not ──────────────────────────
 
 /** What `removeBlockingEdge` observed. `removed: false` means nothing was written. */
 export interface EdgeRemoval {
@@ -335,7 +335,7 @@ const setDiff = (current: readonly string[], desired: readonly string[]) => ({
 
 /**
  * The only card surface an intent gets: every read, and only instrumented
- * writes. Six reversible ops, each declared once, capture + mutate + push fused
+ * writes. Seven reversible ops, each declared once, capture + mutate + push fused
  * — plus `deleteCard`, the one write with no inverse, which logs nothing and
  * says why.
  *
@@ -640,6 +640,82 @@ export class TxCards {
       applyInverse: async () => { await this.api.linkCard(cardId, { toCardId: farId, isBefore }); },
     });
     return { removed: true, isBefore };
+  }
+
+  // ── 7. setArchived ────────────────────────────────────────────────────────
+
+  /**
+   * Move a card across the archive line, either way.
+   *
+   * The write field is **`archive`**; the field a card reads **back** is
+   * `archived`, and `PUT {archived: …}` answers 200 and writes nothing (#75, and
+   * see `UpdateCardRequest.archive` for the full probe). So the capture reads
+   * `archived` and the mutate sends `archive`. They are not interchangeable, and
+   * forwarding the read-side spelling would be a green write that changed
+   * nothing.
+   *
+   * Scalar shape: one boolean replaced another, so strict equality is the honest
+   * guard. There is still no version carrier on this wire, so a human who moves
+   * the card across the line between our write and the detecting read makes the
+   * compensating write SKIPPED rather than applied — the facade-wide rule,
+   * inherited rather than restated.
+   *
+   * The prior value is CAPTURED, never assumed to be `false`: un-archiving a card
+   * that was archived must unwind back to **archived**.
+   *
+   * Already on the requested side → nothing is written and nothing is logged,
+   * exactly as `setTags` / `setAssignees` treat an empty delta. That keeps a
+   * retry after a failed run able to reach `ok` without a pointless PUT.
+   *
+   * The write is READ BACK, which the rest of the silent-no-op family does not
+   * have to do: `status`, `assignees` and whole-array `tags` are defended by
+   * TRANSLATING the write into the verb Favro honours, and there is no
+   * translation available here — `archive` already IS the honoured spelling, so
+   * the only remaining defence is observing the result. It costs nothing: the PUT
+   * response echoes `archived` (see `UpdateCardRequest.archive`), so the
+   * observation is already in hand.
+   */
+  async setArchived(cardRef: string, archived: boolean): Promise<Card> {
+    const before = await this.api.getCard(cardRef);
+    const cardId = before.cardId;
+    const was = before.archived === true;
+    if (was === archived) return before;
+
+    const after = await this.api.updateCard(cardId, { archive: archived });
+    // Checked BEFORE the log push, and it throws rather than refusing.
+    //
+    // Before the push because a mismatch means the PUT wrote NOTHING — there is
+    // nothing to compensate, and an entry here would send an inverse that writes
+    // nothing either and then orphan on the compare, reporting wreckage that
+    // does not exist.
+    //
+    // Not a `RefusalError`: a refusal claims "deterministic, wrote nothing,
+    // repair the call", and the call is not what is wrong. This is a probed field
+    // no longer being honoured, which belongs in `isRetryable`'s unclassifiable
+    // family — the world is genuinely unchanged, so the next attempt is allowed
+    // to behave differently.
+    //
+    // Absent normalises to false, exactly as the capture above does. The two
+    // must agree about the same card, and `Card.archived` is optional.
+    if ((after.archived === true) !== archived) {
+      throw new Error(
+        `Archive write on card ${cardId} answered 200 but did not take: sent ` +
+          `{archive: ${archived}}, the response reads archived=${JSON.stringify(after.archived)}.\n` +
+          `Nothing was written, so nothing needs undoing. The write field \`archive\` is probed ` +
+          `honoured in both directions (#75); the read-side \`archived\` spelling is the one that ` +
+          `200s and does nothing, so if a caller-side change started sending that, this is where it ` +
+          `surfaces.`,
+      );
+    }
+    this.log.push({
+      card: cardId,
+      field: 'archived',
+      record: { shape: 'scalar', wrote: archived, before: was },
+      label: `${was ? 're-archive' : 'un-archive'} card ${cardId}`,
+      readLive: async () => (await this.api.getCard(cardId)).archived === true,
+      applyInverse: async () => { await this.api.updateCard(cardId, { archive: was }); },
+    });
+    return after;
   }
 
   /**

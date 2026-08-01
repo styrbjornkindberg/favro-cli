@@ -45,7 +45,7 @@ THE SCOPE LOCK, AND THE TWO GUARDS BESIDE IT
   ('-y' skips the prompt) and takes '--dry-run' — a preview, never a safety wall.
 
 INTENTS
-  Eight, one call each — no chain to author. Each has a CLI spelling, and all but
+  Nine, one call each — no chain to author. Each has a CLI spelling, and all but
   'delete' can also be a skill 'command:'.
   create                Card plus every composite — parent, both dependency
                         directions, column, tags, assignees — in ONE POST, so a
@@ -56,6 +56,8 @@ INTENTS
                         cardCommonId survive. IRREVERSIBLE, and logs no
                         compensating write — so it CANNOT be a skill step: a run
                         is one transaction. CLI ONLY: cards delete.
+  archive               Move ONE instance across the archive line. REVERSIBLE,
+                        so it CAN be a skill step. CLI: cards archive/unarchive.
   claim                 Assign yourself and move to the active column, on the
                         TRACKER-BOARD instance only: assignment FORKS the card
                         into a boardless, columnless entity. CLI: cards claim.
@@ -102,16 +104,8 @@ BUILT-IN SKILLS
   pick-up               Read a ticket, then claim it.
   file-blocked          Create a ticket and record what blocks it, atomically.
   unblock               Drop a blocking edge and re-triage the card it freed.
-
-WORKED EXAMPLE — a skill, because a chain belongs in one transaction
-  steps:
-    - command: create
-      as: made
-      args: { name: "{{title}}", board: "{{board}}" }
-    - command: add-blocking-edge
-      args: { card: "{{made.cardId}}", blockedBy: "{{blocker}}" }
-  One compensation log spans both: if the edge fails, the card just created is
-  removed and the run reports 'rolled-back'.
+  Need a chain of your own? Author a skill ('favro skill create') rather than
+  several CLI calls: a run is ONE transaction over ONE compensation log.
 
 NOT EVERY WRITE IS A SAGA
   'cards create --csv/--bulk' and 'cards update' are bulk edits, not tracker

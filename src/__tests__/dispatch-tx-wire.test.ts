@@ -97,6 +97,8 @@ interface StoredCard {
   createdAt: string;
   detailedDescription?: string;
   parentCardId?: string;
+  /** The READ-side field. Written only by a body `archive`, never by `archived`. */
+  archived?: boolean;
 }
 
 interface Edge { near: string; far: string; isBefore: boolean }
@@ -137,7 +139,20 @@ function card(overrides: Partial<StoredCard> & { cardId: string }): StoredCard {
   };
 }
 
-function startServer(opts: { fail?: FailHook; afterWrite?: ConcurrentEdit } = {}): Promise<Stand> {
+function startServer(
+  opts: {
+    fail?: FailHook;
+    afterWrite?: ConcurrentEdit;
+    /**
+     * A wire that stopped honouring the probed write field: `PUT {archive: …}`
+     * answers 200 and changes nothing, which is what the READ-side spelling
+     * `archived` does today (#75). Modelled as a stand behaviour rather than a
+     * seam on the facade, for the same reason `afterWrite` is: the read-back
+     * check has to be verifiable through the door production uses.
+     */
+    ignoreArchiveWrites?: true;
+  } = {},
+): Promise<Stand> {
   const received: Received[] = [];
   const cards = new Map<string, StoredCard>([
     [CARD, card({ cardId: CARD })],
@@ -236,6 +251,11 @@ function startServer(opts: { fail?: FailHook; afterWrite?: ConcurrentEdit } = {}
           if (b.name !== undefined) next.name = b.name;
           if (b.detailedDescription !== undefined) next.detailedDescription = b.detailedDescription;
           if (b.columnId !== undefined) next.columnId = b.columnId;
+          // The measured asymmetry (#75), modelled where it actually lives: the
+          // wire honours the WRITE field `archive` and answers 200-and-nothing to
+          // the READ field `archived`. Modelling only the honoured half would let
+          // the wrong spelling pass every test in this file.
+          if (typeof b.archive === 'boolean' && !opts.ignoreArchiveWrites) next.archived = b.archive;
           if (b.widgetCommonId !== undefined) next.widgetCommonId = b.widgetCommonId;
           for (const id2 of b.addTagIds ?? []) if (!next.tags.includes(id2)) next.tags.push(id2);
           for (const id2 of b.removeTagIds ?? []) next.tags = next.tags.filter((t) => t !== id2);
@@ -246,8 +266,15 @@ function startServer(opts: { fail?: FailHook; afterWrite?: ConcurrentEdit } = {}
             next.assignments = next.assignments.filter((a) => a.userId !== u);
           }
           cards.set(id, next);
+          // The echo is snapshotted BEFORE the concurrent editor runs. A real
+          // server serialises the response from its own write's state, not from a
+          // re-read, so an edit that `afterWrite` places "between our write and
+          // our detecting read" cannot leak into the response to that write.
+          // Leaving it live made a concurrent edit indistinguishable from a 200
+          // that wrote nothing, which `setArchived`'s read-back has to tell apart.
+          const echo = wire(next);
           concurrently();
-          return send(200, wire(next));
+          return send(200, echo);
         }
       }
 
@@ -425,6 +452,17 @@ beforeAll(() => {
     },
   });
   registerIntent({
+    name: 'probe-archive',
+    summary: 'move a card across the archive line, optionally failing afterwards',
+    preview: (a: any) => [`archive ${a.card} = ${a.archived}`],
+    board: async (a: any, tx: TxCards) => (await tx.getCard(a.card)).boardId,
+    run: async (a: any, tx: TxCards) => {
+      await tx.setArchived(a.card, a.archived);
+      if (a.thenFail) throw new Error('probe failure after the archive write');
+      return {};
+    },
+  });
+  registerIntent({
     name: 'probe-fail',
     summary: 'fails without writing anything',
     preview: () => ['fail'],
@@ -459,11 +497,13 @@ describe('the table is the single home for every write intent', () => {
     // The original seven. Frontier-listing was cut (subsumed by `--filter`) and
     // list-children folded into `read`. `delete` (#73) is the eighth and the
     // first irreversible one — see the terminal-intent block at the foot of
-    // this file for what that costs.
+    // this file for what that costs. `archive` (#75) is the ninth and the
+    // reversible sibling of it — one intent carrying a direction, not two.
     for (const name of [
       'create',
       'read',
       'delete',
+      'archive',
       'claim',
       'resolve',
       'add-blocking-edge',
@@ -1754,5 +1794,329 @@ describe('delete logs nothing, and therefore cannot join a transaction', () => {
     // Nothing was logged, so "rolled-back" here means "we wrote nothing that
     // needed undoing" — and the card is still there to prove it.
     expect(stand.cards.has(CARD)).toBe(true);
+  });
+});
+
+describe('archive is ONE intent with a direction, and it writes `archive` not `archived` (#75)', () => {
+  /** The body of every PUT that carried an archive flag, in either spelling. */
+  const archiveBodies = (stand: Stand) =>
+    puts(stand.received).map((r) => r.body ?? {});
+
+  it('sends `archive` in the BODY — the read-side `archived` spelling never ships', async () => {
+    const stand = await startServer();
+
+    const result = await dispatch<{ cardId: string; archived: boolean }>(
+      'archive', { card: CARD, archived: true }, ctx(stand),
+    );
+
+    expect(result.outcome).toBe('ok');
+    expect(result.value).toEqual({ cardId: CARD, archived: true });
+
+    // The pin that stops the trap coming back. Asserted on the body the stand-in
+    // PARSED off the wire, not on a call shape — and the stand-in honours only
+    // `archive`, exactly as Favro does, so a mutation to `archived` fails both
+    // this assertion and the read-back below.
+    const bodies = archiveBodies(stand);
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).toEqual({ archive: true });
+    expect(bodies[0]).not.toHaveProperty('archived');
+
+    // Read the state back rather than counting calls: Favro answers 200 for
+    // writes it does not perform.
+    expect(stand.cards.get(CARD)!.archived).toBe(true);
+  });
+
+  it('does not put the flag on the QUERY string — this one is body-only', async () => {
+    const stand = await startServer();
+    await dispatch('archive', { card: CARD, archived: true }, ctx(stand));
+
+    for (const put of puts(stand.received)) {
+      expect(put.url).not.toContain('archive=');
+      expect(put.url).not.toContain('archived=');
+    }
+  });
+
+  it('un-archives through the same one wire op, with the direction flipped', async () => {
+    const stand = await startServer();
+    stand.cards.get(CARD)!.archived = true;
+
+    const result = await dispatch<{ archived: boolean }>(
+      'archive', { card: CARD, archived: false }, ctx(stand),
+    );
+
+    expect(result.outcome).toBe('ok');
+    expect(result.value?.archived).toBe(false);
+    expect(archiveBodies(stand)).toEqual([{ archive: false }]);
+    expect(stand.cards.get(CARD)!.archived).toBe(false);
+  });
+
+  it('a skill step spells the direction as a STRING, and "false" means false', async () => {
+    const stand = await startServer();
+    stand.cards.get(CARD)!.archived = true;
+
+    await dispatch('archive', { card: CARD, archived: 'false' }, ctx(stand));
+
+    // `"false"` is truthy in JS. Honouring it as true would archive a card the
+    // caller asked to un-archive — the same silent wrong answer `read`'s
+    // `children: "false"` closed.
+    expect(archiveBodies(stand)).toEqual([{ archive: false }]);
+    expect(stand.cards.get(CARD)!.archived).toBe(false);
+  });
+
+  it('an ABSENT direction refuses rather than defaulting to un-archive', async () => {
+    const stand = await startServer();
+    stand.cards.get(CARD)!.archived = true;
+
+    await expect(dispatch('archive', { card: CARD }, ctx(stand))).rejects.toThrow(RefusalError);
+    expect(writes(stand.received)).toHaveLength(0);
+    expect(stand.cards.get(CARD)!.archived).toBe(true);
+  });
+
+  it('the direction is strictly two-valued — an off-type value refuses, it never INVERTS', async () => {
+    // The direction used to share `read`'s lenient flag parser, whose non-string
+    // arm is `v === true` and whose string arm reads anything-not-in-a-blocklist
+    // as true. On a mutation that leniency is not permissive, it is WRONG in both
+    // directions, and silently: every row below wrote the opposite of what it
+    // reads like, or wrote at all when it should have refused.
+    //
+    //   1 / null      → un-archived, no refusal
+    //   "off" / "n"   → archived
+    //
+    // Held as a table so no row can be quietly dropped, and the card starts
+    // ARCHIVED so an inverse write is observable as a state change rather than as
+    // a no-op.
+    const offType: unknown[] = [1, 0, null, 'yes', 'no', 'n', 'off', 'nope', '', '1', '0', {}, []];
+
+    for (const archived of offType) {
+      const stand = await startServer();
+      stand.cards.get(CARD)!.archived = true;
+
+      await expect(
+        dispatch('archive', { card: CARD, archived } as any, ctx(stand)),
+      ).rejects.toThrow(RefusalError);
+
+      expect(writes(stand.received)).toHaveLength(0);
+      expect(stand.cards.get(CARD)!.archived).toBe(true);
+    }
+  });
+
+  it('the refusal names the accepted set, so a caller can repair the call', async () => {
+    const stand = await startServer();
+
+    await expect(dispatch('archive', { card: CARD, archived: 1 } as any, ctx(stand)))
+      .rejects.toThrow(/"true" \/ "false"/);
+  });
+
+  it('the four accepted spellings all reach the wire, in the direction they name', async () => {
+    // Case and surrounding space are ignored on the string arm, because a skill
+    // step spells every arg as a string and a stray space is not a direction
+    // change. Nothing beyond these four is accepted — see the table above.
+    for (const [spelling, expected] of [
+      [true, true], [false, false], ['TRUE', true], [' false ', false],
+    ] as Array<[unknown, boolean]>) {
+      const stand = await startServer();
+      stand.cards.get(CARD)!.archived = !expected;
+
+      await dispatch('archive', { card: CARD, archived: spelling } as any, ctx(stand));
+
+      expect(archiveBodies(stand)).toEqual([{ archive: expected }]);
+      expect(stand.cards.get(CARD)!.archived).toBe(expected);
+    }
+  });
+
+  it('a 200 that did not take is a LOUD failure, not a ✓ about the argument', async () => {
+    // The premise of this whole ticket is a wire that answers 200 and writes
+    // nothing — that is exactly what `PUT {archived: …}` does. `status`,
+    // `assignees` and whole-array `tags` are defended by TRANSLATING the write;
+    // `archive` has no translation to make, so it reads the echo back instead.
+    // Modelled on the far side of the wire, where the real thing would live: the
+    // stand takes the PUT, answers 200, and does not move the card.
+    const stand = await startServer({ ignoreArchiveWrites: true });
+
+    const result = await dispatch('archive', { card: CARD, archived: true }, ctx(stand));
+
+    expect(result.outcome).not.toBe('ok');
+    expect(result.error).toMatch(/answered 200 but did not take/);
+    // Nothing to compensate: the write landed nothing, so the log stayed empty
+    // and the unwind had nothing to leave behind.
+    expect(result.orphans).toBeUndefined();
+    expect(result.outcome).toBe('rolled-back');
+    // Not a refusal — the call is fine, the wire changed. A refusal would claim
+    // "repair the call", which is advice about the wrong thing.
+    expect(result.retryable).toBe(true);
+  });
+
+  it('the reported side is the OBSERVED one, never the requested one', async () => {
+    const stand = await startServer();
+
+    const result = await dispatch<{ cardId: string; archived: boolean }>(
+      'archive', { card: CARD, archived: true }, ctx(stand),
+    );
+
+    // Agreeing here is the point: the value comes from the card the wire echoed,
+    // so it can only agree once the read-back check above has passed.
+    expect(result.value?.archived).toBe(true);
+    expect(stand.cards.get(CARD)!.archived).toBe(true);
+  });
+
+  it('a card already on the requested side is left alone, and nothing is written', async () => {
+    const stand = await startServer();
+    stand.cards.get(CARD)!.archived = true;
+
+    const result = await dispatch('archive', { card: CARD, archived: true }, ctx(stand));
+
+    expect(result.outcome).toBe('ok');
+    expect(puts(stand.received)).toHaveLength(0);
+    expect(stand.cards.get(CARD)!.archived).toBe(true);
+  });
+
+  it('is NOT terminal — it composes into a caller-threaded transaction', async () => {
+    // The contrast with `delete`, which refuses a threaded log outright. Archive
+    // is reversible in both directions, so it carries a real compensation entry
+    // and a transaction can hold it.
+    const stand = await startServer();
+    const log = new CompensationLog();
+
+    const result = await dispatch('archive', { card: CARD, archived: true }, ctx(stand, { log }));
+
+    expect(result.outcome).toBe('ok');
+    // A real entry, not an exempt placeholder: the transaction can undo this.
+    expect(log.depth).toBe(1);
+    expect(log.describe().join(' ')).toMatch(/un-archive card/);
+  });
+
+  it('--dry-run previews the direction and writes nothing', async () => {
+    const stand = await startServer();
+
+    const result = await dispatch('archive', { card: CARD, archived: true }, ctx(stand, { dryRun: true }));
+
+    expect(result.outcome).toBe('ok');
+    expect(result.preview?.join(' ')).toMatch(/archive card/);
+    expect(result.preview?.join(' ')).toMatch(/reversible/i);
+    expect(writes(stand.received)).toHaveLength(0);
+    expect(stand.cards.get(CARD)!.archived).toBeUndefined();
+  });
+
+  it('the preview promises nothing it cannot see — it makes no read, so it stays conditional', async () => {
+    // `preview` is a pure function of its args by design (`delete` shares that),
+    // so it cannot know which side of the line the card is already on. The flat
+    // wording asserted two things that are both false for an already-archived
+    // card: that a write would happen, and that a compensation entry would exist
+    // to move it back. Pinned on an ALREADY-archived card, which is the case the
+    // old wording lied about.
+    const stand = await startServer();
+    stand.cards.get(CARD)!.archived = true;
+
+    const result = await dispatch('archive', { card: CARD, archived: true }, ctx(stand, { dryRun: true }));
+    const preview = result.preview?.join('\n') ?? '';
+
+    expect(preview).toMatch(/unless it is already archived/);
+    expect(preview).toMatch(/if it does write, a later failure/);
+    // The two claims the old wording made unconditionally.
+    expect(preview).not.toMatch(/reversible: a later failure in the same transaction moves it back/);
+    // And no read was made to reach that wording.
+    expect(stand.received.filter((r) => r.method === 'GET' && r.path === `/cards/${CARD}`)).toHaveLength(1);
+  });
+
+  it('a board outside the locked collection refuses BEFORE any PUT is sent', async () => {
+    const stand = await startServer();
+    stand.cards.get(CARD)!.widgetCommonId = OTHER_BOARD;
+
+    await expect(
+      dispatch('archive', { card: CARD, archived: true }, ctx(stand, {
+        config: { scopeCollectionId: 'coll-a', scopeCollectionName: 'Collection A' },
+      })),
+    ).rejects.toThrow(ScopeError);
+
+    expect(writes(stand.received)).toHaveLength(0);
+    expect(stand.cards.get(CARD)!.archived).toBeUndefined();
+  });
+
+  it('a boardless card — the fork shape — refuses rather than failing open', async () => {
+    const stand = await startServer();
+    delete stand.cards.get(CARD)!.widgetCommonId;
+
+    await expect(
+      dispatch('archive', { card: CARD, archived: true }, ctx(stand, {
+        config: { scopeCollectionId: 'coll-a', scopeCollectionName: 'Collection A' },
+      })),
+    ).rejects.toThrow(RefusalError);
+
+    expect(writes(stand.received)).toHaveLength(0);
+  });
+
+  it('a card inside the locked collection proceeds', async () => {
+    const stand = await startServer();
+
+    const result = await dispatch('archive', { card: CARD, archived: true }, ctx(stand, {
+      config: { scopeCollectionId: 'coll-a' },
+    }));
+
+    expect(result.outcome).toBe('ok');
+    expect(stand.cards.get(CARD)!.archived).toBe(true);
+  });
+});
+
+describe('the archive compensation restores the CAPTURED prior value', () => {
+  it('un-archiving an ARCHIVED card unwinds back to archived, not to false', async () => {
+    // The hardcode test. A compensating write that sent `archive: false` — or
+    // any fixed value — would leave this card un-archived and report a clean
+    // `rolled-back`, which is the lie the captured pre-state exists to prevent.
+    const stand = await startServer();
+    stand.cards.get(CARD)!.archived = true;
+
+    const result = await dispatch(
+      'probe-archive', { card: CARD, archived: false, thenFail: true }, ctx(stand),
+    );
+
+    expect(result.outcome).toBe('rolled-back');
+    expect(result.retryable).toBe(true);
+    expect(stand.cards.get(CARD)!.archived).toBe(true);
+
+    const bodies = puts(stand.received).map((r) => r.body);
+    expect(bodies).toEqual([{ archive: false }, { archive: true }]);
+  });
+
+  it('archiving a LIVE card unwinds back to un-archived', async () => {
+    const stand = await startServer();
+
+    const result = await dispatch(
+      'probe-archive', { card: CARD, archived: true, thenFail: true }, ctx(stand),
+    );
+
+    expect(result.outcome).toBe('rolled-back');
+    expect(stand.cards.get(CARD)!.archived).toBe(false);
+    expect(puts(stand.received).map((r) => r.body)).toEqual([{ archive: true }, { archive: false }]);
+  });
+
+  it('a concurrent editor who moved the card back is SKIPPED, with per-field detail', async () => {
+    // No version carrier on this wire, so this is DETECTED, never prevented. A
+    // human un-archives the card between our write and the detecting read;
+    // applying our inverse would clobber their edit.
+    const stand = await startServer({
+      afterWrite: ({ cards }, wrote) => {
+        if (wrote !== 1) return;
+        cards.get(CARD)!.archived = false;
+      },
+    });
+
+    const result = await dispatch(
+      'probe-archive', { card: CARD, archived: true, thenFail: true }, ctx(stand),
+    );
+
+    expect(result.outcome).toBe('rollback-incomplete');
+    expect(result.retryable).toBe(false);
+    expect(result.orphans).toEqual([
+      expect.objectContaining({
+        cause: 'compensation-skipped',
+        card: CARD,
+        field: 'archived',
+        wrote: true,
+        live: false,
+      }),
+    ]);
+    // Exactly ONE PUT — ours. No compensating write went out over their edit.
+    expect(puts(stand.received)).toHaveLength(1);
+    expect(stand.cards.get(CARD)!.archived).toBe(false);
   });
 });

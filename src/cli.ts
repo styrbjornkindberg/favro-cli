@@ -49,6 +49,7 @@ import { registerCardsFindCommand } from './commands/cards-find';
 import { registerCardsLinkCommands } from './commands/cards-link';
 import { registerCardsTrackerCommands } from './commands/cards-tracker';
 import { registerCardsDeleteCommand } from './commands/cards-delete';
+import { registerCardsArchiveCommands } from './commands/cards-archive';
 import { registerIssueTrackerHelp } from './commands/issue-tracker-help';
 import { registerCustomFieldsCommands } from './commands/custom-fields';
 import { registerMembersCommand } from './commands/members';
@@ -423,6 +424,9 @@ registerCardsTrackerCommands(cards);
 
 // ─── cards delete ────────────────────────────────────────────────────────────
 registerCardsDeleteCommand(cards);
+
+// ─── cards archive / unarchive ───────────────────────────────────────────────
+registerCardsArchiveCommands(cards);
 
 /**
  * Parse a CSV string into an array of objects using the header row.

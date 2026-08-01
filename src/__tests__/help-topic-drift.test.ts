@@ -199,6 +199,23 @@ describe('the topic is reachable the way its consumers reach it', () => {
     expect(content.length).toBeLessThanOrEqual(80);
   });
 
+  it('keeps the contract facts the 80-line cap makes tempting to cut', () => {
+    // The cap is real arithmetic, so every added row evicts something — and what
+    // gets evicted must be padding, never contract. These four were cut once to
+    // make room for the `archive` row (#75) and are pinned so the next row has to
+    // find its space somewhere else.
+    //
+    // The edge trichotomy, all three arms: without the first two, the surviving
+    // "reversing is delete-then-add" reads as advice to destroy an edge you may
+    // already hold.
+    expect(ISSUE_TRACKER_TOPIC).toMatch(/ONE bounded GET on ONE card and never a\n\s*graph walk/);
+    expect(ISSUE_TRACKER_TOPIC).toMatch(/the exact edge means no write and a report saying so/);
+    expect(ISSUE_TRACKER_TOPIC).toMatch(/only "neither" writes/);
+    // The fan-out hint. Without it, "total estimate on this column" invites
+    // reading every card on the board.
+    expect(ISSUE_TRACKER_TOPIC).toMatch(/'columns list' already carries cardCount \/ timeSum \/ estimationSum/);
+  });
+
   it('maps Favro before/after onto blocking exactly once', () => {
     // Twice would be two statements of the same rule, free to disagree.
     const said = ISSUE_TRACKER_TOPIC.match(/before\/after/g) ?? [];

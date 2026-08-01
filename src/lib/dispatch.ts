@@ -566,8 +566,14 @@ export interface ReadArgs {
  * A skill step spells every arg as a string, so `"false"`, `"0"` and `""` must
  * all mean false — in JS they are all truthy as strings. Anything else that is
  * present means true, which is what a bare CLI flag already means.
+ *
+ * `read`'s two call sites ONLY, and the leniency is why. A flag that only ever
+ * gates extra output can safely read anything-present as true; a DIRECTION
+ * argument for a mutation cannot, because the same leniency turns an
+ * unrecognised spelling into the opposite write. `archive` used to share this
+ * and does not any more — see `archiveDirection`.
  */
-const wantsChildren = (v: boolean | string | undefined): boolean =>
+const truthyArg = (v: boolean | string | undefined): boolean =>
   typeof v === 'string' ? !['', 'false', '0', 'no'].includes(v.trim().toLowerCase()) : v === true;
 
 /** `"2"` is a limit of 2. Anything that is not a positive integer is no cap. */
@@ -591,7 +597,7 @@ export interface ReadResult {
 registerIntent<ReadArgs, ReadResult>({
   name: 'read',
   summary: 'Read one card, optionally with its children',
-  preview: (a) => [`read ${a.card}${wantsChildren(a.children) ? ' and list its children' : ''}`],
+  preview: (a) => [`read ${a.card}${truthyArg(a.children) ? ' and list its children' : ''}`],
   // A read lands no write, so the scope lock has nothing to check. The lock
   // guards mutation; making it guard reads would break `read` on any card
   // outside the locked collection, which is the opposite of honest failure.
@@ -602,7 +608,7 @@ registerIntent<ReadArgs, ReadResult>({
   run: async (a, tx) => {
     const limit = readLimit(a.limit);
     const card = await tx.getCard(a.card);
-    if (!wantsChildren(a.children)) return { card };
+    if (!truthyArg(a.children)) return { card };
     if (!card.boardId) {
       // `boardId` is our alias for `widgetCommonId`, and a fork has none. Listing
       // without it is not "the board" — it is every card in the organisation,
@@ -879,5 +885,108 @@ registerIntent<RetagArgs, { cardId: string; category: string; state: string; tag
     // (via `CardsAPI.tagReplacement`) — a second tag resolver here would be a defect.
     await tx.setTags(card.cardId, tags);
     return { cardId: card.cardId, category, state, tags };
+  },
+});
+
+export interface ArchiveArgs {
+  card: string;
+  /**
+   * `true` archives, `false` un-archives. REQUIRED, and strictly two-valued —
+   * see `archiveDirection`. A skill step spells every arg as a string, so
+   * `"true"` / `"false"` are accepted; nothing else is, in either type.
+   */
+  archived: boolean | string;
+}
+
+/**
+ * Which side of the archive line this call is asking for. **Strictly
+ * two-valued**, and everything else REFUSES.
+ *
+ * Absent refuses rather than defaulting. `false` is not a safe default here: it
+ * is a write of its own, so an omitted arg on a skill step would silently
+ * UN-archive a card nobody asked about. One intent with a direction still has to
+ * be told the direction.
+ *
+ * `truthyArg` is deliberately NOT used, though it once was. It is a lenient
+ * read-FLAG parser — "anything present means true, like a bare CLI flag" — which
+ * is harmless on `read`'s `children` (no write either way) and inverts a write
+ * here. Its non-string arm is `v === true`, so `archived: 1` — a JSON caller
+ * spelling true the C way — parsed as FALSE and un-archived the card, as did
+ * `null`; and its string arm let `"off"` and `"nope"` ARCHIVE one. A direction
+ * argument for a mutation gets no leniency: an unrecognised spelling is a call to
+ * repair, not a value to guess at.
+ *
+ * `"1"` / `"0"` are refused too, not accepted as a convenience. Accepting the
+ * strings while the numbers refuse is exactly the kind of asymmetry that produced
+ * the bug, and no caller spells it that way — the CLI passes real booleans and
+ * every doc surface says `true` / `false`.
+ */
+function archiveDirection(v: unknown): boolean {
+  if (v === true || v === false) return v;
+  if (typeof v === 'string') {
+    const spelled = v.trim().toLowerCase();
+    if (spelled === 'true') return true;
+    if (spelled === 'false') return false;
+  }
+  throw new RefusalError(
+    `The "archive" intent needs 'archived: true' or 'archived: false'; got ${JSON.stringify(v)}.\n` +
+      `Accepted, and nothing else: the booleans true / false, or the strings "true" / "false" ` +
+      `(case and surrounding space are ignored, because a skill step spells every arg as a string).\n` +
+      `It is ONE intent carrying a direction, not two — 'archive' and 'unarchive' are two CLI ` +
+      `spellings of it, because Favro has ONE wire op here (PUT {archive: boolean}), unlike ` +
+      `link/unlink which are a POST and a DELETE.\n` +
+      `Nothing here is guessed at: defaulting an absent value to false would un-archive the card, ` +
+      `and reading an unrecognised value as either side would write the direction you did not ask for.`,
+  );
+}
+
+/**
+ * `archive` — move ONE board instance of a card across the archive line, either
+ * way.
+ *
+ * ONE intent taking a boolean, not two intents. `add-blocking-edge` /
+ * `remove-blocking-edge` are two because they are two wire ops (POST and
+ * DELETE); this is one wire op with a boolean argument — `PUT {archive: …}` —
+ * and two names for one write would be two places for it to drift. The CLI still
+ * spells it twice (`cards archive` / `cards unarchive`), the same way
+ * `cards link` / `cards unlink` read better than a flag.
+ *
+ * **NOT `terminal`.** Unlike `delete` (#73), this is measured reversible in both
+ * directions (#75), so it carries a real compensation entry and composes into a
+ * larger transaction — including as a skill `command:` step.
+ *
+ * The write field is `archive` and the read-back field is `archived`; `PUT
+ * {archived: …}` answers 200 and writes nothing. `TxCards.setArchived` owns that
+ * asymmetry, and nothing here restates it.
+ */
+registerIntent<ArchiveArgs, { cardId: string; archived: boolean }>({
+  name: 'archive',
+  summary: 'Archive a card, or un-archive it — reversible, so it carries a compensating write',
+  // Conditional wording, because `preview` is a pure function of its args by
+  // design — no read, exactly as `delete`'s preview makes none — so it cannot
+  // know which side of the line the card is already on. A card already archived
+  // is left alone and logs nothing (`TxCards.setArchived`), so the flat
+  // "archive card X / a later failure moves it back" this used to print asserted
+  // two things it could not see: that a write would happen, and that a
+  // compensation entry would exist to reverse. Both phrasings below stay true
+  // whichever side the card is on. Adding a read to fix it was rejected:
+  // read-free preview is the deliberate property.
+  preview: (a) => {
+    const wanted = archiveDirection(a.archived);
+    const verb = wanted ? 'archive' : 'un-archive';
+    return [
+      `${verb} card ${a.card}, unless it is already ${wanted ? 'archived' : 'un-archived'}`,
+      `  reversible: if it does write, a later failure in the same transaction moves it back`,
+    ];
+  },
+  board: async (a, tx) => (await tx.getCard(a.card)).boardId,
+  run: async (a, tx) => {
+    const archived = archiveDirection(a.archived);
+    const card = await tx.setArchived(a.card, archived);
+    // The OBSERVED side, never the requested one. `setArchived` already threw if
+    // the write did not take, so these agree — but reporting the argument back
+    // would make the CLI's "✓ Card X is archived" a claim about the argument, in
+    // the one feature whose whole premise is 200-and-nothing writes.
+    return { cardId: card.cardId, archived: card.archived === true };
   },
 });
