@@ -86,6 +86,16 @@ export interface Intent<A = any, R = unknown> {
    * in-scope entry smuggle the rest of the batch past the lock.
    */
   board(args: A, tx: TxCards): Promise<string | string[] | undefined>;
+  /**
+   * This intent writes NOTHING, so the scope lock has nothing to guard and no
+   * board is required. Declared per intent, never inferred: an intent that
+   * yields no board is otherwise unlockable, and defaulting to "unlocked" is
+   * how a fork card slipped a write past the lock.
+   *
+   * Absent means "this writes", which is the fail-closed default a new intent
+   * inherits with nothing to remember.
+   */
+  readOnly?: true;
   run(args: A, tx: TxCards): Promise<R>;
 }
 
@@ -158,9 +168,29 @@ export async function dispatch<T = unknown>(
   // The mandatory guardrail, inside the table, on every path — including the
   // skill engine's and the MCP passthrough's.
   const board = await intent.board(args as never, tx);
+  const boards = typeof board === 'string' ? [board] : board ?? [];
+  // A write that names no board is UNCHECKABLE, not exempt. The loop below
+  // simply does not run for an empty list, so without this the lock would fail
+  // OPEN — which is exactly what an assignment fork produces: `getCard(...)
+  // .boardId` is `widgetCommonId`, and a fork has none, so `cards link`,
+  // `cards unlink` and `cards retag` all boarded off `undefined`.
+  //
+  // `--force` deliberately does NOT rescue this. Force is "I know this board is
+  // outside the lock"; here there is no board to know anything about, so there
+  // is nothing for the escape hatch to escape.
+  if (boards.length === 0 && !intent.readOnly && ctx.config?.scopeCollectionId) {
+    throw new RefusalError(
+      `Refusing to run "${name}": it writes, but it resolved no board, so the scope lock ` +
+        `(${ctx.config.scopeCollectionName ?? ctx.config.scopeCollectionId}) cannot be checked.\n` +
+        `A card with no board instance (no widgetCommonId) is what an assignment fork looks like, and ` +
+        `a write to one is a write the lock cannot see.\n` +
+        `Pass the reference of the board-resident instance instead — 'favro cards get <cardCommonId>' ` +
+        `names the instances.`,
+    );
+  }
   // Every distinct board, not just the first: a batch that straddles the lock
   // must refuse as a whole, before anything is written.
-  for (const one of new Set(typeof board === 'string' ? [board] : board ?? [])) {
+  for (const one of new Set(boards)) {
     await assertScope(one, ctx.client, ctx.config, ctx.force);
   }
 
@@ -432,6 +462,9 @@ registerIntent<ReadArgs, ReadResult>({
   // A read lands no write, so the scope lock has nothing to check. The lock
   // guards mutation; making it guard reads would break `read` on any card
   // outside the locked collection, which is the opposite of honest failure.
+  // Declared, not inferred — a boardless WRITE is refused under a lock, and
+  // this is the one intent that has earned the exemption.
+  readOnly: true,
   board: async () => undefined,
   run: async (a, tx) => {
     const limit = readLimit(a.limit);

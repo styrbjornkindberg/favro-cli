@@ -150,23 +150,26 @@ describe('listSkills', () => {
     const skills = listSkills();
     expect(Array.isArray(skills)).toBe(true);
     // Should at least have the builtin skills
-    expect(skills.length).toBeGreaterThanOrEqual(5);
+    expect(skills.length).toBeGreaterThanOrEqual(4);
   });
 
   test('includes builtin skills', () => {
+    // `triage`, `sprint-close`, `stale-cleanup` and `release-prep` were removed
+    // in #57: every one of them had a step naming `ask` or `do`, commands
+    // deleted long ago, so they listed fine and failed on first run. The
+    // replacements are tracker composites over the dispatch table.
     const skills = listSkills();
     const names = skills.map(s => s.name);
     expect(names).toContain('daily-digest');
-    expect(names).toContain('triage');
-    expect(names).toContain('sprint-close');
-    expect(names).toContain('stale-cleanup');
-    expect(names).toContain('release-prep');
+    expect(names).toContain('pick-up');
+    expect(names).toContain('file-blocked');
+    expect(names).toContain('unblock');
   });
 
   test('builtin skills have correct source', () => {
     const skills = listSkills();
     const builtin = skills.filter(s => s.source === 'builtin');
-    expect(builtin.length).toBeGreaterThanOrEqual(5);
+    expect(builtin.length).toBeGreaterThanOrEqual(4);
     for (const s of builtin) {
       expect(s.description).toBeTruthy();
       expect(s.path).toBeTruthy();

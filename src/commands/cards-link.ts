@@ -7,6 +7,13 @@ import CardsAPI from '../lib/cards-api';
 import { LINK_TYPES, linkTypeToIsBefore } from '../lib/dependency-direction';
 import { logError } from '../lib/error-handler';
 import { createFavroClient } from '../lib/client-factory';
+// `link` and `unlink` write a blocking edge, and the shared table already owns
+// that write as `add-blocking-edge` / `remove-blocking-edge`. Going through it
+// is what stops this file being a second, weaker path to the same wire call
+// (#63): the pre-read, the reverse-edge refusal and the compensation log are all
+// on the intent, and a direct `api.linkCard` here would have none of them.
+import { dispatch, AddedEdge, EdgeArgs } from '../lib/dispatch';
+import { reportDispatch } from '../lib/report-dispatch';
 
 // 'related' and 'duplicates' are gone — Favro has no API representation for them,
 // so they were being silently discarded. See lib/dependency-direction.ts.
@@ -22,17 +29,24 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
   cardsCmd
     .command('link <card> <toCardId>')
     .description(
-      'Link a card to another card.\n\n' +
+      'Record a blocking edge between two cards — the CLI surface of the\n' +
+      '`add-blocking-edge` intent.\n\n' +
+      'There is at most ONE edge per card pair (undirected identity, directed\n' +
+      'semantics), so a pair\n' +
+      'already holding the reverse edge is REFUSED, not overwritten — reversing is\n' +
+      '`cards unlink` then `cards link`. An edge that is already there is reported,\n' +
+      'not rewritten, so retrying after a failure is safe.\n\n' +
       'Examples:\n' +
-      '  favro cards link CARD-A CARD-B --type depends-on\n' +
-      '  favro cards link CARD-A CARD-B --type blocks\n' +
-      '  favro cards link CARD-A CARD-B --type related\n\n' +
+      '  favro cards link CARD-A CARD-B --type depends-on   # B blocks A\n' +
+      '  favro cards link CARD-A CARD-B --type blocks       # A blocks B\n\n' +
       `Valid types: ${VALID_LINK_TYPES.join(', ')}`
     )
     .requiredOption('--type <type>', `Link type: ${VALID_LINK_TYPES.join('|')}`)
     .option('--json', 'Output link details as JSON')
     .option('-y, --yes', 'Skip confirmation prompt')
+    .option('--dry-run', 'Preview the edge write without making it')
     .option('--force', 'Bypass scope check')
+    .addHelpText('after', '\nIntent contract: run `favro help issue-tracker`.')
     .action(async (cardId: string, toCardId: string, options) => {
       const verbose = cardsCmd.parent?.opts()?.verbose ?? cardsCmd.opts()?.verbose ?? false;
       try {
@@ -50,33 +64,55 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
         }
 
         const client = await createFavroClient();
-        const api = new CardsAPI(client);
-        
-        const card = await api.getCard(cardId);
-        
         const { readConfig } = await import('../lib/config');
-        const { checkScope, confirmAction } = await import('../lib/safety');
-        await checkScope(card.boardId ?? '', client, await readConfig(), options.force);
-        
+        const { confirmAction } = await import('../lib/safety');
+
         if (!(await confirmAction(`Link card ${cardId} to ${toCardId} (${type})?`, { yes: options.yes }))) {
           console.log('Aborted.');
           process.exit(0);
         }
 
-        // No cycle walk here. The old `wouldCreateCycle` BFS was unbounded
-        // (derived N), followed `depends-on` only, and swallowed every read
-        // failure — and the one real thing it caught, a pair linked both ways
-        // round, is what the `add-blocking-edge` intent's bounded pre-read now
-        // settles for BOTH directions in one call. Favro itself refuses a
-        // second edge on a pair with `403 Dependency already exists`, loudly.
-        const link = await api.linkCard(cardId, { toCardId, isBefore: linkTypeToIsBefore(type) });
+        // One intent, two spellings of the same edge. `depends-on` means the
+        // target comes BEFORE this card, so the target is the blocker; `blocks`
+        // is that same edge read from the other end, so the arguments swap.
+        //
+        // No cycle walk here and none in the intent: the old `wouldCreateCycle`
+        // BFS was unbounded (derived N), followed `depends-on` only, and
+        // swallowed every read failure — and the one real thing it caught, a
+        // pair linked both ways round, is what the intent's bounded pre-read
+        // settles for BOTH directions in one call.
+        const args: EdgeArgs = linkTypeToIsBefore(type)
+          ? { card: cardId, blockedBy: toCardId }
+          : { card: toCardId, blockedBy: cardId };
 
-        console.log(`✓ Linked card ${cardId} → ${toCardId} (${type})`);
-        if (options.json) {
-          console.log(JSON.stringify(link, null, 2));
+        const result = await dispatch<AddedEdge>('add-blocking-edge', { ...args }, {
+          client,
+          config: (await readConfig()) ?? {},
+          force: options.force,
+          dryRun: options.dryRun,
+        });
+        if (reportDispatch(result, options.json)) process.exit(1);
+        if (result.outcome === 'ok' && result.value !== undefined) {
+          // "Created" and "already there" stay distinguishable, exactly as the
+          // intent keeps them: reporting a no-op as a fresh write is the
+          // silent-wrong-answer class this build exists to close.
+          //
+          // Both arms speak the refs the CALLER typed. The intent answers
+          // resolved 24-hex ids, and echoing those on one arm only made one
+          // command talk in two vocabularies.
+          const blocker = args.card === cardId ? toCardId : cardId;
+          const blocked = args.card === cardId ? cardId : toCardId;
+          console.log(
+            result.value.created
+              ? `✓ Linked card ${cardId} → ${toCardId} (${type})`
+              : `✓ Already linked: ${blocker} blocks ${blocked} — nothing written`,
+          );
+          if (options.json) {
+            console.log(JSON.stringify(result.value, null, 2));
+          }
         }
       } catch (error: any) {
-        if (error?.message === 'process.exit') throw error;
+        if (String(error?.message).startsWith('process.exit')) throw error;
         if (error?.response?.status === 404) {
           console.error(`Error: Card '${cardId}' or target '${toCardId}' not found.`);
         } else {
@@ -90,34 +126,55 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
   cardsCmd
     .command('unlink <card> <fromCardId>')
     .description(
-      'Remove a link between two cards.\n\n' +
+      'Remove the blocking edge between two cards — the CLI surface of the\n' +
+      '`remove-blocking-edge` intent.\n\n' +
+      'Direction-agnostic: there is at most one edge per pair, so this removes\n' +
+      'whichever way round it points. No edge to remove is reported as such and is\n' +
+      'not an error, so a retry after a failed run can still reach a clean result.\n\n' +
       'Examples:\n' +
       '  favro cards unlink CARD-A CARD-B\n'
     )
     .option('-y, --yes', 'Skip confirmation prompt')
+    .option('--json', 'Output the removal as JSON')
+    .option('--dry-run', 'Preview the removal without making it')
     .option('--force', 'Bypass scope check')
+    .addHelpText('after', '\nIntent contract: run `favro help issue-tracker`.')
     .action(async (cardId: string, fromCardId: string, options) => {
       const verbose = cardsCmd.parent?.opts()?.verbose ?? cardsCmd.opts()?.verbose ?? false;
       try {
 
         const client = await createFavroClient();
-        const api = new CardsAPI(client);
-        
-        const card = await api.getCard(cardId);
-        
         const { readConfig } = await import('../lib/config');
-        const { checkScope, confirmAction } = await import('../lib/safety');
-        await checkScope(card.boardId ?? '', client, await readConfig(), options.force);
-        
+        const { confirmAction } = await import('../lib/safety');
+
         if (!(await confirmAction(`Unlink card ${cardId} from ${fromCardId}?`, { yes: options.yes }))) {
           console.log('Aborted.');
           process.exit(0);
         }
 
-        await api.unlinkCard(cardId, fromCardId);
-        console.log(`✓ Unlinked card ${cardId} from ${fromCardId}`);
+        const result = await dispatch<{ removed: boolean; isBefore?: boolean }>(
+          'remove-blocking-edge',
+          { ...({ card: cardId, blockedBy: fromCardId } as EdgeArgs) },
+          {
+            client,
+            config: (await readConfig()) ?? {},
+            force: options.force,
+            dryRun: options.dryRun,
+          },
+        );
+        if (reportDispatch(result, options.json)) process.exit(1);
+        if (result.outcome === 'ok' && result.value !== undefined) {
+          console.log(
+            result.value.removed
+              ? `✓ Unlinked card ${cardId} from ${fromCardId}`
+              : `✓ No edge between ${cardId} and ${fromCardId} — nothing written`,
+          );
+          if (options.json) {
+            console.log(JSON.stringify(result.value, null, 2));
+          }
+        }
       } catch (error: any) {
-        if (error?.message === 'process.exit') throw error;
+        if (String(error?.message).startsWith('process.exit')) throw error;
         if (error?.response?.status === 404) {
           console.error(`Error: Card '${cardId}' or link to '${fromCardId}' not found.`);
         } else {
@@ -180,7 +237,7 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
           console.log(JSON.stringify(card, null, 2));
         }
       } catch (error: any) {
-        if (error?.message === 'process.exit') throw error;
+        if (String(error?.message).startsWith('process.exit')) throw error;
         if (error?.response?.status === 404) {
           console.error(`Error: Card '${cardId}' or board '${options.toBoard}' not found.`);
         } else {
@@ -227,7 +284,7 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
         };
         console.table([row]);
       } catch (error: any) {
-        if (error?.message === 'process.exit') throw error;
+        if (String(error?.message).startsWith('process.exit')) throw error;
         if (error?.response?.status === 404) {
           console.error(`Error: Card '${cardId}' not found.`);
         } else {
@@ -269,7 +326,7 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
         console.log(`Dependencies of card ${cardId}:`);
         deps.forEach(l => console.log(`  → ${l.cardId}${l.cardName ? ` (${l.cardName})` : ''}`));
       } catch (error: any) {
-        if (error?.message === 'process.exit') throw error;
+        if (String(error?.message).startsWith('process.exit')) throw error;
         if (error?.response?.status === 404) {
           console.error(`Error: Card '${cardId}' not found.`);
         } else {
@@ -314,7 +371,7 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
         console.log(`Cards blocked by ${cardId}:`);
         blocked.forEach(l => console.log(`  ⛔ ${l.cardId}${l.cardName ? ` (${l.cardName})` : ''}`));
       } catch (error: any) {
-        if (error?.message === 'process.exit') throw error;
+        if (String(error?.message).startsWith('process.exit')) throw error;
         if (error?.response?.status === 404) {
           console.error(`Error: Card '${cardId}' not found.`);
         } else {
@@ -358,7 +415,7 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
         console.log(`Cards blocking ${cardId}:`);
         blockedBy.forEach(l => console.log(`  🚫 ${l.cardId}${l.cardName ? ` (${l.cardName})` : ''}`));
       } catch (error: any) {
-        if (error?.message === 'process.exit') throw error;
+        if (String(error?.message).startsWith('process.exit')) throw error;
         if (error?.response?.status === 404) {
           console.error(`Error: Card '${cardId}' not found.`);
         } else {

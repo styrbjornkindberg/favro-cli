@@ -865,23 +865,6 @@ Execute a proposed change.
 | `-y, --yes` | Skip confirmation |
 | `--force` | Bypass scope check |
 
-### `audit <board>` 📖 READ
-Board change audit log.
-
-| Flag | Description |
-|------|-------------|
-| `--since <period>` | Time range: `1h`, `1d`, `1w` |
-| `--limit <n>` | Max entries (default: 100) |
-| `--json` | Output raw JSON |
-
-### `who-changed <cardTitle>` 📖 READ
-Card edit history by title search.
-
-| Flag | Description |
-|------|-------------|
-| `--board <boardId>` | Narrow search to board |
-| `--json` | Output raw JSON |
-
 ### `risks <board>` 📖 READ
 Board risk analysis — surfaces blocked, stale, unassigned, and incomplete cards.
 
@@ -948,10 +931,9 @@ Stop recording and save the skill.
 | Name | Description |
 |------|-------------|
 | `daily-digest` | Standup + overdue + blocked cards in one view |
-| `triage` | Find unassigned cards, suggest owners, assign with AI |
-| `sprint-close` | Summarize completed work, audit recent changes |
-| `stale-cleanup` | Find cards with no recent activity, suggest actions |
-| `release-prep` | Generate changelog from done cards, flag blockers |
+| `pick-up` | Read a ticket, then claim it |
+| `file-blocked` | Create a ticket and record what blocks it, atomically |
+| `unblock` | Drop a blocking edge and re-triage the card it freed |
 
 ### Skill YAML Format
 

@@ -23,7 +23,8 @@ import CardsAPI, { UpdateCardRequest } from './lib/cards-api';
 // The shared dispatch table. Importing it here is what makes the CLI a caller of
 // the one table rather than a second, drifting write path — and it registers
 // every intent, so intents added by later tickets are reachable with no change.
-import { dispatch, DispatchResult } from './lib/dispatch';
+import { dispatch } from './lib/dispatch';
+import { reportDispatch } from './lib/report-dispatch';
 import { writeCardsCSV, writeCardsJSON, normalizeCard, cardsToCSV } from './lib/csv';
 import { applyFilters, ExportFormat } from './commands/cards-export';
 import { Card } from './lib/cards-api';
@@ -46,6 +47,8 @@ import { registerCollectionsDeleteCommand } from './commands/collections-delete'
 import { registerCardsGetCommand } from './commands/cards-get';
 import { registerCardsFindCommand } from './commands/cards-find';
 import { registerCardsLinkCommands } from './commands/cards-link';
+import { registerCardsTrackerCommands } from './commands/cards-tracker';
+import { registerIssueTrackerHelp } from './commands/issue-tracker-help';
 import { registerCustomFieldsCommands } from './commands/custom-fields';
 import { registerMembersCommand } from './commands/members';
 import { registerCommentsCommand } from './commands/comments';
@@ -106,6 +109,8 @@ program
     '  favro cards list --board <id>     List cards on a board\n' +
     '  favro cards create "My card"      Create a card\n' +
     '  favro cards export <id> --format csv --out cards.csv\n\n' +
+    'Working a ticket — claim it, block it, resolve it — or writing an agent\n' +
+    'against this CLI? Start with `favro help issue-tracker`.\n\n' +
     'Authentication:\n' +
     '  Set FAVRO_API_KEY env var, or run `favro auth login` to save to ~/.favro/config.json\n\n' +
     'Full docs: https://github.com/square-moon/favro-cli#readme'
@@ -118,6 +123,11 @@ registerAuthCommand(program);
 
 // ─── scope command ────────────────────────────────────────────────────────────
 registerScopeCommand(program);
+
+// ─── the tracker contract, as a real --help topic ────────────────────────────
+// `favro help issue-tracker`, and `favro issue-tracker --help` for MCP
+// `favro_help`, which shells out to `--help` and so never sees a skill file.
+registerIssueTrackerHelp(program);
 
 // ─── boards parent ────────────────────────────────────────────────────────────
 const boardsCmd = program.command('boards').description('Board operations');
@@ -215,9 +225,12 @@ const cards = program.command('cards').description(
   '  create  Create a card (single, bulk JSON, or CSV import)\n' +
   '  update  Update an existing card by ID\n' +
   '  export  Export all cards from a board to JSON or CSV\n' +
-  '  link    Link a card to another card\n' +
-  '  unlink  Remove a link between two cards\n' +
-  '  move    Move a card to a different board\n\n' +
+  '  link    Record a blocking edge between two cards\n' +
+  '  unlink  Remove the blocking edge between two cards\n' +
+  '  move    Move a card to a different board\n' +
+  '  claim   Assign yourself and move to the tracker\'s active column\n' +
+  '  resolve Move a card to the tracker\'s done column\n' +
+  '  retag   Set the triage roles — one category, one state\n\n' +
   'Examples:\n' +
   '  favro cards get <card> --include board,collection\n' +
   '  favro cards list <board-id> --filter "customField:value"\n' +
@@ -401,6 +414,9 @@ cards
 // ─── cards link / unlink / move ──────────────────────────────────────────────
 registerCardsLinkCommands(cards);
 
+// ─── cards claim / resolve / retag ───────────────────────────────────────────
+registerCardsTrackerCommands(cards);
+
 /**
  * Parse a CSV string into an array of objects using the header row.
  * Handles simple RFC 4180 CSV (no quoted newlines).
@@ -415,34 +431,6 @@ function parseCSV(content: string): Record<string, string>[] {
     headers.forEach((h, i) => { obj[h] = values[i] ?? ''; });
     return obj;
   });
-}
-
-/**
- * Render one `DispatchResult` for a terminal, and say whether to exit non-zero.
- *
- * Reads the RESULT, never the intent name — so a commander action for an intent
- * registered by a later ticket renders correctly with no change here. A refusal
- * (scope lock, resolver, unknown intent) never arrives as a result: it throws,
- * and each action's catch is where the throw becomes an exit code.
- */
-function reportDispatch(result: DispatchResult<unknown>, json?: boolean): boolean {
-  if (result.preview) {
-    // A preview of the whole chain, and only a preview. The lock, not this flag,
-    // is what stopped anything unsafe.
-    result.preview.forEach((line) => console.log(`[dry-run] ${line}`));
-    return false;
-  }
-  if (result.outcome === 'ok') return false;
-
-  console.error(`✗ ${result.intent} failed: ${result.error}`);
-  if (result.retryable) {
-    console.error('  Rolled back — nothing was left behind, so the same call is safe to retry.');
-  } else {
-    console.error('  Rollback incomplete — do NOT retry. Left behind:');
-    for (const orphan of result.orphans ?? []) console.error(`    - ${orphan.reason}`);
-  }
-  if (json) console.log(JSON.stringify(result));
-  return true;
 }
 
 // ─── cards create ─────────────────────────────────────────────────────────────
@@ -491,6 +479,9 @@ cards
   .option('-y, --yes', 'Skip confirmation prompt')
   .option('--force', 'Bypass scope check')
   .option('--json', 'Output as JSON')
+  // On intent-carrying commands only. A pointer on every command would be noise
+  // an agent learns to skip.
+  .addHelpText('after', '\nIntent contract: run `favro help issue-tracker`.')
   .action(async (title: string | undefined, options) => {
     if (!title && !options.csv && !options.bulk) {
       console.error('Error: provide a title or use --csv/--bulk for bulk import');

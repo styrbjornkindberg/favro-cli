@@ -139,32 +139,16 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
 
   // ─── cards link ─────────────────────────────────────────────────────────────
 
-  test('links card with two positional args and --type depends-on', async () => {
-    const { mockLinkCard } = buildMockApi();
-    const cardsCmd = new Command('cards');
-    registerCardsLinkCommands(cardsCmd);
-    await cardsCmd.parseAsync(['node', 'cards', 'link', 'card-src', 'card-target', '--type', 'depends-on']);
-
-    expect(mockLinkCard).toHaveBeenCalledWith('card-src', { toCardId: 'card-target', isBefore: true });
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('✓ Linked'));
-  });
-
-  test('all valid link types are accepted (spec names)', async () => {
-    // 'related' and 'duplicates' are gone: Favro cannot store them (issue #12).
-    const validTypes = ['depends-on', 'blocks'];
-    for (const type of validTypes) {
-      const { mockLinkCard } = buildMockApi();
-      const cardsCmd = new Command('cards');
-      registerCardsLinkCommands(cardsCmd);
-      await cardsCmd.parseAsync(['node', 'cards', 'link', 'card-src', 'card-target', '--type', type]);
-      expect(mockLinkCard).toHaveBeenCalledWith('card-src', {
-        toCardId: 'card-target',
-        isBefore: type === 'depends-on',
-      });
-      jest.clearAllMocks();
-      (config.resolveApiKey as jest.Mock).mockResolvedValue('test-key');
-    }
-  });
+  // The eight API-asserting tests that lived here asserted `api.linkCard` / `api.unlinkCard`
+  // were called with a shape we chose. `cards link` and `cards unlink` now route
+  // through the shared dispatch table (#63), so those assertions were pinning
+  // the weaker path they replaced — and a mocked `CardsAPI` cannot see the thing
+  // that actually changed: whether the reverse-edge write reaches Favro at all.
+  // They are replaced by `cli-cards-intents-wire.test.ts`, which drives the same
+  // commands over a `node:http` Favro stand-in and reads the wire.
+  //
+  // What stays here is what commander parsing alone decides: registration, type
+  // validation, self-link, and the missing-key path.
 
   test('exits with error on old type name "depends"', async () => {
     buildMockApi();
@@ -217,89 +201,6 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
     ).rejects.toThrow('process.exit');
 
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining("Cannot link a card to itself"));
-    expect(exitSpy).toHaveBeenCalledWith(1);
-  });
-
-  test('allows linking different cards', async () => {
-    const { mockLinkCard } = buildMockApi();
-    const cardsCmd = new Command('cards');
-    registerCardsLinkCommands(cardsCmd);
-
-    await cardsCmd.parseAsync(['node', 'cards', 'link', 'CARD-A', 'CARD-B', '--type', 'depends-on']);
-    expect(mockLinkCard).toHaveBeenCalled();
-  });
-
-  // ─── No cycle walk (#53) ───────────────────────────────────────────────────
-
-  test('link does not walk the dependency graph looking for a cycle', async () => {
-    // `wouldCreateCycle` is deleted: an unbounded BFS over derived N, following
-    // `depends-on` only, with a bare `catch {}` around every read. The one real
-    // thing it caught — a pair linked both ways round — is settled by the
-    // `add-blocking-edge` intent's bounded pre-read, for BOTH directions in one
-    // call, and by Favro's own `403 Dependency already exists`.
-    const mockGetCardLinks = jest.fn().mockResolvedValue([{ cardId: 'card-b', isBefore: true }]);
-    const { mockLinkCard } = buildMockApi({ getCardLinks: mockGetCardLinks });
-
-    const cardsCmd = new Command('cards');
-    registerCardsLinkCommands(cardsCmd);
-    await cardsCmd.parseAsync(['node', 'cards', 'link', 'card-b', 'card-a', '--type', 'depends-on']);
-
-    expect(mockGetCardLinks).not.toHaveBeenCalled();
-    expect(mockLinkCard).toHaveBeenCalledWith('card-b', { toCardId: 'card-a', isBefore: true });
-  });
-
-  // ─── JSON output ──────────────────────────────────────────────────────────
-
-  test('outputs link JSON when --json flag set', async () => {
-    buildMockApi();
-    const cardsCmd = new Command('cards');
-    registerCardsLinkCommands(cardsCmd);
-    await cardsCmd.parseAsync(['node', 'cards', 'link', 'card-src', 'card-target', '--type', 'depends-on', '--json']);
-
-    const calls = consoleSpy.mock.calls.map(c => c[0]);
-    const jsonCall = calls.find(c => typeof c === 'string' && c.includes('"isBefore"'));
-    expect(jsonCall).toBeDefined();
-  });
-
-  // ─── 404 handling ─────────────────────────────────────────────────────────
-
-  test('handles 404 on link gracefully', async () => {
-    const err = Object.assign(new Error('Not Found'), { response: { status: 404 } });
-    buildMockApi({ linkCard: jest.fn().mockRejectedValue(err) });
-    const cardsCmd = new Command('cards');
-    registerCardsLinkCommands(cardsCmd);
-
-    await expect(
-      cardsCmd.parseAsync(['node', 'cards', 'link', 'bad-card', 'bad-target', '--type', 'depends-on'])
-    ).rejects.toThrow('process.exit');
-
-    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining("not found"));
-    expect(exitSpy).toHaveBeenCalledWith(1);
-  });
-
-  // ─── cards unlink ───────────────────────────────────────────────────────────
-
-  test('unlinks card with two positional args', async () => {
-    const { mockUnlinkCard } = buildMockApi();
-    const cardsCmd = new Command('cards');
-    registerCardsLinkCommands(cardsCmd);
-    await cardsCmd.parseAsync(['node', 'cards', 'unlink', 'card-src', 'card-linked']);
-
-    expect(mockUnlinkCard).toHaveBeenCalledWith('card-src', 'card-linked');
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('✓ Unlinked'));
-  });
-
-  test('handles 404 on unlink gracefully', async () => {
-    const err = Object.assign(new Error('Not Found'), { response: { status: 404 } });
-    buildMockApi({ unlinkCard: jest.fn().mockRejectedValue(err) });
-    const cardsCmd = new Command('cards');
-    registerCardsLinkCommands(cardsCmd);
-
-    await expect(
-      cardsCmd.parseAsync(['node', 'cards', 'unlink', 'bad-card', 'no-link'])
-    ).rejects.toThrow('process.exit');
-
-    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining("not found"));
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 

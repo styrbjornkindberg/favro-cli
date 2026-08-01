@@ -548,6 +548,72 @@ describe('the mandatory scope lock is enforced inside the table', () => {
   });
 });
 
+describe('the lock fails CLOSED on a write that resolves no board', () => {
+  /** A lock that is actually configured — `ctx()` deliberately configures none. */
+  const locked = (stand: Stand): DispatchContext =>
+    ctx(stand, { config: { scopeCollectionId: 'coll-a', scopeCollectionName: 'Collection A' } });
+
+  /** The assignment fork: no `widgetCommonId`, so `card.boardId` is undefined. */
+  const forkAndEdge = (stand: Stand) => {
+    stand.cards.get(CARD)!.widgetCommonId = undefined;
+    stand.cards.get(CARD)!.columnId = undefined;
+    stand.cards.get(CARD)!.tags = [TAG_BUG, TAG_TRIAGE];
+    stand.edges.push({ near: CARD, far: FAR, isBefore: true });
+  };
+
+  // Every write intent that boards off `getCard(...).boardId`. A fork has no
+  // board, and an empty board list means the lock's loop never runs — so
+  // without the refusal these three wrote with no scope check at all.
+  it.each([
+    ['remove-blocking-edge', { card: CARD, blockedBy: FAR }],
+    ['add-blocking-edge', { card: CARD, blockedBy: FAR }],
+    ['retag', { card: CARD, state: 'ready-for-agent' }],
+  ])('%s on a boardless fork refuses, and nothing reaches the wire', async (name, args) => {
+    const stand = await startServer();
+    forkAndEdge(stand);
+
+    await expect(dispatch(name, args, locked(stand))).rejects.toThrow(RefusalError);
+
+    // The wire, not a call count: the throw alone would still pass if the write
+    // had already gone out ahead of it.
+    expect(writes(stand.received)).toHaveLength(0);
+    expect(stand.edges).toEqual([{ near: CARD, far: FAR, isBefore: true }]);
+    expect(stand.cards.get(CARD)!.tags).toEqual([TAG_BUG, TAG_TRIAGE]);
+  });
+
+  it('a board OUTSIDE the lock still refuses — the ordinary violation is unchanged', async () => {
+    const stand = await startServer();
+    stand.cards.get(CARD)!.widgetCommonId = OTHER_BOARD;
+    stand.edges.push({ near: CARD, far: FAR, isBefore: true });
+
+    await expect(
+      dispatch('remove-blocking-edge', { card: CARD, blockedBy: FAR }, locked(stand)),
+    ).rejects.toThrow(ScopeError);
+    expect(writes(stand.received)).toHaveLength(0);
+    expect(stand.edges).toEqual([{ near: CARD, far: FAR, isBefore: true }]);
+  });
+
+  it('a board INSIDE the lock still writes — the lock must not become unconditional', async () => {
+    const stand = await startServer();
+    stand.edges.push({ near: CARD, far: FAR, isBefore: true });
+
+    const result = await dispatch('remove-blocking-edge', { card: CARD, blockedBy: FAR }, locked(stand));
+
+    expect(result.outcome).toBe('ok');
+    expect(stand.edges).toEqual([]);
+  });
+
+  it('read on a boardless fork still works — reads are deliberately unlocked', async () => {
+    const stand = await startServer();
+    stand.cards.get(CARD)!.widgetCommonId = undefined;
+
+    const result = await dispatch<ReadResult>('read', { card: CARD }, locked(stand));
+
+    expect(result.outcome).toBe('ok');
+    expect(result.value?.card.cardId).toBe(CARD);
+  });
+});
+
 describe('--dry-run is a preview only', () => {
   it('previews the whole chain and makes no write at all', async () => {
     const stand = await startServer();

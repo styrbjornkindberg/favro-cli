@@ -1,0 +1,25 @@
+name: unblock
+description: "Drop a blocking edge and re-triage the card it freed — one transaction"
+triggers:
+  - manual
+steps:
+  # Removing an edge that is not there is reported, not an error, so a retry
+  # after a failed run can still reach a clean result.
+  - command: remove-blocking-edge
+    args:
+      card: "{{card}}"
+      blockedBy: "{{blocker}}"
+  # If this refuses (an unknown state role, or no category tag to keep), the
+  # edge removed above is put back: the run is one transaction.
+  - command: retag
+    args:
+      card: "{{card}}"
+      state: "{{state}}"
+variables:
+  card:
+    prompt: "Which card is being unblocked?"
+  blocker:
+    prompt: "Which blocker goes away?"
+  state:
+    prompt: "New state role?"
+    default: "ready-for-agent"

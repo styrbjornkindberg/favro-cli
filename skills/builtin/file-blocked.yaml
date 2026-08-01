@@ -1,0 +1,30 @@
+name: file-blocked
+description: "Create a ticket and record what blocks it — both writes in one transaction"
+triggers:
+  - manual
+steps:
+  # `as:` captures the created card, so the edge below references the real
+  # cardId rather than a reference the run would have to resolve again.
+  - command: create
+    as: made
+    args:
+      name: "{{title}}"
+      board: "{{board}}"
+      description: "{{description}}"
+  # One compensation log spans the run: if this edge fails, the card above is
+  # removed and the whole run reports `rolled-back`.
+  - command: add-blocking-edge
+    args:
+      card: "{{made.cardId}}"
+      blockedBy: "{{blocker}}"
+variables:
+  title:
+    prompt: "Ticket title?"
+  board:
+    prompt: "Which board?"
+    default: "{{scope.board}}"
+  description:
+    prompt: "Body (markdown)?"
+    default: ""
+  blocker:
+    prompt: "Which card blocks it?"

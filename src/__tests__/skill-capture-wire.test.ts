@@ -175,6 +175,10 @@ beforeAll(() => {
     name: 'probe-capture-echo',
     summary: 'returns its argument, writing nothing',
     preview: (a) => [`echo ${a.echo}`],
+    // Writing nothing is now DECLARED: a boardless intent that writes is refused
+    // under a scope lock, because a board it cannot name is a board the lock
+    // cannot check.
+    readOnly: true,
     board: async () => undefined,
     run: async (a) => ({ echoed: a.echo }),
   });

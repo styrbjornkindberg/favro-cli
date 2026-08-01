@@ -1,0 +1,21 @@
+name: pick-up
+description: "Read a ticket, then claim it — assigns you and moves it to the tracker's active column"
+triggers:
+  - manual
+steps:
+  # Read first so the claim acts on a settled cardId rather than on whatever the
+  # reference happened to resolve to a second time.
+  - command: read
+    as: ticket
+    args:
+      card: "{{card}}"
+  - command: claim
+    args:
+      card: "{{ticket.card.cardId}}"
+      assignee: "{{assignee}}"
+variables:
+  card:
+    prompt: "Which ticket? (sequentialId, cardId or cardCommonId)"
+  assignee:
+    prompt: "Who claims it?"
+    default: "@me"
