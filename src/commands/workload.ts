@@ -12,7 +12,7 @@ import { logError } from '../lib/error-handler';
 const ACTIVE_STAGES = ['active', 'review', 'testing'];
 const OVERLOAD_THRESHOLD = 8;
 
-interface MemberWorkload {
+export interface MemberWorkload {
   name: string;
   email: string;
   activeCards: number;
@@ -36,7 +36,7 @@ interface WorkloadResult {
   generatedAt: string;
 }
 
-function extractEffort(card: AggregateCard): number {
+export function extractEffort(card: AggregateCard): number {
   if (!card.customFields) return 0;
   for (const [key, val] of Object.entries(card.customFields)) {
     if (/effort|story.?points?|points?|estimate/i.test(key)) {
@@ -45,6 +45,68 @@ function extractEffort(card: AggregateCard): number {
     }
   }
   return 0;
+}
+
+/**
+ * Per-member rollup. Lifted out of the commander action so the threshold and the
+ * alert wording are reachable from a test — the previous coverage lived entirely
+ * in the action and amounted to `expect(9 > 8).toBe(true)` (#76).
+ *
+ * `members` is the snapshot member list; both the board and the aggregate paths
+ * hand over the same `{ id, name, email, role? }` shape.
+ */
+export function buildWorkloads(
+  cards: AggregateCard[],
+  members: Array<{ id: string; name: string; email: string; role?: string }>,
+): { members: MemberWorkload[]; alerts: string[] } {
+  const memberMap = new Map<string, MemberWorkload>();
+
+  for (const card of cards) {
+    const assignees = card.assignees?.length ? card.assignees : ['unassigned'];
+    for (const uid of assignees) {
+      if (!memberMap.has(uid)) {
+        const member = members.find(m => m.id === uid);
+        memberMap.set(uid, {
+          name: member?.name ?? uid,
+          email: member?.email ?? '',
+          activeCards: 0,
+          totalCards: 0,
+          totalEffort: 0,
+          dependencyCards: 0,
+          overloaded: false,
+          cards: [],
+        });
+      }
+      const mw = memberMap.get(uid)!;
+      mw.totalCards++;
+      mw.totalEffort += extractEffort(card);
+      if (ACTIVE_STAGES.includes(card.stage ?? '')) mw.activeCards++;
+      if ((card.blockedBy && card.blockedBy.length > 0)) mw.dependencyCards++;
+      mw.cards.push({
+        id: card.id,
+        title: card.title,
+        stage: card.stage,
+        board: (card as any).boardName,
+      });
+    }
+  }
+
+  // Detect overloaded/idle
+  const alerts: string[] = [];
+  for (const [, mw] of memberMap) {
+    if (mw.activeCards > OVERLOAD_THRESHOLD) {
+      mw.overloaded = true;
+      alerts.push(`${mw.name} has ${mw.activeCards} active cards (threshold: ${OVERLOAD_THRESHOLD})`);
+    }
+    if (mw.totalCards === 0) {
+      alerts.push(`${mw.name} has no assigned cards`);
+    }
+  }
+
+  return {
+    members: Array.from(memberMap.values()).sort((a, b) => b.activeCards - a.activeCards),
+    alerts,
+  };
 }
 
 function formatHuman(data: WorkloadResult): string {
@@ -111,52 +173,7 @@ export function registerWorkloadCommand(program: Command): void {
           scope = 'all collections';
         }
 
-        // Build per-member workload
-        const memberMap = new Map<string, MemberWorkload>();
-
-        for (const card of snapshot.allCards) {
-          const assignees = card.assignees?.length ? card.assignees : ['unassigned'];
-          for (const uid of assignees) {
-            if (!memberMap.has(uid)) {
-              const member = snapshot.members.find((m: any) => m.id === uid);
-              memberMap.set(uid, {
-                name: member?.name ?? uid,
-                email: member?.email ?? '',
-                activeCards: 0,
-                totalCards: 0,
-                totalEffort: 0,
-                dependencyCards: 0,
-                overloaded: false,
-                cards: [],
-              });
-            }
-            const mw = memberMap.get(uid)!;
-            mw.totalCards++;
-            mw.totalEffort += extractEffort(card);
-            if (ACTIVE_STAGES.includes(card.stage ?? '')) mw.activeCards++;
-            if ((card.blockedBy && card.blockedBy.length > 0)) mw.dependencyCards++;
-            mw.cards.push({
-              id: card.id,
-              title: card.title,
-              stage: card.stage,
-              board: (card as any).boardName,
-            });
-          }
-        }
-
-        // Detect overloaded/idle
-        const alerts: string[] = [];
-        for (const [, mw] of memberMap) {
-          if (mw.activeCards > OVERLOAD_THRESHOLD) {
-            mw.overloaded = true;
-            alerts.push(`${mw.name} has ${mw.activeCards} active cards (threshold: ${OVERLOAD_THRESHOLD})`);
-          }
-          if (mw.totalCards === 0) {
-            alerts.push(`${mw.name} has no assigned cards`);
-          }
-        }
-
-        const members = Array.from(memberMap.values()).sort((a, b) => b.activeCards - a.activeCards);
+        const { members, alerts } = buildWorkloads(snapshot.allCards, snapshot.members);
 
         const result: WorkloadResult = {
           scope,

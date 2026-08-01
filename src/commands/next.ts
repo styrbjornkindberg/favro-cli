@@ -39,7 +39,7 @@ interface NextResult {
   generatedAt: string;
 }
 
-function extractPriority(card: AggregateCard): { label: string; score: number } {
+export function extractPriority(card: AggregateCard): { label: string; score: number } {
   if (!card.customFields) return { label: 'unset', score: 0 };
   for (const [key, val] of Object.entries(card.customFields)) {
     if (/priority|urgency|severity/i.test(key)) {
@@ -53,7 +53,7 @@ function extractPriority(card: AggregateCard): { label: string; score: number } 
   return { label: 'unset', score: 0 };
 }
 
-function extractEffort(card: AggregateCard): number | undefined {
+export function extractEffort(card: AggregateCard): number | undefined {
   if (!card.customFields) return undefined;
   for (const [key, val] of Object.entries(card.customFields)) {
     if (/effort|story.?points?|points?|estimate/i.test(key)) {
@@ -64,7 +64,7 @@ function extractEffort(card: AggregateCard): number | undefined {
   return undefined;
 }
 
-function scoreCard(card: AggregateCard): { score: number; reasons: string[] } {
+export function scoreCard(card: AggregateCard): { score: number; reasons: string[] } {
   let score = 0;
   const reasons: string[] = [];
 
