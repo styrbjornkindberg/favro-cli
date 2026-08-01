@@ -271,6 +271,14 @@ export interface UpdateCardRequest {
   addTags?: string[];
   /** Tag names to remove. */
   removeTags?: string[];
+  /**
+   * Tag **ids** to add. Zero-extra-read pass-through, and the shape a rollback
+   * wants: a card reads its tags back as ids, so restoring a captured pre-state
+   * means writing ids, never names.
+   */
+  addTagIds?: string[];
+  /** Tag **ids** to remove. Same reason as `addTagIds`. */
+  removeTagIds?: string[];
   /** Due date in YYYY-MM-DD format. Supported by Favro API updateCard endpoint. */
   dueDate?: string;
   /** Target board ID when moving a card between boards. Supported by Favro API updateCard endpoint. */
@@ -454,6 +462,15 @@ export class CardsAPI {
   private get columns(): ColumnDirectory {
     this.columnDirectory ??= new ColumnDirectory(this.client, this.client.organizationId);
     return this.columnDirectory;
+  }
+
+  /**
+   * Settle a `--status` / `--column` argument to a `columnId`, through the one
+   * shared column directory. Public so the tx write facade can record WHICH
+   * column it wrote without a second resolver of its own.
+   */
+  async resolveColumnId(value: string, boardId?: string): Promise<string> {
+    return this.columns.resolveColumnId(value, boardId);
   }
 
   /**
@@ -944,8 +961,13 @@ export class CardsAPI {
    * A desired name unknown to the org goes out as `addTags`, letting Favro create
    * it — or refuse with "User does not have correct permission level in
    * workspace". Either way it is a loud outcome, not a silent no-op.
+   *
+   * Public because the tx write facade needs the DELTA this computes, not just
+   * its effect: a compensation entry compares per-element on our own delta, and
+   * re-deriving it there would be a second tag resolver. `TxCards.setTags`
+   * refuses a non-empty `addTags` rather than letting the wire create a tag.
    */
-  private async tagReplacement(
+  async tagReplacement(
     card: Card,
     desired: string[],
   ): Promise<{ addTags?: string[]; addTagIds?: string[]; removeTagIds?: string[] }> {

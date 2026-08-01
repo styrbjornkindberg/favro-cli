@@ -1,0 +1,539 @@
+/**
+ * The transactional write facade and its compensation log (#50).
+ *
+ * A failed multi-step write is fully rolled back, so an agent can retry the same
+ * call without inspecting wreckage — and the result says whether retrying is
+ * safe.
+ *
+ * ## Why a facade and not per-intent capture/mutate pairs
+ *
+ * Each reversible op is declared **once**, with capture + mutate + push fused.
+ * Per-intent declared pairs were rejected: they split capture from mutate, and an
+ * intent cannot know what it will touch before its arguments are resolved. A
+ * generic state-differ was rejected too — a full-card PUT clobbers concurrent
+ * edits, and Favro's write shape is not symmetric with its read shape (a
+ * whole-array `tags` / `assignees` PUT answers 200 and writes nothing; only the
+ * add/remove verbs are honoured).
+ *
+ * Intents receive `TxCards` and nothing else — no `CardsAPI`, no
+ * `FavroHttpClient` — so an un-instrumented write is not merely discouraged, it
+ * is unconstructible from inside an intent.
+ *
+ * ## Compare-before-restore, facade-wide, always on
+ *
+ * There is **no version carrier on the wire**: no `updatedAt`, no `ETag`, no
+ * `Last-Modified`, and the monotone-ish fields (`position`, `timeOnBoard`,
+ * `timeOnColumns`) do not move when the mutated fields move. Optimistic
+ * concurrency by version is therefore impossible, and comparing is the only
+ * guard available. So the rule is stated once, facade-wide, and a new reversible
+ * op inherits it rather than restating it:
+ *
+ *   > Compare in whatever shape the write took. Delta-shaped writes compare
+ *   > per-element on our own delta; scalar writes compare strict equality;
+ *   > `addBlockingEdge` compares existence with direction; `create` is exempt.
+ *
+ * Per-element follows from the wire: whole-field equality would guard a
+ * whole-field write that never happens, and would refuse to undo our own
+ * `tags=[A]` because a human added `B`.
+ *
+ * This is **not** a re-read of the restore value. The value still comes from the
+ * captured pre-state; the read only DETECTS. Capture-before-mutate stands
+ * unamended, so `rolled-back` keeps its strong meaning.
+ *
+ * There is no opt-out flag on the guard. Under the honest-failure posture that
+ * would be a licence to clobber in silence.
+ */
+import CardsAPI, { Card, CardLink, CreateCardRequest } from './cards-api';
+import { classifyThrownError } from './favro-error';
+import { isUserId } from './users-api';
+
+// ─── the three outcomes ──────────────────────────────────────────────────────
+
+/**
+ * Three outcomes, no fourth.
+ *
+ * - `ok` — the write applied.
+ * - `rolled-back` — it failed and every compensating write landed. **Retryable.**
+ * - `rollback-incomplete` — the unwind left something behind. **Not retryable.**
+ *
+ * A pre-write refusal (scope lock, resolver, unknown intent) is deliberately not
+ * an outcome here: it throws, so there is nothing to roll back and nothing to
+ * report as a fourth state.
+ */
+export type TxOutcome = 'ok' | 'rolled-back' | 'rollback-incomplete';
+
+/**
+ * Something the unwind left behind, so a human can finish the cleanup.
+ *
+ * The two causes are distinct and stay distinct — a compensating write that
+ * FAILED is a different problem from compensation deliberately SKIPPED because a
+ * concurrent editor now owns that field.
+ */
+export interface Orphan {
+  cause: 'compensation-failed' | 'compensation-skipped';
+  /** The `cardId` the write landed on. */
+  card: string;
+  /** The field as a caller names it: `columnId`, `tags`, `assignees`, `dependencies`, `card`. */
+  field: string;
+  /** What we wrote — the scalar, the delta element, the edge, or the created card. */
+  wrote: unknown;
+  /** What is live now. Present on a skip; absent when the compensating write failed. */
+  live?: unknown;
+  reason: string;
+}
+
+// ─── the one compare rule ────────────────────────────────────────────────────
+
+/**
+ * The shape a write took, which is the only thing that decides how it compares.
+ * An op declares one of these; it never implements a comparison.
+ */
+export type WriteRecord =
+  /** `create`. Nothing to compare: the card either exists or it is already gone. */
+  | { shape: 'exempt' }
+  /** One value replaced another. Compares strict equality. */
+  | { shape: 'scalar'; wrote: unknown; before: unknown }
+  /** Set membership changed. Compares per-element, on our own delta only. */
+  | { shape: 'delta'; added: readonly string[]; removed: readonly string[] }
+  /** One directional edge. Compares existence WITH direction. */
+  | { shape: 'edge'; far: string; isBefore: boolean; created: boolean };
+
+/** What the unwind is still allowed to write, after the compare. */
+export type Restorable =
+  | { shape: 'exempt' }
+  | { shape: 'scalar' }
+  /** Elements to un-add and to un-remove — never elements outside our own delta. */
+  | { shape: 'delta'; unadd: string[]; unremove: string[] }
+  | { shape: 'edge' };
+
+/** One unit the compare refused to restore, and what is live in its place. */
+export interface SkippedUnit {
+  wrote: unknown;
+  live: unknown;
+}
+
+/** The live edge to one far card, as the compare needs to see it. */
+export interface LiveEdge {
+  far: string;
+  isBefore: boolean;
+}
+
+/**
+ * The facade-wide rule, in exactly one place.
+ *
+ * @param record what the write did, in the shape it did it.
+ * @param live what the detecting read found. Shape follows `record.shape`:
+ *   the scalar value, the whole element set, or the live edge (`null` when the
+ *   edge is absent).
+ */
+export function compareBeforeRestore(
+  record: WriteRecord,
+  live: unknown,
+): { restorable?: Restorable; skipped: SkippedUnit[] } {
+  switch (record.shape) {
+    case 'exempt':
+      return { restorable: { shape: 'exempt' }, skipped: [] };
+
+    case 'scalar':
+      // Still the value we wrote → nobody touched it, restore it. Anything else
+      // means a concurrent editor owns this field now, and undoing our write
+      // would clobber theirs.
+      if (live === record.wrote) return { restorable: { shape: 'scalar' }, skipped: [] };
+      return { skipped: [{ wrote: record.wrote, live }] };
+
+    case 'delta': {
+      const present = new Set(Array.isArray(live) ? (live as string[]) : []);
+      // Per element, on our own delta. An element that already moved back on its
+      // own needs no inverse — the inverse is idempotent per element, so a
+      // divergence here can never clobber anyone, and dropping it silently is
+      // honest rather than an orphan. Elements OUTSIDE our delta are never
+      // touched: that is the whole reason this is not whole-field equality.
+      const unadd = record.added.filter((e) => present.has(e));
+      const unremove = record.removed.filter((e) => !present.has(e));
+      if (unadd.length === 0 && unremove.length === 0) return { skipped: [] };
+      return { restorable: { shape: 'delta', unadd, unremove }, skipped: [] };
+    }
+
+    case 'edge': {
+      const edge = (live ?? null) as LiveEdge | null;
+      const mine = { far: record.far, isBefore: record.isBefore };
+      if (record.created) {
+        // We added it. Absent already → the inverse is a no-op the wire will 404,
+        // which counts as success. Present with OUR direction → delete it.
+        // Present FLIPPED → someone reversed the pair, and direction is not part
+        // of edge identity, so deleting it would remove their edge.
+        if (edge === null || edge.isBefore === record.isBefore) return { restorable: { shape: 'edge' }, skipped: [] };
+        return { skipped: [{ wrote: mine, live: edge }] };
+      }
+      // We removed it. Still absent → re-add it. Present again, either
+      // direction → someone re-created the pair; re-adding ours would 403
+      // ("Dependency already exists") or, worse, report the wrong direction.
+      if (edge === null) return { restorable: { shape: 'edge' }, skipped: [] };
+      return { skipped: [{ wrote: mine, live: edge }] };
+    }
+  }
+}
+
+// ─── the log ─────────────────────────────────────────────────────────────────
+
+/** One reversible op, as the log holds it. Built by `TxCards`, never by hand. */
+export interface CompensationEntry {
+  card: string;
+  field: string;
+  record: WriteRecord;
+  /** Terminal-ready wording for a preview or a report. */
+  label: string;
+  /** The DETECTING read. Never the source of the restore value. */
+  readLive(): Promise<unknown>;
+  /** The inverse write, given whatever the compare left restorable. */
+  applyInverse(restorable: Restorable): Promise<void>;
+}
+
+/** A 404 on the inverse means the thing we would undo is already undone. */
+function alreadyGone(error: unknown): boolean {
+  const status = (error as { response?: { status?: number } })?.response?.status;
+  if (status === 404) return true;
+  return classifyThrownError(error)?.kind === 'not-found';
+}
+
+function reasonFor(error: unknown): string {
+  const classified = classifyThrownError(error);
+  if (classified?.raw) return classified.raw;
+  if (classified?.message) return classified.message;
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * The compensation log. Owned by the dispatch table, never by an intent and
+ * never by the skill engine — the engine opens one per run and threads it
+ * through steps, which is what makes a failed multi-step skill unwind as a
+ * whole, but it holds no rollback logic of its own.
+ */
+export class CompensationLog {
+  private entries: CompensationEntry[] = [];
+
+  push(entry: CompensationEntry): void {
+    this.entries.push(entry);
+  }
+
+  /** How many reversible writes this transaction has made so far. */
+  get depth(): number {
+    return this.entries.length;
+  }
+
+  /** What this transaction would have to undo, newest first. For a preview. */
+  describe(): string[] {
+    return [...this.entries].reverse().map((e) => e.label);
+  }
+
+  /**
+   * Unwind LIFO, best effort — one failed compensating write must not stop the
+   * rest, because every remaining entry is another orphan if we give up.
+   *
+   * Every entry compares before restoring, per the facade-wide rule. The log is
+   * emptied either way: what could not be undone is reported, not retried.
+   */
+  async unwind(): Promise<{ outcome: 'rolled-back' | 'rollback-incomplete'; orphans: Orphan[] }> {
+    const orphans: Orphan[] = [];
+
+    for (const entry of [...this.entries].reverse()) {
+      try {
+        const live = entry.record.shape === 'exempt' ? undefined : await entry.readLive();
+        const { restorable, skipped } = compareBeforeRestore(entry.record, live);
+        for (const unit of skipped) {
+          orphans.push({
+            cause: 'compensation-skipped',
+            card: entry.card,
+            field: entry.field,
+            wrote: unit.wrote,
+            live: unit.live,
+            reason:
+              `${entry.field} on card ${entry.card} changed after our write, so restoring it would ` +
+              `clobber a concurrent edit. We wrote ${JSON.stringify(unit.wrote)}; it is now ` +
+              `${JSON.stringify(unit.live)}. Left as-is deliberately.`,
+          });
+        }
+        if (restorable) await entry.applyInverse(restorable);
+      } catch (error) {
+        // Already gone is already undone.
+        if (alreadyGone(error)) continue;
+        orphans.push({
+          cause: 'compensation-failed',
+          card: entry.card,
+          field: entry.field,
+          wrote: 'wrote' in entry.record ? entry.record.wrote : entry.record,
+          reason: `restoring ${entry.field} on card ${entry.card} failed: ${reasonFor(error)}`,
+        });
+      }
+    }
+
+    this.entries = [];
+    return {
+      outcome: orphans.length > 0 ? 'rollback-incomplete' : 'rolled-back',
+      orphans,
+    };
+  }
+}
+
+// ─── the six reversible ops ──────────────────────────────────────────────────
+
+/** What `removeBlockingEdge` observed. `removed: false` means nothing was written. */
+export interface EdgeRemoval {
+  removed: boolean;
+  /** The direction the removed edge had, so a caller can report it. */
+  isBefore?: boolean;
+}
+
+/** What `addBlockingEdge` wrote. */
+export interface EdgeAddition {
+  links: CardLink[];
+  isBefore: boolean;
+}
+
+const setDiff = (current: readonly string[], desired: readonly string[]) => ({
+  added: desired.filter((id) => !current.includes(id)),
+  removed: current.filter((id) => !desired.includes(id)),
+});
+
+/**
+ * The only card surface an intent gets: every read, and only instrumented
+ * writes. Six reversible ops, each declared once, capture + mutate + push fused.
+ *
+ * The `CardsAPI` is `private`, and an intent is handed neither a client nor a
+ * config, so it cannot build one either. A raw un-instrumented write from an
+ * intent is unrepresentable, not merely discouraged.
+ */
+export class TxCards {
+  constructor(private readonly api: CardsAPI, private readonly log: CompensationLog) {}
+
+  // ── reads (uninstrumented on purpose — a read has nothing to compensate) ──
+
+  getCard(cardRef: string, options?: { include?: string[]; board?: string }): Promise<Card> {
+    return this.api.getCard(cardRef, options);
+  }
+
+  getCardLinks(cardRef: string): Promise<CardLink[]> {
+    return this.api.getCardLinks(cardRef);
+  }
+
+  resolveCardId(cardRef: string, options?: { widgetCommonId?: string }): Promise<string> {
+    return this.api.resolveCardId(cardRef, options);
+  }
+
+  resolveCardCommonId(cardRef: string, options?: { widgetCommonId?: string }): Promise<string> {
+    return this.api.resolveCardCommonId(cardRef, options);
+  }
+
+  resolveColumnId(value: string, boardId?: string): Promise<string> {
+    return this.api.resolveColumnId(value, boardId);
+  }
+
+  // ── 1. create ─────────────────────────────────────────────────────────────
+
+  /**
+   * `POST /cards` is one atomic validated call: a bad tag, assignee, column or
+   * dependency target 403s the whole create with **no card created**. So the
+   * composites need no compensation of their own and the compare is exempt —
+   * but the card itself still gets an undo handle, which is what makes a
+   * multi-create rollback possible.
+   */
+  async create(req: CreateCardRequest): Promise<Card> {
+    const card = await this.api.createCard(req);
+    this.log.push({
+      card: card.cardId,
+      field: 'card',
+      record: { shape: 'exempt' },
+      label: `delete card ${card.cardId} ("${card.name}")`,
+      readLive: async () => undefined,
+      applyInverse: async () => { await this.api.deleteCard(card.cardId); },
+    });
+    return card;
+  }
+
+  // ── 2. moveColumn ─────────────────────────────────────────────────────────
+
+  /**
+   * Favro's UI "status" IS the column, and `PUT {status}` 200s and changes
+   * nothing — so a move is a `columnId` write. Scalar shape: one value replaced
+   * another, and strict equality is the honest guard.
+   */
+  async moveColumn(cardRef: string, status: string): Promise<Card> {
+    const before = await this.api.getCard(cardRef);
+    const columnId = await this.api.resolveColumnId(status, before.boardId);
+    const after = await this.api.updateCard(before.cardId, { columnId });
+    const cardId = before.cardId;
+    this.log.push({
+      card: cardId,
+      field: 'columnId',
+      record: { shape: 'scalar', wrote: columnId, before: before.columnId },
+      label: `move card ${cardId} back to column ${before.columnId}`,
+      readLive: async () => (await this.api.getCard(cardId)).columnId,
+      applyInverse: async () => { await this.api.updateCard(cardId, { columnId: before.columnId }); },
+    });
+    return after;
+  }
+
+  // ── 3. setTags ────────────────────────────────────────────────────────────
+
+  /**
+   * A whole-array `tags` PUT answers 200 and writes nothing; only
+   * `addTagIds` / `removeTagIds` are honoured. `CardsAPI.tagReplacement` already
+   * owns that diff (and the name/id keyspace), so it is reused rather than
+   * re-derived — a second tag resolver here would be a defect.
+   *
+   * An entry the org does not know would go out as `addTags`, which is a tag
+   * *creation* — refused here, exactly as `cards create` refuses it, so a typo
+   * never invents a tag on a permissive key.
+   */
+  async setTags(cardRef: string, desired: string[]): Promise<Card> {
+    const before = await this.api.getCard(cardRef);
+    const delta = await this.api.tagReplacement(before, desired);
+    if ((delta.addTags ?? []).length > 0) {
+      throw new Error(
+        `Unknown tag ${(delta.addTags ?? []).map((n) => `"${n}"`).join(', ')} — no workspace tag has that name. ` +
+          `Refusing to create it: on a write Favro treats an unknown name as a new tag, so a typo either ` +
+          `invents a tag or 403s depending on this key's permissions. ` +
+          `Run 'favro tags list' to see the workspace tags, or 'favro tags create' to add it first.`,
+      );
+    }
+    const added = delta.addTagIds ?? [];
+    const removed = delta.removeTagIds ?? [];
+    const cardId = before.cardId;
+    if (added.length === 0 && removed.length === 0) return before;
+
+    const after = await this.api.updateCard(cardId, {
+      ...(added.length > 0 ? { addTagIds: added } : {}),
+      ...(removed.length > 0 ? { removeTagIds: removed } : {}),
+    });
+    this.log.push({
+      card: cardId,
+      field: 'tags',
+      record: { shape: 'delta', added, removed },
+      label: `restore tags on card ${cardId} (${before.tagIds?.join(', ') || 'none'})`,
+      readLive: async () => (await this.api.getCard(cardId)).tagIds ?? [],
+      applyInverse: async (restorable) => {
+        if (restorable.shape !== 'delta') return;
+        await this.api.updateCard(cardId, {
+          ...(restorable.unadd.length > 0 ? { removeTagIds: restorable.unadd } : {}),
+          ...(restorable.unremove.length > 0 ? { addTagIds: restorable.unremove } : {}),
+        });
+      },
+    });
+    return after;
+  }
+
+  // ── 4. setAssignees ───────────────────────────────────────────────────────
+
+  /**
+   * `assignees` is a silent no-op on both verbs and `assignmentIds` is one on
+   * PUT; only `add`/`removeAssignmentIds` are honoured, which is also the only
+   * way an assignment can be REMOVED. Takes `userId`s: a name here would diff as
+   * "unassign everyone, add a string Favro has never seen".
+   */
+  async setAssignees(cardRef: string, desired: string[]): Promise<Card> {
+    const notIds = desired.filter((v) => !isUserId(v));
+    if (notIds.length > 0) {
+      throw new Error(
+        `setAssignees takes userIds, got ${notIds.map((v) => `"${v}"`).join(', ')}. ` +
+          `A whole-array assignee write is diffed against the card's current userIds, so a name would ` +
+          `unassign everyone. Resolve names first with resolveAssignees().`,
+      );
+    }
+    const before = await this.api.getCard(cardRef);
+    const cardId = before.cardId;
+    const current = before.assignees ?? [];
+    const { added, removed } = setDiff(current, desired);
+    if (added.length === 0 && removed.length === 0) return before;
+
+    const after = await this.api.updateCard(cardId, {
+      ...(added.length > 0 ? { addAssignmentIds: added } : {}),
+      ...(removed.length > 0 ? { removeAssignmentIds: removed } : {}),
+    });
+    this.log.push({
+      card: cardId,
+      field: 'assignees',
+      record: { shape: 'delta', added, removed },
+      label: `restore assignees on card ${cardId} (${current.join(', ') || 'none'})`,
+      readLive: async () => (await this.api.getCard(cardId)).assignees ?? [],
+      applyInverse: async (restorable) => {
+        if (restorable.shape !== 'delta') return;
+        await this.api.updateCard(cardId, {
+          ...(restorable.unadd.length > 0 ? { removeAssignmentIds: restorable.unadd } : {}),
+          ...(restorable.unremove.length > 0 ? { addAssignmentIds: restorable.unremove } : {}),
+        });
+      },
+    });
+    return after;
+  }
+
+  // ── 5. addBlockingEdge ────────────────────────────────────────────────────
+
+  /**
+   * Favro has one directional edge, `isBefore`, describing the far card relative
+   * to the card queried — so "blocked by X" is X before us.
+   *
+   * The pre-state is "absent by construction": an existing pair answers
+   * `403 Dependency already exists` and nothing is written, so no entry is
+   * pushed. The edge shape compares existence WITH direction, because direction
+   * is not part of edge identity: a duplicate, a flipped write and both from the
+   * mirror end all answer the byte-identical 403.
+   */
+  async addBlockingEdge(cardRef: string, blockedByRef: string): Promise<EdgeAddition> {
+    const cardId = await this.api.resolveCardId(cardRef);
+    const farId = await this.api.resolveCardId(blockedByRef);
+    const links = await this.api.linkCard(cardId, { toCardId: farId, isBefore: true });
+    this.log.push({
+      card: cardId,
+      field: 'dependencies',
+      record: { shape: 'edge', far: farId, isBefore: true, created: true },
+      label: `remove the blocking edge ${farId} → ${cardId}`,
+      readLive: () => this.liveEdge(cardId, farId),
+      applyInverse: async () => { await this.api.unlinkCard(cardId, farId); },
+    });
+    return { links, isBefore: true };
+  }
+
+  // ── 6. removeBlockingEdge ─────────────────────────────────────────────────
+
+  /**
+   * `unlinkCard` is verified: 204, then 404 once the edge is gone, from either
+   * end. The direction is CAPTURED before the delete — it is the only thing that
+   * makes the edge restorable, and reading it back afterwards is impossible.
+   */
+  async removeBlockingEdge(cardRef: string, blockedByRef: string): Promise<EdgeRemoval> {
+    const cardId = await this.api.resolveCardId(cardRef);
+    const farId = await this.api.resolveCardId(blockedByRef);
+    const existing = await this.liveEdge(cardId, farId);
+    // Nothing there: nothing written, nothing to undo. Not an error — a caller
+    // retrying after a failed run must be able to reach `ok`.
+    if (existing === null) return { removed: false };
+
+    await this.api.unlinkCard(cardId, farId);
+    const isBefore = existing.isBefore;
+    this.log.push({
+      card: cardId,
+      field: 'dependencies',
+      record: { shape: 'edge', far: farId, isBefore, created: false },
+      label: `re-add the edge between ${cardId} and ${farId} (isBefore=${isBefore})`,
+      readLive: () => this.liveEdge(cardId, farId),
+      applyInverse: async () => { await this.api.linkCard(cardId, { toCardId: farId, isBefore }); },
+    });
+    return { removed: true, isBefore };
+  }
+
+  /**
+   * The one edge between two cards, from `cardId`'s point of view, or `null`.
+   *
+   * There is at most one edge per pair — undirected identity, directed
+   * semantics. An inlined edge carries only `cardCommonId`, one read from
+   * `/dependencies` carries `cardId`; take whichever is there rather than faking
+   * the ambiguous reverse lookup.
+   */
+  private async liveEdge(cardId: string, farId: string): Promise<LiveEdge | null> {
+    const links = await this.api.getCardLinks(cardId);
+    const found = links.find((l) => l.cardId === farId || l.cardCommonId === farId);
+    return found ? { far: farId, isBefore: found.isBefore } : null;
+  }
+}
+
+export default TxCards;
