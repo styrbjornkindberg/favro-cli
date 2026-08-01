@@ -11,6 +11,7 @@
   "scripts": {
     "build": "tsc",
     "test": "jest",
+    "test:coverage": "jest --coverage",
     "prepack": "npm run build",
     "mcp": "node dist/mcp-server.js",
     "mcp:http": "node dist/mcp-http-server.js"
