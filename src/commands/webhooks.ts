@@ -53,6 +53,14 @@ export function registerWebhooksCommand(program: Command): void {
     });
 
   // ─── webhooks create ───────────────────────────────────────────────────────
+  // No scope-lock check on create or delete below, decided under #104. The lock
+  // is a COLLECTION lock: `assertScope` (src/lib/safety.ts) resolves the board a
+  // write lands on and asks whether it is in the locked collection. A webhook is
+  // registered against the organization, not a board — there is no board to
+  // resolve, so a check here would be either permanently green (a lie) or
+  // permanently red. Org-scoped writes want an org-level lock, which we do not
+  // have; borrowing the collection lock to stand in for one would only make the
+  // lock dishonest. `confirmAction` on delete is the guard these paths do have.
   webhooksCmd
     .command('create')
     .description(

@@ -70,6 +70,19 @@ export function registerTagsCommands(program: Command): void {
       }
     });
 
+  // The three tag writes below (#104) do not consult the scope lock, and that is
+  // decided, not forgotten. The lock is a COLLECTION lock: `assertScope` resolves
+  // the board a write lands on and asks whether that board sits in the locked
+  // collection. A tag is a workspace-level entity — it lands on no board, so there
+  // is nothing for the lock to resolve. Guarding here could only produce a check
+  // that always passes (a lie) or one that always refuses (tag management broken
+  // outright for every locked user). Neither is the lock doing its job. If these
+  // need a guardrail it is an ORG-level lock, which does not exist — not this one
+  // in a costume. The guard that does apply on these paths is `confirmAction`.
+  //
+  // Naming the cost rather than hiding it: `tags delete` strips the tag from every
+  // card in the organization, a wider blast radius than anything the collection
+  // lock guards today. Real gap; just not this lock's gap.
   tagsCommand
     .command('create')
     .description('Create a new global tag')

@@ -9,6 +9,19 @@ import CollectionsAPI from '../lib/collections-api';
 import { createFavroClient } from '../lib/client-factory';
 import { logError } from '../lib/error-handler';
 
+// No scope-lock check here, and that is the decision (#104), not an oversight.
+// The lock is a COLLECTION lock — it resolves the board (or collection) a write
+// targets and asks whether it is the locked one. `collections update` and
+// `collections delete` both call `checkCollectionScope`, because both name an
+// existing collection to check. `create` names none: the collection does not
+// exist until the request returns, so it is outside the lock by construction.
+// The asymmetry inside the `collections` group is decided, not forgotten.
+//
+// The same reasoning covers this write generally: guarding it could only mean a
+// check that always passes (a lie) or one that always refuses (no locked user
+// could ever create a collection). Restricting who may create org-level entities
+// is an ORG-level guardrail, which does not exist — not this one wearing a
+// costume. `confirmAction` is the guard the org-level writes actually carry.
 export function registerCollectionsCreateCommand(collectionsParent: Command): void {
   collectionsParent
     .command('create')
