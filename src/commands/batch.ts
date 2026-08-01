@@ -168,12 +168,13 @@ export function registerBatchUpdateCommand(batch: Command): void {
         const targetBoards = new Set<string>();
         for (const row of rows) {
           let previousState: Partial<BulkCardChanges> | undefined;
-          if (!options.dryRun) {
-            // Fetch current card state for atomic rollback
-            let boardId = '';
-            try {
-              const card = await api.getCard(row.card_id);
-              boardId = card?.boardId ?? '';
+          // The board is resolved on BOTH paths; only the rollback snapshot is
+          // write-path-only, because a preview has nothing to roll back.
+          let boardId = '';
+          try {
+            const card = await api.getCard(row.card_id);
+            boardId = card?.boardId ?? '';
+            if (!options.dryRun) {
               previousState = {
                 name: card.name,
                 status: card.status,
@@ -182,17 +183,36 @@ export function registerBatchUpdateCommand(batch: Command): void {
                 dueDate: card.dueDate,
                 boardId: card.boardId,
               };
-            } catch {
-              // Card not found or unreachable — previousState stays empty;
-              // rollback will send a no-op, which is safe
-              previousState = {};
             }
-            // A row whose card could not be read has an UNKNOWN board, which is
-            // not the same as an allowed one. The empty string hands it to the
-            // shared refusal rather than dropping the row out of the check.
-            targetBoards.add(boardId);
+          } catch {
+            // Card not found or unreachable — previousState stays empty;
+            // rollback will send a no-op, which is safe
+            if (!options.dryRun) previousState = {};
           }
+          // A row whose card could not be read has an UNKNOWN board, which is
+          // not the same as an allowed one. The empty string hands it to the
+          // shared refusal rather than dropping the row out of the check.
+          targetBoards.add(boardId);
           ops.push(csvRowToBulkOperation(row, previousState));
+        }
+
+        // Take the lock on every distinct board the batch touches, before the
+        // transaction exists AND before the preview. A CSV is free to straddle
+        // boards, and a batch that straddles the lock has to refuse as a whole —
+        // checking board-by-board mid-execution would leave the rows before the
+        // violation already written and the compensation log doing work the lock
+        // should have prevented. No-op when no lock is configured.
+        //
+        // Before the PREVIEW too, matching `cards update --from-csv` (#103), the
+        // two sibling `batch` subcommands below, and `dispatch.ts`: the lock runs
+        // ahead of a preview by design, so a preview is not a way around it — and
+        // a dry-run that cheerfully reports "would update CLA-999" when the real
+        // run will refuse is misinformation about the write it exists to describe.
+        const { readConfig } = await import('../lib/config');
+        const { checkScope } = await import('../lib/safety');
+        const scopeConfig = await readConfig();
+        for (const boardId of targetBoards) {
+          await checkScope(boardId, client, scopeConfig, options.force);
         }
 
         // Dry-run: show preview without executing
@@ -208,19 +228,6 @@ export function registerBatchUpdateCommand(batch: Command): void {
             console.log(tx.formatDryRunJSON());
           }
           return;
-        }
-
-        // Take the lock on every distinct board the batch touches, before the
-        // transaction exists. A CSV is free to straddle boards, and a batch that
-        // straddles the lock has to refuse as a whole — checking board-by-board
-        // mid-execution would leave the rows before the violation already
-        // written and the compensation log doing work the lock should have
-        // prevented. No-op when no lock is configured.
-        const { readConfig } = await import('../lib/config');
-        const { checkScope } = await import('../lib/safety');
-        const scopeConfig = await readConfig();
-        for (const boardId of targetBoards) {
-          await checkScope(boardId, client, scopeConfig, options.force);
         }
 
         // Execute

@@ -242,4 +242,54 @@ describe('favro batch update --from-csv — scope lock', () => {
     const firstWrite = Math.min(...(MockCardsAPI.prototype.updateCard as jest.Mock).mock.invocationCallOrder);
     expect(lastCheck).toBeLessThan(firstWrite);
   });
+
+  /**
+   * The same rule #103 settled for `cards update --from-csv`, applied to its
+   * twin. Fixing only the ticketed half would have rebuilt the very shape these
+   * three issues exist to close: one command in a pair checks, its sibling does
+   * not, and a reader who checks either concludes the group is covered. The two
+   * `batch` subcommands below this one already checked ahead of their previews,
+   * so the file disagreed with itself as well.
+   */
+  describe('--dry-run takes the same lock, before the preview', () => {
+    it('checks every distinct board before printing the preview', async () => {
+      mockReadFile.mockResolvedValue('card_id,status\ncard-1,Done\ncard-2,Done' as any);
+
+      await runBatch(['update', '--from-csv', 'cards.csv', '--dry-run']);
+
+      expect((safety.checkScope as jest.Mock).mock.calls.map((c) => c[0])).toEqual(['board-a', 'board-b']);
+      const lastCheck = Math.max(...(safety.checkScope as jest.Mock).mock.invocationCallOrder);
+      const firstPrint = Math.min(...(console.log as jest.Mock).mock.invocationCallOrder);
+      expect(lastCheck).toBeLessThan(firstPrint);
+    });
+
+    it('an out-of-scope row refuses in dry-run, with no preview and no writes', async () => {
+      mockReadFile.mockResolvedValue('card_id,status\ncard-1,Done\ncard-2,Done' as any);
+      (safety.checkScope as jest.Mock).mockImplementation(async (boardId: string) => {
+        if (boardId === 'board-b') throw new Error('out of scope');
+      });
+
+      await runBatch(['update', '--from-csv', 'cards.csv', '--dry-run']);
+
+      expect(MockCardsAPI.prototype.updateCard).not.toHaveBeenCalled();
+      expect(console.log).not.toHaveBeenCalled();
+    });
+
+    it('forwards --force on the dry-run path too', async () => {
+      mockReadFile.mockResolvedValue('card_id,status\ncard-1,Done' as any);
+
+      await runBatch(['update', '--from-csv', 'cards.csv', '--dry-run', '--force']);
+
+      expect(safety.checkScope).toHaveBeenCalledWith('board-a', expect.anything(), expect.anything(), true);
+    });
+
+    it('an unreadable row reaches the check as an empty board rather than vanishing', async () => {
+      mockReadFile.mockResolvedValue('card_id,status\ncard-1,Done' as any);
+      MockCardsAPI.prototype.getCard = jest.fn().mockRejectedValue(new Error('404 Not Found'));
+
+      await runBatch(['update', '--from-csv', 'cards.csv', '--dry-run']);
+
+      expect(safety.checkScope).toHaveBeenCalledWith('', expect.anything(), expect.anything(), undefined);
+    });
+  });
 });
