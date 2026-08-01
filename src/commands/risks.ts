@@ -9,6 +9,7 @@ import CardsAPI, { Card } from '../lib/cards-api';
 import { logError, suggestBoard } from '../lib/error-handler';
 import BoardsAPI from '../lib/boards-api';
 import { createFavroClient } from '../lib/client-factory';
+import { Unreachable } from '../lib/read-shape';
 
 export interface RiskReport {
   board: string;
@@ -30,7 +31,7 @@ export interface RiskReport {
     total: number;
   };
   /** Checks this report could not perform. Empty is not the same as unavailable. */
-  unreachable?: string[];
+  unreachable?: Unreachable[];
 }
 
 export interface RiskCard {
@@ -61,6 +62,17 @@ function isOverdue(card: Card): boolean {
  * a missing timestamp used to do) the report marks the check unreachable.
  */
 const STALE_UNAVAILABLE = 'Favro sends no last-modified field on a card, so staleness cannot be computed';
+
+/**
+ * The staleness hole, in the one vocabulary every producer uses (#86).
+ *
+ * `id` names the CHECK rather than a card, because that is what could not be
+ * performed — but it is still an `Unreachable`, so the agent reading `u.reason`
+ * here reads it the same way it reads one from `cards list` or `overview`. This
+ * shipped as a bare `string[]` under the same key, which is the worse failure:
+ * it parses, and every `u.reason` comes back undefined.
+ */
+export const STALE_UNREACHABLE: Unreachable[] = [{ id: 'stale', reason: STALE_UNAVAILABLE }];
 
 /**
  * Check if a card is missing required fields.
@@ -187,7 +199,7 @@ export function registerRisksCommand(program: Command): void {
             missingFields: missingFields.length,
             total: uniqueAtRiskCardIds.size,
           },
-          unreachable: [STALE_UNAVAILABLE],
+          unreachable: STALE_UNREACHABLE,
         };
 
         if (options.json) {

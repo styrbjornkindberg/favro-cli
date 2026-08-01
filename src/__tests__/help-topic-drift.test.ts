@@ -257,6 +257,40 @@ describe('every name in the topic is a live name', () => {
   });
 });
 
+describe('the wire shape the topic teaches is the wire shape read-shape.ts declares', () => {
+  // The topic is what an agent parses against, so prose that names the envelope
+  // and the marker is a contract, not a description. #86 was three producers
+  // disagreeing with it; nothing stops the prose drifting the same way, and a
+  // wrong shape here is worse than none — it parses, and reads undefined.
+  const READ_SHAPE = fs.readFileSync(path.join(REPO_ROOT, 'src', 'lib', 'read-shape.ts'), 'utf-8');
+
+  /** The field names of one exported interface, read from the live source. */
+  const fieldsOf = (name: string): string[] => {
+    const body = new RegExp(`export interface ${name}(?:<[^>]*>)? \\{([\\s\\S]*?)\\n\\}`).exec(READ_SHAPE);
+    if (!body) throw new Error(`read-shape.ts has no exported interface ${name}`);
+    return [...body[1].matchAll(/^ {2}(\w+)\??:/gm)].map((m) => m[1]).sort();
+  };
+
+  /** The names inside a `'{a, b?, c?}'` literal in the prose. */
+  const taught = (literal: string): string[] =>
+    literal.replace(/[{}']/g, '').split(',').map((n) => n.trim().replace(/\?$/, '')).sort();
+
+  it('the envelope it teaches has exactly ListEnvelope’s fields', () => {
+    const literal = /List reads answer an envelope, '(\{[^}]*\})'/.exec(ISSUE_TRACKER_TOPIC);
+    expect(literal).not.toBeNull();
+    expect(taught(literal![1])).toEqual(fieldsOf('ListEnvelope'));
+  });
+
+  it('the marker it teaches has exactly Unreachable’s fields, and is objects', () => {
+    // The key alone is not enough: `risks` shipped `unreachable: string[]`, which
+    // satisfies "there is an unreachable" and still hands back `u.reason ===
+    // undefined`. The topic has to say the fields, or the drift is invisible.
+    const literal = /'unreachable' is ALWAYS objects — '(\{[^}]*\})'/.exec(ISSUE_TRACKER_TOPIC);
+    expect(literal).not.toBeNull();
+    expect(taught(literal![1])).toEqual(fieldsOf('Unreachable'));
+  });
+});
+
 describe('every built-in skill is runnable against the code that ships with it', () => {
   // The four skills deleted in this change had steps naming `ask` and `do` —
   // commands removed long ago. They parsed, listed and failed on the first
