@@ -123,7 +123,7 @@ async function fromOverview(): Promise<unknown> {
   const cards = [
     { id: 'id-1', commonId: '1', title: 'blocked', blockedBy: ['off-board'] },
   ] as unknown as AggregateCard[];
-  const { unreachable } = await findTopBlockers(cards);
+  const { unreachable } = findTopBlockers(cards);
   return { ...(unreachable.length > 0 ? { unreachable } : {}) };
 }
 
@@ -160,7 +160,7 @@ describe('the unreachable marker reads the same from every producer (#86)', () =
   });
 
   it('an absent marker is absent, not an empty array — empty means true-empty', async () => {
-    const { unreachable } = await findTopBlockers([
+    const { unreachable } = findTopBlockers([
       { id: 'id-1', commonId: '1', title: 'a' },
     ] as unknown as AggregateCard[]);
 

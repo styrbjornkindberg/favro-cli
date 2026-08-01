@@ -37,11 +37,30 @@ const LIB_DIR = path.resolve(__dirname, '..', 'lib');
  */
 const DECLARATION = /export class (\w+(?:Resolution|Lookup)Error)\b/g;
 
+/**
+ * The refusals that predate the naming convention and would otherwise escape the
+ * regex above. `refusal.ts` names these four as already compliant, so a
+ * regression in one is exactly what this file exists to catch — and discovery
+ * alone would not have looked at any of them.
+ *
+ * Listed because they are named irregularly, not because listing is preferred:
+ * anything matching the convention is still found without an edit here.
+ */
+const NAMED_IRREGULARLY: Array<[string, string]> = [
+  ['assignee.ts', 'AssigneeError'],
+  ['card-reference.ts', 'CardResolutionError'],
+  ['tracker-config.ts', 'TrackerConfigError'],
+  ['dispatch.ts', 'ReverseEdgeError'],
+];
+
 function declaredErrors(): Array<[string, string]> {
   const found: Array<[string, string]> = [];
   for (const file of fs.readdirSync(LIB_DIR).filter((f) => f.endsWith('.ts'))) {
     const source = fs.readFileSync(path.join(LIB_DIR, file), 'utf-8');
     for (const match of source.matchAll(DECLARATION)) found.push([file, match[1]]);
+  }
+  for (const entry of NAMED_IRREGULARLY) {
+    if (!found.some(([, name]) => name === entry[1])) found.push(entry);
   }
   return found;
 }
