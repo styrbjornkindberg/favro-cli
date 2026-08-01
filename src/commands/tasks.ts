@@ -8,9 +8,29 @@
 import { Command } from 'commander';
 import TasksAPI from '../lib/tasks-api';
 import TaskListsAPI from '../lib/tasklists-api';
+import CardsAPI from '../lib/cards-api';
 import { createFavroClient } from '../lib/client-factory';
+import { readConfig } from '../lib/config';
 import { logError } from '../lib/error-handler';
-import { confirmAction, dryRunLog } from '../lib/safety';
+import { checkScope, confirmAction, dryRunLog } from '../lib/safety';
+
+/**
+ * Resolve a card reference to its board id for the scope check.
+ * An unreadable card resolves to `''` — the shared check refuses that under a
+ * lock and is a no-op without one, so a stale reference never fails OPEN and
+ * never kills the command with an unwrapped GET.
+ */
+async function resolveBoardId(
+  cardRef: string,
+  client: ConstructorParameters<typeof CardsAPI>[0]
+): Promise<string> {
+  if (!cardRef) return '';
+  try {
+    return (await new CardsAPI(client).getCard(cardRef))?.boardId ?? '';
+  } catch {
+    return '';
+  }
+}
 
 export function registerTasksCommands(program: Command): void {
   const tasksCommand = program.command('tasks').description('Manage granular checklists inside a single card');
@@ -50,6 +70,7 @@ export function registerTasksCommands(program: Command): void {
     .option('--json', 'Output as JSON')
     .option('--dry-run', 'Preview without making API calls')
     .option('-y, --yes', 'Skip confirmation prompt')
+    .option('--force', 'Bypass scope check')
     .action(async (cardCommonId: string, name: string, options) => {
       const verbose = tasksCommand.opts()?.verbose ?? false;
       try {
@@ -58,11 +79,13 @@ export function registerTasksCommands(program: Command): void {
           process.exit(0);
         }
 
+        const client = await createFavroClient();
+        await checkScope(await resolveBoardId(cardCommonId, client), client, await readConfig(), options.force);
+
         if (!(await confirmAction(`Add task "${name}" to card ${cardCommonId}?`, { yes: options.yes }))) {
           process.exit(0);
         }
 
-        const client = await createFavroClient();
         const api = new TasksAPI(client);
         const taskListsApi = new TaskListsAPI(client);
 
@@ -101,6 +124,13 @@ export function registerTasksCommands(program: Command): void {
     .option('--json', 'Output as JSON')
     .option('--dry-run', 'Preview without making API calls')
     .option('-y, --yes', 'Skip confirmation prompt')
+    .option('--force', 'Bypass scope check')
+    // A taskId names no card, and so no board. `TasksAPI` has no `getTask` and
+    // Favro's `GET /tasks/:taskId` is UNMEASURED — this repo does not guess at
+    // wire behaviour, so the card comes from the caller instead. Omitted, the
+    // board resolves to '' and the shared check refuses under a lock: the write
+    // is uncheckable, not exempt. Without a lock it stays a no-op.
+    .option('--card <card>', 'Card the task belongs to — required under a scope lock, since a taskId names no board')
     .action(async (taskId: string, options) => {
       const verbose = tasksCommand.opts()?.verbose ?? false;
       try {
@@ -120,11 +150,13 @@ export function registerTasksCommands(program: Command): void {
           return;
         }
 
+        const client = await createFavroClient();
+        await checkScope(await resolveBoardId(options.card, client), client, await readConfig(), options.force);
+
         if (!(await confirmAction(`Update task ${taskId}?`, { yes: options.yes }))) {
           return;
         }
 
-        const client = await createFavroClient();
         const api = new TasksAPI(client);
         const task = await api.updateTask(taskId, updateData);
 
@@ -145,6 +177,8 @@ export function registerTasksCommands(program: Command): void {
     .option('--json', 'Output as JSON')
     .option('--dry-run', 'Preview without making API calls')
     .option('-y, --yes', 'Skip confirmation prompt')
+    .option('--force', 'Bypass scope check')
+    .option('--card <card>', 'Card the task belongs to — required under a scope lock, since a taskId names no board')
     .action(async (taskId: string, options) => {
       const verbose = tasksCommand.opts()?.verbose ?? false;
       try {
@@ -153,11 +187,13 @@ export function registerTasksCommands(program: Command): void {
           process.exit(0);
         }
 
+        const client = await createFavroClient();
+        await checkScope(await resolveBoardId(options.card, client), client, await readConfig(), options.force);
+
         if (!(await confirmAction(`Complete task ${taskId}?`, { yes: options.yes }))) {
           process.exit(0);
         }
 
-        const client = await createFavroClient();
         const api = new TasksAPI(client);
         const task = await api.updateTask(taskId, true);
 
@@ -177,6 +213,8 @@ export function registerTasksCommands(program: Command): void {
     .description('Delete a task from a card')
     .option('--dry-run', 'Preview without making API calls')
     .option('-y, --yes', 'Skip confirmation prompt')
+    .option('--force', 'Bypass scope check')
+    .option('--card <card>', 'Card the task belongs to — required under a scope lock, since a taskId names no board')
     .action(async (taskId: string, options) => {
       const verbose = tasksCommand.opts()?.verbose ?? false;
       try {
@@ -185,11 +223,13 @@ export function registerTasksCommands(program: Command): void {
           return;
         }
 
+        const client = await createFavroClient();
+        await checkScope(await resolveBoardId(options.card, client), client, await readConfig(), options.force);
+
         if (!(await confirmAction(`Delete task ${taskId}? This cannot be undone.`, { yes: options.yes }))) {
           return;
         }
 
-        const client = await createFavroClient();
         const api = new TasksAPI(client);
         await api.deleteTask(taskId);
 

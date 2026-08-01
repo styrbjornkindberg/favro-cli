@@ -13,6 +13,32 @@ import { confirmAction } from '../lib/safety';
 import CommentsApiClient from '../api/comments';
 import { formatTimestamp } from '../lib/time';
 
+/**
+ * Scope-check a write named only by a commentId: comment → card → board, both
+ * hops inside the try. An unresolvable comment resolves to `''`, which the
+ * shared check refuses under a lock and ignores without one — never a crash.
+ */
+async function checkCommentScope(
+  commentId: string,
+  client: any,
+  api: CommentsApiClient,
+  force?: boolean
+): Promise<void> {
+  const { default: CardsAPI } = await import('../lib/cards-api');
+  let boardId = '';
+  try {
+    // The normaliser puts cardCommonId on `cardId`.
+    const cardId = (await api.getComment(commentId))?.cardId ?? '';
+    boardId = (await new CardsAPI(client).getCard(cardId))?.boardId ?? '';
+  } catch {
+    boardId = '';
+  }
+
+  const { readConfig } = await import('../lib/config');
+  const { checkScope } = await import('../lib/safety');
+  await checkScope(boardId, client, await readConfig(), force);
+}
+
 export function registerCommentsCommand(program: Command): void {
   const commentsCmd = program
     .command('comments')
@@ -173,6 +199,7 @@ export function registerCommentsCommand(program: Command): void {
     .option('--json', 'Output as JSON')
     .option('--dry-run', 'Print what would be updated without making API calls')
     .option('-y, --yes', 'Skip confirmation prompt')
+    .option('--force', 'Bypass scope check')
     .action(async (commentId: string, options) => {
       const verbose = program.opts()?.verbose ?? false;
       try {
@@ -186,13 +213,15 @@ export function registerCommentsCommand(program: Command): void {
           return;
         }
 
+        const client = await createFavroClient();
+        const api = new CommentsApiClient(client);
+        await checkCommentScope(commentId, client, api, options.force);
+
         const { confirmAction } = await import('../lib/safety');
         if (!(await confirmAction(`Update comment ${commentId}?`, { yes: options.yes }))) {
           process.exit(0);
         }
 
-        const client = await createFavroClient();
-        const api = new CommentsApiClient(client);
         const comment = await api.updateComment(commentId, options.text);
 
         if (options.json) {
@@ -219,6 +248,7 @@ export function registerCommentsCommand(program: Command): void {
     )
     .option('--dry-run', 'Preview without making API calls')
     .option('-y, --yes', 'Skip confirmation prompt')
+    .option('--force', 'Bypass scope check')
     .action(async (commentId: string, options) => {
       const verbose = program.opts()?.verbose ?? false;
       try {
@@ -227,13 +257,15 @@ export function registerCommentsCommand(program: Command): void {
           return;
         }
 
+        const client = await createFavroClient();
+        const api = new CommentsApiClient(client);
+        await checkCommentScope(commentId, client, api, options.force);
+
         const { confirmAction } = await import('../lib/safety');
         if (!(await confirmAction(`Delete comment ${commentId}?`, { yes: options.yes }))) {
           process.exit(0);
         }
 
-        const client = await createFavroClient();
-        const api = new CommentsApiClient(client);
         await api.deleteComment(commentId);
 
         console.log(`✓ Comment deleted: ${commentId}`);
