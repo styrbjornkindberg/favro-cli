@@ -162,12 +162,18 @@ export function registerBatchUpdateCommand(batch: Command): void {
         const api = new CardsAPI(client);
 
         const ops: BulkOperation[] = [];
+        // The rollback GET below also answers "which board does this row write
+        // to?" — the scope lock needs that, and a second round of GETs to learn
+        // it would double the wire cost of every batch.
+        const targetBoards = new Set<string>();
         for (const row of rows) {
           let previousState: Partial<BulkCardChanges> | undefined;
           if (!options.dryRun) {
             // Fetch current card state for atomic rollback
+            let boardId = '';
             try {
               const card = await api.getCard(row.card_id);
+              boardId = card?.boardId ?? '';
               previousState = {
                 name: card.name,
                 status: card.status,
@@ -181,6 +187,10 @@ export function registerBatchUpdateCommand(batch: Command): void {
               // rollback will send a no-op, which is safe
               previousState = {};
             }
+            // A row whose card could not be read has an UNKNOWN board, which is
+            // not the same as an allowed one. The empty string hands it to the
+            // shared refusal rather than dropping the row out of the check.
+            targetBoards.add(boardId);
           }
           ops.push(csvRowToBulkOperation(row, previousState));
         }
@@ -198,6 +208,19 @@ export function registerBatchUpdateCommand(batch: Command): void {
             console.log(tx.formatDryRunJSON());
           }
           return;
+        }
+
+        // Take the lock on every distinct board the batch touches, before the
+        // transaction exists. A CSV is free to straddle boards, and a batch that
+        // straddles the lock has to refuse as a whole — checking board-by-board
+        // mid-execution would leave the rows before the violation already
+        // written and the compensation log doing work the lock should have
+        // prevented. No-op when no lock is configured.
+        const { readConfig } = await import('../lib/config');
+        const { checkScope } = await import('../lib/safety');
+        const scopeConfig = await readConfig();
+        for (const boardId of targetBoards) {
+          await checkScope(boardId, client, scopeConfig, options.force);
         }
 
         // Execute
