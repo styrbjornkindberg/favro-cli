@@ -138,32 +138,25 @@ failure.
 Places where the code does not yet speak the glossary. Recorded, not fixed — file as
 follow-ups.
 
-1. **`unreachable` has three spellings and two types.**
-   `ListEnvelope.unreachable: Unreachable[]` (`src/lib/read-shape.ts:42`),
-   `OverviewResult.unreachableBlockers?: Unreachable[]` (`src/commands/overview.ts:39`),
-   and `unreachable?: string[]` (`src/commands/risks.ts:33`) — the last is a different
-   type entirely, losing the `{ id, reason }` pair.
-
-2. **Two `Collection` interfaces.** `src/lib/collections-api.ts:12` (with `boardCount`,
+1. **Two `Collection` interfaces.** `src/lib/collections-api.ts:12` (with `boardCount`,
    `memberCount`) and `src/lib/boards-api.ts:91` (without). Same name, different shape.
 
-3. **Not every refusal is a `RefusalError`.** `CardResolutionError` and
-   `TrackerConfigError` extend it; `ColumnResolutionError`
-   (`src/lib/column-directory.ts:39`), `TagLookupError` (`src/lib/tags-api.ts:34`) and
-   `ScopeError` (`src/lib/safety.ts:46`) extend bare `Error`. All three are
-   deterministic declines by the definition above, so the concept and the class cover
-   different sets.
+2. **`ScopeError` is not a `RefusalError`.** Every identifier resolver now raises one
+   (see #81), but `ScopeError` (`src/lib/safety.ts:46`) still extends bare `Error`.
+   A scope refusal is a deterministic decline by the definition above — retrying it
+   cannot change the answer — so the concept and the class still cover different sets
+   at this one site.
 
-4. **`blocked-by` is accepted but not declared.** `LINK_TYPES` lists two labels
+3. **`blocked-by` is accepted but not declared.** `LINK_TYPES` lists two labels
    (`depends-on`, `blocks`) while `linkTypeToIsBefore` accepts three — `blocked-by`
    maps to `isBefore: true` but never appears in the exported vocabulary
    (`src/lib/dependency-direction.ts:14` vs `:22`).
 
-5. **`boardId` vs `widgetCommonId`.** The board id is renamed at the API layer but the
+4. **`boardId` vs `widgetCommonId`.** The board id is renamed at the API layer but the
    wire name resurfaces above it — `assertScope` GETs `/widgets/${boardId}`, and
    `Intent.board` documents `widgetCommonId` semantics under the name `boardId`. An
    alias, not a bug, but two names for one keyspace.
 
-6. **`tagId` is not one keyspace.** Two measured shapes inside one organization —
+5. **`tagId` is not one keyspace.** Two measured shapes inside one organization —
    hex-24 and base62-17 (`src/lib/tags-api.ts:20`). Any classifier that assumes one
    misses ~11% of tags.
