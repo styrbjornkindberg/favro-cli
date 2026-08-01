@@ -115,7 +115,9 @@ program
     '  Set FAVRO_API_KEY env var, or run `favro auth login` to save to ~/.favro/config.json\n\n' +
     'Full docs: https://github.com/square-moon/favro-cli#readme'
   )
-  .version('2.1.0')
+  // Read from package.json, never a literal: the hardcoded '2.1.0' here drifted
+  // three releases behind the published 2.4.1 before anyone noticed.
+  .version(require('../package.json').version as string)
   .option('--verbose', 'Show stack traces for errors');
 
 // ─── auth commands ────────────────────────────────────────────────────────────
