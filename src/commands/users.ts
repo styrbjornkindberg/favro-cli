@@ -124,6 +124,14 @@ export function registerUsersCommands(program: Command): void {
       }
     });
 
+  // The three group writes below (#104) skip the scope lock on purpose. The lock
+  // is a COLLECTION lock — `assertScope` resolves the board a write lands on and
+  // checks that board against the locked collection. A user group is an org-scoped
+  // entity: no board, nothing to resolve. A check here would either always pass
+  // (a lie) or always refuse, breaking group management for every locked user.
+  // Neither is the lock working; it is the lock pretending. An org-level guardrail
+  // would be a DIFFERENT guardrail, and one that does not exist yet. What actually
+  // guards these paths is `confirmAction`.
   groupsCommand
     .command('create')
     .description('Create a new user group')
