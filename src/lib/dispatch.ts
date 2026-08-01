@@ -51,9 +51,16 @@ export interface DispatchResult<T = unknown> {
   intent: string;
   outcome: TxOutcome;
   /**
-   * `rolled-back` is retryable — the world is back where it started, so the same
-   * black-box call is safe to repeat. `rollback-incomplete` is not: something is
-   * left behind and a retry would compound it.
+   * Is the same black-box call worth making again?
+   *
+   * Two things have to hold, and the outcome is only one of them: the unwind
+   * must have left nothing behind (`rolled-back`), AND the failure must not be
+   * one that will recur identically. `rollback-incomplete` fails the first;
+   * a deterministic refusal — ours or the wire's — fails the second.
+   *
+   * This is the ONE derivation. `reportDispatch`, the skill engine and
+   * `skill run` all read it rather than re-deriving it from the outcome, which
+   * is what let three sites drift apart in #66.
    */
   retryable: boolean;
   value?: T;
@@ -114,6 +121,35 @@ export interface Intent<A = any, R = unknown> {
  * rather than four remembered special cases.
  */
 export { RefusalError };
+
+/**
+ * Is this failure worth retrying, given how the unwind went? **The one
+ * derivation of retry advice** (#66) — nothing else may compute it.
+ *
+ * A clean unwind says the world is unchanged. That is NOT the same as saying
+ * the call is worth making again, and conflating the two is the loop #51 closed
+ * for client-side refusals: create, be refused, unwind, repeat. The wire raises
+ * exactly the same class of refusal — `403 "Invalid column"` is a bad-input
+ * rejection, so the identical request is rejected identically — and until now
+ * only the client-side half was recognised.
+ *
+ * Narrow on purpose. `retryable: false` is claimed only for a `RefusalError`,
+ * or where `./favro-error` classifies the response as a deterministic refusal:
+ * its closed, probed message sets (`not-found`, `conflict`, `invalid`), a 401,
+ * or a 403 — which that module defaults to a permission denial whether or not
+ * the message is one it recognises, the fail-closed arm. A failure it cannot
+ * classify — a 5xx, a timeout, a bug of our own — keeps the
+ * rolled-back-is-retryable reading: the world is genuinely back where it
+ * started, and the next attempt may well behave differently.
+ */
+export function isRetryable(outcome: TxOutcome, error: unknown): boolean {
+  if (outcome !== 'rolled-back') return false;
+  if (error instanceof RefusalError) return false;
+  const kind = classifyThrownError(error)?.kind;
+  // `undefined` is "no HTTP response to classify"; `unknown` is "a response we
+  // cannot name". Both are the transient family. `none` cannot reach here.
+  return kind === undefined || kind === 'unknown' || kind === 'none';
+}
 
 /** An intent nobody registered. Names the table so the refusal is reachable. */
 export class UnknownIntentError extends Error {
@@ -227,7 +263,7 @@ export async function dispatch<T = unknown>(
     return {
       intent: name,
       outcome,
-      retryable: outcome === 'rolled-back',
+      retryable: isRetryable(outcome, error),
       error: error instanceof Error ? error.message : String(error),
       ...(orphans.length > 0 ? { orphans } : {}),
     };

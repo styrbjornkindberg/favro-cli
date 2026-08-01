@@ -160,7 +160,12 @@ describe('csvRowToBulkOperation', () => {
     expect(op.changes.status).toBe('In Progress');
   });
 
-  it('maps owner to assignees', () => {
+  // #60: the raw name is correct HERE and nowhere else. `updateCard` is the one
+  // place a whole-array assignee write settles names to userIds and refuses what
+  // will not settle, so resolving a second time in the CSV mapper would be a
+  // second resolver to keep in step. See the display-name tests in
+  // `cards-api-update-wire.test.ts` for what the wire then receives.
+  it('maps owner to assignees, leaving resolution to updateCard', () => {
     const op = csvRowToBulkOperation({ card_id: 'card-1', owner: 'alice' });
     expect(op.changes.assignees).toEqual(['alice']);
   });

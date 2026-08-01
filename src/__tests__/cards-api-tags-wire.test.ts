@@ -20,9 +20,27 @@
  * - `POST /cards {tags:["Bug"]}`      → honoured at create time; only the PUT ignores `tags`.
  */
 import * as http from 'http';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { AddressInfo } from 'net';
 import FavroHttpClient from '../lib/http-client';
-import CardsAPI from '../lib/cards-api';
+import CardsAPI, { unknownTagMessage } from '../lib/cards-api';
+import { CompensationLog, TxCards } from '../lib/tx-cards';
+import { RefusalError } from '../lib/refusal';
+
+// The tag path is cache-backed and invalidates on a miss; the cache resolves its
+// file per call, so a tmpdir keeps this suite off the real `~/.favro`.
+const CONFIG_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'favro-tags-wire-'));
+process.env.FAVRO_CONFIG_DIR = CONFIG_DIR;
+const CACHE_FILE = path.join(CONFIG_DIR, 'name-cache.json');
+const ORG = 'org-tags-wire';
+
+// The cache is a file that outlives a test. Every case below starts from an
+// empty one, so a hit is only ever the one the case itself planted.
+beforeEach(() => {
+  fs.rmSync(CACHE_FILE, { force: true });
+});
 
 interface Received {
   method: string;
@@ -37,7 +55,8 @@ const DEVOP_ID = '4HGKcSnW2xuXvnQqN';
 /** A fake Favro that records what it was asked, and replies how Favro replies. */
 function startServer(
   handler: (req: Received) => { status: number; body?: unknown },
-): Promise<{ api: CardsAPI; received: Received[]; close: () => Promise<void> }> {
+  organizationId: string | null = ORG,
+): Promise<{ api: CardsAPI; client: FavroHttpClient; received: Received[]; close: () => Promise<void> }> {
   const received: Received[] = [];
   const server = http.createServer((req, res) => {
     let body = '';
@@ -59,9 +78,13 @@ function startServer(
   return new Promise((resolve) => {
     server.listen(0, '127.0.0.1', () => {
       const { port } = server.address() as AddressInfo;
-      const client = new FavroHttpClient({ baseURL: `http://127.0.0.1:${port}/api/v1` });
+      const client = new FavroHttpClient({
+        baseURL: `http://127.0.0.1:${port}/api/v1`,
+        ...(organizationId ? { auth: { organizationId } } : {}),
+      });
       resolve({
         api: new CardsAPI(client as any),
+        client,
         received,
         close: () => new Promise((done) => server.close(() => done())),
       });
@@ -142,11 +165,55 @@ describe('updateCard tag writes (no client mock)', () => {
     }
   });
 
-  test('an unknown name goes out as addTags, so Favro creates it or 403s loudly', async () => {
+  // #62: this used to go out as `addTags`, which to Favro is a tag CREATION.
+  // On a key that holds the permission a typo silently and permanently added a
+  // junk tag to the workspace — the same reason `cards create --tag` validates
+  // client-side. Refusing is the only outcome an agent can act on.
+  test('an unknown name is REFUSED, not handed to Favro to create', async () => {
     const { api, received, close } = await startServer(favro([]));
     try {
-      await api.updateCard(CARD, { tags: ['brand-new'] });
-      expect(putBody(received)).toEqual({ addTags: ['brand-new'] });
+      await expect(api.updateCard(CARD, { tags: ['brand-new'] })).rejects.toThrow(RefusalError);
+      await expect(api.updateCard(CARD, { tags: ['brand-new'] })).rejects.toThrow(
+        /Unknown tag "brand-new"/,
+      );
+      expect(received.some((r) => r.method === 'PUT')).toBe(false);
+      expect(received.map((r) => r.body).join('')).not.toContain('addTags');
+    } finally {
+      await close();
+    }
+  });
+
+  test('a known name alongside an unknown one refuses the WHOLE write', async () => {
+    // Partial application would leave the card in a state nobody asked for and
+    // no undo entry describes.
+    const { api, received, close } = await startServer(favro([]));
+    try {
+      await expect(api.updateCard(CARD, { tags: ['Bug', 'brand-new'] })).rejects.toThrow(
+        /Unknown tag "brand-new"/,
+      );
+      expect(received.some((r) => r.method === 'PUT')).toBe(false);
+    } finally {
+      await close();
+    }
+  });
+
+  test('a tag created since the last read is not refused on stale cache evidence', async () => {
+    // The refusal must never fire on the cache alone: `favro tags create X` then
+    // `cards update --tags X` has to work inside the 15-minute TTL.
+    let listings = 0;
+    const { api, received, close } = await startServer((req) => {
+      if (req.method === 'GET' && req.url?.startsWith('/api/v1/tags')) {
+        listings += 1;
+        const entities = [{ tagId: BUG_ID, name: 'Bug' }];
+        if (listings > 1) entities.push({ tagId: DEVOP_ID, name: 'fresh' });
+        return { status: 200, body: { entities } };
+      }
+      return { status: 200, body: { cardId: CARD, name: 'probe', tags: [] } };
+    });
+    try {
+      await api.updateCard(CARD, { tags: ['fresh'] });
+      expect(putBody(received)).toEqual({ addTagIds: [DEVOP_ID] });
+      expect(listings).toBeGreaterThan(1);
     } finally {
       await close();
     }
@@ -187,6 +254,41 @@ describe('updateCard tag writes (no client mock)', () => {
     }
   });
 
+  // `client.organizationId` comes from saved auth, and `favro auth` warns it may
+  // be absent ("Organization ID not saved"). The tag path used to react to a
+  // cache miss with `invalidateCache(undefined, 'tags')`, which discarded the
+  // kind and truncated the file for EVERY org — observed live as a 2-byte
+  // `~/.favro/name-cache.json`. A tag write must never be able to do that.
+  // An unknown tag is what drives the code to the invalidate, and a typo is how
+  // an agent gets there. That invalidate used to run as
+  // `invalidateCache(undefined, 'tags')`, which discarded the kind and truncated
+  // the file for EVERY org.
+  test('a REFUSED tag write with no organizationId leaves other orgs\' cache intact', async () => {
+    const planted = {
+      'other-org': { tags: { fetchedAt: Date.now(), entries: [{ tagId: 'x1', name: 'keepme' }] } },
+    };
+    fs.writeFileSync(CACHE_FILE, JSON.stringify(planted));
+    const { api, close } = await startServer(favro([]), null);
+    try {
+      await expect(api.updateCard(CARD, { tags: ['brand-new'] })).rejects.toThrow(RefusalError);
+      expect(JSON.parse(fs.readFileSync(CACHE_FILE, 'utf-8'))).toEqual(planted);
+    } finally {
+      await close();
+    }
+  });
+
+  // Without an org there is no cache, so the list just fetched is already live —
+  // the refill re-asked the identical question over the wire for nothing.
+  test('no organizationId costs exactly one tag listing, not two', async () => {
+    const { api, received, close } = await startServer(favro([]), null);
+    try {
+      await expect(api.updateCard(CARD, { tags: ['brand-new'] })).rejects.toThrow(RefusalError);
+      expect(received.filter((r) => r.url.startsWith('/api/v1/tags'))).toHaveLength(1);
+    } finally {
+      await close();
+    }
+  });
+
   test('surfaces Favro\'s 403 on an unpermitted tag creation instead of swallowing it', async () => {
     const { api, close } = await startServer((req) => {
       if (req.method === 'PUT') {
@@ -196,6 +298,26 @@ describe('updateCard tag writes (no client mock)', () => {
     });
     try {
       await expect(api.updateCard(CARD, { addTags: ['brand-new'] })).rejects.toThrow();
+    } finally {
+      await close();
+    }
+  });
+});
+
+// #62's stated goal: the create, update and tx tag-write paths "cannot drift".
+// `TxCards.setTags` kept a hand-written copy of the refusal instead of calling
+// the shared helper, so the wording had already drifted — the copy omitted the
+// tag name from the `favro tags create` advice.
+describe('TxCards.setTags refuses on the same wording as the other tag writes', () => {
+  test('an unknown tag refuses with unknownTagMessage, byte for byte, and writes nothing', async () => {
+    const { api, client, received, close } = await startServer(favro([]));
+    try {
+      const tx = new TxCards(api, new CompensationLog(), client as any);
+      await expect(tx.setTags(CARD, ['brand-new'])).rejects.toThrow(RefusalError);
+      await expect(tx.setTags(CARD, ['brand-new'])).rejects.toThrow(
+        unknownTagMessage(['brand-new']),
+      );
+      expect(received.some((r) => r.method === 'PUT')).toBe(false);
     } finally {
       await close();
     }

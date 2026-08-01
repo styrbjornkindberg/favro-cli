@@ -29,7 +29,6 @@ function buildMockApi(card: Card = sampleCard) {
     getCard: mockGetCard,
     listCards: jest.fn(),
     createCard: jest.fn(),
-    createCards: jest.fn(),
     updateCard: jest.fn(),
     deleteCard: jest.fn(),
     searchCards: jest.fn(),

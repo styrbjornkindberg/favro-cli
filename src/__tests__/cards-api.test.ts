@@ -282,17 +282,6 @@ describe('Cards API', () => {
     await expect(api.createCard({ name: 'Bad' })).rejects.toThrow('Validation error');
   });
 
-  // --- createCards ---
-  // Favro has no bulk-create route (verified live, issue #12), so createCards
-  // loops POST /cards. Per-call wiring is covered in
-  // cards-api-dependencies-wire.test.ts.
-
-  test('createCards propagates rate limit errors', async () => {
-    const rateLimitError = Object.assign(new Error('Too Many Requests'), { response: { status: 429 } });
-    mockClient.post.mockRejectedValue(rateLimitError);
-    await expect(api.createCards([{ name: 'Test' }])).rejects.toThrow('Too Many Requests');
-  });
-
   // --- updateCard ---
 
   test('updateCard updates card by id', async () => {

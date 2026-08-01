@@ -18,6 +18,7 @@ import {
 import CardsAPI, { Card } from '../../lib/cards-api';
 import FavroHttpClient from '../../lib/http-client';
 import * as config from '../../lib/config';
+import * as assignee from '../../lib/assignee';
 
 jest.mock('../../lib/cards-api');
 jest.mock('../../lib/http-client');
@@ -106,10 +107,31 @@ describe('parseGoal', () => {
       expect(goal.actionSummary).toContain('alice');
     });
 
-    it('skips cards already assigned to target user', () => {
-      const goal = parseGoal('assign all Backlog cards with no owner to alice');
-      const alreadyAssigned = makeCard({ assignees: ['alice'] });
-      expect(goal.cardFilter(alreadyAssigned)).toBe(false);
+    // #59: `card.assignees` only ever holds userIds, so the skip only works once
+    // the goal has been re-parsed with the resolved id. The old version of this
+    // test put the display name in `assignees` — a shape Favro never sends — and
+    // so asserted the bug as if it were the behaviour.
+    it('skips cards already assigned to the target user, matched by userId', () => {
+      const ALICE = 'aaaaaaaaaaaaaaaaa';
+      const goal = parseGoal('assign all Backlog cards to alice', ALICE);
+      expect(goal.cardFilter(makeCard({ status: 'Backlog', assignees: [ALICE] }))).toBe(false);
+      expect(goal.cardFilter(makeCard({ status: 'Backlog', assignees: [] }))).toBe(true);
+    });
+
+    it('exposes the typed assignee so the caller can resolve it, and keeps it out of the write', () => {
+      const ALICE = 'aaaaaaaaaaaaaaaaa';
+      expect(parseGoal('assign all Backlog cards to alice').targetAssignee).toBe('alice');
+      const resolved = parseGoal('assign all Backlog cards to alice', ALICE);
+      // The operation carries the userId; the human-readable text still reads
+      // "alice" so the preview is about a person, not a token.
+      expect(resolved.buildOperation(makeCard({ status: 'Backlog' })).targetAssignee).toBe(ALICE);
+      expect(resolved.actionSummary).toContain('alice');
+    });
+
+    it('no other goal shape asks for assignee resolution', () => {
+      expect(parseGoal('move all cards to Done').targetAssignee).toBeUndefined();
+      expect(parseGoal('unassign all cards').targetAssignee).toBeUndefined();
+      expect(parseGoal('close all cards').targetAssignee).toBeUndefined();
     });
 
     it('matches unassigned Backlog cards', () => {
@@ -596,6 +618,9 @@ describe('registerBatchSmartCommand (CLI)', () => {
     consoleSpy.mockRestore();
     consoleErrorSpy.mockRestore();
     exitSpy.mockRestore();
+    // The assignee spy is set per-test; without this it leaks into every test
+    // added after it.
+    jest.restoreAllMocks();
   });
 
   it('exits with error when no --goal provided', async () => {
@@ -620,7 +645,6 @@ describe('registerBatchSmartCommand (CLI)', () => {
       updateCard: mockUpdateCard,
       getCard: jest.fn(),
       createCard: jest.fn(),
-      createCards: jest.fn(),
       deleteCard: jest.fn(),
       searchCards: jest.fn(),
     } as any));
@@ -663,5 +687,66 @@ describe('registerBatchSmartCommand (CLI)', () => {
 
     const logCalls = consoleSpy.mock.calls.flat().join(' ');
     expect(logCalls).toMatch(/No cards match/i);
+  });
+
+  // #59: the goal names a human, `card.assignees` are userIds. What the caller
+  // observes is the only thing asserted here — the value that reached
+  // `updateCard` — because a display name in that array is what the wire turns
+  // into "unassign everyone, add a stranger".
+  it('an assign goal writes the resolved userId, never the typed name', async () => {
+    const ALICE = 'aaaaaaaaaaaaaaaaa';
+    jest.spyOn(assignee, 'resolveAssignee').mockResolvedValue(ALICE);
+
+    const MockedCardsAPI = CardsAPI as jest.MockedClass<typeof CardsAPI>;
+    const mockUpdateCard = jest.fn().mockResolvedValue(makeCard());
+    MockedCardsAPI.mockImplementation(() => ({
+      listCards: jest.fn().mockResolvedValue([
+        makeCard({ cardId: 'c1', status: 'Backlog', assignees: [] }),
+        // Already assigned — must be skipped, which the raw-name comparison
+        // could never do.
+        makeCard({ cardId: 'c2', status: 'Backlog', assignees: [ALICE] }),
+      ]),
+      updateCard: mockUpdateCard,
+    } as any));
+    (FavroHttpClient as jest.MockedClass<typeof FavroHttpClient>).mockImplementation(() => ({} as any));
+
+    try {
+      await program.parseAsync([
+        'node', 'favro', 'batch-smart', 'board-1',
+        '--goal', 'assign all Backlog cards to alice',
+        '--yes',
+      ]);
+    } catch {
+      // process.exit throws via our exitSpy
+    }
+
+    expect(mockUpdateCard).toHaveBeenCalledTimes(1);
+    expect(mockUpdateCard).toHaveBeenCalledWith('c1', { assignees: [ALICE] });
+  });
+
+  it('an unresolvable assignee refuses before a single card is written', async () => {
+    jest.spyOn(assignee, 'resolveAssignee').mockRejectedValue(
+      new assignee.AssigneeError('Unknown assignee "nobody"', 'unknown', 'nobody'),
+    );
+
+    const MockedCardsAPI = CardsAPI as jest.MockedClass<typeof CardsAPI>;
+    const mockUpdateCard = jest.fn();
+    MockedCardsAPI.mockImplementation(() => ({
+      listCards: jest.fn().mockResolvedValue([makeCard({ cardId: 'c1', status: 'Backlog' })]),
+      updateCard: mockUpdateCard,
+    } as any));
+    (FavroHttpClient as jest.MockedClass<typeof FavroHttpClient>).mockImplementation(() => ({} as any));
+
+    try {
+      await program.parseAsync([
+        'node', 'favro', 'batch-smart', 'board-1',
+        '--goal', 'assign all Backlog cards to nobody',
+        '--yes',
+      ]);
+    } catch {
+      // expected
+    }
+
+    expect(mockUpdateCard).not.toHaveBeenCalled();
   });
 });

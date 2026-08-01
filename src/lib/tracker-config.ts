@@ -157,8 +157,9 @@ export async function readTrackerMapping(): Promise<StoredTracker | undefined> {
 
   const config = await readConfig();
   if (config.tracker) {
-    const { CONFIG_FILE } = await import('./config');
-    return { mapping: validate(config.tracker, CONFIG_FILE), source: 'config', location: CONFIG_FILE };
+    const { configFile } = await import('./config');
+    const location = configFile();
+    return { mapping: validate(config.tracker, location), source: 'config', location };
   }
   return undefined;
 }

@@ -73,7 +73,6 @@ function buildProgram(mockListCards: jest.Mock) {
     listCards: mockListCards,
     getCard: jest.fn(),
     createCard: jest.fn(),
-    createCards: jest.fn(),
     updateCard: jest.fn(),
   } as any));
   (config.resolveApiKey as jest.Mock).mockResolvedValue('test-token');

@@ -22,10 +22,19 @@
  *                               here beyond the field being gone from the type.
  */
 import * as http from 'http';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { AddressInfo } from 'net';
 import FavroHttpClient from '../lib/http-client';
 import CardsAPI from '../lib/cards-api';
 import { ColumnResolutionError } from '../lib/column-directory';
+import { AssigneeError } from '../lib/assignee';
+
+// The name cache resolves its file per call, so a tmpdir here keeps the suite
+// off the real `~/.favro` — a cache invalidation with no organizationId rewrites
+// the whole file.
+process.env.FAVRO_CONFIG_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'favro-update-wire-'));
 
 interface Received {
   method: string;
@@ -115,6 +124,17 @@ function favro(card: Record<string, unknown> = {}) {
     if (req.method === 'GET' && req.url?.startsWith('/api/v1/tags')) {
       return { status: 200, body: { entities: [] } };
     }
+    if (req.method === 'GET' && req.url?.startsWith('/api/v1/users')) {
+      return {
+        status: 200,
+        body: {
+          entities: [
+            { userId: ALICE, name: 'Alice Ant', email: 'alice@example.com' },
+            { userId: BOB, name: 'Bob Builder', email: 'bob@example.com' },
+          ],
+        },
+      };
+    }
     return { status: 200, body: stored };
   };
 }
@@ -179,11 +199,65 @@ describe('updateCard assignee writes (no client mock)', () => {
     }
   });
 
-  test('a name in the whole-array write is refused, not diffed into a wipe', async () => {
+  // #59 / #60: `updateCard` is the chokepoint every whole-array assignee write
+  // funnels through — batch-smart's composed array, bulk's CSV `owner` column,
+  // `cards update --assignee`. Resolving here is what stops a display name being
+  // diffed into "unassign everyone, add a stranger".
+  test('a display name is resolved to a userId and diffed — never sent raw', async () => {
     const { api, received, close } = await startServer(favro());
     try {
-      await expect(api.updateCard(CARD, { assignees: ['alice'] })).rejects.toThrow(/userIds/);
+      await api.updateCard(CARD, { assignees: ['Bob Builder'] });
+      expect(putBody(received)).toEqual({
+        addAssignmentIds: [BOB],
+        removeAssignmentIds: [ALICE],
+      });
+      // The name itself must not reach Favro under any key.
+      expect(putRequest(received).body).not.toContain('Bob Builder');
+    } finally {
+      await close();
+    }
+  });
+
+  test('an email resolves too, and a name already on the card is a no-op', async () => {
+    const { api, received, close } = await startServer(favro());
+    try {
+      await api.updateCard(CARD, { assignees: ['alice@example.com'] });
+      expect(putBody(received)).toEqual({});
+    } finally {
+      await close();
+    }
+  });
+
+  test('a name and its own userId in one array do not double-add', async () => {
+    const { api, received, close } = await startServer(favro());
+    try {
+      await api.updateCard(CARD, { assignees: ['Bob Builder', BOB] });
+      expect(putBody(received)).toEqual({
+        addAssignmentIds: [BOB],
+        removeAssignmentIds: [ALICE],
+      });
+    } finally {
+      await close();
+    }
+  });
+
+  test('an unresolvable name refuses before the PUT, leaving the card untouched', async () => {
+    const { api, received, close } = await startServer(favro());
+    try {
+      await expect(api.updateCard(CARD, { assignees: ['Nobody Here'] })).rejects.toThrow(AssigneeError);
       expect(received.some((r) => r.method === 'PUT')).toBe(false);
+    } finally {
+      await close();
+    }
+  });
+
+  test('an all-userId array costs no /users read', async () => {
+    // The undo and tx paths hand back ids. Resolving those would add a read per
+    // write for nothing.
+    const { api, received, close } = await startServer(favro());
+    try {
+      await api.updateCard(CARD, { assignees: [BOB] });
+      expect(received.filter((r) => r.url.startsWith('/api/v1/users'))).toEqual([]);
     } finally {
       await close();
     }

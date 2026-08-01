@@ -150,16 +150,6 @@ function startServer(seed?: { tags?: string[] }): Promise<{
   });
 }
 
-/**
- * `config.ts` resolves CONFIG_DIR once at import, so the config fallback can
- * only be exercised on a module graph loaded after this test's tmpdir is in
- * the env. Re-import rather than write into the developer's real ~/.favro.
- */
-async function freshTrackerConfig(): Promise<typeof import('../lib/tracker-config')> {
-  jest.resetModules();
-  return import('../lib/tracker-config');
-}
-
 const posts = (received: Received[], prefix: string) =>
   received.filter((r) => r.method === 'POST' && r.url.startsWith(`/api/v1/${prefix}`));
 
@@ -290,7 +280,7 @@ describe('the paste-ready block', () => {
     );
     await fs.writeFile(process.env.FAVRO_TRACKER_DOC!, renderTrackerBlock(mapping));
 
-    const stored = await (await freshTrackerConfig()).readTrackerMapping();
+    const stored = await readTrackerMapping();
     expect(stored?.source).toBe('doc');
     expect(stored?.mapping).toEqual(mapping);
   });
@@ -298,9 +288,11 @@ describe('the paste-ready block', () => {
   it('falls back to ~/.favro/config.json when there is no repo doc', async () => {
     await fs.writeFile(path.join(tmpDir, 'config.json'), JSON.stringify({ tracker: mapping }));
 
-    const stored = await (await freshTrackerConfig()).readTrackerMapping();
+    const stored = await readTrackerMapping();
     expect(stored?.source).toBe('config');
     expect(stored?.mapping).toEqual(mapping);
+    // The redirect actually took: the fallback names THIS run's tmpdir, not ~/.favro.
+    expect(stored?.location).toBe(path.join(tmpDir, 'config.json'));
   });
 
   it('a half-filled block refuses rather than being read as a mapping', async () => {

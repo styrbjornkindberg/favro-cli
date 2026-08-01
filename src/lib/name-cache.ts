@@ -96,10 +96,20 @@ export async function writeCache<T>(
   await writeFile(data);
 }
 
-/** Drop one kind, one org, or the whole cache. */
+/**
+ * Drop one kind, one org, or — only when called with NO arguments at all — the
+ * whole cache.
+ *
+ * `invalidateCache(undefined, 'tags')` used to discard the `kind` and truncate
+ * the file for EVERY org. No caller means that: all three pass a kind, and all
+ * three read `organizationId` from saved auth, which `favro auth` explicitly
+ * warns may be absent ("Organization ID not saved"). A named kind with no org
+ * is a no-op — nothing was cached under a missing org, so there is nothing to
+ * drop.
+ */
 export async function invalidateCache(organizationId?: string, kind?: CacheKind): Promise<void> {
   if (!organizationId) {
-    await writeFile({});
+    if (!kind) await writeFile({});
     return;
   }
   const data = await readFile();

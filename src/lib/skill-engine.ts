@@ -21,7 +21,7 @@ import FavroHttpClient from '../lib/http-client';
 import { createFavroClient } from './client-factory';
 import { confirmAction } from './safety';
 import { readConfig, FavroConfig } from './config';
-import { dispatch, getIntent, intentNames, DispatchResult } from './dispatch';
+import { dispatch, getIntent, intentNames, isRetryable, DispatchResult } from './dispatch';
 import { CompensationLog, Orphan, TxOutcome } from './tx-cards';
 import ContextAPI from '../api/context';
 import { StandupAPI } from '../api/standup';
@@ -42,8 +42,14 @@ export interface SkillRunResult {
   skill: string;
   steps: StepResult[];
   status: 'completed' | 'partial' | 'failed';
-  /** Present only when the run's one transaction had to be unwound. */
-  rollback?: { outcome: TxOutcome; orphans: Orphan[] };
+  /**
+   * Present only when the run's one transaction had to be unwound.
+   *
+   * `retryable` is the table's own derivation (`isRetryable`), carried rather
+   * than re-derived: `outcome === 'rolled-back'` is not the same question, and
+   * asking it here instead was one of the three drifted sites in #66.
+   */
+  rollback?: { outcome: TxOutcome; retryable: boolean; orphans: Orphan[] };
 }
 
 export interface SkillRunOptions {
@@ -323,6 +329,10 @@ export async function runSkill(
   // that wrote nothing, is tolerated rather than fatal, so it must not drag the
   // writes that come after it into a rollback.
   let aborted = false;
+  // What ended the run, kept so the end-of-run unwind can ask the table's one
+  // question about it. A pre-write refusal is deterministic whichever step
+  // raised it, so a run that unwinds around one is not retryable either (#66).
+  let abortCause: unknown;
   let rollback: SkillRunResult['rollback'];
 
   for (let i = 0; i < skill.steps.length; i++) {
@@ -368,12 +378,18 @@ export async function runSkill(
       results.push(result);
       options.onStepComplete?.(result);
       hasFailure = true;
+      abortCause = error;
 
       if (error instanceof StepDispatchFailure) {
         // The table already unwound the whole run and emptied the log. There is
         // nothing left to build on, so `continueOnError` cannot apply: a later
         // step would be writing against a world that was just rolled back.
-        rollback = { outcome: error.result.outcome, orphans: error.result.orphans ?? [] };
+        rollback = {
+          outcome: error.result.outcome,
+          // The table already asked; asking again here is how the answers drift.
+          retryable: error.result.retryable,
+          orphans: error.result.orphans ?? [],
+        };
         aborted = true;
         break;
       }
@@ -399,7 +415,8 @@ export async function runSkill(
   // unwound, or one that merely tolerated a failure that wrote nothing, leaves
   // nothing here to do.
   if (aborted && log.depth > 0) {
-    rollback = await log.unwind();
+    const unwound = await log.unwind();
+    rollback = { ...unwound, retryable: isRetryable(unwound.outcome, abortCause) };
   }
 
   const allCompleted = results.length === skill.steps.length;

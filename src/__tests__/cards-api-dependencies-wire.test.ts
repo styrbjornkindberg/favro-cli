@@ -166,37 +166,8 @@ describe('linkCard (no client mock)', () => {
   });
 });
 
-describe('createCards (no client mock)', () => {
-  test('creates one card per POST /cards — never the non-existent /cards/bulk', async () => {
-    let n = 0;
-    const { api, received, close } = await startServer(() => ({
-      status: 201,
-      body: { cardId: `made-${n++}`, name: 'x', createdAt: '', updatedAt: '' },
-    }));
-    try {
-      const made = await api.createCards([{ name: 'one' }, { name: 'two' }]);
-      expect(made).toHaveLength(2);
-      expect(received.map((r) => r.url)).toEqual([
-        '/api/v1/cards?descriptionFormat=markdown',
-        '/api/v1/cards?descriptionFormat=markdown',
-      ]);
-      expect(received.some((r) => r.url.includes('bulk'))).toBe(false);
-    } finally {
-      await close();
-    }
-  });
-
-  test('fails fast and reports the cards it already created', async () => {
-    let n = 0;
-    const { api, close } = await startServer(() => (n++ === 0
-      ? { status: 201, body: { cardId: 'made-0', name: 'one', createdAt: '', updatedAt: '' } }
-      : { status: 400, body: { message: 'Match error' } }));
-    try {
-      await expect(api.createCards([{ name: 'one' }, { name: 'two' }])).rejects.toMatchObject({
-        created: [expect.objectContaining({ cardId: 'made-0' })],
-      });
-    } finally {
-      await close();
-    }
-  });
-});
+// `CardsAPI.createCards` was deleted with #67 — since #55 `cards create
+// --csv/--bulk` routes through `dispatch('create', {cards})`, which is where the
+// one-POST-per-card guarantee (and the "never `POST /cards/bulk`" assertion that
+// used to live here) is now pinned: see the multi-create test in
+// `dispatch-tx-wire.test.ts`.

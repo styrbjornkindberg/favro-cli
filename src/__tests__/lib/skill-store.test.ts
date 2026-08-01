@@ -6,6 +6,13 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { parse as parseYaml } from 'yaml';
+
+// Redirect the user skills dir into a tmpdir BEFORE anything resolves it.
+// Without this, saveSkill/importSkill write into the developer's real
+// ~/.favro/skills and never clean up (issue #65).
+const CONFIG_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'favro-skill-store-'));
+process.env.FAVRO_CONFIG_DIR = CONFIG_DIR;
+
 import {
   listSkills,
   loadSkill,
@@ -14,6 +21,7 @@ import {
   exportSkill,
   importSkill,
   deleteSkill,
+  getUserSkillsDir,
   SkillDefinition,
 } from '../../lib/skill-store';
 
@@ -58,10 +66,9 @@ steps:
 `;
 
 afterAll(() => {
-  // Cleanup test directory
-  if (fs.existsSync(TEST_SKILLS_DIR)) {
-    fs.rmSync(TEST_SKILLS_DIR, { recursive: true, force: true });
-  }
+  // Cleanup test directories
+  fs.rmSync(TEST_SKILLS_DIR, { recursive: true, force: true });
+  fs.rmSync(CONFIG_DIR, { recursive: true, force: true });
 });
 
 // ─── loadSkillFromFile Tests ──────────────────────────────────────────────────
@@ -133,6 +140,9 @@ describe('saveSkill', () => {
     };
 
     const filePath = saveSkill(skill);
+    // The write must land in the redirected tmpdir, never in the real home.
+    expect(filePath).toBe(path.join(CONFIG_DIR, 'skills', 'save-test.yaml'));
+    expect(getUserSkillsDir().startsWith(os.homedir())).toBe(false);
     expect(fs.existsSync(filePath)).toBe(true);
 
     const content = fs.readFileSync(filePath, 'utf-8');

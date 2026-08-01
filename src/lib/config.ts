@@ -40,9 +40,17 @@ export interface FavroConfig {
  * FAVRO_CONFIG_DIR. The HTTP MCP server uses this to give each user their own
  * isolated config (scope, cached userId, defaults) on a shared server, since
  * every CLI invocation is a fresh process whose env is set before it starts.
+ *
+ * Resolved per call, not at import: a frozen constant made FAVRO_CONFIG_DIR
+ * unsettable from a test that had already imported this module (issue #65).
  */
-export const CONFIG_DIR = process.env.FAVRO_CONFIG_DIR || path.join(os.homedir(), '.favro');
-export const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
+export function configDir(): string {
+  return process.env.FAVRO_CONFIG_DIR || path.join(os.homedir(), '.favro');
+}
+
+export function configFile(): string {
+  return path.join(configDir(), 'config.json');
+}
 
 /**
  * Read config from ~/.favro/config.json.
@@ -51,7 +59,7 @@ export const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
  */
 export async function readConfig(): Promise<FavroConfig> {
   try {
-    const raw = await fs.readFile(CONFIG_FILE, 'utf-8');
+    const raw = await fs.readFile(configFile(), 'utf-8');
     return JSON.parse(raw) as FavroConfig;
   } catch (err: any) {
     if (err.code === 'ENOENT') {
@@ -59,10 +67,10 @@ export async function readConfig(): Promise<FavroConfig> {
     }
     // Fix: explicit SyntaxError check (SyntaxError has no .code property)
     if (err instanceof SyntaxError) {
-      throw new Error(`Config file is corrupted (invalid JSON): ${CONFIG_FILE}\nFix or delete it: rm ${CONFIG_FILE}`);
+      throw new Error(`Config file is corrupted (invalid JSON): ${configFile()}\nFix or delete it: rm ${configFile()}`);
     }
     if (err.code === 'EACCES' || err.code === 'EPERM') {
-      throw new Error(`Config file permission error: ${CONFIG_FILE} is not readable. Check file permissions.`);
+      throw new Error(`Config file permission error: ${configFile()} is not readable. Check file permissions.`);
     }
     throw new Error(`Failed to read config: ${err.message}`);
   }
@@ -74,11 +82,11 @@ export async function readConfig(): Promise<FavroConfig> {
  */
 export async function writeConfig(config: FavroConfig): Promise<void> {
   try {
-    await fs.mkdir(CONFIG_DIR, { recursive: true });
-    await fs.writeFile(CONFIG_FILE, JSON.stringify(config, null, 2), { mode: 0o600 });
+    await fs.mkdir(configDir(), { recursive: true });
+    await fs.writeFile(configFile(), JSON.stringify(config, null, 2), { mode: 0o600 });
   } catch (err: any) {
     if (err.code === 'EACCES' || err.code === 'EPERM') {
-      throw new Error(`Config file permission error: cannot write to ${CONFIG_FILE}. Check directory permissions.`);
+      throw new Error(`Config file permission error: cannot write to ${configFile()}. Check directory permissions.`);
     }
     throw new Error(`Failed to write config: ${err.message}`);
   }

@@ -143,4 +143,18 @@ describe('resilience', () => {
     await invalidateCache();
     expect(await readCache('org-b', 'tags')).toBeUndefined();
   });
+
+  // Every caller passes a kind and reads its org from saved auth, which may not
+  // hold one ("Organization ID not saved"). Discarding the kind and wiping the
+  // file for every org is not what any of them asked for — it was observed live
+  // as a 2-byte `~/.favro/name-cache.json`.
+  test('a kind with no organizationId is a no-op, not a whole-file wipe', async () => {
+    await writeCache('org-a', 'tags', [{ tagId: 'a' }]);
+    await writeCache('org-b', 'users', [{ userId: 'b' }]);
+
+    await invalidateCache(undefined, 'tags');
+
+    expect(await readCache('org-a', 'tags')).toEqual([{ tagId: 'a' }]);
+    expect(await readCache('org-b', 'users')).toEqual([{ userId: 'b' }]);
+  });
 });

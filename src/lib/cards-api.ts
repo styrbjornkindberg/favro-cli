@@ -1,10 +1,26 @@
 import FavroHttpClient from './http-client';
-import TagsAPI, { Tag } from './tags-api';
+import { Tag } from './tags-api';
 import ColumnDirectory, { ColumnResolutionError } from './column-directory';
 import CardReferenceResolver, { CardResolutionError, isSequentialReference } from './card-reference';
 import { cachedTags, invalidateCache } from './name-cache';
 import { isUserId } from './users-api';
 import { resolveAssignee } from './assignee';
+import { RefusalError } from './refusal';
+
+/**
+ * The one wording for "the workspace holds no tag by that name". Shared by the
+ * create and the update path so the two cannot drift — they refuse for the
+ * identical reason (#62).
+ */
+export function unknownTagMessage(names: string[]): string {
+  const listed = names.map((n) => `"${n}"`).join(', ');
+  return (
+    `Unknown tag ${listed} — no workspace tag has that name. Refusing to create it: ` +
+    `on a write Favro treats an unknown name as a new tag, so a typo either invents a tag or ` +
+    `403s the whole write depending on this key's permissions. ` +
+    `Run 'favro tags list' to see the workspace tags, or 'favro tags create "${names[0]}"' to add it first.`
+  );
+}
 
 /** Raw card shape returned directly by the Favro REST API */
 interface RawCard {
@@ -822,57 +838,48 @@ export class CardsAPI {
    * name and let Favro resolve it, which is exactly why we must not send an id.
    */
   private async validateTagNames(names: string[]): Promise<string[]> {
-    const orgId = this.client.organizationId;
     const key = (name: string) => name.trim().toLowerCase();
-    const index = (tags: Tag[]) => new Map(tags.map((t) => [key(t.name ?? ''), t.name]));
-
-    let byName = index(await cachedTags(this.client, orgId));
-    if (names.some((raw) => !byName.has(key(raw)))) {
-      // Never refuse on cache evidence alone — the read path settled this in
-      // `query-values`' `checkTag`, and a false refusal costs more on a write.
-      // Without this, the 15-minute TTL made this method's own advice useless:
-      // `favro tags create` then `cards create --tag` still refused. `tags` is a
-      // whole-org list, so this refill replaces nothing the message then lists.
-      await invalidateCache(orgId, 'tags');
-      byName = index(await cachedTags(this.client, orgId));
-    }
+    const tags = await this.orgTags((known) => names.every((raw) => known.has(key(raw))));
+    const byName = new Map(tags.map((t) => [key(t.name ?? ''), t.name]));
 
     return names.map((raw) => {
       const known = byName.get(key(raw));
-      if (known === undefined) {
-        throw new Error(
-          `Unknown tag "${raw}" — no workspace tag has that name. Refusing to create it: ` +
-            `on a write Favro treats an unknown name as a new tag, so a typo either invents a tag or ` +
-            `403s the whole create depending on this key's permissions. ` +
-            `Run 'favro tags list' to see the workspace tags, or 'favro tags create "${raw}"' to add it first.`,
-        );
-      }
+      if (known === undefined) throw new RefusalError(unknownTagMessage([raw]));
       return known;
     });
   }
 
   /**
-   * Create several cards. Favro has **no bulk-create route** — `POST /cards/bulk`
-   * was verified live and does not exist (it falls through to Favro's web app
-   * and answers 200 with an HTML page, so the old `response.cards` read silently
-   * yielded zero cards created). So this loops `createCard` one call per card.
+   * The org's tag list, cache-backed, refetched once when `answered` says the
+   * cached copy cannot settle the question being asked of it.
    *
-   * Fails fast: on the first error it throws, attaching the cards created so far
-   * as `.created` so the caller can report or undo them.
+   * Never refuse on cache evidence alone — the read path settled this in
+   * `query-values`' `checkTag`, and a false refusal costs more on a write.
+   * Without the refill, the 15-minute TTL made the refusal's own advice useless:
+   * `favro tags create` then a tag write still refused. `tags` is a whole-org
+   * list, so the refill replaces nothing the message then lists.
+   *
+   * `answered` is handed the lower-cased names and the tagIds as SEPARATE sets,
+   * because the two callers key differently — create validates names only,
+   * update accepts either. One merged set made "known" mean two things at once:
+   * a tagId satisfied the names-only predicate, skipped the refill, and then
+   * failed the name lookup it had just claimed to answer.
    */
-  async createCards(cards: CreateCardRequest[]): Promise<Card[]> {
-    const created: Card[] = [];
-    for (const card of cards) {
-      try {
-        created.push(await this.createCard(card));
-      } catch (err: any) {
-        throw Object.assign(
-          new Error(`Failed creating card "${card.name}" (${created.length}/${cards.length} created): ${err.message}`),
-          { created, cause: err },
-        );
-      }
-    }
-    return created;
+  private async orgTags(answered: (names: Set<string>, ids: Set<string>) => boolean): Promise<Tag[]> {
+    const orgId = this.client.organizationId;
+    const ask = (tags: Tag[]) =>
+      answered(
+        new Set(tags.map((t) => (t.name ?? '').trim().toLowerCase())),
+        new Set(tags.map((t) => t.tagId)),
+      );
+
+    const tags = await cachedTags(this.client, orgId);
+    // No orgId means nothing was cached, so the list just fetched IS live: a
+    // refill would re-ask the same question, and the invalidate has nothing of
+    // this org's to drop.
+    if (!orgId || ask(tags)) return tags;
+    await invalidateCache(orgId, 'tags');
+    return cachedTags(this.client, orgId);
   }
 
   /**
@@ -917,20 +924,28 @@ export class CardsAPI {
     if (payload.assignees !== undefined) {
       const desired = (payload.assignees ?? []) as string[];
       delete payload.assignees;
-      // A name here would diff as "remove everyone, add a string Favro has never
-      // seen" — a wipe reported as success. Refused, never guessed at.
-      const notIds = desired.filter((v) => !isUserId(v));
-      if (notIds.length > 0) {
-        throw new Error(
-          `updateCard {assignees} takes userIds, got ${notIds.map((v) => `"${v}"`).join(', ')}. ` +
-            `A whole-array assignee write is diffed against the card's current userIds, so a name would ` +
-            `unassign everyone. Resolve names first with resolveAssignees(), or pass ` +
-            `addAssignmentIds/removeAssignmentIds.`,
-        );
+      // A name left raw would diff as "remove everyone, add a string Favro has
+      // never seen" — a wipe reported as success. So this is the ONE place a
+      // whole-array assignee write settles its names, the same closed vocabulary
+      // `createCard` uses (#59, #60): every caller that can be handed a NAME —
+      // batch-smart, bulk CSV `owner`, `cards update --assignee` — routes
+      // through here, so resolving at the chokepoint beats a guard per call
+      // site. An unresolvable name refuses (AssigneeError, a RefusalError)
+      // before any PUT leaves.
+      //
+      // `TxCards.setAssignees` is the deliberate exception: it takes `userId`s
+      // only and refuses any other shape up front, so it never reaches this
+      // resolution. Same for the undo paths, which replay ids they read back.
+      // Already-`userId`-shaped entries short-circuit: no extra read on the id
+      // path, which is what tx-cards and the undo paths hand us.
+      const desiredIds: string[] = [];
+      for (const value of desired) {
+        const id = isUserId(value) ? value : await resolveAssignee(this.client, value);
+        if (!desiredIds.includes(id)) desiredIds.push(id);
       }
       const currentIds = (await currentCard()).assignees ?? [];
-      const add = desired.filter((id) => !currentIds.includes(id));
-      const remove = currentIds.filter((id) => !desired.includes(id));
+      const add = desiredIds.filter((id) => !currentIds.includes(id));
+      const remove = currentIds.filter((id) => !desiredIds.includes(id));
       if (add.length > 0) payload.addAssignmentIds = add;
       if (remove.length > 0) payload.removeAssignmentIds = remove;
     }
@@ -940,7 +955,16 @@ export class CardsAPI {
     if (payload.tags !== undefined) {
       const desired = (payload.tags ?? []) as string[];
       delete payload.tags;
-      Object.assign(payload, await this.tagReplacement(await currentCard(), desired));
+      const delta = await this.tagReplacement(await currentCard(), desired);
+      // A name the org does not hold would go out as `addTags`, which to Favro
+      // is a tag CREATION — so on a key that holds the permission a typo on
+      // `cards update --tags` permanently pollutes the workspace tag list, and
+      // on one that does not it 403s the whole write. Refused here exactly as
+      // `cards create --tag` refuses it (#62), and for the same reason: neither
+      // wire outcome is one an agent can act on.
+      const invented = delta.addTags ?? [];
+      if (invented.length > 0) throw new RefusalError(unknownTagMessage(invented));
+      Object.assign(payload, delta);
     }
     // Favro uses PUT for card updates, not PATCH
     return this.client.put<Card>(`/cards/${cardId}`, payload, MARKDOWN_BODY);
@@ -958,20 +982,23 @@ export class CardsAPI {
    * round-trip (read a card, write its tags back, as the batch undo path does)
    * hands us ids, while a human types names.
    *
-   * A desired name unknown to the org goes out as `addTags`, letting Favro create
-   * it — or refuse with "User does not have correct permission level in
-   * workspace". Either way it is a loud outcome, not a silent no-op.
+   * A desired name unknown to the org comes back as `addTags` — the delta says
+   * "this would be a tag CREATION" and leaves the decision to the caller. Every
+   * caller refuses it: `updateCard` and `TxCards.setTags` both decline rather
+   * than let the wire invent a workspace tag (#62). Reporting it rather than
+   * throwing keeps this a pure diff, which is the whole reason it is shared.
    *
    * Public because the tx write facade needs the DELTA this computes, not just
    * its effect: a compensation entry compares per-element on our own delta, and
-   * re-deriving it there would be a second tag resolver. `TxCards.setTags`
-   * refuses a non-empty `addTags` rather than letting the wire create a tag.
+   * re-deriving it there would be a second tag resolver.
    */
   async tagReplacement(
     card: Card,
     desired: string[],
   ): Promise<{ addTags?: string[]; addTagIds?: string[]; removeTagIds?: string[] }> {
-    const orgTags = await new TagsAPI(this.client).listTags();
+    const orgTags = await this.orgTags((names, ids) =>
+      desired.every((entry) => ids.has(entry) || names.has(entry.trim().toLowerCase())),
+    );
 
     const byName = new Map(orgTags.map((t) => [t.name.toLowerCase(), t.tagId]));
     const knownIds = new Set(orgTags.map((t) => t.tagId));

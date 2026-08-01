@@ -50,6 +50,15 @@ export interface ParsedGoal {
   buildOperation: (card: Card) => CardOperation;
   /** Action summary text for preview (e.g. "→ status: Review") */
   actionSummary: string;
+  /**
+   * The raw `--goal` assignee text, present only on an `assign` goal.
+   *
+   * Parsing is synchronous and assignee resolution is not, so the caller
+   * resolves this and re-parses with the `userId` (#59). Until it does, the
+   * "already assigned to this user" skip compares a display name against
+   * `card.assignees`, which only ever holds `userId`s, and can never match.
+   */
+  targetAssignee?: string;
 }
 
 export interface BatchSummary {
@@ -83,7 +92,7 @@ export interface BatchSummary {
  *
  * @throws Error with a helpful message if the goal cannot be parsed
  */
-export function parseGoal(goal: string): ParsedGoal {
+export function parseGoal(goal: string, resolvedAssignee?: string): ParsedGoal {
   const normalized = goal.trim().toLowerCase();
 
   // ── move all [filter] cards to <status> ──
@@ -126,10 +135,15 @@ export function parseGoal(goal: string): ParsedGoal {
       .replace(/\s*no\s+owner/, '')
       .replace(/\s*unassigned/, '')
       .trim() || 'all';
-    const targetUser = assignMatch[3].trim();
+    const typedUser = assignMatch[3].trim();
+    // `card.assignees` holds userIds, so the skip and the write both need one.
+    // On the first (unresolved) pass this is still the typed name — that pass
+    // exists only to surface `targetAssignee` to the caller, which resolves it
+    // and parses again.
+    const targetUser = resolvedAssignee ?? typedUser;
     const filter = buildCardFilter(cleanFilterStr);
     return {
-      description: `Assign ${filterStr} cards to "${targetUser}"`,
+      description: `Assign ${filterStr} cards to "${typedUser}"`,
       baseCardFilter: filter,
       cardFilter: (card) => {
         // FIX BLOCKER #1: correctly check requireNoOwner — cards with owners must be skipped
@@ -145,7 +159,8 @@ export function parseGoal(goal: string): ParsedGoal {
         targetAssignee: targetUser,
         previousState: { assignees: card.assignees ?? [] },
       }),
-      actionSummary: `→ assignee: ${targetUser}`,
+      actionSummary: `→ assignee: ${typedUser}`,
+      targetAssignee: typedUser,
     };
   }
 
@@ -449,7 +464,19 @@ export function registerBatchSmartCommand(program: Command): void {
 
         // 3. Fetch cards from board
         const client = await createFavroClient();
-        
+
+        // An `assign` goal names a human; `card.assignees` are userIds. Settle
+        // the name once, here, then re-parse so both the already-assigned skip
+        // and the write are in userIds (#59). An unknown name refuses before a
+        // single card is read, let alone written.
+        if (parsedGoal.targetAssignee) {
+          const { resolveAssignee } = await import('../lib/assignee');
+          parsedGoal = parseGoal(
+            options.goal,
+            await resolveAssignee(client, parsedGoal.targetAssignee),
+          );
+        }
+
         const { readConfig } = await import('../lib/config');
         const { checkScope } = await import('../lib/safety');
         await checkScope(board, client, await readConfig(), options.force);

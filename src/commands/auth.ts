@@ -11,7 +11,7 @@
 import { Command } from 'commander';
 import FavroHttpClient from '../lib/http-client';
 import * as readline from 'readline';
-import { readConfig, writeConfig, CONFIG_FILE, resolveApiKey } from '../lib/config';
+import { readConfig, writeConfig, configFile, resolveApiKey } from '../lib/config';
 
 import { logError } from '../lib/error-handler';
 
@@ -224,7 +224,7 @@ export function registerAuthCommand(program: Command): void {
         }
 
         await writeConfig(updated);
-        console.log(`\n✓ Credentials saved to ${CONFIG_FILE}`);
+        console.log(`\n✓ Credentials saved to ${configFile()}`);
         if (!organizationId) {
           console.log('  ⚠  Organization ID not saved. Set FAVRO_ORGANIZATION_ID or re-run `favro auth login`.');
         }
@@ -249,7 +249,7 @@ export function registerAuthCommand(program: Command): void {
         }
         const { apiKey: _removed, ...rest } = existing;
         await writeConfig(rest);
-        console.log(`✓ API key removed from ${CONFIG_FILE}`);
+        console.log(`✓ API key removed from ${configFile()}`);
       } catch (err: any) {
         logError(err, verbose);
         process.exit(1);

@@ -10,6 +10,9 @@
  */
 
 import CardsAPI, { UpdateCardRequest } from './cards-api';
+import type FavroHttpClient from './http-client';
+import { resolveAssignee } from './assignee';
+import { isUserId } from './users-api';
 import { Profiler, ConcurrencyController, BenchmarkResult } from './profiling';
 
 // ---------------------------------------------------------------------------
@@ -367,6 +370,41 @@ export class BulkTransaction {
   }
 
   /**
+   * Settle every name-shaped `assignees` entry to a `userId` before the first PUT.
+   *
+   * `updateCard` is the one home for this translation and refuses an
+   * unresolvable name there (#59/#60) — but lazily, per row, mid-run. On a
+   * 500-row CSV a typo on row 400 lands 399 writes, then rolls all 399 back one
+   * best-effort PUT at a time, with `rollback-incomplete` on the table. Not
+   * doing that is the entire reason this class exists, and the whole check is
+   * one org-user read that `cachedUsers` already holds. So: same resolver, same
+   * refusal, just before the first write instead of after 399 of them (#60).
+   *
+   * The rows arrive resolved, so `updateCard`'s `isUserId` short-circuit means
+   * nothing is looked up twice.
+   */
+  private async settleAssigneeNames(): Promise<void> {
+    const pending = this.operations.filter((op) =>
+      op.changes.assignees?.some((value) => !isUserId(value)),
+    );
+    if (pending.length === 0) return;
+
+    // ponytail: CardsAPI holds the only client in reach, and this pass only
+    // moves WHEN the refusal happens — the chokepoint still refuses either way —
+    // so no client just means the old lazy behaviour, never a skipped guard.
+    const client = (this.api as unknown as { client?: FavroHttpClient }).client;
+    if (!client) return;
+
+    for (const op of pending) {
+      const settled: string[] = [];
+      for (const value of op.changes.assignees!) {
+        settled.push(isUserId(value) ? value : await resolveAssignee(client, value));
+      }
+      op.changes = { ...op.changes, assignees: settled };
+    }
+  }
+
+  /**
    * Execute all operations atomically.
    * If any operation fails, rolls back all completed operations.
    *
@@ -383,6 +421,8 @@ export class BulkTransaction {
     if (dryRun) {
       return this.preview();
     }
+
+    await this.settleAssigneeNames();
 
     const profiler = enableProfiling ? new Profiler('BulkTransaction.execute') : null;
     const completed: BulkOperation[] = [];

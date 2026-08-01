@@ -7,6 +7,7 @@ import { createFavroClient } from '../lib/client-factory';
 import { readConfig } from '../lib/config';
 import AggregateAPI, { AggregateCard } from '../api/aggregate';
 import { outputResult, resolveFormat } from '../lib/output';
+import { Unreachable } from '../lib/read-shape';
 import { logError } from '../lib/error-handler';
 
 interface BoardSummary {
@@ -22,13 +23,20 @@ interface DueSummary {
   noDueDate: number;
 }
 
-interface OverviewResult {
+export interface OverviewResult {
   scope: string;
   boardCount: number;
   totalCards: number;
   boards: BoardSummary[];
   stageDistribution: Record<string, number>;
   topBlockers: Array<{ id: string; title: string; board?: string; blockingCount: number }>;
+  /**
+   * Blockers named by a fetched card that are not themselves in the fetched
+   * set, so their rank could not be judged. Present only when there are any:
+   * an absent `unreachable` with an empty `topBlockers` means there genuinely
+   * are none, which is the distinction `read-shape.ts` exists to keep.
+   */
+  unreachableBlockers?: Unreachable[];
   dueSummary: DueSummary;
   generatedAt: string;
 }
@@ -53,40 +61,66 @@ function computeDueSummary(cards: AggregateCard[]): DueSummary {
   return { overdue, dueThisWeek, dueNextWeek, noDueDate };
 }
 
-function findTopBlockers(cards: AggregateCard[], count: number = 5) {
-  // Find cards that are blocking the most other cards
-  const blockingCount = new Map<string, { card: AggregateCard; count: number }>();
-
+/**
+ * The cards blocking the most other cards, plus the blockers we could not judge.
+ *
+ * Counting comes FIRST, over every edge, and resolution second — blocking edges
+ * are not board-scoped, so a blocker can easily live outside the fetched set,
+ * and the most impactful blocker in a workspace is plausibly exactly the one
+ * that spans boards. Resolving before counting dropped those silently (#69),
+ * which conflates "no blockers" with "we could not check". They come back as
+ * `unreachable` instead, in the `read-shape.ts` vocabulary.
+ *
+ * The counts are a LOWER BOUND for every blocker, reachable or not: an edge from
+ * a card outside the fetch was never seen at all. That is inherent to a bounded
+ * snapshot; naming the holes is what stops it being a lie.
+ */
+export function findTopBlockers(
+  cards: AggregateCard[],
+  count: number = 5,
+): { topBlockers: OverviewResult['topBlockers']; unreachable: Unreachable[] } {
+  const edgeCount = new Map<string, number>();
   for (const card of cards) {
-    if (card.blockedBy) {
-      for (const blockerId of card.blockedBy) {
-        const existing = blockingCount.get(blockerId);
-        if (existing) {
-          existing.count++;
-        } else {
-          // `blockedBy` holds `cardCommonId`s — that is all an inlined edge
-          // carries — while `id` is the `cardId`. Matching on `id` never hit.
-          const blocker = cards.find(c => c.commonId === blockerId);
-          if (blocker) {
-            blockingCount.set(blockerId, { card: blocker, count: 1 });
-          }
-        }
-      }
+    for (const blockerId of card.blockedBy ?? []) {
+      edgeCount.set(blockerId, (edgeCount.get(blockerId) ?? 0) + 1);
     }
   }
 
-  return Array.from(blockingCount.values())
-    .sort((a, b) => b.count - a.count)
-    .slice(0, count)
-    .map(b => ({
-      id: b.card.id,
-      title: b.card.title,
-      board: (b.card as any).boardName,
-      blockingCount: b.count,
-    }));
+  // `blockedBy` holds `cardCommonId`s — that is all an inlined edge carries —
+  // while `id` is the `cardId`. Matching on `id` never hit.
+  const byCommonId = new Map(cards.filter(c => c.commonId).map(c => [c.commonId!, c]));
+
+  const topBlockers: OverviewResult['topBlockers'] = [];
+  const unreachable: Unreachable[] = [];
+
+  for (const [blockerId, n] of [...edgeCount].sort((a, b) => b[1] - a[1])) {
+    const blocker = byCommonId.get(blockerId);
+    if (!blocker) {
+      unreachable.push({
+        id: blockerId,
+        reason:
+          `blocks ${n} card(s) in this scope, but the blocking card is outside the fetched set ` +
+          `(blocking edges are not board-scoped), so it could not be ranked or named.`,
+      });
+      continue;
+    }
+    if (topBlockers.length < count) {
+      topBlockers.push({
+        id: blocker.id,
+        title: blocker.title,
+        board: blocker.boardName,
+        blockingCount: n,
+      });
+    }
+  }
+
+  return { topBlockers, unreachable };
 }
 
-function formatHuman(data: OverviewResult): string {
+/** How many unreachable blockers the human render names before summarising. */
+const UNREACHABLE_HUMAN_LIMIT = 5;
+
+export function formatHuman(data: OverviewResult): string {
   const lines: string[] = [];
   lines.push(`Overview — ${data.scope}`);
   lines.push(`  Boards: ${data.boardCount}  Cards: ${data.totalCards}\n`);
@@ -106,6 +140,23 @@ function formatHuman(data: OverviewResult): string {
     lines.push('\n  Top Blockers:');
     for (const b of data.topBlockers) {
       lines.push(`    • ${b.title} — blocking ${b.blockingCount} card(s) (${b.board})`);
+    }
+  }
+
+  if (data.unreachableBlockers?.length) {
+    // Never let the ranking above read as complete when it is not — but the
+    // count in this header is what carries that, not the lines under it. Across
+    // ~20 boards cross-board edges are routine and this list runs to hundreds of
+    // ~150-char lines that differ only in an id and a number, drowning a ranking
+    // of five. Shown at the ranking's own horizon; the rest is a remainder, and
+    // `--json` still carries every one for a machine reader.
+    const all = data.unreachableBlockers;
+    lines.push(`\n  Not ranked — ${all.length} blocker(s) outside this scope:`);
+    for (const u of all.slice(0, UNREACHABLE_HUMAN_LIMIT)) {
+      lines.push(`    • ${u.id} — ${u.reason}`);
+    }
+    if (all.length > UNREACHABLE_HUMAN_LIMIT) {
+      lines.push(`    … +${all.length - UNREACHABLE_HUMAN_LIMIT} more (use --json for all)`);
     }
   }
 
@@ -165,13 +216,16 @@ export function registerOverviewCommand(program: Command): void {
           stageDistribution[stage] = (stageDistribution[stage] ?? 0) + 1;
         }
 
+        const blockers = findTopBlockers(snapshot.allCards);
+
         const result: OverviewResult = {
           scope,
           boardCount: boards.length,
           totalCards: snapshot.allCards.length,
           boards,
           stageDistribution,
-          topBlockers: findTopBlockers(snapshot.allCards),
+          topBlockers: blockers.topBlockers,
+          ...(blockers.unreachable.length > 0 ? { unreachableBlockers: blockers.unreachable } : {}),
           dueSummary: computeDueSummary(snapshot.allCards),
           generatedAt: new Date().toISOString(),
         };

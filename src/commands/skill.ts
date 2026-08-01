@@ -133,8 +133,19 @@ export function registerSkillCommands(program: Command): void {
           const total = result.steps.length;
           console.log(`\n${result.status === 'completed' ? '✓' : '✗'} Skill "${result.skill}" ${result.status} (${completed}/${total} steps)`);
           // The run is one transaction: report the whole-run unwind, not per step.
-          if (result.rollback?.outcome === 'rolled-back') {
+          // The advice reads `retryable`, the table's one derivation — a clean
+          // unwind around a deterministic refusal is undone AND not worth
+          // repeating, and re-deriving it from the outcome here said the
+          // opposite (#66).
+          // Gated on the outcome too: only `rolled-back` means a clean unwind,
+          // so only it may print "the whole run was undone".
+          if (result.rollback?.outcome === 'rolled-back' && result.rollback.retryable) {
             console.log('  Rolled back — the whole run was undone, so it is safe to retry.');
+          } else if (result.rollback?.outcome === 'rolled-back') {
+            console.error(
+              '  Rolled back — the whole run was undone, but the failure is deterministic: ' +
+                'the same run will fail the same way. Do NOT retry it unchanged.',
+            );
           } else if (result.rollback) {
             console.error('  Rollback incomplete — do NOT retry. Left behind:');
             for (const orphan of result.rollback.orphans) console.error(`    - ${orphan.reason}`);

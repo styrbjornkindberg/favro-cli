@@ -415,6 +415,16 @@ beforeAll(() => {
     },
   });
   registerIntent({
+    name: 'probe-refuse-after-write',
+    summary: 'writes, then refuses deterministically',
+    preview: (a: any) => [`move ${a.card}, then refuse`],
+    board: async (a: any, tx: TxCards) => (await tx.getCard(a.card)).boardId,
+    run: async (a: any, tx: TxCards) => {
+      await tx.moveColumn(a.card, a.to);
+      throw new RefusalError('probe refuses, after writing');
+    },
+  });
+  registerIntent({
     name: 'probe-fail',
     summary: 'fails without writing anything',
     preview: () => ['fail'],
@@ -1192,6 +1202,104 @@ describe('a deterministic refusal is never dressed up as a retryable rollback', 
   });
 });
 
+describe('a deterministic WIRE refusal is not retryable either (#66)', () => {
+  /**
+   * Three creates where the wire refuses the third. The unwind always succeeds
+   * — the two earlier cards are deleted — so the OUTCOME is `rolled-back` every
+   * time and the only thing under test is the retry advice that rides with it.
+   */
+  async function batchRefusedBy(status: number, message: string) {
+    let posts = 0;
+    const stand = await startServer({
+      fail: (r) => {
+        if (r.method !== 'POST' || r.path !== '/cards') return undefined;
+        posts += 1;
+        return posts === 3 ? { status, message } : undefined;
+      },
+    });
+    const before = stand.cards.size;
+    const result = await dispatch<Card[]>('create', {
+      cards: [{ name: 'One', board: BOARD }, { name: 'Two', board: BOARD }, { name: 'Three', board: BOARD }],
+    }, ctx(stand));
+    // Read back, not counted: the world really is where it started.
+    expect(result.outcome).toBe('rolled-back');
+    expect(stand.cards.size).toBe(before);
+    return result;
+  }
+
+  it.each([
+    ['a bad-input rejection', 403, 'Invalid column'],
+    ['an already-exists conflict', 403, 'Dependency already exists'],
+    ['an unrecognised 403, refused as permission', 403, 'Insufficient privileges'],
+    ['a missing target', 403, 'Access denied'],
+    ['rejected credentials', 401, 'Bad token'],
+  ])('%s rolls back cleanly and is still NOT retryable', async (_what, status, message) => {
+    // The whole point of #66: a clean unwind says the world is unchanged, which
+    // is NOT the same as saying the call is worth making again. Every message
+    // here is one Favro will send again, verbatim, for the same request — an
+    // agent told "safe to retry" would create, be refused, unwind, forever.
+    const result = await batchRefusedBy(status, message);
+    expect(result.retryable).toBe(false);
+  });
+
+  it('a failure we cannot NAME stays retryable — the rule is narrow on purpose', async () => {
+    // The discriminator. `retryable: false` is claimed only where the closed
+    // message set (or a 401) actually identifies a deterministic refusal;
+    // anything unnamed — a 5xx, a timeout, a bug in our own code — keeps the
+    // rolled-back-is-retryable reading, because the world IS back where it
+    // started and the next call may well behave differently.
+    const result = await batchRefusedBy(400, 'Something we have never probed');
+    expect(result.retryable).toBe(true);
+  });
+
+  it('a 429 mid-batch is absorbed by the client, not turned into an unwind', async () => {
+    // #67 deleted the only assertion that pinned 429 through the multi-create
+    // path. `http-client` retries 429 generically, but nothing proved these
+    // POSTs go through it — a raw client here would abort a transaction that
+    // Favro merely asked us to slow down, and every earlier card would be
+    // deleted for nothing. One transient 429 on the second create: all three
+    // cards must exist and the outcome must be `ok`.
+    let posts = 0;
+    const stand = await startServer({
+      fail: (r) => {
+        if (r.method !== 'POST' || r.path !== '/cards') return undefined;
+        posts += 1;
+        return posts === 2 ? { status: 429, message: 'Rate limit exceeded' } : undefined;
+      },
+    });
+    const before = stand.cards.size;
+    const result = await dispatch<Card[]>('create', {
+      cards: [{ name: 'One', board: BOARD }, { name: 'Two', board: BOARD }, { name: 'Three', board: BOARD }],
+    }, ctx(stand));
+
+    expect(result.outcome).toBe('ok');
+    expect(stand.cards.size).toBe(before + 3);
+  }, 20000);
+
+  it('a plain in-process failure after a write is still retryable', async () => {
+    // Same discriminator from the other side: `probe-chain` throws an ordinary
+    // Error carrying no HTTP response at all.
+    const stand = await startServer();
+    const result = await dispatch('probe-chain', { card: CARD, to: 'Doing', tags: ['bug'] }, ctx(stand));
+
+    expect(result.outcome).toBe('rolled-back');
+    expect(result.retryable).toBe(true);
+  });
+
+  it('a refusal raised AFTER this invocation wrote unwinds, and is not retryable', async () => {
+    // A `RefusalError` before the first write throws (covered above). Raised
+    // after one, it unwinds like any failure — but it is still the deterministic
+    // decline it always was, so the advice must not flip just because an orphan
+    // check happened to pass.
+    const stand = await startServer();
+    const result = await dispatch('probe-refuse-after-write', { card: CARD, to: 'Doing' }, ctx(stand));
+
+    expect(result.outcome).toBe('rolled-back');
+    expect(result.retryable).toBe(false);
+    expect(stand.cards.get(CARD)!.columnId).toBe(TODO);
+  });
+});
+
 describe('there is no fourth outcome', () => {
   it('every result carries one of exactly three outcomes', async () => {
     const stand = await startServer();
@@ -1384,7 +1492,9 @@ describe('multi-create is one bounded transaction over an enumerated list', () =
     }, ctx(stand));
 
     expect(result.outcome).toBe('rolled-back');
-    expect(result.retryable).toBe(true);
+    // NOT retryable, even though the unwind was clean: `403 "Invalid column"` is
+    // a bad-input rejection, so the identical batch is refused identically (#66).
+    expect(result.retryable).toBe(false);
     // Every card created before the failure has its own undo handle, so the
     // wire is back where it started — read back, not counted.
     expect(stand.cards.size).toBe(before);

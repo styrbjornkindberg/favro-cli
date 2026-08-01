@@ -43,7 +43,7 @@
  * There is no opt-out flag on the guard. Under the honest-failure posture that
  * would be a licence to clobber in silence.
  */
-import CardsAPI, { Card, CardLink, CreateCardRequest } from './cards-api';
+import CardsAPI, { Card, CardLink, CreateCardRequest, unknownTagMessage } from './cards-api';
 import FavroHttpClient from './http-client';
 import { classifyThrownError } from './favro-error';
 import { isUserId } from './users-api';
@@ -60,8 +60,13 @@ import { RefusalError } from './refusal';
  * Three outcomes, no fourth.
  *
  * - `ok` — the write applied.
- * - `rolled-back` — it failed and every compensating write landed. **Retryable.**
- * - `rollback-incomplete` — the unwind left something behind. **Not retryable.**
+ * - `rolled-back` — it failed and every compensating write landed.
+ * - `rollback-incomplete` — the unwind left something behind. **Never retryable.**
+ *
+ * The outcome does NOT settle retryability, and `rolled-back` on its own does
+ * not mean "try again": a deterministic wire refusal unwinds perfectly cleanly.
+ * `isRetryable` in `dispatch.ts` is the single answer, reported as
+ * `DispatchResult.retryable` — read that, never the outcome (see #66).
  *
  * A pre-write refusal (scope lock, resolver, unknown intent) is deliberately not
  * an outcome here: it throws, so there is nothing to roll back and nothing to
@@ -196,7 +201,33 @@ export interface CompensationEntry {
   applyInverse(restorable: Restorable): Promise<void>;
 }
 
-/** A 404 on the inverse means the thing we would undo is already undone. */
+/**
+ * The thing we would undo is already undone.
+ *
+ * `favro-error.ts` is the ONE place not-found is decided, and it decides on the
+ * MESSAGE — Favro's status says nothing, and its closed set is default-refuse
+ * on purpose. The raw-404 arm below is the single documented exception, and it
+ * is load-bearing rather than a fast path (#68):
+ *
+ *   `unlinkCard` is measured to answer `404 "Dependency not found"` once the
+ *   edge is gone (see `CardsAPI.unlinkCard`), and that message is not in the
+ *   closed set. That 404 is the ROUTINE case, not an exceptional one — the edge
+ *   compare in `compareBeforeRestore` deliberately sends the inverse delete at
+ *   an absent edge and counts the 404 as success. On the message alone it would
+ *   classify `unknown`, so an ordinary concurrent removal would surface as a
+ *   false `compensation-failed` orphan and downgrade a correct, retryable
+ *   `rolled-back` to `rollback-incomplete`.
+ *
+ * The arm is scoped to the inverses this log applies, all of which are settled
+ * `/cards/{cardId}` writes: `DELETE /cards/{id}`, `PUT /cards/{id}`,
+ * `POST|DELETE /cards/{id}/dependencies[/{far}]`. A 404 on any of those means
+ * the card or the edge is gone, which is what an inverse wants to hear. It is
+ * NOT a general not-found rule and must not be copied elsewhere.
+ *
+ * If #58 widens the closed set to cover `Dependency not found`, this arm
+ * becomes redundant and should go — `tx-cards-unwind-wire.test.ts` pins the
+ * behaviour either way.
+ */
 function alreadyGone(error: unknown): boolean {
   const status = (error as { response?: { status?: number } })?.response?.status;
   if (status === 404) return true;
@@ -429,19 +460,15 @@ export class TxCards {
    *
    * An entry the org does not know would go out as `addTags`, which is a tag
    * *creation* — refused here, exactly as `cards create` refuses it, so a typo
-   * never invents a tag on a permissive key.
+   * never invents a tag on a permissive key. The wording comes from
+   * `unknownTagMessage` rather than a copy, so this refusal and the create /
+   * update ones cannot drift (#62).
    */
   async setTags(cardRef: string, desired: string[]): Promise<Card> {
     const before = await this.api.getCard(cardRef);
     const delta = await this.api.tagReplacement(before, desired);
-    if ((delta.addTags ?? []).length > 0) {
-      throw new RefusalError(
-        `Unknown tag ${(delta.addTags ?? []).map((n) => `"${n}"`).join(', ')} — no workspace tag has that name. ` +
-          `Refusing to create it: on a write Favro treats an unknown name as a new tag, so a typo either ` +
-          `invents a tag or 403s depending on this key's permissions. ` +
-          `Run 'favro tags list' to see the workspace tags, or 'favro tags create' to add it first.`,
-      );
-    }
+    const invented = delta.addTags ?? [];
+    if (invented.length > 0) throw new RefusalError(unknownTagMessage(invented));
     const added = delta.addTagIds ?? [];
     const removed = delta.removeTagIds ?? [];
     const cardId = before.cardId;

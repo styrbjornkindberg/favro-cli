@@ -43,7 +43,6 @@ function buildMockApi(overrides: Partial<{
     getCardLinks: mockGetCardLinks,
     listCards: jest.fn(),
     createCard: jest.fn(),
-    createCards: jest.fn(),
     updateCard: jest.fn(),
     deleteCard: jest.fn(),
     searchCards: jest.fn(),

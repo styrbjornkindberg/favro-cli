@@ -70,7 +70,10 @@ const BOARDS = [
   },
 ];
 
-function startServer(): Promise<Stand> {
+/** A wire-level refusal a test injects, decided per request. */
+type FailHook = (r: Received) => { status: number; message: string } | undefined;
+
+function startServer(opts: { fail?: FailHook } = {}): Promise<Stand> {
   const received: Received[] = [];
   const cards = new Map<string, StoredCard>();
   let created = 0;
@@ -92,6 +95,9 @@ function startServer(): Promise<Stand> {
         res.writeHead(status, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(body));
       };
+
+      const injected = opts.fail?.(r);
+      if (injected) return send(injected.status, { message: injected.message });
 
       const single = pathOnly.match(/^\/cards\/([^/]+)$/);
       if (single) {
@@ -304,6 +310,9 @@ describe('the run is ONE transaction — one log, threaded through every step', 
     expect(result.status).toBe('failed');
     expect(result.rollback?.outcome).toBe('rolled-back');
     expect(result.rollback?.orphans).toEqual([]);
+    // An ordinary in-process failure carries no wire classification, so the
+    // rolled-back-is-retryable reading stands. The discriminator for #66.
+    expect(result.rollback?.retryable).toBe(true);
     // What a caller can see afterwards: the card step 1 made is gone.
     expect(stand.cards.size).toBe(0);
     expect(stand.received.some((r) => r.method === 'DELETE' && r.path === '/cards/new-card-1')).toBe(true);
@@ -362,7 +371,39 @@ describe('the run is ONE transaction — one log, threaded through every step', 
     expect(result.status).toBe('failed');
     expect(result.steps[1].error).toBe('probe refuses, and will refuse again');
     expect(result.rollback?.outcome).toBe('rolled-back');
+    // Undone, and still not worth repeating: the refusal that ended the run is
+    // deterministic, so re-running the whole skill refuses at step 2 again (#66).
+    // This is the END-OF-RUN unwind path — the engine's own, not the table's.
+    expect(result.rollback?.retryable).toBe(false);
     // Step 1's card is gone, exactly once.
+    expect(stand.cards.size).toBe(0);
+    expect(stand.received.filter((r) => r.method === 'DELETE')).toHaveLength(1);
+  });
+
+  it('a deterministic WIRE refusal in step 2 undoes step 1 and is NOT retryable', async () => {
+    // The other path into `rollback`: the table unwound this one itself and the
+    // engine carries its verdict rather than re-deriving one. `403 "Invalid
+    // column"` is a bad-input rejection, so the identical run is refused
+    // identically — an agent told "safe to retry" loops on it.
+    const stand = await startServer({
+      fail: (r) =>
+        r.method === 'POST' && r.path === '/cards' && r.body?.name === 'second'
+          ? { status: 403, message: 'Invalid column' }
+          : undefined,
+    });
+
+    const result = await runSkill(
+      skill(
+        { command: 'create', args: { name: 'first', board: BOARD } },
+        { command: 'create', args: { name: 'second', board: BOARD } },
+      ),
+      opts(stand),
+    );
+
+    expect(result.status).toBe('failed');
+    expect(result.rollback?.outcome).toBe('rolled-back');
+    expect(result.rollback?.retryable).toBe(false);
+    // Read back: step 1's card really is gone from the wire.
     expect(stand.cards.size).toBe(0);
     expect(stand.received.filter((r) => r.method === 'DELETE')).toHaveLength(1);
   });

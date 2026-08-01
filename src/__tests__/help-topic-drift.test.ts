@@ -16,11 +16,12 @@ import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs';
 
-// `config.ts` freezes `CONFIG_DIR` from the environment at IMPORT time, so this
-// has to be set before anything that reaches `readConfig` is loaded — a
-// `beforeEach` would be too late and a stray read would pick up the developer's
-// own `~/.favro/config.json` (issue #65). Nothing here talks to a network, but
-// building the program imports the whole command tree.
+// Set at module scope, before the command tree is imported. `config.ts` reads
+// the environment per call now (#65 unfroze it), so a `beforeEach` would work
+// for `readConfig` — but building the program imports every command, and any
+// module that captures a path at import time would still land on the
+// developer's own `~/.favro`. Earliest possible is the safe place for it.
+// Nothing here talks to a network.
 const CONFIG_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'favro-cli-drift-config-'));
 fs.writeFileSync(path.join(CONFIG_DIR, 'config.json'), '{}');
 process.env.FAVRO_CONFIG_DIR = CONFIG_DIR;

@@ -321,6 +321,10 @@ describe('a chain reference that cannot resolve fails loudly', () => {
     // And the run is one transaction, so step 1's card is gone.
     expect(stand.cards.size).toBe(0);
     expect(result.rollback?.outcome).toBe('rolled-back');
+    // An interpolation failure is an ordinary in-process throw carrying no wire
+    // classification, so the end-of-run unwind still reports it as retryable —
+    // the discriminator that keeps #66's rule from collapsing into "never".
+    expect(result.rollback?.retryable).toBe(true);
   });
 
   it('a capture referenced whole, not by field, refuses rather than blobbing JSON', async () => {
@@ -370,8 +374,9 @@ describe('chaining does not weaken the run-is-one-transaction contract', () => {
     // earlier creates are gone from the wire. It does NOT distinguish the
     // refusal-throws path from a depth-compared-against-a-constant mutation —
     // at skill level both are identical (same message, same `rolled-back`, same
-    // two DELETEs; the only differing field, `DispatchResult.retryable`, is not
-    // carried by `SkillRunResult`). The guard on depth-at-entry vs a constant
+    // two DELETEs, and since #66 the same `retryable: false` by either route,
+    // because a refusal is deterministic wherever it is caught). The guard on
+    // depth-at-entry vs a constant
     // lives in `dispatch-tx-wire.test.ts` — do not read this test as covering it.
     expect(result.steps[2].error).toBe('probe refuses, and will refuse again');
     expect(result.status).toBe('failed');

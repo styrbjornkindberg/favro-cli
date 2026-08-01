@@ -9,8 +9,8 @@
  */
 import fs from 'fs';
 import path from 'path';
-import os from 'os';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
+import { configDir } from './config';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -49,7 +49,14 @@ export interface SkillInfo {
 
 // ─── Paths ────────────────────────────────────────────────────────────────────
 
-const USER_SKILLS_DIR = path.join(os.homedir(), '.favro', 'skills');
+/**
+ * User skills directory. Resolved per call, not at import: a frozen constant
+ * ignored FAVRO_CONFIG_DIR entirely, so tests wrote into the developer's real
+ * ~/.favro/skills (issue #65, same class of bug as config.ts).
+ */
+function userSkillsDir(): string {
+  return path.join(configDir(), 'skills');
+}
 
 function getBuiltinSkillsDir(): string {
   // Resolve relative to this file — works in both src/ and dist/
@@ -93,11 +100,11 @@ export function listSkills(): SkillInfo[] {
   }
 
   // Load user skills (override builtin)
-  if (fs.existsSync(USER_SKILLS_DIR)) {
-    for (const file of fs.readdirSync(USER_SKILLS_DIR)) {
+  if (fs.existsSync(userSkillsDir())) {
+    for (const file of fs.readdirSync(userSkillsDir())) {
       if (!file.endsWith('.yaml') && !file.endsWith('.yml')) continue;
       const name = file.replace(/\.ya?ml$/, '');
-      const fullPath = path.join(USER_SKILLS_DIR, file);
+      const fullPath = path.join(userSkillsDir(), file);
       try {
         const def = loadSkillFromFile(fullPath);
         skills.set(name, {
@@ -120,7 +127,7 @@ export function listSkills(): SkillInfo[] {
  */
 export function loadSkill(name: string): SkillDefinition {
   // Check user skills first
-  const userPath = path.join(USER_SKILLS_DIR, `${name}.yaml`);
+  const userPath = path.join(userSkillsDir(), `${name}.yaml`);
   if (fs.existsSync(userPath)) {
     return loadSkillFromFile(userPath);
   }
@@ -177,8 +184,8 @@ export function loadSkillFromFile(filePath: string): SkillDefinition {
  * Save a skill definition to the user skills directory.
  */
 export function saveSkill(skill: SkillDefinition): string {
-  ensureDir(USER_SKILLS_DIR);
-  const filePath = path.join(USER_SKILLS_DIR, `${skill.name}.yaml`);
+  ensureDir(userSkillsDir());
+  const filePath = path.join(userSkillsDir(), `${skill.name}.yaml`);
 
   const yamlContent = stringifyYaml({
     name: skill.name,
@@ -202,7 +209,7 @@ export function saveSkill(skill: SkillDefinition): string {
  * Delete a user skill by name. Cannot delete builtin skills.
  */
 export function deleteSkill(name: string): void {
-  const userPath = path.join(USER_SKILLS_DIR, `${name}.yaml`);
+  const userPath = path.join(userSkillsDir(), `${name}.yaml`);
   if (!fs.existsSync(userPath)) {
     throw new Error(`User skill not found: "${name}". Only user skills can be deleted.`);
   }
@@ -248,14 +255,14 @@ export function importSkill(yamlContent: string): SkillDefinition {
  * Get the user skills directory path (for opening in editor, etc.)
  */
 export function getUserSkillsDir(): string {
-  return USER_SKILLS_DIR;
+  return userSkillsDir();
 }
 
 /**
  * Get the path to a specific skill file (user or builtin).
  */
 export function getSkillPath(name: string): string {
-  const userPath = path.join(USER_SKILLS_DIR, `${name}.yaml`);
+  const userPath = path.join(userSkillsDir(), `${name}.yaml`);
   if (fs.existsSync(userPath)) return userPath;
 
   const builtinPath = path.join(getBuiltinSkillsDir(), `${name}.yaml`);

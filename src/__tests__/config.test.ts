@@ -9,7 +9,7 @@
  * - resolveApiKey respects priority: flag > env > config
  * - Permission error handling
  */
-import { readConfig, writeConfig, loadConfig, resolveApiKey, CONFIG_FILE, CONFIG_DIR } from '../lib/config';
+import { readConfig, writeConfig, loadConfig, resolveApiKey, configFile, configDir } from '../lib/config';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
@@ -73,9 +73,9 @@ describe('writeConfig', () => {
     const config = { apiKey: 'my-api-key', defaultBoard: 'board-1' };
     await writeConfig(config);
 
-    expect(mockFs.mkdir).toHaveBeenCalledWith(CONFIG_DIR, { recursive: true });
+    expect(mockFs.mkdir).toHaveBeenCalledWith(configDir(), { recursive: true });
     expect(mockFs.writeFile).toHaveBeenCalledWith(
-      CONFIG_FILE,
+      configFile(),
       JSON.stringify(config, null, 2),
       { mode: 0o600 }
     );
@@ -246,25 +246,18 @@ describe('FAVRO_CONFIG_DIR override', () => {
   afterEach(() => {
     if (orig === undefined) delete process.env.FAVRO_CONFIG_DIR;
     else process.env.FAVRO_CONFIG_DIR = orig;
-    jest.resetModules();
   });
 
-  test('CONFIG_DIR/CONFIG_FILE honor FAVRO_CONFIG_DIR when set', () => {
+  test('configDir/configFile honor FAVRO_CONFIG_DIR set AFTER import (issue #65)', () => {
     process.env.FAVRO_CONFIG_DIR = '/tmp/custom-favro';
-    jest.resetModules();
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const cfg = require('../lib/config');
-    expect(cfg.CONFIG_DIR).toBe('/tmp/custom-favro');
-    expect(cfg.CONFIG_FILE).toBe(path.join('/tmp/custom-favro', 'config.json'));
+    expect(configDir()).toBe('/tmp/custom-favro');
+    expect(configFile()).toBe(path.join('/tmp/custom-favro', 'config.json'));
   });
 
   test('defaults to ~/.favro when FAVRO_CONFIG_DIR is unset', () => {
     delete process.env.FAVRO_CONFIG_DIR;
-    jest.resetModules();
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const cfg = require('../lib/config');
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const os = require('os');
-    expect(cfg.CONFIG_DIR).toBe(path.join(os.homedir(), '.favro'));
+    expect(configDir()).toBe(path.join(os.homedir(), '.favro'));
   });
 });
