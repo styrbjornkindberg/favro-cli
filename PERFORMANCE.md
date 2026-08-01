@@ -27,9 +27,15 @@ operation performance.
 ### Tools
 
 - **`src/lib/profiling.ts`** — Custom profiler with named span tracking, throughput
-  calculation, and heap memory measurement
-- **Jest performance tests** — `tests/integration/performance.test.ts` with both
-  mock-API benchmarks (CI-safe) and real-API integration tests
+  calculation, and heap memory measurement. Covered by
+  `src/__tests__/lib/profiling.test.ts`.
+- **No standing benchmark harness.** `tests/integration/performance.test.ts` was
+  deleted in #71 along with the rest of `tests/`. Its mock-API benchmarks asserted
+  a 30-second and a 5-minute ceiling against a mocked client — they took ~3s to
+  prove nothing about real latency, and its real-API tests were env-gated so CI
+  never ran them. The numbers recorded below are historical measurements, kept
+  because they are the basis of the recommendations; they are not re-verified on
+  each run.
 
 ### Approach
 
@@ -43,12 +49,14 @@ operation performance.
 
 ### How to Profile
 
-```bash
-# Run all performance tests (mock API, CI-safe):
-pnpm test:integration --testPathPattern=performance
+There is no `test:integration` script any more. To take a fresh measurement, use
+the profiler directly against a real board — a mocked client cannot produce a
+number worth recording here:
 
-# With real API (required for real numbers):
-FAVRO_API_TOKEN=xxx FAVRO_TEST_BOARD_ID=yyy pnpm test:integration --testPathPattern=performance
+```bash
+# The profiler is a library, not a test. Wrap the operation you care about:
+#   import { profile } from './src/lib/profiling';
+# and run it against a real board with real credentials.
 ```
 
 ---
@@ -313,10 +321,12 @@ consistency is acceptable.
 
 ---
 
-## Skipped Tests (Real API Required)
+## Unverified Claims (No Longer Covered By Any Test)
 
-Three tests in `tests/integration/performance.test.ts` are skipped unless `FAVRO_API_TOKEN`
-and `FAVRO_TEST_BOARD_ID` environment variables are set:
+These three checks lived in `tests/integration/performance.test.ts`, gated behind
+`FAVRO_API_TOKEN` + `FAVRO_TEST_BOARD_ID`. CI never ran them, and #71 deleted the
+file. **Nothing verifies them today** — they are listed here so the gap is visible
+rather than implied:
 
 | Test | Why Skipped | What It Verifies |
 |------|-------------|-----------------|
@@ -324,16 +334,14 @@ and `FAVRO_TEST_BOARD_ID` environment variables are set:
 | `measures custom field cache effectiveness` | Requires real board with custom fields | Cache miss=API roundtrip, hit=0ms (verifies real cache benefit) |
 | `pre-warming cache reduces N+1 for batch custom field lookups` | Requires real board with custom fields | preWarmCache() → ≥10 subsequent hits with 0 API calls |
 
-These tests cover the **critical path for N+1 elimination** — the primary performance
-optimization in this release. They cannot be replaced by mocks without losing the
-validation that the real API behaves as assumed.
+These covered the **critical path for N+1 elimination**, and the point stands: they
+cannot be replaced by mocks without losing the validation that the real API behaves
+as assumed. That is also why deleting them lost nothing CI had — an env-gated test
+that never runs is a claim, not a check.
 
-**To run skipped tests:**
-```bash
-export FAVRO_API_TOKEN=<your_token>
-export FAVRO_TEST_BOARD_ID=<your_board_id>
-pnpm test:integration --testPathPattern=performance
-```
+If N+1 behaviour needs to be pinned again, it wants a real-API probe run
+deliberately (the shape `scripts/probe-favro-errors.ts` uses), not a test file that
+skips itself into silence.
 
 ---
 
@@ -437,14 +445,14 @@ See [Concurrency Safety](#concurrency-safety).
 
 ## Testing
 
-Performance tests live in `tests/integration/performance.test.ts`.
+There is no performance test suite. `src/__tests__/lib/profiling.test.ts` covers the
+profiler itself — span durations and derived throughput, the custom-field cache's
+hit/miss counters, and that concurrency is actually concurrent (it asserts more than
+one span overlaps, so a fully sequential implementation fails). It does **not**
+exercise nested spans, and nothing asserts a latency budget.
 
 ```bash
-# Run performance tests (mock API, CI-safe):
-pnpm test:integration --testPathPattern=performance
-
-# Run with real API (requires env vars):
-FAVRO_API_TOKEN=xxx FAVRO_TEST_BOARD_ID=yyy pnpm test:integration --testPathPattern=performance
+npm test    # the whole suite, including the profiler's own tests
 ```
 
 ### Test Coverage

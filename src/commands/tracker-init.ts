@@ -24,7 +24,11 @@ import TagsAPI, { TagLookupError } from '../lib/tags-api';
 import { createFavroClient } from '../lib/client-factory';
 import { logError } from '../lib/error-handler';
 import { detectStage, proposeColumnMapping, WorkflowStage } from '../lib/workflow-stage';
+import { classifyThrownError } from '../lib/favro-error';
+import { invalidateCache } from '../lib/name-cache';
 import {
+  CATEGORY_TAGS,
+  STATE_TAGS,
   TrackerConfigError,
   TrackerMapping,
   TRIAGE_TAGS,
@@ -59,27 +63,80 @@ export interface InitTrackerResult {
 }
 
 /**
- * Provision the triage vocabulary. A tag that already exists is left exactly as
- * it is — including an ambiguous name, where Favro has two ids behind one
- * visible name and creating a third would make it worse.
+ * Look the vocabulary up, recording what is already there, and answer with the
+ * names nothing in the org holds. An ambiguous name counts as present — Favro
+ * has two ids behind one visible name and creating a third would make it worse.
  */
-async function provisionTags(client: FavroHttpClient): Promise<InitTrackerResult['tags']> {
-  const api = new TagsAPI(client);
-  const tags: InitTrackerResult['tags'] = { existing: [], created: [], ambiguous: [] };
-
-  for (const name of TRIAGE_TAGS) {
+async function findTags(
+  api: TagsAPI,
+  names: readonly string[],
+  tags: InitTrackerResult['tags']
+): Promise<string[]> {
+  const missing: string[] = [];
+  for (const name of names) {
     try {
       await api.getTag(name);
       tags.existing.push(name);
     } catch (error) {
       if (!(error instanceof TagLookupError)) throw error;
-      if (error.kind === 'ambiguous') {
-        tags.ambiguous.push(name);
-        continue;
-      }
+      if (error.kind === 'ambiguous') tags.ambiguous.push(name);
+      else missing.push(name);
+    }
+  }
+  return missing;
+}
+
+/**
+ * Provision the triage vocabulary — LOOK UP first, create only what is genuinely
+ * absent (#72).
+ *
+ * Favro tags are organization-level, so minting one is an admin operation and
+ * the key running `tracker init` usually cannot: an unknown name offered on a
+ * write is a *creation*, refused 403 "User does not have correct permission
+ * level in workspace". The normal case in an administered org is that the seven
+ * already exist, and then this asks Favro for nothing it may refuse.
+ *
+ * A name the cached list misses is re-asked once against a fresh one, the same
+ * refresh-on-miss `CardsAPI.orgTags` does: a 15-minute-old cache cannot tell
+ * "the admin has not added it" from "we have not looked since" — which is also
+ * what made a second `init` inside the TTL re-attempt every creation.
+ */
+async function provisionTags(client: FavroHttpClient): Promise<InitTrackerResult['tags']> {
+  const api = new TagsAPI(client);
+  const tags: InitTrackerResult['tags'] = { existing: [], created: [], ambiguous: [] };
+
+  let missing = await findTags(api, TRIAGE_TAGS, tags);
+  if (missing.length > 0) {
+    await invalidateCache(client.organizationId, 'tags');
+    missing = await findTags(api, missing, tags);
+  }
+
+  // Every refusal is collected before any is reported: a key that cannot create
+  // one tag cannot create any, and a list the user can hand to an admin in one
+  // go beats seven round-trips discovering them one at a time.
+  const refused: string[] = [];
+  let denial = '';
+  for (const name of missing) {
+    try {
       await api.createTag(name);
       tags.created.push(name);
+    } catch (error) {
+      const classification = classifyThrownError(error);
+      if (classification?.kind !== 'permission') throw error;
+      denial = classification.raw ?? classification.message;
+      refused.push(name);
     }
+  }
+
+  if (refused.length > 0) {
+    throw new TrackerConfigError(
+      `The triage vocabulary is incomplete and this key cannot create the missing tags: ${refused.join(', ')}.\n` +
+        `Favro tags are organization-level, so creating one is an admin operation — Favro refused it: "${denial}".\n` +
+        (tags.created.length > 0 ? `Created before the refusal: ${tags.created.join(', ')}.\n` : '') +
+        `Ask someone who can to run 'favro tags create "${refused[0]}"' for each, then re-run 'favro tracker init'. ` +
+        `All seven are needed: 'retag' requires exactly one of ${CATEGORY_TAGS.join('/')} and one of ${STATE_TAGS.join('/')}.`,
+      'missing'
+    );
   }
   return tags;
 }
@@ -98,21 +155,11 @@ export async function initTracker(
   let boardId: string;
   let boardName: string;
   let scaffolded = false;
+  let chosen: { boardId: string; name: string } | undefined;
 
-  if (boards.length === 0) {
-    const created = await boardsApi.createBoardInCollection(collectionId, {
-      name: wanted || DEFAULT_BOARD_NAME,
-      type: 'board',
-    });
-    boardId = created.boardId;
-    boardName = created.name;
-    scaffolded = true;
-    for (const [position, name] of SCAFFOLD_COLUMNS.entries()) {
-      await columnsApi.createColumn(boardId, name, position);
-    }
-  } else {
+  if (boards.length > 0) {
     const listed = boards.map((b) => `  ${b.boardId}  ${b.name}`).join('\n');
-    let chosen = boards[0];
+    chosen = boards[0];
 
     if (wanted) {
       const matches = boards.filter((b) => b.boardId === wanted || norm(b.name) === norm(wanted));
@@ -130,9 +177,28 @@ export async function initTracker(
         'ambiguous'
       );
     }
+  }
 
+  // Before the scaffold, not after it: provisioning is a pure lookup when the
+  // seven already exist, so this costs nothing in the normal case — but a key
+  // with board rights (collection-level) and no tag rights (org-level) would
+  // otherwise leave a board and its columns behind on its way to the refusal.
+  const tags = await provisionTags(client);
+
+  if (chosen) {
     boardId = chosen.boardId;
     boardName = chosen.name;
+  } else {
+    const created = await boardsApi.createBoardInCollection(collectionId, {
+      name: wanted || DEFAULT_BOARD_NAME,
+      type: 'board',
+    });
+    boardId = created.boardId;
+    boardName = created.name;
+    scaffolded = true;
+    for (const [position, name] of SCAFFOLD_COLUMNS.entries()) {
+      await columnsApi.createColumn(boardId, name, position);
+    }
   }
 
   const columns = (await columnsApi.listColumns(boardId)).map((c) => ({
@@ -168,7 +234,6 @@ export async function initTracker(
     );
   }
 
-  const tags = await provisionTags(client);
   const mapping: TrackerMapping = { collectionId, boardId, columns: { active: activeId, done: doneId } };
   const nameOf = (id: string) => columns.find((c) => c.columnId === id)!.name;
 

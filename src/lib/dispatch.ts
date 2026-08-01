@@ -103,6 +103,25 @@ export interface Intent<A = any, R = unknown> {
    * inherits with nothing to remember.
    */
   readOnly?: true;
+  /**
+   * This intent makes a write with NO inverse, so it cannot be composed into a
+   * larger transaction.
+   *
+   * The three-outcome contract can describe a transaction that unwound cleanly
+   * (`rolled-back`) or left orphans (`rollback-incomplete`). It cannot describe
+   * "the unwind succeeded and a deleted card is still gone" — and inventing a
+   * fourth outcome to say so would break every reader of `TxOutcome`. So the
+   * composition is REFUSED before anything is written instead: a pre-write
+   * refusal throws, which the contract already covers.
+   *
+   * Bites on a CALLER-THREADED log, full stop — its depth is not consulted. A
+   * terminal intent logs nothing, so writes made after it see a log that still
+   * reads "nothing written yet"; asking about depth only saw the writes that
+   * came BEFORE. A terminal intent dispatched with no log of the caller's opens
+   * a fresh one and runs normally, which is the whole point of
+   * `favro cards delete` — and is the only way to reach one.
+   */
+  terminal?: true;
   run(args: A, tx: TxCards): Promise<R>;
 }
 
@@ -199,6 +218,32 @@ export async function dispatch<T = unknown>(
   if (!intent) throw new UnknownIntentError(name, intentNames());
 
   const log = ctx.log ?? new CompensationLog();
+
+  // An irreversible intent cannot join a transaction AT ALL — a threaded log is
+  // the refusal, not the log's depth.
+  //
+  // Depth was the wrong question in both directions. A terminal intent pushes NO
+  // compensation entry, so it leaves the depth exactly where it found it: every
+  // write made AFTER it sees a log that still says "nothing written yet", and a
+  // later failure unwinds those, reports `rolled-back / retryable` and says
+  // nothing about the card this step destroyed. Nothing inside this invocation
+  // can know whether a later write is coming, so the composition is refused
+  // whether or not the transaction has written anything yet.
+  //
+  // Refused before the scope lock because it is free — no network, no
+  // resolution — and a refusal is a refusal either way.
+  if (intent.terminal && ctx.log) {
+    throw new RefusalError(
+      `Refusing to run "${name}" as part of a transaction: it is IRREVERSIBLE and has no compensating write.\n` +
+        `Any step of that transaction that failed — before this one or after it — would unwind the ` +
+        `reversible writes and report "rolled-back", while what this step destroyed stayed destroyed. That ` +
+        `report would be a lie, and there is no fourth outcome to tell the truth with.\n` +
+        `This is why "${name}" cannot be a skill step: a skill run is ONE transaction, start to finish. ` +
+        `Run 'favro cards delete <card>' directly instead — that path opens no transaction of its own, and ` +
+        `prompts before it writes.`,
+    );
+  }
+
   const tx = new TxCards(new CardsAPI(ctx.client), log, ctx.client);
 
   // The mandatory guardrail, inside the table, on every path — including the
@@ -427,6 +472,58 @@ registerIntent<CreateArgs | MultiCreateArgs, Card | Card[]>({
     // compensation log.
     for (const entry of entries) made.push(await tx.create(createRequest(entry)));
     return made;
+  },
+});
+
+export interface DeleteArgs {
+  card: string;
+}
+
+export interface DeleteResult {
+  /** The instance actually deleted, not the reference we were handed. */
+  cardId: string;
+  /** The board it was on. Absent only when no scope lock forced us to have one. */
+  boardId?: string;
+}
+
+/**
+ * `delete` — remove ONE board instance of a card. Irreversible, and terminal.
+ *
+ * **Instance, not card.** Favro keys `DELETE /cards/{cardId}` on the instance id
+ * and removes every instance only under `?everywhere=true`, which `CardsAPI
+ * .deleteCard` does not send (`docs/research/card-identifier-semantics.md` §2.1;
+ * the probe wave in `tracker-contract-favro-carriers.md` had to pass it
+ * explicitly to make throwaway cards vanish org-wide). Claiming FORKS a card, so
+ * "the card" routinely has more than one instance, and deleting the one named
+ * leaves the rest — along with the comments, tasks and tasklists, which hang off
+ * `cardCommonId` and survive as long as any instance does.
+ *
+ * `board()` is the whole guardrail. A fork has no `widgetCommonId`, so it boards
+ * off `undefined` and the table's boardless-write rule refuses it under a lock —
+ * `--force` deliberately does not rescue that, because there is no board for the
+ * escape hatch to escape.
+ *
+ * `terminal: true` and NO compensation entry: see `TxCards.deleteCard`. The
+ * delete is the last statement in `run` for the `depthAtEntry` reason documented
+ * there — nothing after it may refuse.
+ */
+registerIntent<DeleteArgs, DeleteResult>({
+  name: 'delete',
+  summary: 'Delete one board instance of a card — irreversible, with no compensating write',
+  terminal: true,
+  preview: (a) => [
+    `delete card ${a.card}`,
+    `  ONE board instance: other instances of the same cardCommonId are left alone`,
+    `  IRREVERSIBLE — no compensating write, so no later failure can roll this back`,
+  ],
+  board: async (a, tx) => (await tx.getCard(a.card)).boardId,
+  run: async (a, tx) => {
+    const card = await tx.getCard(a.card);
+    // Last statement, deliberately. Nothing may throw a RefusalError after this:
+    // the delete logs nothing, so `log.depth` still equals `depthAtEntry` and the
+    // table would rethrow such a refusal as a PRE-write one. See TxCards.deleteCard.
+    const cardId = await tx.deleteCard(card.cardId);
+    return { cardId, boardId: card.boardId };
   },
 });
 

@@ -20,9 +20,8 @@
  * Total: 250+ test cases
  */
 
-import { describe, it, expect } from 'vitest';
-import { parseAction, ActionParseError } from '../../../src/lib/action-parser-api';
-import type { ParsedAction, CardRef } from '../../../src/types/actions';
+import { parseAction, ActionParseError } from '../../lib/action-parser-api';
+import type { ParsedAction, CardRef } from '../../types/actions';
 
 // ---------------------------------------------------------------------------
 // Test helpers

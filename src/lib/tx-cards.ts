@@ -313,7 +313,7 @@ export class CompensationLog {
   }
 }
 
-// ─── the six reversible ops ──────────────────────────────────────────────────
+// ─── the six reversible ops, plus one that is not ────────────────────────────
 
 /** What `removeBlockingEdge` observed. `removed: false` means nothing was written. */
 export interface EdgeRemoval {
@@ -335,7 +335,9 @@ const setDiff = (current: readonly string[], desired: readonly string[]) => ({
 
 /**
  * The only card surface an intent gets: every read, and only instrumented
- * writes. Six reversible ops, each declared once, capture + mutate + push fused.
+ * writes. Six reversible ops, each declared once, capture + mutate + push fused
+ * — plus `deleteCard`, the one write with no inverse, which logs nothing and
+ * says why.
  *
  * The `CardsAPI` is `private`, and an intent is handed neither a client nor a
  * config, so it cannot build one either. A raw un-instrumented write from an
@@ -425,6 +427,52 @@ export class TxCards {
       applyInverse: async () => { await this.api.deleteCard(card.cardId); },
     });
     return card;
+  }
+
+  // ── 1b. deleteCard — the one IRREVERSIBLE op ──────────────────────────────
+
+  /**
+   * `DELETE /cards/{cardId}` — **pushes nothing onto the compensation log**, on
+   * purpose. This is the only write on this facade with no inverse.
+   *
+   * A re-create is NOT an inverse. It would mint a new `cardId`, a new
+   * `cardCommonId` and a new `sequentialId`, and it would not bring back the
+   * comments, tasks, tasklists, attachments or dependency edges that hung off
+   * the old card — none of which the log ever captured. An entry claiming to
+   * undo this would make `rolled-back` a lie about the run.
+   *
+   * `{ shape: 'exempt' }` is NOT the shape to reuse here, tempting as it looks.
+   * `exempt` means "skip the detecting read, the inverse is unconditionally
+   * safe" — `create`'s inverse is a DELETE that 404s harmlessly when the card is
+   * already gone (see `alreadyGone`). Delete has no such safe inverse; it has
+   * none at all.
+   *
+   * Two consequences the callers must honour, both enforced in `dispatch.ts`:
+   *
+   *  1. `log.depth` is UNCHANGED by this call, so an intent that refuses after
+   *     calling it would be misread as refusing *before* any write
+   *     (`depthAtEntry` compare). The delete must therefore be the LAST thing an
+   *     intent's `run` does — nothing after it may raise a `RefusalError`.
+   *  2. ANY other step of a caller-threaded transaction that fails would unwind
+   *     and report `rolled-back` while this card stays gone forever — whether
+   *     that step ran before this one or after it. There is no fourth outcome to
+   *     express that, so a delete intent is marked `terminal: true` and refuses
+   *     the moment a caller-supplied log is present at all. Gating on
+   *     `log.depth > 0` was the original condition and was WRONG in exactly the
+   *     direction this call creates: the delete logs nothing, so depth stays 0
+   *     and every write after it went unguarded.
+   *
+   * Instance-scoped: no `everywhere` query parameter, so this removes ONE board
+   * instance and leaves every other instance of the same `cardCommonId` alone
+   * (`docs/research/card-identifier-semantics.md` §2.1).
+   *
+   * @returns the `cardId` actually deleted, so a caller can report which
+   *   instance went rather than echoing the reference it was handed.
+   */
+  async deleteCard(cardRef: string): Promise<string> {
+    const cardId = await this.api.resolveCardId(cardRef);
+    await this.api.deleteCard(cardId);
+    return cardId;
   }
 
   // ── 2. moveColumn ─────────────────────────────────────────────────────────

@@ -3,7 +3,6 @@
  * CLA-1799 / FAVRO-037: Standup & Sprint Commands
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   isCompleted,
   isInProgress,
@@ -11,8 +10,8 @@ import {
   isDueSoon,
   classifyCard,
   StandupAPI,
-} from '../../../src/api/standup';
-import type { ContextCard } from '../../../src/api/context';
+} from '../../api/standup';
+import type { ContextCard } from '../../api/context';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -206,21 +205,15 @@ describe('classifyCard', () => {
 
 // ─── StandupAPI ───────────────────────────────────────────────────────────────
 
-const mockGetSnapshot = vi.fn();
+const mockGetSnapshot = jest.fn();
 
-vi.mock('../../../src/api/context', () => ({
+jest.mock('../../api/context', () => ({
+  __esModule: true,
   default: function MockContextAPI() {
     return { getSnapshot: mockGetSnapshot };
   },
 }));
 
-vi.mock('../../../src/lib/http-client', () => ({
-  default: function MockFavroHttpClient() {
-    return {};
-  },
-}));
-
-import FavroHttpClient from '../../../src/lib/http-client';
 
 const SAMPLE_SNAPSHOT = {
   board: { id: 'b-1', name: 'Sprint 42', members: [] },
@@ -240,12 +233,12 @@ const SAMPLE_SNAPSHOT = {
 
 describe('StandupAPI', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    jest.clearAllMocks();
     mockGetSnapshot.mockResolvedValue(SAMPLE_SNAPSHOT);
   });
 
   it('returns standup with completed cards', async () => {
-    const client = new FavroHttpClient({} as any);
+    const client = {} as any;
     const api = new StandupAPI(client);
     const result = await api.getStandup('Sprint 42');
 
@@ -254,7 +247,7 @@ describe('StandupAPI', () => {
   });
 
   it('returns standup with in-progress cards', async () => {
-    const client = new FavroHttpClient({} as any);
+    const client = {} as any;
     const api = new StandupAPI(client);
     const result = await api.getStandup('Sprint 42');
 
@@ -264,7 +257,7 @@ describe('StandupAPI', () => {
   });
 
   it('returns standup with blocked cards', async () => {
-    const client = new FavroHttpClient({} as any);
+    const client = {} as any;
     const api = new StandupAPI(client);
     const result = await api.getStandup('Sprint 42');
 
@@ -273,7 +266,7 @@ describe('StandupAPI', () => {
   });
 
   it('reports c3\'s dependency edge as a count, not as the reason it is blocked', async () => {
-    const client = new FavroHttpClient({} as any);
+    const client = {} as any;
     const api = new StandupAPI(client);
     const result = await api.getStandup('Sprint 42');
 
@@ -282,7 +275,7 @@ describe('StandupAPI', () => {
   });
 
   it('excludes backlog cards from standup groups', async () => {
-    const client = new FavroHttpClient({} as any);
+    const client = {} as any;
     const api = new StandupAPI(client);
     const result = await api.getStandup('Sprint 42');
 
@@ -291,7 +284,7 @@ describe('StandupAPI', () => {
   });
 
   it('includes board name and total in result', async () => {
-    const client = new FavroHttpClient({} as any);
+    const client = {} as any;
     const api = new StandupAPI(client);
     const result = await api.getStandup('Sprint 42');
 
@@ -300,7 +293,7 @@ describe('StandupAPI', () => {
   });
 
   it('passes cardLimit to getSnapshot', async () => {
-    const client = new FavroHttpClient({} as any);
+    const client = {} as any;
     const api = new StandupAPI(client);
     await api.getStandup('Sprint 42', 200);
 
@@ -320,7 +313,7 @@ describe('StandupAPI', () => {
     };
     mockGetSnapshot.mockResolvedValue(snapshotWithDue);
 
-    const client = new FavroHttpClient({} as any);
+    const client = {} as any;
     const api = new StandupAPI(client);
     const result = await api.getStandup('Sprint 42');
 

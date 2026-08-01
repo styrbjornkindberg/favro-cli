@@ -5,10 +5,20 @@
  * AggregateAPI creates sub-API instances (CardsAPI, BoardsAPI, etc.) from the
  * shared FavroHttpClient.  All sub-APIs call client.get() with different URL
  * paths. We mock by inspecting the first argument (path) of each call.
+ *
+ * Collection scoping goes through `resolveCollectionId` (#41), which reads and
+ * writes the on-disk name cache — so FAVRO_CONFIG_DIR is redirected to a fresh
+ * tmpdir at file level, before anything imports the config module.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import AggregateAPI from '../../../src/api/aggregate';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+
+const TMP_CONFIG_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'favro-aggregate-test-'));
+process.env.FAVRO_CONFIG_DIR = TMP_CONFIG_DIR;
+
+import AggregateAPI from '../../api/aggregate';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -30,7 +40,7 @@ function makeRawCard(overrides: Record<string, any> = {}) {
  * Callers provide a map of path-prefix → response (or response fn).
  */
 function routingClient(routes: Record<string, any>) {
-  const get = vi.fn().mockImplementation((path: string) => {
+  const get = jest.fn().mockImplementation((path: string) => {
     for (const [prefix, response] of Object.entries(routes)) {
       if (path.startsWith(prefix)) {
         return Promise.resolve(typeof response === 'function' ? response(path) : response);
@@ -38,7 +48,7 @@ function routingClient(routes: Record<string, any>) {
     }
     return Promise.resolve({ entities: [] });
   });
-  return { get, post: vi.fn(), patch: vi.fn(), put: vi.fn(), delete: vi.fn() };
+  return { get, post: jest.fn(), patch: jest.fn(), put: jest.fn(), delete: jest.fn() };
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -75,6 +85,8 @@ describe('AggregateAPI', () => {
       '/columns': { entities: [{ columnId: 'col-a', name: 'In Progress' }, { columnId: 'col-b', name: 'Done' }] },
       // getMembers → GET /users
       '/users': { entities: [{ userId: 'user-1', name: 'Alice', email: 'alice@example.com' }] },
+      // resolveCollectionId (#41) lists collections before scoping the read
+      '/collections': { entities: [{ collectionId: 'col-1', name: 'Sprint' }] },
     });
 
     const api = new AggregateAPI(client as any);
@@ -107,6 +119,8 @@ describe('AggregateAPI', () => {
         ],
       },
       '/users': { entities: [] },
+      // resolveCollectionId (#41) lists collections before scoping the read
+      '/collections': { entities: [{ collectionId: 'col-1', name: 'Sprint' }] },
     });
 
     const api = new AggregateAPI(client as any);
@@ -130,6 +144,8 @@ describe('AggregateAPI', () => {
       '/widgets': { entities: [{ widgetCommonId: 'b1', name: 'Board A' }] },
       '/columns': { entities: [] },
       '/users': { entities: [] },
+      // resolveCollectionId (#41) lists collections before scoping the read
+      '/collections': { entities: [{ collectionId: 'col-1', name: 'Sprint' }] },
     });
 
     const api = new AggregateAPI(client as any);

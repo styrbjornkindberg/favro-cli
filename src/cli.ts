@@ -48,6 +48,7 @@ import { registerCardsGetCommand } from './commands/cards-get';
 import { registerCardsFindCommand } from './commands/cards-find';
 import { registerCardsLinkCommands } from './commands/cards-link';
 import { registerCardsTrackerCommands } from './commands/cards-tracker';
+import { registerCardsDeleteCommand } from './commands/cards-delete';
 import { registerIssueTrackerHelp } from './commands/issue-tracker-help';
 import { registerCustomFieldsCommands } from './commands/custom-fields';
 import { registerMembersCommand } from './commands/members';
@@ -226,6 +227,7 @@ const cards = program.command('cards').description(
   '  list    List cards from a board with filtering\n' +
   '  create  Create a card (single, bulk JSON, or CSV import)\n' +
   '  update  Update an existing card by ID\n' +
+  '  delete  Delete ONE board instance of a card (irreversible)\n' +
   '  export  Export all cards from a board to JSON or CSV\n' +
   '  link    Record a blocking edge between two cards\n' +
   '  unlink  Remove the blocking edge between two cards\n' +
@@ -418,6 +420,9 @@ registerCardsLinkCommands(cards);
 
 // ─── cards claim / resolve / retag ───────────────────────────────────────────
 registerCardsTrackerCommands(cards);
+
+// ─── cards delete ────────────────────────────────────────────────────────────
+registerCardsDeleteCommand(cards);
 
 /**
  * Parse a CSV string into an array of objects using the header row.

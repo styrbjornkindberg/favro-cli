@@ -469,6 +469,83 @@ describe('the run is ONE transaction — one log, threaded through every step', 
   });
 });
 
+describe('an irreversible intent is unreachable from a skill run', () => {
+  /** A card the stand-in already holds, so `delete` has a real target. */
+  const CARD = '00000000000000000000cc01';
+  const plant = (stand: Stand) => {
+    stand.cards.set(CARD, {
+      cardId: CARD,
+      cardCommonId: `ccid-${CARD}`,
+      name: 'Existing',
+      widgetCommonId: BOARD,
+      columnId: TODO,
+      tags: [],
+      assignments: [],
+      createdAt: '2026-01-01',
+    });
+  };
+
+  it('a bare `delete` step — no confirm, --yes — is refused and sends no DELETE', async () => {
+    // The engine prompts only for a step that sets `confirm: true`, and `--yes`
+    // skips even that, so nothing in the engine would have stopped this. The
+    // table refuses it instead: a skill run is ONE transaction, and an
+    // irreversible write cannot be part of one.
+    const stand = await startServer();
+    plant(stand);
+
+    const result = await runSkill(skill({ command: 'delete', args: { card: CARD } }), opts(stand));
+
+    expect(result.status).toBe('failed');
+    expect(result.steps[0].error).toMatch(/IRREVERSIBLE/);
+    // And it says what to do instead, rather than only blocking.
+    expect(result.steps[0].error).toMatch(/favro cards delete/);
+    expect(writes(stand.received)).toHaveLength(0);
+    expect(stand.cards.has(CARD)).toBe(true);
+  });
+
+  it('and it is refused as the FIRST step too, where no write is pending yet', async () => {
+    // Step 2 writes, so a guard that only looked at what the transaction had
+    // already written would let step 1 through and then lie about step 3.
+    const stand = await startServer();
+    plant(stand);
+
+    const result = await runSkill(
+      skill(
+        { command: 'delete', args: { card: CARD } },
+        { command: 'create', args: { name: 'later', board: BOARD } },
+      ),
+      opts(stand),
+    );
+
+    expect(result.status).toBe('failed');
+    expect(result.steps).toHaveLength(1);
+    expect(writes(stand.received)).toHaveLength(0);
+    expect(stand.cards.has(CARD)).toBe(true);
+  });
+
+  it('refused after a write, the run unwinds and is reported NOT retryable', async () => {
+    // The other direction, at run level: step 1's create is undone, and because
+    // the refusal is deterministic the run is not worth repeating — which is the
+    // verdict `skill run` prints from, so it cannot say "safe to retry" here.
+    const stand = await startServer();
+    plant(stand);
+
+    const result = await runSkill(
+      skill(
+        { command: 'create', args: { name: 'first', board: BOARD } },
+        { command: 'delete', args: { card: CARD } },
+      ),
+      opts(stand),
+    );
+
+    expect(result.status).toBe('failed');
+    expect(result.rollback?.outcome).toBe('rolled-back');
+    expect(result.rollback?.retryable).toBe(false);
+    // Step 1's card is gone; the delete's target never was touched.
+    expect([...stand.cards.keys()]).toEqual([CARD]);
+  });
+});
+
 describe('--dry-run is a preview of the run, never its safety', () => {
   it('previews every step and makes no write at all', async () => {
     const stand = await startServer();

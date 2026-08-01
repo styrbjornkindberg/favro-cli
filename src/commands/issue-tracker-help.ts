@@ -45,13 +45,17 @@ THE SCOPE LOCK, AND THE TWO GUARDS BESIDE IT
   ('-y' skips the prompt) and takes '--dry-run' — a preview, never a safety wall.
 
 INTENTS
-  Seven, one call each — no chain to author. Each is a skill 'command:' and has
-  a CLI spelling.
+  Eight, one call each — no chain to author. Each has a CLI spelling, and all but
+  'delete' can also be a skill 'command:'.
   create                Card plus every composite — parent, both dependency
                         directions, column, tags, assignees — in ONE POST, so a
                         bad value leaves no card behind. CLI: cards create.
   read                  One card, optionally with its children. Writes nothing.
                         CLI: cards get, minus the children arm.
+  delete                Remove ONE board instance; other instances of the same
+                        cardCommonId survive. IRREVERSIBLE, and logs no
+                        compensating write — so it CANNOT be a skill step: a run
+                        is one transaction. CLI ONLY: cards delete.
   claim                 Assign yourself and move to the active column, on the
                         TRACKER-BOARD instance only: assignment FORKS the card
                         into a boardless, columnless entity. CLI: cards claim.
@@ -126,7 +130,11 @@ export function registerIssueTrackerHelp(program: Command): void {
   program
     .command('issue-tracker')
     .description(
-      'The Favro tracker contract: the scope lock, the seven intents, the two\n' +
+      // No count here on purpose. The drift test holds the INTENTS section in
+      // the body against the real table, but it never reads this string — so a
+      // number here rots silently, and did: it still said "seven" after the
+      // eighth intent landed.
+      'The Favro tracker contract: the scope lock, the intents, the two\n' +
       'relationships, and what a failed write leaves behind. Read this before\n' +
       'your first write.'
     )

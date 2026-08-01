@@ -15,6 +15,7 @@ import { AddressInfo } from 'net';
 import FavroHttpClient from '../lib/http-client';
 import { initTracker } from '../commands/tracker-init';
 import {
+  TRIAGE_TAGS,
   TrackerConfigError,
   TrackerMapping,
   parseTrackerBlock,
@@ -47,7 +48,7 @@ interface Widget {
 /** Every server this file started, so a failed assertion cannot leak one. */
 const running: http.Server[] = [];
 
-function startServer(seed?: { tags?: string[] }): Promise<{
+function startServer(seed?: { tags?: string[]; denyTagCreate?: boolean; tagCreateStatus?: number }): Promise<{
   client: FavroHttpClient;
   received: Received[];
   widgets: Widget[];
@@ -122,6 +123,18 @@ function startServer(seed?: { tags?: string[] }): Promise<{
         const widget = widgets.find((w) => w.widgetCommonId === query.get('widgetCommonId'));
         payload = { entities: (widget?.columns ?? []).map((c) => ({ ...c, boardId: widget!.widgetCommonId })) };
       } else if (url.startsWith('/api/v1/tags') && method === 'POST') {
+        // The measured #72 wire: an org-level tag creation on a key without the
+        // right. Not a 404 — a 403 with this exact message.
+        if (seed?.denyTagCreate) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ message: 'User does not have correct permission level in workspace' }));
+          return;
+        }
+        if (seed?.tagCreateStatus) {
+          res.writeHead(seed.tagCreateStatus, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ message: 'Internal server error' }));
+          return;
+        }
         const tag = { tagId: `tag-new-${tags.length}`, name: body.name };
         tags.push(tag);
         payload = tag;
@@ -242,6 +255,76 @@ describe('tracker init on the wire', () => {
       'ready-for-human',
     ]);
     expect(result.tags.existing.sort()).toEqual(['needs-triage', 'wontfix']);
+  });
+
+  it('succeeds on a key that cannot create tags, when all seven already exist (#72)', async () => {
+    const { client, received } = await startServer({ tags: [...TRIAGE_TAGS], denyTagCreate: true });
+    const result = await initTracker(client, { collectionId: COLL });
+
+    expect(result.mapping.boardId).toBe(BOARD);
+    expect(result.tags.existing.sort()).toEqual([...TRIAGE_TAGS].sort());
+    expect(result.tags.created).toEqual([]);
+    // The whole point: nothing was offered to Favro for creation, so the
+    // permission the key lacks was never needed.
+    expect(posts(received, 'tags')).toHaveLength(0);
+  });
+
+  it('names the missing tags when creation is refused, rather than surfacing a bare 403 (#72)', async () => {
+    const { client } = await startServer({ tags: ['bug', 'needs-triage'], denyTagCreate: true });
+    const attempt = initTracker(client, { collectionId: COLL });
+
+    await expect(attempt).rejects.toBeInstanceOf(TrackerConfigError);
+    const error = (await attempt.catch((e: unknown) => e)) as TrackerConfigError;
+
+    for (const name of ['enhancement', 'needs-info', 'ready-for-agent', 'ready-for-human', 'wontfix']) {
+      expect(error.message).toContain(name);
+    }
+    // Favro's own words are kept, so the user can tell a permission denial from
+    // anything else — but they no longer arrive alone.
+    expect(error.message).toContain('User does not have correct permission level in workspace');
+    expect(error.message).toContain('favro tags create');
+  });
+
+  it('refuses BEFORE scaffolding when the key cannot create the tags (#72)', async () => {
+    // An empty collection plus a key with board rights (collection-level) but no
+    // tag rights (organization-level). The refusal must land with nothing left
+    // behind: an orphan board and 4 columns in someone's org is not a dry run.
+    const { client, received } = await startServer({ denyTagCreate: true });
+    const attempt = initTracker(client, { collectionId: COLL_EMPTY });
+
+    await expect(attempt).rejects.toBeInstanceOf(TrackerConfigError);
+    expect(posts(received, 'widgets')).toHaveLength(0);
+    expect(posts(received, 'columns')).toHaveLength(0);
+  });
+
+  it('a transient POST /tags failure propagates as itself, not as the missing-tags refusal', async () => {
+    // 500, not 403: "this key cannot create the missing tags" would be a wrong
+    // diagnosis, and the retry-then-give-up path must surface Favro's failure.
+    // Six of seven seeded, so exactly one creation is attempted — the retry
+    // ladder on a 5xx is real time, and one is enough to prove the path.
+    const { client } = await startServer({ tags: TRIAGE_TAGS.slice(1), tagCreateStatus: 500 });
+    const error = await initTracker(client, { collectionId: COLL }).then(
+      () => null,
+      (e: unknown) => e
+    );
+
+    expect(error).not.toBeInstanceOf(TrackerConfigError);
+    expect((error as any)?.response?.status).toBe(500);
+  }, 30000);
+
+  it('is idempotent — a second init creates nothing (#72)', async () => {
+    const { client, received } = await startServer();
+    await initTracker(client, { collectionId: COLL });
+    const before = posts(received, 'tags').length;
+    expect(before).toBe(TRIAGE_TAGS.length);
+
+    const second = await initTracker(client, { collectionId: COLL });
+
+    // The tags exist now; the run must find them even though the cache written
+    // by the first run predates their creation and is nowhere near its TTL.
+    expect(posts(received, 'tags')).toHaveLength(before);
+    expect(second.tags.created).toEqual([]);
+    expect(second.tags.existing.sort()).toEqual([...TRIAGE_TAGS].sort());
   });
 });
 

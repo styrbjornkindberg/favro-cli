@@ -455,12 +455,15 @@ afterEach(async () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('the table is the single home for every write intent', () => {
-  it('the seven intents named by the spec are all registered', () => {
-    // All seven. Frontier-listing was cut (subsumed by `--filter`) and
-    // list-children folded into `read`, so there is no eighth.
+  it('the intents named by the spec are all registered', () => {
+    // The original seven. Frontier-listing was cut (subsumed by `--filter`) and
+    // list-children folded into `read`. `delete` (#73) is the eighth and the
+    // first irreversible one — see the terminal-intent block at the foot of
+    // this file for what that costs.
     for (const name of [
       'create',
       'read',
+      'delete',
       'claim',
       'resolve',
       'add-blocking-edge',
@@ -1564,3 +1567,192 @@ describe('multi-create is one bounded transaction over an enumerated list', () =
 
 /** Set inside a `fail` hook that needs the stand it belongs to. */
 let standRef: Stand | undefined;
+
+// ─── delete: the one irreversible intent (#73) ───────────────────────────────
+
+describe('delete removes ONE board instance, and says so on the wire', () => {
+  /** Every DELETE that actually reached the stand-in, card-scoped only. */
+  const deletes = (stand: Stand) =>
+    stand.received.filter((r) => r.method === 'DELETE' && /^\/cards\/[^/]+$/.test(r.path));
+
+  it('sends DELETE /cards/{cardId} with NO everywhere param, and the card is gone', async () => {
+    const stand = await startServer();
+
+    const result = await dispatch<{ cardId: string; boardId?: string }>('delete', { card: CARD }, ctx(stand));
+
+    expect(result.outcome).toBe('ok');
+    expect(result.value?.cardId).toBe(CARD);
+    expect(result.value?.boardId).toBe(BOARD);
+
+    const sent = deletes(stand);
+    expect(sent).toHaveLength(1);
+    expect(sent[0].path).toBe(`/cards/${CARD}`);
+    // THE instance-vs-card pin. `?everywhere=true` is what removes every
+    // instance of a cardCommonId; omitting it is what makes this an
+    // instance-scoped delete, and it is the only thing on the wire that says
+    // so. A mock of `CardsAPI` could not see this at all.
+    expect(sent[0].url).not.toContain('everywhere');
+
+    // Read the state back rather than counting calls: Favro answers 200 for
+    // writes it does not perform, so "we sent it" is not "it happened".
+    expect(stand.cards.has(CARD)).toBe(false);
+    // The sibling instance is untouched — that is the whole claim of the flag
+    // we did not send.
+    expect(stand.cards.has(FAR)).toBe(true);
+  });
+
+  it('--dry-run previews the irreversibility and sends no DELETE', async () => {
+    const stand = await startServer();
+
+    const result = await dispatch('delete', { card: CARD }, ctx(stand, { dryRun: true }));
+
+    expect(result.outcome).toBe('ok');
+    expect(result.preview?.join(' ')).toMatch(/IRREVERSIBLE/);
+    expect(result.preview?.join(' ')).toMatch(/ONE board instance/);
+    expect(deletes(stand)).toHaveLength(0);
+    expect(stand.cards.has(CARD)).toBe(true);
+  });
+});
+
+describe('delete is behind the scope lock, and the lock fails CLOSED', () => {
+  const deletes = (stand: Stand) =>
+    stand.received.filter((r) => r.method === 'DELETE' && /^\/cards\/[^/]+$/.test(r.path));
+
+  const locked = (stand: Stand, extra: Partial<DispatchContext> = {}): DispatchContext =>
+    ctx(stand, { config: { scopeCollectionId: 'coll-a', scopeCollectionName: 'Collection A' }, ...extra });
+
+  it('a card on a board outside the lock refuses BEFORE any DELETE is sent', async () => {
+    const stand = await startServer();
+    stand.cards.get(CARD)!.widgetCommonId = OTHER_BOARD;
+
+    await expect(dispatch('delete', { card: CARD }, locked(stand))).rejects.toThrow(ScopeError);
+
+    expect(deletes(stand)).toHaveLength(0);
+    expect(stand.cards.has(CARD)).toBe(true);
+  });
+
+  it('a boardless card — the fork shape — refuses rather than failing open', async () => {
+    // CEILING, same one as the `claim` fork test above: the stand-in never
+    // actually forks on `addAssignmentIds`; the fork is planted BY HAND here.
+    // What this pins is that a card with no `widgetCommonId` is refused, not
+    // that Favro produces one where we think it does — that half is probe
+    // knowledge (#54), not something this seam can observe.
+    const stand = await startServer();
+    stand.cards.get(CARD)!.widgetCommonId = undefined;
+    stand.cards.get(CARD)!.columnId = undefined;
+
+    await expect(dispatch('delete', { card: CARD }, locked(stand))).rejects.toThrow(RefusalError);
+
+    expect(deletes(stand)).toHaveLength(0);
+    expect(stand.cards.has(CARD)).toBe(true);
+  });
+
+  it('--force does NOT rescue a boardless delete — there is no board to know about', async () => {
+    const stand = await startServer();
+    stand.cards.get(CARD)!.widgetCommonId = undefined;
+    stand.cards.get(CARD)!.columnId = undefined;
+
+    await expect(
+      dispatch('delete', { card: CARD }, locked(stand, { force: true })),
+    ).rejects.toThrow(RefusalError);
+
+    expect(deletes(stand)).toHaveLength(0);
+    expect(stand.cards.has(CARD)).toBe(true);
+  });
+
+  it('a card inside the locked collection proceeds', async () => {
+    const stand = await startServer();
+    const result = await dispatch('delete', { card: CARD }, locked(stand));
+    expect(result.outcome).toBe('ok');
+    expect(stand.cards.has(CARD)).toBe(false);
+  });
+});
+
+describe('delete logs nothing, and therefore cannot join a transaction', () => {
+  const deletes = (stand: Stand) =>
+    stand.received.filter((r) => r.method === 'DELETE' && /^\/cards\/[^/]+$/.test(r.path));
+
+  it('refuses on an EMPTY caller-threaded log — the writes come AFTER the delete', async () => {
+    // The direction a depth check cannot see. `delete` pushes no compensation
+    // entry, so a threaded log is still at depth 0 afterwards and every write
+    // that follows is unguarded: create, then fail, and the run reports
+    // `rolled-back / retryable` while the deleted card stays gone forever.
+    // Nothing inside this invocation can know whether a later write is coming,
+    // so a threaded log AT ALL is refused.
+    const stand = await startServer();
+    const log = new CompensationLog();
+
+    await expect(dispatch('delete', { card: CARD }, ctx(stand, { log }))).rejects.toThrow(RefusalError);
+
+    expect(deletes(stand)).toHaveLength(0);
+    expect(stand.cards.has(CARD)).toBe(true);
+    expect(log.depth).toBe(0);
+  });
+
+  it('the reported "rolled-back, safe to retry" can no longer be a lie about a deleted card', async () => {
+    // The reviewer's three-step reproduction, end to end. Step 1 is the refusal
+    // above, so steps 2 and 3 run over a transaction that destroyed nothing —
+    // and `rolled-back / retryable: true` is then TRUE, which is the only
+    // condition under which `skill run` may print "safe to retry".
+    const stand = await startServer();
+    const log = new CompensationLog();
+
+    await expect(dispatch('delete', { card: CARD }, ctx(stand, { log }))).rejects.toThrow(RefusalError);
+    const made = await dispatch<Card>('create', { name: 'later', board: BOARD }, ctx(stand, { log }));
+    expect(made.outcome).toBe('ok');
+    const failed = await dispatch('probe-fail', {}, ctx(stand, { log }));
+
+    expect(failed.outcome).toBe('rolled-back');
+    expect(failed.retryable).toBe(true);
+    expect(failed.orphans).toBeUndefined();
+    // The whole run really is undone: the create is gone, and the card the
+    // refused step would have destroyed is still there.
+    expect(stand.cards.has(made.value!.cardId)).toBe(false);
+    expect(stand.cards.has(CARD)).toBe(true);
+    expect(deletes(stand).map((r) => r.path)).toEqual([`/cards/${made.value!.cardId}`]);
+  });
+
+  it('refuses inside a caller-threaded transaction that already holds writes', async () => {
+    // The reason the entry above must not exist is also why this must refuse:
+    // a later failure would unwind the create, report `rolled-back`, and say
+    // nothing about the card this step destroyed. There is no fourth outcome
+    // to tell that truth with, so the composition is refused before the write.
+    const stand = await startServer();
+    const log = new CompensationLog();
+
+    const made = await dispatch<{ cardId: string }>('create', { name: 'Solo', board: BOARD }, ctx(stand, { log }));
+    expect(made.outcome).toBe('ok');
+    expect(log.depth).toBe(1);
+
+    await expect(dispatch('delete', { card: CARD }, ctx(stand, { log }))).rejects.toThrow(RefusalError);
+
+    // A pre-write refusal THROWS and writes nothing — it is not a fourth outcome.
+    expect(deletes(stand)).toHaveLength(0);
+    expect(stand.cards.has(CARD)).toBe(true);
+    // The refused step left the transaction exactly as it found it.
+    expect(log.depth).toBe(1);
+  });
+
+  it('runs normally on its own — a fresh log at depth 0 is not a transaction', async () => {
+    const stand = await startServer();
+    const result = await dispatch('delete', { card: CARD }, ctx(stand));
+    expect(result.outcome).toBe('ok');
+    expect(deletes(stand)).toHaveLength(1);
+  });
+
+  it('a delete that the wire refuses is reported as NOT retryable', async () => {
+    // `isRetryable` stays the one derivation: a deterministic wire refusal is
+    // non-retryable whatever the outcome, and nothing here special-cases delete.
+    const stand = await startServer({
+      fail: (r) => (r.method === 'DELETE' ? { status: 403, message: 'Access denied' } : undefined),
+    });
+
+    const result = await dispatch('delete', { card: CARD }, ctx(stand));
+
+    expect(result.outcome).toBe('rolled-back');
+    expect(result.retryable).toBe(false);
+    // Nothing was logged, so "rolled-back" here means "we wrote nothing that
+    // needed undoing" — and the card is still there to prove it.
+    expect(stand.cards.has(CARD)).toBe(true);
+  });
+});

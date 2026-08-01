@@ -3,7 +3,6 @@
  * CLA-1799 / FAVRO-037: Standup & Sprint Commands
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   priorityScore,
   extractEffort,
@@ -12,8 +11,8 @@ import {
   compareSprintCards,
   SprintPlanAPI,
   type SprintCard,
-} from '../../../src/api/sprint-plan';
-import type { ContextCard } from '../../../src/api/context';
+} from '../../api/sprint-plan';
+import type { ContextCard } from '../../api/context';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -205,21 +204,14 @@ describe('compareSprintCards', () => {
 
 // ─── SprintPlanAPI ────────────────────────────────────────────────────────────
 
-const mockGetSnapshot = vi.fn();
+const mockGetSnapshot = jest.fn();
 
-vi.mock('../../../src/api/context', () => ({
+jest.mock('../../api/context', () => ({
+  __esModule: true,
   default: function MockContextAPI() {
     return { getSnapshot: mockGetSnapshot };
   },
 }));
-
-vi.mock('../../../src/lib/http-client', () => ({
-  default: function MockFavroHttpClient() {
-    return {};
-  },
-}));
-
-import FavroHttpClient from '../../../src/lib/http-client';
 
 const SAMPLE_SNAPSHOT = {
   board: { id: 'b-1', name: 'Sprint 42', members: [] },
@@ -254,12 +246,12 @@ const SAMPLE_SNAPSHOT = {
 
 describe('SprintPlanAPI', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    jest.clearAllMocks();
     mockGetSnapshot.mockResolvedValue(SAMPLE_SNAPSHOT);
   });
 
   it('filters out non-backlog cards', async () => {
-    const client = new FavroHttpClient({} as any);
+    const client = {} as any;
     const api = new SprintPlanAPI(client);
     const result = await api.getSuggestions('Sprint 42', 40);
 
@@ -268,7 +260,7 @@ describe('SprintPlanAPI', () => {
   });
 
   it('sorts by priority desc, effort asc', async () => {
-    const client = new FavroHttpClient({} as any);
+    const client = {} as any;
     const api = new SprintPlanAPI(client);
     const result = await api.getSuggestions('Sprint 42', 40);
 
@@ -280,7 +272,7 @@ describe('SprintPlanAPI', () => {
   });
 
   it('respects budget — c5 (effort=50) should overflow budget=40', async () => {
-    const client = new FavroHttpClient({} as any);
+    const client = {} as any;
     const api = new SprintPlanAPI(client);
     const result = await api.getSuggestions('Sprint 42', 40);
 
@@ -289,7 +281,7 @@ describe('SprintPlanAPI', () => {
   });
 
   it('calculates cumulative effort correctly', async () => {
-    const client = new FavroHttpClient({} as any);
+    const client = {} as any;
     const api = new SprintPlanAPI(client);
     const result = await api.getSuggestions('Sprint 42', 40);
 
@@ -299,7 +291,7 @@ describe('SprintPlanAPI', () => {
   });
 
   it('uses default budget of 40', async () => {
-    const client = new FavroHttpClient({} as any);
+    const client = {} as any;
     const api = new SprintPlanAPI(client);
     const result = await api.getSuggestions('Sprint 42');
 
@@ -307,7 +299,7 @@ describe('SprintPlanAPI', () => {
   });
 
   it('passes cardLimit to getSnapshot', async () => {
-    const client = new FavroHttpClient({} as any);
+    const client = {} as any;
     const api = new SprintPlanAPI(client);
     await api.getSuggestions('Sprint 42', 40, 300);
 
@@ -315,7 +307,7 @@ describe('SprintPlanAPI', () => {
   });
 
   it('includes board info in result', async () => {
-    const client = new FavroHttpClient({} as any);
+    const client = {} as any;
     const api = new SprintPlanAPI(client);
     const result = await api.getSuggestions('Sprint 42');
 
@@ -326,7 +318,7 @@ describe('SprintPlanAPI', () => {
   it('handles empty board (no backlog cards)', async () => {
     mockGetSnapshot.mockResolvedValue({ ...SAMPLE_SNAPSHOT, cards: [] });
 
-    const client = new FavroHttpClient({} as any);
+    const client = {} as any;
     const api = new SprintPlanAPI(client);
     const result = await api.getSuggestions('Sprint 42');
 
@@ -336,7 +328,7 @@ describe('SprintPlanAPI', () => {
   });
 
   it('marks withinBudget correctly', async () => {
-    const client = new FavroHttpClient({} as any);
+    const client = {} as any;
     const api = new SprintPlanAPI(client);
     const result = await api.getSuggestions('Sprint 42', 40);
 

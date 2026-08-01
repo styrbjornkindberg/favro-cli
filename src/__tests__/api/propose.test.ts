@@ -12,18 +12,17 @@
  *   - executeChange: expired/missing change-id → error
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { proposeChange, executeChange, ValidationError } from '../../src/api/propose';
-import { changeStore, ChangeStore } from '../../src/lib/change-store';
-import FavroHttpClient from '../../src/lib/http-client';
-import ContextAPI from '../../src/api/context';
-import type { BoardContextSnapshot } from '../../src/api/context';
+import { proposeChange, executeChange, ValidationError } from '../../api/propose';
+import { changeStore, ChangeStore } from '../../lib/change-store';
+import ContextAPI from '../../api/context';
+import type { BoardContextSnapshot } from '../../api/context';
+import type FavroHttpClient from '../../lib/http-client';
 
 // ─── Mock ContextAPI ──────────────────────────────────────────────────────────
 
-vi.mock('../../src/api/context');
+jest.mock('../../api/context');
 
-const MockContextAPI = vi.mocked(ContextAPI);
+const MockContextAPI = jest.mocked(ContextAPI);
 
 // ─── Sample board snapshot ────────────────────────────────────────────────────
 
@@ -75,6 +74,7 @@ const SAMPLE_SNAPSHOT: BoardContextSnapshot = {
     by_status: { 'In Progress': 1, Backlog: 2 },
     by_owner: { 'alice@ex.com': 1, 'bob@ex.com': 1 },
   },
+  workflow: [],
   generatedAt: '2026-03-28T12:00:00.000Z',
 };
 
@@ -86,8 +86,8 @@ function makeMockClient(): FavroHttpClient {
 
 function setupMockContextApi(snapshot: BoardContextSnapshot = SAMPLE_SNAPSHOT) {
   MockContextAPI.mockImplementation(function(this: any) {
-    this.getSnapshot = vi.fn().mockResolvedValue(snapshot);
-    this.resolveBoard = vi.fn();
+    this.getSnapshot = jest.fn().mockResolvedValue(snapshot);
+    this.resolveBoard = jest.fn();
   } as any);
 }
 
@@ -95,7 +95,7 @@ function setupMockContextApi(snapshot: BoardContextSnapshot = SAMPLE_SNAPSHOT) {
 
 beforeEach(() => {
   changeStore.clear();
-  vi.clearAllMocks();
+  jest.clearAllMocks();
 });
 
 afterEach(() => {
@@ -331,7 +331,7 @@ describe('proposeChange — validation errors', () => {
       ],
     };
     MockContextAPI.mockImplementation(function(this: any) {
-      this.getSnapshot = vi.fn().mockResolvedValue(snapshotWithAmbiguous);
+      this.getSnapshot = jest.fn().mockResolvedValue(snapshotWithAmbiguous);
     } as any);
 
     const client = makeMockClient();
@@ -350,8 +350,8 @@ describe('proposeChange — validation errors', () => {
 describe('executeChange', () => {
   it('EX001: execute valid change → calls API and returns executed status', async () => {
     // Set up a mock axios client
-    const mockPatch = vi.fn().mockResolvedValue({ data: { cardId: 'card-001' } });
-    const mockPost = vi.fn().mockResolvedValue({ data: { cardId: 'card-new' } });
+    const mockPatch = jest.fn().mockResolvedValue({ data: { cardId: 'card-001' } });
+    const mockPost = jest.fn().mockResolvedValue({ data: { cardId: 'card-new' } });
     const client = { client: { patch: mockPatch, post: mockPost } } as any;
 
     // Pre-store a change
@@ -378,7 +378,7 @@ describe('executeChange', () => {
   });
 
   it('EX002: execute POST call correctly', async () => {
-    const mockPost = vi.fn().mockResolvedValue({ data: {} });
+    const mockPost = jest.fn().mockResolvedValue({ data: {} });
     const client = { client: { post: mockPost } } as any;
 
     const changeId = 'ch_test000002';
@@ -411,6 +411,8 @@ describe('executeChange', () => {
 
     const client = makeMockClient();
     await expect(executeChange(changeId, client)).rejects.toThrow(ValidationError);
+    // The refusal names the TTL, so the caller knows to re-propose rather than retry.
+    await expect(executeChange(changeId, client)).rejects.toThrow(/expired.*10 minutes/s);
   });
 
   it('EX004: missing change-id → ValidationError', async () => {
@@ -419,7 +421,7 @@ describe('executeChange', () => {
   });
 
   it('EX005: removes change from store after execution', async () => {
-    const mockPatch = vi.fn().mockResolvedValue({});
+    const mockPatch = jest.fn().mockResolvedValue({});
     const client = { client: { patch: mockPatch } } as any;
 
     const changeId = 'ch_test000003';
@@ -440,7 +442,7 @@ describe('executeChange', () => {
   });
 
   it('EX006: API failure → returns failed status with error details', async () => {
-    const mockPatch = vi.fn().mockRejectedValue(new Error('Network error'));
+    const mockPatch = jest.fn().mockRejectedValue(new Error('Network error'));
     const client = { client: { patch: mockPatch } } as any;
 
     const changeId = 'ch_test000004';

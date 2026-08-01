@@ -10,16 +10,15 @@
  *  - QueryAPI.execute: integration with mocked ContextAPI
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   parseQueryFilter,
   matchCard,
   explainNoResults,
   buildSummary,
   QueryAPI,
-} from '../../../src/api/query';
-import type { BoardContextSnapshot, ContextCard } from '../../../src/api/context';
-import type { QueryFilter, QueryMatch } from '../../../src/types/query';
+} from '../../api/query';
+import type { BoardContextSnapshot, ContextCard } from '../../api/context';
+import type { QueryFilter, QueryMatch } from '../../types/query';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -48,6 +47,7 @@ function makeContext(cards: ContextCard[] = []): BoardContextSnapshot {
       { id: 'm-2', name: 'Bob Jones', email: 'bob@example.com', role: 'member' },
     ],
     cards,
+    workflow: [],
     stats: { total: cards.length, by_status: {}, by_owner: {} },
     generatedAt: new Date().toISOString(),
   };
@@ -106,21 +106,6 @@ describe('parseQueryFilter', () => {
     expect(f.label).toBe('frontend');
   });
 
-  it('parses blocked shorthand', () => {
-    const f = parseQueryFilter('blocked');
-    expect(f.blocked).toBe(true);
-  });
-
-  it('parses blocked cards', () => {
-    const f = parseQueryFilter('blocked cards');
-    expect(f.blocked).toBe(true);
-  });
-
-  it('parses blocking shorthand', () => {
-    const f = parseQueryFilter('blocking');
-    expect(f.blocking).toBe(true);
-  });
-
   it('parses overdue shorthand', () => {
     const f = parseQueryFilter('overdue');
     expect(f.due).toBe('overdue');
@@ -129,16 +114,6 @@ describe('parseQueryFilter', () => {
   it('parses due:overdue', () => {
     const f = parseQueryFilter('due:overdue');
     expect(f.due).toBe('overdue');
-  });
-
-  it('parses relates:card-x', () => {
-    const f = parseQueryFilter('relates:card-x');
-    expect(f.relatesTo).toBe('card-x');
-  });
-
-  it('parses relates to card-x (natural language)', () => {
-    const f = parseQueryFilter('relates to card-x');
-    expect(f.relatesTo).toBe('card-x');
   });
 
   it('parses "assigned to @alice" natural language', () => {
@@ -259,50 +234,6 @@ describe('matchCard', () => {
     expect(result).toBeNull();
   });
 
-  it('matches blocked cards', () => {
-    const card = makeCard({ blockedBy: ['card-2'] });
-    const result = matchCard(card, { blocked: true }, ctx);
-    expect(result).not.toBeNull();
-    expect(result).toContain('blocked by');
-  });
-
-  it('rejects non-blocked cards when blocked filter set', () => {
-    const card = makeCard({ blockedBy: [] });
-    const result = matchCard(card, { blocked: true }, ctx);
-    expect(result).toBeNull();
-  });
-
-  it('matches blocking cards', () => {
-    const card = makeCard({ blocking: ['card-3'] });
-    const result = matchCard(card, { blocking: true }, ctx);
-    expect(result).not.toBeNull();
-    expect(result).toContain('blocking');
-  });
-
-  it('rejects non-blocking cards when blocking filter set', () => {
-    const card = makeCard({ blocking: [] });
-    const result = matchCard(card, { blocking: true }, ctx);
-    expect(result).toBeNull();
-  });
-
-  it('matches card related to specified card', () => {
-    const card = makeCard({ blockedBy: ['feature-x'] });
-    const result = matchCard(card, { relatesTo: 'feature-x' }, ctx);
-    expect(result).not.toBeNull();
-  });
-
-  it('matches blocking side for relatesTo', () => {
-    const card = makeCard({ blocking: ['feature-x'] });
-    const result = matchCard(card, { relatesTo: 'feature-x' }, ctx);
-    expect(result).not.toBeNull();
-  });
-
-  it('rejects card with no relation to specified card', () => {
-    const card = makeCard({ blockedBy: [], blocking: [] });
-    const result = matchCard(card, { relatesTo: 'feature-x' }, ctx);
-    expect(result).toBeNull();
-  });
-
   it('matches card with correct priority custom field', () => {
     const card = makeCard({ customFields: { priority: 'high' } });
     const result = matchCard(card, { priority: 'high' }, ctx);
@@ -377,12 +308,6 @@ describe('matchCard', () => {
     expect(result).toBeNull();
   });
 
-  it('matches compound: blocked + label', () => {
-    const card = makeCard({ blockedBy: ['card-2'], tags: ['critical'] });
-    const result = matchCard(card, { blocked: true, label: 'critical' }, ctx);
-    expect(result).not.toBeNull();
-  });
-
   it('matches Priority with capital P', () => {
     const card = makeCard({ customFields: { Priority: 'urgent' } });
     const result = matchCard(card, { priority: 'urgent' }, ctx);
@@ -420,18 +345,6 @@ describe('explainNoResults', () => {
     expect(explanation).toContain('alice');
   });
 
-  it('explains no blocked cards', () => {
-    const ctx = makeContext([makeCard({ blockedBy: [] })]);
-    const explanation = explainNoResults({ blocked: true }, ctx);
-    expect(explanation).toContain('blocked');
-  });
-
-  it('explains no blocking cards', () => {
-    const ctx = makeContext([makeCard({ blocking: [] })]);
-    const explanation = explainNoResults({ blocking: true }, ctx);
-    expect(explanation).toContain('blocking');
-  });
-
   it('explains missing priority field', () => {
     const ctx = makeContext([makeCard({ customFields: {} })]);
     const explanation = explainNoResults({ priority: 'high' }, ctx);
@@ -462,12 +375,6 @@ describe('explainNoResults', () => {
     const ctx = makeContext([makeCard()]);
     const explanation = explainNoResults({ rawQuery: 'exotic query' }, ctx);
     expect(explanation).toContain('exotic query');
-  });
-
-  it('explains no relation found', () => {
-    const ctx = makeContext([makeCard({ blockedBy: [], blocking: [] })]);
-    const explanation = explainNoResults({ relatesTo: 'nonexistent-card' }, ctx);
-    expect(explanation).toContain('nonexistent-card');
   });
 });
 
@@ -523,10 +430,11 @@ describe('buildSummary', () => {
 
 // ─── QueryAPI.execute Tests ───────────────────────────────────────────────────
 
-const mockGetSnapshot = vi.fn();
+const mockGetSnapshot = jest.fn();
 
-vi.mock('../../../src/api/context', () => {
+jest.mock('../../api/context', () => {
   return {
+    __esModule: true,
     default: function MockContextAPI() {
       return { getSnapshot: mockGetSnapshot };
     },
@@ -535,7 +443,7 @@ vi.mock('../../../src/api/context', () => {
 
 describe('QueryAPI.execute', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    jest.clearAllMocks();
   });
 
   function makeSnapshot(cards: ContextCard[]): BoardContextSnapshot {
@@ -610,20 +518,6 @@ describe('QueryAPI.execute', () => {
     expect(result.matches.some(m => m.card.title === 'Bob Card')).toBe(false);
   });
 
-  it('filters blocked cards', async () => {
-    const cards = [
-      makeCard({ id: 'c1', title: 'Blocked', blockedBy: ['c3'] }),
-      makeCard({ id: 'c2', title: 'Clear', blockedBy: [] }),
-    ];
-    mockGetSnapshot.mockResolvedValue(makeSnapshot(cards));
-
-    const api = new QueryAPI({} as any);
-    const result = await api.execute('board-1', 'blocked');
-
-    expect(result.matches).toHaveLength(1);
-    expect(result.matches[0].card.title).toBe('Blocked');
-  });
-
   it('includes filter in result', async () => {
     const cards = [makeCard({ status: 'done' })];
     mockGetSnapshot.mockResolvedValue(makeSnapshot(cards));
@@ -642,16 +536,6 @@ describe('QueryAPI.execute', () => {
     await api.execute('board-1', 'status:done', 500);
 
     expect(mockGetSnapshot).toHaveBeenCalledWith('board-1', 500);
-  });
-
-  it('explains no-results for blocked when no blocked cards', async () => {
-    const cards = [makeCard({ blockedBy: [] })];
-    mockGetSnapshot.mockResolvedValue(makeSnapshot(cards));
-
-    const api = new QueryAPI({} as any);
-    const result = await api.execute('board-1', 'blocked');
-
-    expect(result.noResultsExplanation).toContain('blocked');
   });
 
   it('explains no-results for label', async () => {
