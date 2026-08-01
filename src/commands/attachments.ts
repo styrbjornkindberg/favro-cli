@@ -32,9 +32,7 @@ export function registerAttachmentsCommands(program: Command): void {
         // Safety bound: check scope for target card
         const api = new CardsAPI(client);
         const card = await api.getCard(cardCommonId);
-        if (card && card.boardId) {
-            await checkScope(card.boardId, client, config, options.force);
-        }
+        await checkScope(card?.boardId ?? '', client, config, options.force);
 
         if (options.dryRun) {
           dryRunLog('uploading', 'attachment', `${options.file} to card ${cardCommonId}`);

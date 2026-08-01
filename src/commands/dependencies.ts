@@ -61,9 +61,7 @@ export function registerDependenciesCommands(program: Command): void {
         // Safety bound: check scope for source card
         const api = new CardsAPI(client);
         const sourceCard = await api.getCard(sourceId);
-        if (sourceCard && sourceCard.boardId) {
-            await checkScope(sourceCard.boardId, client, config, options.force);
-        }
+        await checkScope(sourceCard?.boardId ?? '', client, config, options.force);
 
         if (options.dryRun) {
           dryRunLog('adding', 'dependency', `${sourceId} -> ${targetId} (${options.type})`);
@@ -105,9 +103,7 @@ export function registerDependenciesCommands(program: Command): void {
         const client = await createFavroClient();
         const api = new CardsAPI(client);
         const card = await api.getCard(cardId);
-        if (card && card.boardId) {
-          await checkScope(card.boardId, client, config, options.force);
-        }
+        await checkScope(card?.boardId ?? '', client, config, options.force);
 
         if (!(await confirmAction(`Remove dependency ${cardId} -> ${targetId}?`, { yes: options.yes }))) {
           return;
@@ -140,9 +136,7 @@ export function registerDependenciesCommands(program: Command): void {
         const client = await createFavroClient();
         const api = new CardsAPI(client);
         const card = await api.getCard(cardId);
-        if (card && card.boardId) {
-          await checkScope(card.boardId, client, config, options.force);
-        }
+        await checkScope(card?.boardId ?? '', client, config, options.force);
 
         if (!(await confirmAction(`Remove ALL dependencies from card ${cardId}? This cannot be undone.`, { yes: options.yes }))) {
           return;

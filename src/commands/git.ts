@@ -10,7 +10,8 @@
 import { Command } from 'commander';
 import { logError } from '../lib/error-handler';
 import { createFavroClient } from '../lib/client-factory';
-import { confirmAction, dryRunLog } from '../lib/safety';
+import { checkScope, confirmAction, dryRunLog } from '../lib/safety';
+import { readConfig } from '../lib/config';
 import CardsAPI from '../lib/cards-api';
 import BoardsAPI from '../lib/boards-api';
 import { CommentsApiClient } from '../api/comments';
@@ -211,6 +212,7 @@ export function registerGitCommands(program: Command): void {
     .description('Sync git branch state to Favro cards')
     .option('--dry-run', 'Show what would change without doing it')
     .option('-y, --yes', 'Skip confirmation')
+    .option('--force', 'Bypass scope check')
     .option('--json', 'Output as JSON')
     .action(async (options) => {
       try {
@@ -272,23 +274,44 @@ export function registerGitCommands(program: Command): void {
 
         const client = await createFavroClient();
         const cardsApi = new CardsAPI(client);
-        let updated = 0;
 
-        for (const m of merged) {
+        const targets = [
+          ...merged.map(m => ({ cardId: m.cardId!, status: 'Done' })),
+          ...open.map(m => ({ cardId: m.cardId!, status: 'In Progress' })),
+        ];
+
+        // The branch mappings carry only card IDs, so the board has to be
+        // resolved per card. Scope-check the whole pass first: a batch that
+        // straddles the lock must refuse as a whole rather than half-write.
+        // Once per DISTINCT card and once per DISTINCT board — two branches on
+        // the same card, or two cards on the same board, are not two of
+        // everything.
+        const globalConfig = await readConfig();
+        const targetBoards = new Set<string>();
+        for (const cardId of new Set(targets.map(t => t.cardId))) {
           try {
-            await cardsApi.updateCard(m.cardId!, { status: 'Done' });
-            updated++;
+            const card = await cardsApi.getCard(cardId);
+            targetBoards.add(card?.boardId ?? '');
           } catch {
-            console.error(`  ✗ Could not update card ${m.cardId}`);
+            // A stale mapping onto a deleted card resolves no board, and an
+            // unknown board is not an allowed one. The empty string hands it to
+            // the shared refusal — a no-op when no lock is configured, so the
+            // rest of the batch still syncs and the write loop below reports the
+            // bad card, exactly as it did before the lock existed.
+            targetBoards.add('');
           }
         }
+        for (const boardId of targetBoards) {
+          await checkScope(boardId, client, globalConfig, options.force);
+        }
 
-        for (const m of open) {
+        let updated = 0;
+        for (const t of targets) {
           try {
-            await cardsApi.updateCard(m.cardId!, { status: 'In Progress' });
+            await cardsApi.updateCard(t.cardId, { status: t.status });
             updated++;
           } catch {
-            console.error(`  ✗ Could not update card ${m.cardId}`);
+            console.error(`  ✗ Could not update card ${t.cardId}`);
           }
         }
 
@@ -308,6 +331,7 @@ export function registerGitCommands(program: Command): void {
     .option('--create', 'Create Favro cards from TODOs')
     .option('--dry-run', 'Preview what cards would be created')
     .option('-y, --yes', 'Skip confirmation')
+    .option('--force', 'Bypass scope check')
     .option('--json', 'Output as JSON')
     .option('--limit <n>', 'Max TODOs to show (default: 100)', '100')
     .action(async (options) => {
@@ -363,13 +387,20 @@ export function registerGitCommands(program: Command): void {
             return;
           }
 
+          const client = await createFavroClient();
+          const cardsApi = new CardsAPI(client);
+
+          // The board comes from --board or the repo's link config, neither of
+          // which is bound by the scope lock. Check BEFORE the confirm, like
+          // every other caller: no point asking "create 100 cards?" and only
+          // then admitting the board is locked out.
+          await checkScope(boardId, client, await readConfig(), options.force);
+
           if (!(await confirmAction(`Create ${limited.length} cards from TODOs?`, { yes: options.yes }))) {
             console.log('Aborted.');
             return;
           }
 
-          const client = await createFavroClient();
-          const cardsApi = new CardsAPI(client);
           let created = 0;
 
           for (const item of limited) {

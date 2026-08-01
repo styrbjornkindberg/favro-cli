@@ -113,10 +113,8 @@ export function registerColumnsCommands(program: Command): void {
 
         // Fetch column to check scope via its board
         const colMetadata = await api.getColumn(columnId);
-        if (colMetadata) {
-            const config = await readConfig();
-            await checkScope(colMetadata.boardId, client, config, options.force);
-        }
+        const config = await readConfig();
+        await checkScope(colMetadata?.boardId ?? '', client, config, options.force);
 
         const position = options.position !== undefined ? parseInt(options.position, 10) : undefined;
         

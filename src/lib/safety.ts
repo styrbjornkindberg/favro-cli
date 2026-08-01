@@ -70,6 +70,30 @@ export async function assertScope(
   }
 
   const locked = config.scopeCollectionName ?? config.scopeCollectionId;
+
+  // A write that names no board is UNCHECKABLE, not exempt. Callers reach here
+  // with an empty board id two ways — the card has no board instance
+  // (`boardId` is `widgetCommonId`, and an assignment fork has none), or the
+  // card could not be read at all and the caller passed `?? ''` rather than
+  // guessing. Both are boards the lock cannot see. Without this the lock fails
+  // OPEN, or sends a `/widgets/` request that refuses by accident rather than
+  // on purpose.
+  //
+  // `--force` deliberately does NOT rescue this. Force is "I know this board is
+  // outside the lock"; here there is no board to know anything about, so there
+  // is nothing for the escape hatch to escape.
+  if (!boardId) {
+    throw new ScopeError(
+      `Scope violation: this write names no board, so the scope lock ("${locked}") cannot be checked.\n` +
+        `  Either the card could not be read (wrong id, deleted card, or a failed request — the\n` +
+        `  underlying error is reported separately), or it has no board instance: no widgetCommonId\n` +
+        `  is what an assignment fork looks like, and a write to one is a write the lock cannot see.\n` +
+        `  Check the id, then run 'favro cards get <cardCommonId>' to name the board-resident instance.`,
+      boardId,
+      config.scopeCollectionId,
+    );
+  }
+
   const raw = await client.get<any>(`/widgets/${boardId}`);
   const collectionIds = raw?.collectionIds ?? [];
   if (collectionIds.includes(config.scopeCollectionId)) return;

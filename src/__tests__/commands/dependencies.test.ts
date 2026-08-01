@@ -63,6 +63,15 @@ describe('favro dependencies delete', () => {
     expect(safety.dryRunLog).toHaveBeenCalled();
     expect(MockCardsAPI.prototype.unlinkCard).not.toHaveBeenCalled();
   });
+
+  it('still runs the scope check on a card with no board', async () => {
+    MockCardsAPI.prototype.getCard = jest.fn().mockResolvedValue({ cardId: 'card-1' });
+    MockCardsAPI.prototype.unlinkCard = jest.fn().mockResolvedValue(undefined);
+
+    await runCli(['dependencies', 'delete', 'card-1', 'card-2', '--yes']);
+
+    expect(safety.checkScope).toHaveBeenCalledWith('', expect.anything(), {}, undefined);
+  });
 });
 
 describe('favro dependencies delete-all', () => {
