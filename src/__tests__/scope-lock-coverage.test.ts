@@ -41,17 +41,26 @@
  * Read-only commands need no exemption list — they never enter MUTATES. Nor do
  * `auth`, `scope set` or `init`, which write only local config.
  *
- * THE ALLOWLIST
- * ~22 writes in the tree today have never taken the lock. This test is a
- * RATCHET, not a green-field assertion: the allowlist below makes it pass on the
- * tree as it stands while failing the moment a NEW unguarded write appears.
- * Every entry names the issue that will delete it, so the debt is visible and
- * shrinking the list is the definition of done for those issues.
+ * TWO LISTS, AND WHY THEY ARE NOT ONE
+ * An unguarded write is one of two things, and collapsing them is how a decision
+ * turns back into debt six months later:
  *
- * TO DISCHARGE AN ENTRY: add the scope check to the command, then delete its
- * line here. Deleting the line is not optional — the second test below fails on
- * an entry that is no longer unguarded, so the list cannot rot into a permanent
- * exemption that nobody prunes.
+ *   - ALLOWLIST — debt. A write that SHOULD take the lock and does not yet. Each
+ *     entry names the issue that will delete it. The list only ever shrinks; it
+ *     is empty today, and an empty debt list is the point, not an accident.
+ *   - OUT_OF_REMIT — a decision. A write the lock structurally cannot govern,
+ *     with the reason stated here and again in the command's own source. These
+ *     are not going away, and pretending they are debt would mean a permanently
+ *     red ratchet that everyone learns to ignore.
+ *
+ * Both are exempt from the "no new holes" test and both are checked for
+ * staleness, so neither can rot: an entry in either list that is now guarded, or
+ * that no longer exists under that key, fails the build.
+ *
+ * TO DISCHARGE AN ALLOWLIST ENTRY: add the scope check to the command, then
+ * delete its line. Deleting the line is not optional. TO MOVE ONE TO
+ * OUT_OF_REMIT: argue it on the issue first — this file records calls, it does
+ * not make them.
  */
 import * as path from 'path';
 import * as ts from 'typescript';
@@ -59,58 +68,53 @@ import * as ts from 'typescript';
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
 /**
- * Writes that have never taken the scope lock, keyed `<file> <command path>`.
- * Do NOT add to this list to make a red build green — a new entry is a new hole.
+ * DEBT: writes that should take the scope lock and do not yet, keyed
+ * `<file> <command path>`, valued with the issue that will delete the line.
+ *
+ * Empty. It held 22 entries before #102/#103/#104; ten took the lock and twelve
+ * were decided out of remit below. Do NOT add to this list to make a red build
+ * green — a new entry is a new hole, and the only correct response to one is to
+ * guard the command.
  */
-const ALLOWLIST: Record<string, string> = {
-  // #104 — card-child writes that have never taken the lock. Each names a card
-  // (or a task/tasklist id that belongs to one), so each has a board to check.
-  'src/commands/tasks.ts tasks add': '#104',
-  'src/commands/tasks.ts tasks update': '#104',
-  'src/commands/tasks.ts tasks complete': '#104',
-  'src/commands/tasks.ts tasks delete': '#104',
-  'src/commands/tasklists.ts tasklists create': '#104',
-  'src/commands/tasklists.ts tasklists update': '#104',
-  'src/commands/tasklists.ts tasklists delete': '#104',
-  // The half-locked group that names the pattern: `comments add` checks.
-  'src/commands/comments.ts comments update': '#104',
-  'src/commands/comments.ts comments delete': '#104',
+const ALLOWLIST: Record<string, string> = {};
 
-  // #104 — org-level writes. Whether a COLLECTION lock should govern these at
-  // all is the call #104 asks to be made deliberately; until it is made, they
-  // are listed rather than quietly exempted.
-  'src/commands/tags.ts tags create': '#104 (org-level)',
-  'src/commands/tags.ts tags update': '#104 (org-level)',
-  'src/commands/tags.ts tags delete': '#104 (org-level)',
-  'src/commands/users.ts groups create': '#104 (org-level)',
-  'src/commands/users.ts groups update': '#104 (org-level)',
-  'src/commands/users.ts groups delete': '#104 (org-level)',
-  'src/commands/webhooks.ts webhooks create': '#104 (org-level)',
-  'src/commands/webhooks.ts webhooks delete': '#104 (org-level)',
-  // `collections update`/`delete` both call `checkCollectionScope`; create does
-  // not, and arguably cannot — a collection that does not exist yet is outside
-  // the lock by construction. Same deliberate call as the rest of this group.
-  'src/commands/collections-create.ts create': '#104 (org-level)',
-
-  // #102 — no board is resolvable from a commentId, so this one needs a
-  // decision (resolve the comment's card first, or refuse), not just a call.
-  // Its sibling `attachments upload` was locked in 32e6b93.
-  'src/commands/attachments.ts attachments upload-to-comment': '#102',
-
-  // #104 — found by this test, not previously known, filed onto #104 after the
-  // sweep. All three are the half-locked-sibling shape the file's header
-  // describes, which is why they were missed: each sits next to a command that
-  // WAS fixed, and a reader who checked the sibling concluded the group was
-  // covered.
-  //   `cards update --from-csv` took the lock in 32e6b93 (#79); `batch update
-  //   --from-csv` is the same CSV write through BulkTransaction and did not.
-  'src/commands/batch.ts update': '#104 (sibling of the #79 fix)',
-  //   `git sync` and `git todos --create` took the lock in 32e6b93 (#78);
-  //   `git branch` moves the card to In Progress and `git commit --comment`
-  //   comments on it, both unlocked.
-  'src/commands/git.ts git branch': '#104 (sibling of the #78 fix)',
-  'src/commands/git.ts git commit': '#104 (sibling of the #78 fix)',
+/**
+ * DECIDED: writes the collection lock structurally cannot govern.
+ *
+ * The lock resolves the BOARD a write lands on and asks whether that board is in
+ * the locked collection (`assertScope`). Every entry here lands on no board at
+ * all, so there is nothing to resolve — a check would either always pass (a lie)
+ * or always refuse, since `assertScope` treats an unresolvable board as a
+ * violation rather than an exemption. Always-refuse would break tag and group
+ * management outright for every locked user, which is not the lock doing its
+ * job. An org-level guardrail would have to be a DIFFERENT guardrail; one does
+ * not exist today.
+ *
+ * The same reasoning is written at the head of each command's own source (#104),
+ * because a reader hunting the missing check reads the command, not this file.
+ *
+ * The cost is named rather than hidden: `tags delete` strips the tag from every
+ * card in the organization — a wider blast radius than anything the collection
+ * lock guards. That is a real gap. It is not this lock's gap.
+ */
+const OUT_OF_REMIT: Record<string, string> = {
+  'src/commands/tags.ts tags create': '#104 — org-scoped; no board to resolve',
+  'src/commands/tags.ts tags update': '#104 — org-scoped; no board to resolve',
+  'src/commands/tags.ts tags delete': '#104 — org-scoped; no board to resolve',
+  'src/commands/users.ts groups create': '#104 — org-scoped; no board to resolve',
+  'src/commands/users.ts groups update': '#104 — org-scoped; no board to resolve',
+  'src/commands/users.ts groups delete': '#104 — org-scoped; no board to resolve',
+  'src/commands/webhooks.ts webhooks create': '#104 — org-scoped; no board to resolve',
+  'src/commands/webhooks.ts webhooks delete': '#104 — org-scoped; no board to resolve',
+  // The sharpest case, and the reason this list exists rather than a silence:
+  // `collections update`/`delete` DO call `checkCollectionScope`, so the group
+  // is asymmetric on purpose. `create` cannot check — the collection does not
+  // exist until the request returns, so it is outside the lock by construction.
+  'src/commands/collections-create.ts create': '#104 — the collection does not exist yet',
 };
+
+/** Exempt either way: debt and decision are both non-failing, for different reasons. */
+const EXEMPT = { ...ALLOWLIST, ...OUT_OF_REMIT };
 
 // ─── the program ─────────────────────────────────────────────────────────────
 
@@ -338,18 +342,27 @@ describe('the scope lock covers every write command', () => {
     expect(actions.filter((a) => a.writes && a.guarded).length).toBeGreaterThan(15);
   });
 
-  it('no command writes without taking the lock, outside the allowlist', () => {
+  it('no command writes without taking the lock, outside the two lists', () => {
     // A new name here is a new hole. Add the scope check to the command; do not
-    // add it to ALLOWLIST.
-    expect(unguarded.filter((key) => !(key in ALLOWLIST))).toEqual([]);
+    // add it to either list.
+    expect(unguarded.filter((key) => !(key in EXEMPT))).toEqual([]);
   });
 
-  it('no allowlist entry is stale — a fixed command must be removed from it', () => {
-    // An allowlist nobody prunes is worse than no test: it becomes a permanent
+  it('the debt list is empty and stays that way', () => {
+    // Stated as its own assertion rather than left implicit in the one above.
+    // #102/#103/#104 emptied it; the next entry to appear should have to be
+    // argued for, not slipped in beside twelve existing lines.
+    expect(Object.keys(ALLOWLIST)).toEqual([]);
+  });
+
+  it('no entry in either list is stale — a fixed command must be removed', () => {
+    // A list nobody prunes is worse than no test: it becomes a permanent
     // exemption that reads like debt. An entry that is now guarded, or that no
-    // longer exists under that key, has to go.
+    // longer exists under that key, has to go. This runs over OUT_OF_REMIT too:
+    // a decision is not a licence to stop checking whether it still describes
+    // the code.
     const live = new Set(unguarded);
-    expect(Object.keys(ALLOWLIST).filter((key) => !live.has(key)).sort()).toEqual([]);
+    expect(Object.keys(EXEMPT).filter((key) => !live.has(key)).sort()).toEqual([]);
   });
 });
 

@@ -130,6 +130,15 @@ export function registerTasksCommands(program: Command): void {
     // wire behaviour, so the card comes from the caller instead. Omitted, the
     // board resolves to '' and the shared check refuses under a lock: the write
     // is uncheckable, not exempt. Without a lock it stays a no-op.
+    //
+    // KNOWN CEILING (#104): the taskId is never verified to belong to the card
+    // named by `--card`, because verifying it is exactly the read that does not
+    // exist. So a caller can point `--card` at an in-scope card and mutate a
+    // task on another — a bypass no louder than `--force`, and unlike `--force`
+    // it prints no warning. This is weaker than every other site's check, which
+    // resolves the board FROM the thing being written. Upgrade path: measure
+    // `GET /tasks/:taskId`; if it carries `cardCommonId`, delete this flag and
+    // resolve like everywhere else.
     .option('--card <card>', 'Card the task belongs to — required under a scope lock, since a taskId names no board')
     .action(async (taskId: string, options) => {
       const verbose = tasksCommand.opts()?.verbose ?? false;

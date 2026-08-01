@@ -23,7 +23,7 @@ export function registerAttachmentsCommands(program: Command): void {
     .option('--json', 'Output as JSON')
     .option('--dry-run', 'Preview without making API calls')
     .option('-y, --yes', 'Skip confirmation prompt')
-    .option('--force', 'Bypass bounds checking')
+    .option('--force', 'Bypass scope check')
     .action(async (cardCommonId: string, options) => {
       const verbose = attachmentsCmd.opts()?.verbose ?? false;
       try {

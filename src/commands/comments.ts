@@ -14,29 +14,44 @@ import CommentsApiClient from '../api/comments';
 import { formatTimestamp } from '../lib/time';
 
 /**
- * Scope-check a write named only by a commentId: comment → card → board, both
- * hops inside the try. An unresolvable comment resolves to `''`, which the
- * shared check refuses under a lock and ignores without one — never a crash.
+ * The board a card sits on, or `''` when it cannot be read.
+ *
+ * Wrapped on purpose: an unwrapped resolving GET turns a stale reference into a
+ * dead command rather than a clean refusal (#78). `''` is UNCHECKABLE, not
+ * exempt — the shared check refuses it under a lock and ignores it without one.
  */
-async function checkCommentScope(
-  commentId: string,
-  client: any,
-  api: CommentsApiClient,
-  force?: boolean
-): Promise<void> {
+async function boardOfCard(client: any, cardRef: string): Promise<string> {
+  if (!cardRef) return '';
   const { default: CardsAPI } = await import('../lib/cards-api');
-  let boardId = '';
   try {
-    // The normaliser puts cardCommonId on `cardId`.
-    const cardId = (await api.getComment(commentId))?.cardId ?? '';
-    boardId = (await new CardsAPI(client).getCard(cardId))?.boardId ?? '';
+    return (await new CardsAPI(client).getCard(cardRef))?.boardId ?? '';
   } catch {
-    boardId = '';
+    return '';
   }
+}
 
+/** The one scope check every write in this file goes through. */
+async function checkCommentScope(boardId: string, client: any, force?: boolean): Promise<void> {
   const { readConfig } = await import('../lib/config');
   const { checkScope } = await import('../lib/safety');
   await checkScope(boardId, client, await readConfig(), force);
+}
+
+/**
+ * The board behind a write named only by a commentId: comment → card → board,
+ * both hops inside the try, for the same reason `boardOfCard` wraps its one.
+ */
+async function boardOfComment(
+  client: any,
+  api: CommentsApiClient,
+  commentId: string
+): Promise<string> {
+  try {
+    // The normaliser puts cardCommonId on `cardId`.
+    return await boardOfCard(client, (await api.getComment(commentId))?.cardId ?? '');
+  } catch {
+    return '';
+  }
 }
 
 export function registerCommentsCommand(program: Command): void {
@@ -154,20 +169,19 @@ export function registerCommentsCommand(program: Command): void {
           return;
         }
 
+        const client = await createFavroClient();
+
+        // Check BEFORE the confirm, and with the resolving GET wrapped — this
+        // command was already "guarded" but had neither, which is the #78 shape
+        // its own siblings were just fixed for (#104): a stale cardId threw out
+        // of the command instead of refusing, and a user could answer "add this
+        // comment?" only to be refused afterwards.
+        await checkCommentScope(await boardOfCard(client, cardId), client, options.force);
+
         if (!(await confirmAction(`Add comment to card ${cardId}?`, { yes: options.yes }))) {
           console.log('Aborted.');
           return;
         }
-
-        const client = await createFavroClient();
-        
-        const { default: CardsAPI } = await import('../lib/cards-api');
-        const cardsApi = new CardsAPI(client);
-        const card = await cardsApi.getCard(cardId);
-        
-        const { readConfig } = await import('../lib/config');
-        const { checkScope } = await import('../lib/safety');
-        await checkScope(card.boardId ?? '', client, await readConfig(), options.force);
 
         const api = new CommentsApiClient(client);
 
@@ -215,7 +229,7 @@ export function registerCommentsCommand(program: Command): void {
 
         const client = await createFavroClient();
         const api = new CommentsApiClient(client);
-        await checkCommentScope(commentId, client, api, options.force);
+        await checkCommentScope(await boardOfComment(client, api, commentId), client, options.force);
 
         const { confirmAction } = await import('../lib/safety');
         if (!(await confirmAction(`Update comment ${commentId}?`, { yes: options.yes }))) {
@@ -259,7 +273,7 @@ export function registerCommentsCommand(program: Command): void {
 
         const client = await createFavroClient();
         const api = new CommentsApiClient(client);
-        await checkCommentScope(commentId, client, api, options.force);
+        await checkCommentScope(await boardOfComment(client, api, commentId), client, options.force);
 
         const { confirmAction } = await import('../lib/safety');
         if (!(await confirmAction(`Delete comment ${commentId}?`, { yes: options.yes }))) {

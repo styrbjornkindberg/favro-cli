@@ -97,12 +97,20 @@ it is why a refusal is never reported as retryable. `RefusalError`
 (`src/lib/refusal.ts`) is a leaf class every refusal extends; anything raising a bare
 `Error` is treated as a failure and unwinds, which is the safe default.
 
-**scope lock** — the mandatory guardrail. Every write resolves the board it lands on
-and checks it against the locked collection before anything happens; a batch that
-straddles the lock refuses as a whole, and a write that names no board is
-*uncheckable*, not exempt. `--force` is the only escape hatch, and it does not rescue
-the no-board case. `--dry-run` is a preview, never a safety wall.
-`assertScope` in `src/lib/safety.ts`.
+**scope lock** — the mandatory guardrail on every write that *lands on a board*. Such a
+write resolves its board and checks it against the locked collection before anything
+happens; a batch that straddles the lock refuses as a whole, and a write that names a
+board it cannot resolve is *uncheckable*, not exempt. `--force` is the only escape
+hatch, and it does not rescue the no-board case. `--dry-run` is a preview, never a
+safety wall — and the lock runs *before* the preview, so a preview is not a way around
+it. `assertScope` in `src/lib/safety.ts`.
+
+Its remit has an edge, decided rather than implied (#104): a write to an **org-scoped**
+entity — a tag, a group, a webhook, a collection being created — lands on no board at
+all, so there is nothing for a collection lock to resolve and it is *out of remit*, not
+unguarded-by-oversight. Guarding those would need an org-level lock, which does not
+exist. `src/__tests__/scope-lock-coverage.test.ts` holds both lists — debt and
+decision — and fails on a stale entry in either.
 
 **compensation log** — the ordered record of reversible writes a transaction has made,
 which the dispatch table unwinds LIFO on failure. Each entry carries what the write did
