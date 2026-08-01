@@ -440,6 +440,31 @@ Add `--verbose` to any command for full debug output.
 
 ---
 
+## Tests
+
+```bash
+npm test                                          # unit tests
+npx jest --config jest.integration.config.js      # integration tests
+```
+
+The integration suite in `src/__integration__/` talks to the real Favro API. It
+needs two environment variables, and skips every test cleanly when either is
+missing:
+
+| Variable | What it is |
+|----------|------------|
+| `FAVRO_API_TOKEN` | A Favro API token |
+| `FAVRO_TEST_BOARD_ID` | A **dedicated throwaway board** — the suite creates, edits, and deletes cards on it |
+
+A few suites unlock extra cases when also set: `FAVRO_TEST_CARD_ID`,
+`FAVRO_TEST_FIELD_ID`, `FAVRO_TEST_MEMBER_EMAIL`, `FAVRO_TEST_MEMBER_ID`, and
+`FAVRO_ORG` (the custom-fields suite defaults it to `seldon`).
+
+In CI the same two are read from repo secrets of the same names. Without them
+the integration job announces a skip instead of reporting a pass.
+
+---
+
 ## License
 
 See [LICENSE](./LICENSE).

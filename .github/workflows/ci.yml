@@ -57,14 +57,21 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Requires repo secrets FAVRO_API_TOKEN and FAVRO_TEST_BOARD_ID (a
+      # dedicated throwaway Favro board — the suite creates and deletes cards
+      # on it). Without both, the run is announced as skipped rather than
+      # passing quietly: the suite's own guards would skip every test anyway.
       - name: Run integration tests
-        run: npx jest --config jest.integration.config.js --verbose
         env:
           CI: true
           FAVRO_API_TOKEN: ${{ secrets.FAVRO_API_TOKEN }}
           FAVRO_TEST_BOARD_ID: ${{ secrets.FAVRO_TEST_BOARD_ID }}
-        # Integration tests require credentials — skip gracefully if not set
-        continue-on-error: ${{ secrets.FAVRO_API_TOKEN == '' }}
+        run: |
+          if [ -z "$FAVRO_API_TOKEN" ] || [ -z "$FAVRO_TEST_BOARD_ID" ]; then
+            echo "::warning title=Integration tests skipped::FAVRO_API_TOKEN / FAVRO_TEST_BOARD_ID are not configured — no integration coverage for this run."
+            exit 0
+          fi
+          npx jest --config jest.integration.config.js --verbose
 
   typecheck:
     name: TypeScript Check
