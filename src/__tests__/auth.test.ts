@@ -9,7 +9,7 @@
  */
 import FavroHttpClient from '../lib/http-client';
 import BoardsAPI from '../lib/boards-api';
-import { registerCardsListCommand } from '../commands/cards-list';
+import { buildProgram } from '../cli';
 import { Command } from 'commander';
 
 jest.mock('axios');
@@ -153,9 +153,12 @@ describe('Missing FAVRO_API_TOKEN — command fast-fail', () => {
   // One case, not two: the pair that used to live here registered the same
   // command with the same argv and differed only in which half of the message
   // they read.
+  //
+  // Driven through `buildProgram()` — the program users actually reach. The
+  // earlier version registered a standalone `cards-list` module that nothing
+  // else imported, so it proved the hint text on a command no user could run.
   test('a card read with no credentials names the missing API key and the fix', async () => {
-    const program = new Command();
-    registerCardsListCommand(program);
+    const program = buildProgram();
 
     await expect(
       program.parseAsync(['node', 'test', 'cards', 'list'])
