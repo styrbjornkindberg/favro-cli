@@ -639,7 +639,7 @@ cards
   .option('--label <label>', 'Label/tag filter for batch operations (use with --board)')
   .option('--board <id>', 'Board ID — required for batch operations, optional for single')
   .option('--from-csv <file>', 'CSV file with card updates (columns: cardId, status, assignee, dueDate)')
-  .option('--dry-run', 'Preview changes without making API calls')
+  .option('--dry-run', 'Preview changes without writing — with --from-csv this still reads each row\'s card, because the scope lock runs before the preview, by design, so a preview cannot be a way around it')
   .option('-y, --yes', 'Skip confirmation prompt')
   .option('--force', 'Bypass scope check')
   .option('--json', 'Output as JSON')
@@ -722,10 +722,10 @@ cards
         const targetBoards = new Set<string>();
         for (const row of rows) {
           let previousState: Record<string, unknown> | undefined;
-          if (!options.dryRun) {
-            let card: Card | undefined;
-            try {
-              card = await api.getCard(row.card_id);
+          let card: Card | undefined;
+          try {
+            card = await api.getCard(row.card_id);
+            if (!options.dryRun) {
               previousState = {
                 name: card.name,
                 status: card.status,
@@ -734,29 +734,45 @@ cards
                 dueDate: card.dueDate,
                 boardId: card.boardId,
               };
-            } catch (error: any) {
-              previousState = {};
-              // Say WHICH row could not be read and why. The scope refusal below
-              // can only report "no board"; without this the actual cause — a
-              // typo'd id, a deleted card, an auth blip — never reaches the user.
-              console.error(
-                `✗ Could not read card ${row.card_id}: ${error?.message ?? String(error)}`
-              );
             }
-            // A row whose card could not be fetched has an unknown board, and an
-            // unknown board is not the same as an allowed one. Feeding the empty
-            // string to the shared check keeps this fail-closed: the check
-            // refuses it rather than this branch silently dropping the row from
-            // the lock and writing anyway.
-            targetBoards.add(card?.boardId ?? '');
+          } catch (error: any) {
+            if (!options.dryRun) previousState = {};
+            // Say WHICH row could not be read and why. The scope refusal below
+            // can only report "no board"; without this the actual cause — a
+            // typo'd id, a deleted card, an auth blip — never reaches the user.
+            console.error(
+              `✗ Could not read card ${row.card_id}: ${error?.message ?? String(error)}`
+            );
           }
+          // A row whose card could not be fetched has an unknown board, and an
+          // unknown board is not the same as an allowed one. Feeding the empty
+          // string to the shared check keeps this fail-closed: the check
+          // refuses it rather than this branch silently dropping the row from
+          // the lock and writing anyway.
+          targetBoards.add(card?.boardId ?? '');
           ops.push(csvRowToBulkOperation(row, previousState as any));
         }
 
+        // Take the lock on every distinct board the batch touches, before the
+        // transaction exists — and before the preview prints. A CSV is free to
+        // straddle boards, and a batch that straddles the lock has to refuse as
+        // a whole: checking board-by-board mid-execution would leave the rows
+        // before the violation already written and the compensation log doing
+        // work the lock should have prevented. No-op when no lock is configured.
+        const { readConfig } = await import('./lib/config');
+        const { checkScope } = await import('./lib/safety');
+        const scopeConfig = await readConfig();
+        for (const boardId of targetBoards) {
+          await checkScope(boardId, client, scopeConfig, options.force);
+        }
+
         if (options.dryRun) {
-          // Deliberately no scope check here: the dry-run path issues no GETs at
-          // all, so it has no boards to check, and it writes nothing that a lock
-          // would need to guard. It is a pure preview of the parsed CSV.
+          // The lock runs BEFORE this preview, same as `dispatch.ts` and
+          // `cards create --dry-run` (#103). A preview is not a way around the
+          // lock, and a preview that says "would update CLA-999" for a card the
+          // real run refuses is misinformation — telling you what the write
+          // will do is the preview's whole job. Cost: one GET per row on a path
+          // that used to make none, which is what an opted-into preview buys.
           if (!options.json) {
             const preview = formatBulkPreview(ops, `Dry-run preview — ${rows.length} update(s)`);
             console.log(preview);
@@ -768,19 +784,6 @@ cards
             console.log(tx.formatDryRunJSON());
           }
           return;
-        }
-
-        // Take the lock on every distinct board the batch touches, before the
-        // transaction exists. A CSV is free to straddle boards, and a batch that
-        // straddles the lock has to refuse as a whole — checking board-by-board
-        // mid-execution would leave the rows before the violation already
-        // written and the compensation log doing work the lock should have
-        // prevented. No-op when no lock is configured.
-        const { readConfig } = await import('./lib/config');
-        const { checkScope } = await import('./lib/safety');
-        const scopeConfig = await readConfig();
-        for (const boardId of targetBoards) {
-          await checkScope(boardId, client, scopeConfig, options.force);
         }
 
         const tx = new BulkTransaction(api);
