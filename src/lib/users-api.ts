@@ -1,6 +1,7 @@
 import FavroHttpClient from './http-client';
 import { cachedUsers } from './name-cache';
 import { MISSING_WORDING } from './favro-error';
+import { RefusalError } from './refusal';
 
 export interface User {
   userId: string;
@@ -46,8 +47,13 @@ export function detectUserKey(value: string): UserKey {
 
 export type UserLookupFailure = 'unknown' | 'ambiguous';
 
-/** Structured refusal from `getUser`. `candidates` is populated on 'ambiguous'. */
-export class UserLookupError extends Error {
+/**
+ * Structured refusal from `getUser`. `candidates` is populated on 'ambiguous'.
+ *
+ * A `RefusalError`: an unknown or colliding user resolves the same way next
+ * time, so the retry advice must say so (#81).
+ */
+export class UserLookupError extends RefusalError {
   constructor(
     message: string,
     readonly kind: UserLookupFailure,
