@@ -18,11 +18,37 @@
  */
 import { CacheKind, readCache, writeCache } from './name-cache';
 import { MISSING_WORDING } from './favro-error';
+import { RefusalError } from './refusal';
 
 /** One resolvable thing: an id and the name a human types for it. */
 export interface NamedRef {
   id: string;
   name: string;
+}
+
+export type NameResolutionFailure = 'unknown' | 'ambiguous';
+
+/**
+ * Structured refusal from `resolveNameToId`.
+ *
+ * A `RefusalError`, so the dispatch table's one test reaches it: the same name
+ * resolves the same way next time, and "retryable" would be a loop (#81).
+ *
+ * `candidates` is a FIELD, not prose to regex back out of the message — the
+ * colliding entries on 'ambiguous', and whatever the key can see on 'unknown',
+ * which is the same list the message spells out.
+ */
+export class NameResolutionError extends RefusalError {
+  constructor(
+    message: string,
+    readonly kind: NameResolutionFailure,
+    readonly value: string,
+    readonly label: string,
+    readonly candidates: NamedRef[] = []
+  ) {
+    super(message);
+    this.name = 'NameResolutionError';
+  }
 }
 
 const norm = (s: string | undefined): string => (s ?? '').trim().toLowerCase();
@@ -92,16 +118,24 @@ export async function resolveNameToId(options: ResolveOptions): Promise<string> 
   if (found.length === 1) return found[0].id;
 
   if (found.length === 0) {
-    throw new Error(
+    throw new NameResolutionError(
       `No ${options.label} named "${options.value}" — it is ${MISSING_WORDING}.\n` +
         `Matching is exact (trimmed, case-insensitive). Run '${options.listCommand}' to see what your key can reach.` +
-        (entries.length > 0 ? `\nVisible ${options.label}s:\n${describe(entries)}` : '')
+        (entries.length > 0 ? `\nVisible ${options.label}s:\n${describe(entries)}` : ''),
+      'unknown',
+      options.value,
+      options.label,
+      entries
     );
   }
 
-  throw new Error(
+  throw new NameResolutionError(
     `${found.length} ${options.label}s are named "${options.value}" — refusing to pick one.\n` +
       `${describe(found)}\n` +
-      `Pass the id instead: ${options.useIdWith}`
+      `Pass the id instead: ${options.useIdWith}`,
+    'ambiguous',
+    options.value,
+    options.label,
+    found
   );
 }

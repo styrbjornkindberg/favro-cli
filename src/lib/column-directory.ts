@@ -18,6 +18,7 @@ import FavroHttpClient from './http-client';
 import ColumnsAPI from './columns-api';
 import WidgetsAPI from './widgets-api';
 import { readCache, readCacheRecord, writeCache, CACHE_TTL_MS } from './name-cache';
+import { RefusalError } from './refusal';
 
 export interface ColumnRef {
   columnId: string;
@@ -35,8 +36,11 @@ const norm = (s: string): string => s.trim().toLowerCase();
  * **override** `widgetCommonId`, and never validates the pair — so
  * `--board A --status <id-from-B>` answers 200 and populated, about a board
  * nobody asked for.
+ *
+ * A `RefusalError`: the same call resolves the same way, so retrying it is the
+ * loop #81 closed — the dispatch table reads that base class and nothing else.
  */
-export class ColumnResolutionError extends Error {
+export class ColumnResolutionError extends RefusalError {
   constructor(
     message: string,
     readonly value: string,

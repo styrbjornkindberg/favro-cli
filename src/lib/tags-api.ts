@@ -1,6 +1,7 @@
 import FavroHttpClient from './http-client';
 import { cachedTags } from './name-cache';
 import { MISSING_WORDING } from './favro-error';
+import { RefusalError } from './refusal';
 
 export interface Tag {
   tagId: string;
@@ -30,8 +31,13 @@ export function isTagId(value: string): boolean {
 
 export type TagLookupFailure = 'unknown' | 'ambiguous';
 
-/** Structured refusal from `getTag`. `candidates` is populated on 'ambiguous'. */
-export class TagLookupError extends Error {
+/**
+ * Structured refusal from `getTag`. `candidates` is populated on 'ambiguous'.
+ *
+ * A `RefusalError`: an unknown or colliding tag name resolves the same way next
+ * time, so the retry advice must say so (#81).
+ */
+export class TagLookupError extends RefusalError {
   constructor(
     message: string,
     readonly kind: TagLookupFailure,

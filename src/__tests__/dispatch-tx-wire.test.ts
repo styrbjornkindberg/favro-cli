@@ -2120,3 +2120,36 @@ describe('the archive compensation restores the CAPTURED prior value', () => {
     expect(stand.cards.get(CARD)!.archived).toBe(false);
   });
 });
+
+describe('a client-side resolution refusal is never advertised as retryable', () => {
+  // Each of these names something the org does not hold, so the identical call
+  // refuses identically — `retryable: true` is advice to loop forever, which is
+  // exactly what `ColumnResolutionError` produced while it extended plain
+  // `Error`: no `RefusalError` arm to match, and no HTTP response to classify,
+  // so the transient family by default (#81).
+  //
+  // Driven as the SECOND card of a multi-create on purpose. A refusal raised
+  // before this invocation has written anything is RETHROWN, so the retry advice
+  // only exists on a returned result once one card is already made.
+  const bad: Array<[string, Record<string, unknown>]> = [
+    ['--status', { name: 'Second', board: BOARD, status: 'Dong' }],
+    ['--tag', { name: 'Second', board: BOARD, tags: ['no-such-tag'] }],
+    ['--assignee', { name: 'Second', board: BOARD, assignees: ['Nobody Here'] }],
+  ];
+
+  it.each(bad)('a %s that resolves to nothing reports retryable: false', async (_flag, second) => {
+    const stand = await startServer();
+
+    const result = await dispatch(
+      'create',
+      { cards: [{ name: 'First', board: BOARD }, second] },
+      ctx(stand),
+    );
+
+    expect(result.outcome).toBe('rolled-back');
+    expect(result.retryable).toBe(false);
+    // The first card really was unwound — "rolled-back" is a claim about the
+    // wire, not about our own bookkeeping.
+    expect([...stand.cards.keys()]).not.toContain('new-card-1');
+  });
+});
