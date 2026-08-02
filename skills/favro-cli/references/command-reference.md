@@ -847,24 +847,6 @@ Supported goal patterns:
 - `close all <filter> cards`
 - `unassign all <filter> cards`
 
-### `propose <board>` 📖 READ (generates preview)
-Propose a change — generates a dry-run preview with a change ID.
-
-| Flag | Description |
-|------|-------------|
-| `--action <action>` | **Required.** Plain English action |
-| `--pretty` | Pretty-print output |
-
-### `execute <board>` ⚠️ WRITE
-Execute a proposed change.
-
-| Flag | Description |
-|------|-------------|
-| `--change-id <id>` | **Required.** From `propose` output |
-| `--pretty` | Pretty-print output |
-| `-y, --yes` | Skip confirmation |
-| `--force` | Bypass scope check |
-
 ### `risks <board>` 📖 READ
 Board risk analysis — surfaces blocked, stale, unassigned, and incomplete cards.
 

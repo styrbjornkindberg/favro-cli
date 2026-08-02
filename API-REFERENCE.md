@@ -2303,7 +2303,7 @@ jobs:
 
 ---
 
-## Error Message Reference (SPEC-003)
+## Error Message Reference
 
 ### Authentication & Authorization
 
@@ -2322,14 +2322,6 @@ jobs:
 | `Card '<id>' not found` | Card was deleted or ID is wrong | Use `favro query` to search by name |
 | `Status '<status>' not found` | Status name doesn't exist on board | List valid statuses: `favro boards get <id> --json \| jq '.columns'` |
 | `User '<email>' not found` | Email doesn't match any board member | List members: `favro members list --board <id>` |
-
-### Parsing & Natural Language
-
-| Error | Cause | Solution |
-|-------|-------|----------|
-| `Cannot parse action` | Syntax doesn't match expected pattern | Check `favro parse --help` for examples |
-| `Ambiguous card name` | Multiple cards match the search | Use a more specific card name |
-| `Unknown verb` | Verb (move, assign, etc.) not recognized | Use: move, assign, create, close, link, set |
 
 ### Batch Operations
 
@@ -2403,19 +2395,6 @@ favro batch update --from-csv big.csv --verbose
 - Split CSV into chunks (< 250 rows)
 - Use `concurrency=1` (default) to reduce rate limit risk
 - Run at off-peak times
-
----
-
-### Dry-Run Mismatch
-
-**Problem:** Dry-run shows different changes than actual execution
-
-**Likely cause:** Board state changed between proposal and execution (another user edited)
-
-**Solutions:**
-1. Always execute dry-run soon after proposal
-2. Propose + execute atomically in scripts
-3. Use `--force` to override stale warnings (use carefully!)
 
 ---
 
