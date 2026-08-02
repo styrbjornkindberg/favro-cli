@@ -10,6 +10,7 @@
   },
   "scripts": {
     "build": "tsc",
+    "typecheck": "tsc --noEmit -p tsconfig.test.json",
     "test": "jest",
     "test:coverage": "jest --coverage",
     "prepack": "npm run build",
