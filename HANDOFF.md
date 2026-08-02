@@ -95,11 +95,45 @@ five others nothing consumes — pre-existing debt, worth its own issue.
 The agents are gone; the worktrees survive. Check each before restarting from
 scratch.
 
-- **#99** (`worktree-agent-a2309472d2c816a4b`) — **29 uncommitted files, 0
-  commits.** The largest body of unsaved work. Read it before you decide whether
-  to salvage or redo.
 - **#82** (`worktree-agent-afa54d8a0d15ff264`) — nothing committed, nothing
   dirty. Restart it.
+
+### #99 finished and committed — needs review, then merge
+
+`worktree-agent-a2309472d2c816a4b`, commits `28f6ad6` → `23cac6c` (merge of
+main) → `cf0d5d0`. Clean tree. Self-verified **on the merge result**: typecheck
+clean, cycles clean, **142 suites / 2552 tests**. Not independently reviewed —
+that is the only thing standing between it and merge.
+
+It enumerated 21 array-emitting sites with a TS-checker detector rather than by
+name-guessing: 4 already compliant (3 of which had no `--limit`, so `truncated`
+was structurally unreachable), 17 fixed, 1 left to #136, 4 decided out of remit
+and recorded (write echoes own their shape via `reportDispatch`; `cards export`
+is a serialisation format shared with `--out`, where an envelope would make the
+file and the pipe disagree).
+
+Two real bugs found in passing:
+
+- **`activity` was silently cutting rows** — `--limit` was sliced client-side
+  inside `getCardActivity` with nothing saying so. `limit` is now gone from
+  `CardActivityOptions` entirely, #136's shape, so it cannot return a layer down.
+- **Latent NaN bug in `capRows`**: `--limit banana` → `NaN < 1` is false →
+  `slice(0, NaN)` → **zero rows, marked `truncated`**. Guard rewritten as
+  `!(cap >= 1)`.
+
+It also touched `src/lib/run.ts` — `RowsResult.limit` widened, and one
+`noteTruncation` after `writeHuman` so a `human` formatter (which receives rows,
+not the envelope, and so cannot see `truncated`) reports the cut. Additive, and
+it gives #115's eight persona commands truncation-reporting for free.
+
+Its ratchet `list-envelope-coverage.test.ts` fired unprompted when #136 merged —
+the staleness arm caught the stale allowlist line.
+
+**Worth filing, found but not fixed:** the eight persona commands' `--limit`
+flags are *fetch* caps of exactly the #44/#91 class (`parseInt(options.limit,10)
+|| 1000` fed into the read). The ratchet does not catch them because they emit
+report objects rather than arrays. Same for `git todos` (`{total, items}`) and
+`git branches` (`{branches, linkedBoard}`).
 
 ## 4. Blocked, and why
 
