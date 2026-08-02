@@ -85,7 +85,8 @@ Columns that don't match any pattern are omitted from the workflow map.
 Several commands auto-detect `.favro/context.json` from your working directory (walking up to 10 parent directories):
 
 ```bash
-# These resolve board names/slugs via context.json
+# All three are collection-scoped; without --collection they fall back to the
+# scope collection recorded in context.json
 favro my-cards --collection sprint-42
 favro overview --collection sprint-42
 favro health --collection sprint-42

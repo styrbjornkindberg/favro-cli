@@ -35,6 +35,11 @@
  * that way, and the per-file floor below is what would notice if a file
  * converted wholesale.
  *
+ * Fence state is one toggle, so a single stray marker inverts it and blinds the
+ * rest of a file. The floors cannot see that — measured, a stray ``` near the
+ * top of `docs/commands.md` hides every example after it and leaves the suite
+ * green. A parity check on each file catches it at the source instead.
+ *
  * The reverse risk — a scan so narrow it silently matches nothing — is what the
  * self-check block at the bottom exists for.
  *
@@ -284,6 +289,9 @@ interface Invocation {
   tokens: string[];
 }
 
+/** Files whose fence markers do not pair up — see UNBALANCED below. */
+const unbalanced: string[] = [];
+
 /** Every `favro …` invocation in every tracked doc, with where it was written. */
 function readDocs(): Invocation[] {
   const found: Invocation[] = [];
@@ -306,6 +314,7 @@ function readDocs(): Invocation[] {
           for (const tokens of invocations(segment)) found.push({ file, line: i + 1, tokens });
         }
       });
+    if (inFence) unbalanced.push(file);
   }
   return found;
 }
@@ -371,6 +380,16 @@ function walkTokens(cmd: Command, tokens: string[], depth: number): Walked {
   return { extras, unknownFlag };
 }
 
+/** The longest registered argv path the leading positionals name, if any. */
+function resolve(positional: string[]): { cmd: Command; depth: number } | undefined {
+  for (const depth of [2, 1]) {
+    const candidate = positional.slice(0, depth).join(' ');
+    const cmd = depth <= positional.length ? SURFACE.get(candidate) : undefined;
+    if (cmd) return { cmd, depth };
+  }
+  return undefined;
+}
+
 /** What is wrong with this invocation, if anything. */
 function inspect(inv: Invocation): Finding | undefined {
   const positional = inv.tokens.filter((t) => !t.startsWith('-'));
@@ -383,17 +402,9 @@ function inspect(inv: Invocation): Finding | undefined {
     report: `${at}  — ${what}`,
   });
 
-  let cmd: Command | undefined;
-  let depth = 0;
-  for (const d of [2, 1]) {
-    const candidate = positional.slice(0, d).join(' ');
-    if (d <= positional.length && SURFACE.has(candidate)) {
-      cmd = SURFACE.get(candidate);
-      depth = d;
-      break;
-    }
-  }
-  if (!cmd) return finding(positional[0], 'no such command');
+  const resolved = resolve(positional);
+  if (!resolved) return finding(positional[0], 'no such command');
+  const { cmd, depth } = resolved;
   // A group named with no subcommand (`favro batch`, `favro cards --help`) is a
   // reference to the family, not a claim that it runs — commander prints help.
   // `favro cards <subcommand>` is the same: a shape, not a claim. Only a group
@@ -466,11 +477,21 @@ describe('every command the docs teach is a command the binary answers to', () =
     // …and almost all of them met the real surface. See RESOLVED above: this is
     // the assertion a silently-matching-nothing walker cannot pass.
     expect(RESOLVED).toBeGreaterThan(570); // 597 today; the rest are `<placeholder>` and bare `favro --help`
-    // Belt and braces on the global floor, which has ~26 slack against 626 and
-    // so cannot notice a whole small file going dark. One unbalanced ``` inverts
-    // fence state for the rest of a file, and `docs/commands.md` (18) or
-    // `docs/git-integration.md` (16) fits inside that slack twice over.
     expect(new Set(INVOCATIONS.map((i) => i.file)).size).toBeGreaterThan(22); // 24 today
+  });
+
+  it('every doc closes the fences it opens', () => {
+    // Not tidiness — correctness. Fence state is a single toggle, so ONE stray
+    // ``` inverts it for the rest of the file and every later example reads as
+    // prose. The floors above cannot see that: measured, a stray marker near the
+    // top of `docs/commands.md` (18 invocations) hides everything after it and
+    // leaves the suite green, because 18 fits inside the global floor's slack
+    // and the file still contributes inline code spans, so it never goes dark
+    // enough for the per-file count to notice. Parity catches it at the source.
+    //
+    // ponytail: parity, not a real Markdown parser — an EVEN number of strays
+    // still balances. One typo'd marker is the realistic case and this sees it.
+    expect(unbalanced).toEqual([]);
   });
 
   it('detects each of the four shapes it claims to detect', () => {

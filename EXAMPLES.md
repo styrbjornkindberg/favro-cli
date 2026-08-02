@@ -508,10 +508,9 @@ favro cards create --csv new-tasks.csv --board abc123 --dry-run
 
 # Preview update
 favro cards update card-001 --status "Done" --assignees "alice" --dry-run
-
-# Preview export filter — export writes a file, so send it to a scratch path
-favro cards export abc123 --filter "status:Todo" --out /tmp/preview.json
 ```
+
+`cards export` is read-only and has no `--dry-run` — run it straight, or send it to a scratch path with `--out` first.
 
 ---
 
