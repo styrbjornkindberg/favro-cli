@@ -27,7 +27,7 @@ import BoardsAPI from './lib/boards-api';
 import { dispatch } from './lib/dispatch';
 import { reportDispatch } from './lib/report-dispatch';
 import { writeCardsCSV, writeCardsJSON, normalizeCard, cardsToCSV } from './lib/csv';
-import { applyFilters, ExportFormat } from './commands/cards-export';
+import { applyFilters, ExportFormat } from './lib/cards-export';
 import { Card } from './lib/cards-api';
 import { registerAuthCommand } from './commands/auth';
 import { registerScopeCommand } from './commands/scope';
