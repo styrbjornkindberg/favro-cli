@@ -21,6 +21,7 @@ import CollectionsAPI from '../lib/collections-api';
 import { CustomFieldsAPI } from '../lib/custom-fields-api';
 import { FavroApiClient } from '../api/members';
 import { logError } from '../lib/error-handler';
+import { RefusalError } from '../lib/refusal';
 import { detectStage, WorkflowStage } from '../lib/workflow-stage';
 
 // ─── Types for context.json ──────────────────────────────────────────────────
@@ -102,14 +103,27 @@ export function registerInitCommand(program: Command): void {
         const contextDir = path.join(process.cwd(), '.favro');
         const contextFile = path.join(contextDir, 'context.json');
 
-        // Check if file exists and --refresh not set
+        // Refuse to clobber an existing context.json.
+        //
+        // The existence CHECK is a value and the refusal is thrown, because
+        // they used to share a `try`: `fs.access` rejecting meant "no file
+        // yet", so the guard's own `process.exit(1)` sat inside that
+        // `catch {}` and any stub for it — throwing OR returning — was
+        // swallowed, dropping execution into the very write the guard exists
+        // to stop (#131).
+        //
+        // A `RefusalError` rather than an exit because a refusal is a value
+        // the error boundary below renders (`logError` + exit 1), and a value
+        // cannot be swallowed on the way there. It is also the honest
+        // classification: this decline is deterministic, and `refusal.ts` is
+        // where that claim is defined.
         if (!options.refresh && !options.json) {
-          try {
-            await fs.access(contextFile);
-            console.error('Error: .favro/context.json already exists. Use --refresh to update.');
-            process.exit(1);
-          } catch {
-            // File doesn't exist — good
+          const exists = await fs.access(contextFile).then(() => true, () => false);
+          if (exists) {
+            throw new RefusalError(
+              '.favro/context.json already exists — refusing to overwrite it. ' +
+              'Run `favro init --refresh` to rebuild it in place, or `favro init --json` to print the new context without writing.',
+            );
           }
         }
 

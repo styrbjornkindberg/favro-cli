@@ -42,6 +42,24 @@ a **widget**: the id is `widgetCommonId`, the endpoint is `/widgets/`, and
 boardless, columnless entity Favro creates on assignment — and is unactionable by
 construction.
 
+Every board-shaped argument accepts a **name or an id**, settled by `resolveBoardId`
+before the value reaches the wire. That is not convenience: Favro answers **200 with
+an empty page** for a `widgetCommonId` nobody has, and a write to one lands nowhere —
+so an unsettled name is zero rows rather than an error, and there is no classified
+not-found to escalate on (#82). A one-word board name is id-shaped, so shape never
+decides which of the two it is (`ID_SHAPES.boardId` declares no shape at all).
+
+**The accepted cost of that:** resolution matches against `GET /widgets`, so a board
+id that listing does not return now **refuses instead of reading**. Before #82 the id
+went straight to the wire and worked. Most of the surface is safe — `listBoards(100)`
+paginates to completion through `getAllPages`, and the pasted-URL path never passes a
+URL-derived `widgetCommonId` (`findCardByUrl`, `src/lib/cards-api.ts`). The live
+exposure is a board the key can read a card on but cannot list, and archived boards:
+`boards-api.ts` passes no `archived` param, and whether `/widgets` includes archived
+boards is **unmeasured** — per ADR-0003 this records the open edge rather than
+asserting either answer. If it bites, the fix is a classified-not-found escalation on
+the id, the same shape `getBoard` already uses.
+
 **column-as-status** — a card's status *is* its column. There is no `state` field on
 the wire, so the open/closed axis is two `columnId`s and nothing else
 (`src/lib/tracker-config.ts`). Columns are resolved by id or by name through
