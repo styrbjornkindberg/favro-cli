@@ -145,8 +145,7 @@
 - **Acceptance Criteria:**
   - `favro comments list <card-id>`
   - `favro comments add <card-id> --text "COMMENT"`
-  - `favro activity log <board-id>` with --since filter
-  - Pagination support for activity logs
+  - `favro activity <card-id>` with --since filter
   - Timestamp formatting (relative and absolute)
   - Unit and integration tests
 - **Effort:** 1.5 days

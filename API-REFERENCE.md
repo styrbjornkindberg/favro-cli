@@ -29,7 +29,7 @@ Comprehensive reference for all SPEC-002 endpoints in `favro-cli`.
   - [cards move](#cards-move)
   - [cards show](#cards-show)
   - [cards dependencies](#cards-dependencies)
-  - [cards blockers](#cards-blockers)
+  - [cards blocking](#cards-blocking)
   - [cards blocked-by](#cards-blocked-by)
   - [cards export](#cards-export)
 - [Custom Fields](#custom-fields)
@@ -46,7 +46,7 @@ Comprehensive reference for all SPEC-002 endpoints in `favro-cli`.
   - [comments list](#comments-list)
   - [comments add](#comments-add)
 - [Activity](#activity)
-  - [activity log](#activity-log)
+  - [activity](#activity-1)
 - [Webhooks](#webhooks)
   - [webhooks list](#webhooks-list)
   - [webhooks create](#webhooks-create)
@@ -81,7 +81,7 @@ SPEC-002 extends the base CLI with nine endpoint categories:
 | **Custom Fields** | list, get, set, values | Define and set custom metadata on cards |
 | **Members** | list, add, remove, permissions | Manage board and collection memberships |
 | **Comments** | list, add | Card comment management |
-| **Activity** | log | Board and card activity history |
+| **Activity** | activity | Card activity history (no board-level feed exists) |
 | **Webhooks** | list, create, delete | Configure HTTP event notifications |
 | **Columns** | list, create, update | Directly manage board structures |
 | **Widgets** | list, add | Map cards to multiple boards natively |
@@ -811,13 +811,13 @@ favro cards dependencies CARD-A --json
 
 ---
 
-### `cards blockers`
+### `cards blocking`
 
 List all cards blocked by this card (`blocks` links).
 
 **Syntax:**
 ```
-favro cards blockers <cardId> [--json]
+favro cards blocking <cardId> [--json]
 ```
 
 **Output:**
@@ -828,8 +828,8 @@ Cards blocked by CARD-A:
 
 **Examples:**
 ```bash
-favro cards blockers CARD-A
-favro cards blockers CARD-A --json
+favro cards blocking CARD-A
+favro cards blocking CARD-A --json
 ```
 
 ---
@@ -1353,32 +1353,32 @@ favro comments add card-abc123 --text "Blocked by API issue" --json
 
 ## Activity
 
-### `activity log`
+### `activity`
 
-Show the activity log for a board, aggregated from card-level activity.
+Show the activity log for a card.
 
 **Syntax:**
 ```
-favro activity log <boardId> [--since <time>] [--limit <n>] [--offset <n>] [--format table|json] [--json]
+favro activity <card> [--since <time>] [--until <time>] [--limit <n>] [--format table|json] [--json]
 ```
 
 **Arguments:**
 
 | Argument | Required | Description |
 |---|---|---|
-| `<boardId>` | ✓ | Board ID |
+| `<card>` | ✓ | Card ID (use `favro cards find` to get one) |
 
 **Options:**
 
 | Option | Default | Description |
 |---|---|---|
 | `--since <time>` | — | Only show activity after this time ago (e.g. `2h`, `1d`, `7d`, `1w`) |
+| `--until <time>` | — | Only show activity before this time ago |
 | `--limit <n>` | `200` | Maximum entries to return |
-| `--offset <n>` | `0` | Number of entries to skip (for pagination) |
 | `--format <format>` | `table` | Output format: `table` or `json` |
 | `--json` | — | Shorthand for `--format json` |
 
-**Time unit syntax for `--since`:**
+**Time unit syntax for `--since` and `--until`:**
 
 | Example | Meaning |
 |---|---|
@@ -1389,33 +1389,25 @@ favro activity log <boardId> [--since <time>] [--limit <n>] [--offset <n>] [--fo
 
 **Output:**
 ```
-📋 Activity log for board "board-001" (last 1d) — 5 entry/entries:
+📋 Activity for Fix login bug (card-abc123) (last 1d) — 2 entry/entries:
 
   [UPDATED] by alice — 2026-03-28 11:45
-    Card: Fix login bug (card-abc123)
-    Card status changed to "In Progress"
+    Sprint 42 / In Progress
 
   [CREATED] by bob — 2026-03-28 09:30
-    Card: Add dark mode
-    Card "Add dark mode" was created
+    Sprint 42 / Backlog
+
+Total: 2 entry/entries shown.
 ```
 
-**Implementation note:** Favro does not expose a direct board-level activity endpoint. The CLI fetches cards on the board, filters by the `since` cutoff using `updatedAt`, then aggregates card-level activity entries. If card activity is unavailable, it synthesizes entries from card metadata.
+**Scope note:** Favro has no board-level activity feed, so there is no board form of this command. The feed is also scoped to what the API-key user follows or has news for, so it is card history for humans — never a source of truth for a card's state.
 
 **Examples:**
 ```bash
-favro activity log board-001
-favro activity log board-001 --since 1d
-favro activity log board-001 --since 7d --format json
-favro activity log board-001 --limit 50 --offset 10
-```
-
-**Pagination:**
-```bash
-# Page 1
-favro activity log board-001 --limit 20 --offset 0
-# Page 2
-favro activity log board-001 --limit 20 --offset 20
+favro activity card-abc123
+favro activity card-abc123 --since 1d
+favro activity card-abc123 --since 7d --format json
+favro activity card-abc123 --until 1d --limit 50
 ```
 
 **Error cases:**
@@ -2012,7 +2004,7 @@ You attempted to add a `depends-on` link that would create a cycle. Review your 
 
 ```bash
 favro cards dependencies CARD-A
-favro cards blockers CARD-A
+favro cards blocking CARD-A
 favro cards blocked-by CARD-A
 ```
 
@@ -2045,14 +2037,9 @@ favro --verbose cards get card-abc123
 
 ### Pagination Best Practices
 
-**Activity log pagination:** Use `--offset` and `--limit` to page through large result sets:
-
-```bash
-# Fetch in pages of 50
-favro activity log board-001 --limit 50 --offset 0   # page 1
-favro activity log board-001 --limit 50 --offset 50  # page 2
-favro activity log board-001 --limit 50 --offset 100 # page 3
-```
+**Activity has no pagination:** `favro activity <card>` takes `--limit` and a
+`--since`/`--until` window; there is no offset, so narrow the window rather than
+paging.
 
 **Cards export with large datasets:** For boards with thousands of cards, `favro cards export` handles pagination automatically. The default `--limit 10000` covers most boards. For very large boards, pipe to stdout rather than file to avoid memory issues:
 
@@ -2180,10 +2167,12 @@ echo ""
 echo "--- In Progress ---"
 favro cards list --board $BOARD_ID --status "In Progress"
 echo ""
-echo "--- Done Today ---"
-favro activity log $BOARD_ID --since 1d --format json \
-  | jq -r '.[] | select(.type == "updated") | "  \(.cardName): \(.description)"'
+echo "--- Done ---"
+favro cards list --board $BOARD_ID --status "Done"
 ```
+
+There is no board-level activity feed to diff a day against — `favro activity`
+is card-scoped. For per-card history, pass a cardId: `favro activity <card> --since 1d`.
 
 ---
 
@@ -2213,7 +2202,7 @@ Map out what's blocking what before a release:
 CARD_IDS=$(favro cards list --board board-001 --json | jq -r '.[].cardId')
 
 for id in $CARD_IDS; do
-  BLOCKERS=$(favro cards blockers $id --json | jq -r '.[].cardId')
+  BLOCKERS=$(favro cards blocking $id --json | jq -r '.[].cardId')
   if [ -n "$BLOCKERS" ]; then
     NAME=$(favro cards get $id | jq -r '.name')
     echo "$id ($NAME) blocks: $BLOCKERS"
@@ -2297,15 +2286,6 @@ jobs:
             --filter "status:Done" \
             --out done-$DATE.json
           echo "Exported $(cat done-$DATE.json | jq length) done cards"
-
-      - name: Activity summary
-        env:
-          FAVRO_API_KEY: ${{ secrets.FAVRO_API_KEY }}
-        run: |
-          favro activity log ${{ vars.SPRINT_BOARD_ID }} \
-            --since 7d \
-            --format json \
-            --out activity-week.json
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

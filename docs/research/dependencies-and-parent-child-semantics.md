@@ -18,7 +18,7 @@ this CLI (`src/commands/cards-link.ts:10`), and the request body the CLI sends d
 documented schema.
 
 Consequence: `favro dependencies add`, `favro cards link`, `favro cards dependencies`,
-`favro cards blockers`, and `favro cards blocked-by` cannot be working against the live API today.
+`favro cards blocking`, and `favro cards blocked-by` cannot be working against the live API today.
 Details in [CLI mismatch](#cli-mismatch-what-is-actually-broken).
 
 ---
@@ -259,7 +259,7 @@ only `cardId` exists in Favro's dependency object; `linkId`, `type` and `cardNam
 Filtering on `.type` therefore never matches, even if 4.2 were fixed:
 
 - `favro cards dependencies` filters `l.type === 'depends-on'` (`src/commands/cards-link.ts:287`)
-- `favro cards blockers` filters `l.type === 'blocks'` (`src/commands/cards-link.ts:329`)
+- `favro cards blocking` filters `l.type === 'blocks'` (`src/commands/cards-link.ts:329`)
 - `favro cards blocked-by` filters `l.type === 'depends-on'` (`src/commands/cards-link.ts:376`)
 - `wouldCreateCycle` walks `depends-on` edges (`src/commands/cards-link.ts:31`) — always reports
   no cycle

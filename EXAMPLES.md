@@ -585,15 +585,14 @@ favro cards list --board board-001 --status Backlog --json \
   | while read id; do favro cards update "$id" --assignees alice; done
 ```
 
-### Paginate Large Activity Logs
+### Narrow Large Activity Logs
 
-For boards with many cards, paginate the activity log to avoid large responses:
+Activity is card-scoped and has no offset — narrow the window instead of paging:
 
 ```bash
-# Fetch in pages of 50
-favro activity log board-001 --limit 50 --offset 0    # page 1
-favro activity log board-001 --limit 50 --offset 50   # page 2
-favro activity log board-001 --limit 50 --offset 100  # page 3
+favro activity card-abc123 --since 1d              # last 24 hours
+favro activity card-abc123 --since 7d --until 1d   # the six days before that
+favro activity card-abc123 --limit 50              # cap the entries returned
 ```
 
 ### Always Dry-Run Batch Operations
@@ -624,7 +623,6 @@ IDs rarely change. Store them in environment variables to avoid repeated list ca
 ```bash
 export SPRINT_BOARD=$(favro boards list | jq -r '.rows[] | select(.name == "Sprint 43") | .boardId')
 favro cards list --board $SPRINT_BOARD
-favro activity log $SPRINT_BOARD --since 1d
 ```
 
 ### Split Large CSV Batches

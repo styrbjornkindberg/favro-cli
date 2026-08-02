@@ -61,7 +61,7 @@ favro git todos --all                # Show all linked cards across branches
 ## How It Works
 
 1. **Link storage**: `.favro/git-links.json` maps branches ↔ card IDs
-2. **Commit hooks**: Optional — `favro git install-hooks` adds a prepare-commit-msg hook
+2. **Commit messages**: `favro git commit` prefixes the card ID itself (`--no-prefix` opts out) — there is no git hook to install
 3. **Branch naming**: `favro/<seq>-<slugified-title>` by default
 4. **Safety**: `sync` never deletes cards — only updates column/status
 
