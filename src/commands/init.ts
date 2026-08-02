@@ -105,17 +105,18 @@ export function registerInitCommand(program: Command): void {
 
         // Refuse to clobber an existing context.json.
         //
-        // The existence CHECK is a value, and the refusal is thrown outside any
-        // catch — because they used to share one. `fs.access` rejecting meant
-        // "no file yet", so the guard's own `process.exit(1)` sat inside that
-        // `catch {}`; a test stub for `process.exit` (throwing or returning)
-        // was swallowed by it and execution ran on into the very write the
-        // guard exists to stop (#131). The refusal was unobservable, so the
-        // test could only assert the message.
+        // The existence CHECK is a value and the refusal is thrown, because
+        // they used to share a `try`: `fs.access` rejecting meant "no file
+        // yet", so the guard's own `process.exit(1)` sat inside that
+        // `catch {}` and any stub for it — throwing OR returning — was
+        // swallowed, dropping execution into the very write the guard exists
+        // to stop (#131).
         //
-        // A `RefusalError` rather than an exit: the outer boundary below turns
-        // it into `logError` + exit 1, which is the shape every migrated
-        // command uses, and it cannot be swallowed on the way there.
+        // A `RefusalError` rather than an exit because a refusal is a value
+        // the error boundary below renders (`logError` + exit 1), and a value
+        // cannot be swallowed on the way there. It is also the honest
+        // classification: this decline is deterministic, and `refusal.ts` is
+        // where that claim is defined.
         if (!options.refresh && !options.json) {
           const exists = await fs.access(contextFile).then(() => true, () => false);
           if (exists) {
