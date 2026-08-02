@@ -102,7 +102,9 @@ const PERSONAS: Array<{ name: string; register: (p: Command) => void; heading: R
   { name: 'health', register: registerHealthCommand, heading: /^Health — / },
   { name: 'my-cards', register: registerMyCardsCommand, heading: /^My Cards \(/ },
   { name: 'team', register: registerTeamCommand, heading: /^Team — / },
-  { name: 'stale', register: registerStaleCommand, heading: /^Stale Cards \(inactive >/ },
+  // `days or more`, not `>`: the header is derived from the same threshold the
+  // filter applies, and that boundary is inclusive (#145).
+  { name: 'stale', register: registerStaleCommand, heading: /^Stale Cards \(inactive \d+ days? or more\)/ },
   { name: 'my-standup', register: registerMyStandupCommand, heading: /^My Standup \(/ },
 ];
 

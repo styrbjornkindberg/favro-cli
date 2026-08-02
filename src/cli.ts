@@ -25,6 +25,7 @@ import BoardsAPI from './lib/boards-api';
 // the one table rather than a second, drifting write path — and it registers
 // every intent, so intents added by later tickets are reachable with no change.
 import { dispatch } from './lib/dispatch';
+import { foldName } from './lib/fold-name';
 import { reportDispatch } from './lib/report-dispatch';
 import { writeCardsCSV, writeCardsJSON, normalizeCard, cardsToCSV } from './lib/csv';
 import { applyFilters, ExportFormat } from './lib/cards-export';
@@ -1000,9 +1001,9 @@ cards
         const { ColumnsAPI } = await import('./lib/columns-api');
         const columnsApi = new ColumnsAPI(client!);
         const columns = await columnsApi.listColumns(options.board);
-        const target = columns.find(
-          c => c.name.toLowerCase() === options.column!.toLowerCase()
-        );
+        // `foldName`: the column name is Favro's, `--column` is the user's, and
+        // the same visible name reaches the two in different forms (#141).
+        const target = columns.find(c => foldName(c.name) === foldName(options.column));
         if (!target) {
           const available = columns.map(c => c.name).join(', ');
           console.error(`✗ Column "${options.column}" not found. Available: ${available}`);

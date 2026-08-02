@@ -1,6 +1,7 @@
 import FavroHttpClient from './http-client';
 import { getAllPages } from './paginate';
 import { cachedList } from './name-cache';
+import { foldName } from './fold-name';
 import { MISSING_WORDING } from './favro-error';
 import { RefusalError } from './refusal';
 import { isTagId } from './id-shapes';
@@ -75,9 +76,9 @@ export class TagsAPI {
       return byId;
     }
 
-    const matches = tags.filter(
-      (t) => (t.name ?? '').trim().toLowerCase() === value.toLowerCase()
-    );
+    // `foldName` on both sides: the org's spelling and the typed one can be
+    // the same name in two normalisation forms (#141).
+    const matches = tags.filter((t) => foldName(t.name) === foldName(value));
 
     if (matches.length === 0) {
       throw new TagLookupError(

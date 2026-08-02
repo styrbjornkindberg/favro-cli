@@ -24,6 +24,9 @@ import { logError } from '../lib/error-handler';
 import { RefusalError } from '../lib/refusal';
 import { detectStage, WorkflowStage } from '../lib/workflow-stage';
 
+/** One copy — the created file and the appended block must not drift apart. */
+const GITIGNORE_BLOCK = '# Favro CLI context (may contain team emails/IDs)\n.favro/\n';
+
 // ─── Types for context.json ──────────────────────────────────────────────────
 
 interface ContextWorkflowStep {
@@ -71,6 +74,17 @@ interface RepoContext {
 
 function slugify(name: string): string {
   return name
+    // NFC first, or the rules below are form-dependent: a decomposed `Å` is a
+    // plain `A` plus a combining ring, which `[åä]` never sees and
+    // `[^a-z0-9]+` then turns into a separator — so the same visible board
+    // name yielded `atgarder-forbattringar` or `a-tga-rder-fo-rba-ttringar`
+    // depending on where it was typed, and those are two different KEYS in
+    // context.json (#141).
+    //
+    // ponytail: the explicit å/ä/ö/é map is unchanged, so an accent outside it
+    // still degrades to a separator. Swap in strip-combining-marks if a board
+    // name ever needs one.
+    .normalize('NFC')
     .toLowerCase()
     .replace(/[åä]/g, 'a').replace(/ö/g, 'o').replace(/é/g, 'e')
     .replace(/[^a-z0-9]+/g, '-')
@@ -148,21 +162,28 @@ export function registerInitCommand(program: Command): void {
           console.log(`  Board: ${board.name}`);
           const slug = slugify(board.name);
 
-          // Fetch columns for workflow
-          let workflow: ContextWorkflowStep[] | undefined;
-          try {
-            const cols = await columnsApi.listColumns(board.boardId);
-            if (cols.length > 0) {
-              workflow = cols.map((col, i) => ({
-                columnId: col.columnId,
-                name: col.name,
-                stage: detectStage(col.name),
-                next: i < cols.length - 1 ? cols[i + 1].name : null,
-              }));
-            }
-          } catch {
-            // Some boards may not have columns
-          }
+          // Fetch columns for workflow.
+          //
+          // The `await` is a value and the transform is OUTSIDE any catch. The
+          // two used to share a `try` written for "some boards have no
+          // columns", so anything the MAP threw was read as that too — and
+          // `detectStage` threw a TypeError on a column Favro sent with no
+          // name, silently costing the whole board its workflow on exit 0.
+          // The guard for that now lives in `detectStage` itself, where all
+          // four of its callers get it.
+          const cols = await columnsApi.listColumns(board.boardId).catch(() => []);
+          const workflow: ContextWorkflowStep[] | undefined =
+            cols.length > 0
+              ? cols.map((col, i) => ({
+                  columnId: col.columnId,
+                  name: col.name,
+                  stage: detectStage(col.name),
+                  // `?? null`, because `next` is declared `string | null`: an
+                  // unnamed neighbour was leaving `undefined` there, which JSON
+                  // drops and the type does not permit.
+                  next: i < cols.length - 1 ? cols[i + 1].name ?? null : null,
+                }))
+              : undefined;
 
           boards[slug] = {
             boardId: board.boardId,
@@ -179,28 +200,32 @@ export function registerInitCommand(program: Command): void {
         const fieldsApi = new CustomFieldsAPI(client);
         const customFields: Record<string, ContextCustomField> = {};
         const boardIds = new Set(rawBoards.map(b => b.boardId));
-        try {
-          const allFields = await fieldsApi.listFields(); // fetch all once
-          for (const field of allFields) {
-            if (!field.name) continue;
-            // Keep only board-local fields belonging to our boards
-            if (field.widgetCommonId && !boardIds.has(field.widgetCommonId)) continue;
-            // Skip org-wide shared fields (no widgetCommonId) — too noisy
-            if (!field.widgetCommonId) continue;
-            const entry: ContextCustomField = {
-              fieldId: field.fieldId,
-              type: field.type,
-            };
-            if (field.options && field.options.length > 0) {
-              entry.options = {};
-              for (const opt of field.options) {
-                entry.options[opt.name] = opt.optionId;
-              }
+        // Only the FETCH is tolerated. The transform below is outside any
+        // catch, because the two used to share a `try` and
+        // `customFields[field.name] = entry` mutates the outer map inside the
+        // loop: a throw at field N left 1..N-1 in place, swallowed the error,
+        // and fell through to `writeFile`. That produced a context.json which
+        // looked complete while silently missing every custom field after the
+        // bad one — and every agent reading it afterwards could not set those
+        // fields and had no way to learn they existed.
+        const allFields = await fieldsApi.listFields().catch(() => []);
+        for (const field of allFields) {
+          if (!field.name) continue;
+          // Keep only board-local fields belonging to our boards
+          if (field.widgetCommonId && !boardIds.has(field.widgetCommonId)) continue;
+          // Skip org-wide shared fields (no widgetCommonId) — too noisy
+          if (!field.widgetCommonId) continue;
+          const entry: ContextCustomField = {
+            fieldId: field.fieldId,
+            type: field.type,
+          };
+          if (field.options && field.options.length > 0) {
+            entry.options = {};
+            for (const opt of field.options) {
+              entry.options[opt.name] = opt.optionId;
             }
-            customFields[field.name] = entry;
           }
-        } catch {
-          // Custom fields fetch may fail
+          customFields[field.name] = entry;
         }
 
         // Fetch team members — /users is org-scoped, so we filter by the
@@ -209,20 +234,44 @@ export function registerInitCommand(program: Command): void {
         const membersApi = new FavroApiClient(client);
         const allUsers = await membersApi.getMembers().catch(() => []);
 
-        // Get collection member IDs from raw API response (sharedToUsers)
-        let collectionUserIds: Set<string> | undefined;
-        try {
-          const rawColl = await client.get<any>(`/collections/${collectionId}`);
-          if (rawColl?.sharedToUsers && Array.isArray(rawColl.sharedToUsers)) {
-            collectionUserIds = new Set(rawColl.sharedToUsers.map((u: any) => u.userId));
-          }
-        } catch {
-          // Fall back to no filtering
+        // Get collection member IDs from raw API response (sharedToUsers).
+        //
+        // FAILS CLOSED. This is a privacy filter: `/users` is org-scoped, so
+        // without it `team` is every person in the organisation, name and
+        // email, written to a file this same command force-adds to .gitignore
+        // precisely because it carries those. The old `catch {}` left
+        // `collectionUserIds` undefined and the loop below then applied NO
+        // filter, so a 403 on `/collections/:id` — a token without collection
+        // read — turned "the six people on this collection" into "all 140 in
+        // the org". An absent `sharedToUsers` took the same path, though it
+        // means "unknown", not "shared with everyone".
+        //
+        // Unknown membership now yields NOBODY rather than everybody. It does
+        // not refuse outright: one sub-fetch failing should not block a
+        // bootstrap whose boards and custom fields are still correct. But an
+        // empty `team` with no explanation is its own quiet lie, so the reason
+        // goes to stderr AND into the file, where the agents that read it
+        // will not mistake it for "this collection has no members".
+        const membership = await client
+          .get<any>(`/collections/${collectionId}`)
+          .then((raw) =>
+            Array.isArray(raw?.sharedToUsers)
+              ? new Set<string>(raw.sharedToUsers.map((u: any) => u.userId))
+              : undefined,
+          )
+          .catch(() => undefined);
+
+        if (membership === undefined) {
+          console.error(
+            `⚠ Could not read the collection's membership — writing an EMPTY team rather than ` +
+              `every user in the organisation. Re-run with a key that can read ` +
+              `/collections/${collectionId} to populate it.`,
+          );
         }
 
         const team: Record<string, ContextTeamMember> = {};
         for (const m of allUsers) {
-          if (collectionUserIds && !collectionUserIds.has(m.id)) continue;
+          if (!membership?.has(m.id)) continue;
           team[m.id] = { name: m.name, email: m.email, role: m.role };
         }
 
@@ -242,6 +291,17 @@ export function registerInitCommand(program: Command): void {
           notes: {
             cardIds: 'Cards may have different cardIds across boards. Use cardCommonId for cross-board operations (tasks, tasklists, widgets). Use board-specific cardId for column moves.',
             moveCards: 'Use --column flag (not --status) to move cards between kanban columns. --status sets completion metadata, not column position.',
+            // Present only when the filter could not run. An empty `team` with
+            // no note would read as "this collection has no members".
+            ...(membership === undefined
+              ? {
+                  team:
+                    "The collection's membership could not be read, so `team` is EMPTY rather " +
+                    'than every user in the organisation. It is not a claim that the collection ' +
+                    'has no members. Re-run `favro init --refresh` with a key that can read the ' +
+                    'collection to populate it.',
+                }
+              : {}),
           },
         };
 
@@ -256,18 +316,33 @@ export function registerInitCommand(program: Command): void {
         await fs.mkdir(contextDir, { recursive: true });
         await fs.writeFile(contextFile, json + '\n', 'utf-8');
 
-        // Ensure .favro/ is in .gitignore (context may contain IDs/emails)
+        // Ensure .favro/ is in .gitignore (context may contain IDs/emails).
+        //
+        // The read is a value and the append is OUTSIDE its catch, because they
+        // used to share a `try` whose `catch` meant "there is no .gitignore,
+        // create one". A transient EACCES or a full disk on the APPEND landed
+        // in that branch too, and `writeFile` replaced a 200-line .gitignore
+        // with two lines under a success message (#144). An append that fails
+        // now propagates to the error boundary, which is the only honest
+        // outcome: the entry was not added and nothing was lost.
+        //
+        // Only ENOENT reads as "create one". Any other read failure — EACCES on
+        // a file that does exist, EISDIR, EIO — is a file we cannot see, and
+        // writing two lines over a file we cannot see is the same data loss
+        // through a quieter door. It propagates.
         const gitignorePath = path.join(process.cwd(), '.gitignore');
-        try {
-          const gitignoreContent = await fs.readFile(gitignorePath, 'utf-8');
-          if (!gitignoreContent.includes('.favro/')) {
-            await fs.appendFile(gitignorePath, '\n# Favro CLI context (may contain team emails/IDs)\n.favro/\n');
-            console.log('Added .favro/ to .gitignore');
-          }
-        } catch {
-          // No .gitignore — create one
-          await fs.writeFile(gitignorePath, '# Favro CLI context (may contain team emails/IDs)\n.favro/\n');
+        const gitignoreContent = await fs
+          .readFile(gitignorePath, 'utf-8')
+          .catch((err: NodeJS.ErrnoException) => {
+            if (err.code === 'ENOENT') return null;
+            throw err;
+          });
+        if (gitignoreContent === null) {
+          await fs.writeFile(gitignorePath, GITIGNORE_BLOCK);
           console.log('Created .gitignore with .favro/');
+        } else if (!gitignoreContent.includes('.favro/')) {
+          await fs.appendFile(gitignorePath, `\n${GITIGNORE_BLOCK}`);
+          console.log('Added .favro/ to .gitignore');
         }
 
         console.log(`\n✓ Created .favro/context.json`);

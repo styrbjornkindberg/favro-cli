@@ -65,6 +65,43 @@ export function daysSince(dateStr?: string): number | undefined {
 }
 
 /**
+ * The one staleness threshold (#145).
+ *
+ * `favro stale --days` defaults to it and `favro health` scores against it, and
+ * they mean the SAME thing on purpose — one card, one answer to "is this
+ * stale". They used to be two literals written separately, which is how they
+ * drifted to two different boundaries around the same number.
+ */
+export const DEFAULT_STALE_DAYS = 14;
+
+/**
+ * The one staleness boundary, INCLUSIVE (#145).
+ *
+ * `stale` filtered `days >= staleDays` and `health` filtered `d > 14`, so a
+ * card inactive for exactly 14 days was stale to one command and healthy to the
+ * other. Inclusive is the side that was chosen:
+ *
+ * - "inactive for n days or more" is how the threshold is read aloud, and how
+ *   `--days 14` is meant when someone types it.
+ * - It keeps `--days 0` meaning "everything" (#130 made 0 a real threshold);
+ *   exclusive would make it "everything except cards created today", which is
+ *   a degenerate reading of a flag whose whole point is to widen the net.
+ *
+ * `days` is a measured age. An unmeasurable one is `undefined` from
+ * `daysSince` and never reaches here — see the callers, which name those cards
+ * separately rather than guessing at a number for them.
+ */
+export const isStale = (days: number, staleDays: number): boolean => days >= staleDays;
+
+/**
+ * How `isStale` reads in a human report. Lives next to the predicate so the
+ * header cannot promise a boundary the filter does not apply — `stale`'s used
+ * to say `inactive >14 days` over a set built with `>=`.
+ */
+export const staleWording = (staleDays: number): string =>
+  `inactive ${staleDays} ${staleDays === 1 ? 'day' : 'days'} or more`;
+
+/**
  * Format a timestamp in both relative and absolute (ISO 8601) form.
  * E.g.: "2 hours ago (2026-03-25T14:30:00.000Z)"
  */

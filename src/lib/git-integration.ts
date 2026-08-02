@@ -220,6 +220,14 @@ export function extractCardIdFromBranch(branch: string, cardPrefix?: string): st
  */
 export function slugify(title: string): string {
   return title
+    // NFC first: the strip below removes a combining mark but keeps the base
+    // letter it sits on, so a decomposed `café` slugged to `cafe` while the
+    // precomposed one slugged to `caf`. Same title, two branch names,
+    // depending only on where it was typed (#141).
+    //
+    // ponytail: a precomposed accent is still dropped whole. Decompose and
+    // strip only U+0300–U+036F if a branch name should keep the base letter.
+    .normalize('NFC')
     .toLowerCase()
     .replace(/[^a-z0-9\s-]/g, '')
     .replace(/\s+/g, '-')

@@ -125,19 +125,27 @@ describe('scoreBoard — the four sub-scores', () => {
     expect(computeHealth('undated', twenty())).toMatchObject({ score: 100, signal: 'green' });
   });
 
-  it('draws the stale line above 14 days, not at it', () => {
-    const at14 = '2026-06-01T12:00:00.000Z'; // exactly 14 days before NOW
-    const at15 = '2026-05-31T12:00:00.000Z';
+  it('draws the stale line AT the threshold, the same place `favro stale` draws it (#145)', () => {
+    // This assertion used to read the other way. `health` filtered `d > 14`
+    // while `stale` filtered `days >= staleDays`, so a card inactive for
+    // exactly 14 days was stale to one command and healthy to the other —
+    // nobody chose that, they were written separately. Both now go through
+    // `isStale`, and the boundary is inclusive: "inactive for n days or more"
+    // is how the report is read aloud, and it is what keeps `--days 0` meaning
+    // "everything" rather than "everything except what was made today".
+    const at13 = '2026-06-02T12:00:00.000Z';
+    const at14 = '2026-06-01T12:00:00.000Z'; // exactly DEFAULT_STALE_DAYS before NOW
 
-    expect(scoreBoard([card({ id: '1', stage: 'active', createdAt: at14 })]).stale).toBe(100);
-    expect(scoreBoard([card({ id: '1', stage: 'active', createdAt: at15 })]).stale).toBe(0);
+    expect(scoreBoard([card({ id: '1', stage: 'active', createdAt: at13 })]).stale).toBe(100);
+    expect(scoreBoard([card({ id: '1', stage: 'active', createdAt: at14 })]).stale).toBe(0);
   });
 
   it('truncates a part-day age rather than rounding it up over the line', () => {
-    // 14.5 days before NOW: a floored age is 14 and fresh, a ceilinged one 15 and stale.
-    const at14AndAHalf = '2026-06-01T00:00:00.000Z';
+    // 13.5 days before NOW: a floored age is 13 and fresh, a ceilinged one 14
+    // and — with an inclusive boundary — stale.
+    const at13AndAHalf = '2026-06-02T00:00:00.000Z';
 
-    expect(scoreBoard([card({ id: '1', stage: 'active', createdAt: at14AndAHalf })]).stale).toBe(100);
+    expect(scoreBoard([card({ id: '1', stage: 'active', createdAt: at13AndAHalf })]).stale).toBe(100);
   });
 
   it('rounds a one-third ratio down on every sub-score', () => {

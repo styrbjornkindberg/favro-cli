@@ -7,6 +7,7 @@
  */
 import FavroHttpClient from './http-client';
 import { getAllPages } from './paginate';
+import { foldName } from './fold-name';
 import { CustomFieldCache, globalFieldCache } from './profiling';
 
 export type CustomFieldType = 'text' | 'select' | 'date' | 'user' | 'link' | string;
@@ -93,10 +94,9 @@ export function validateSelectValue(
     );
   }
 
-  // Exact match first (case-insensitive)
-  const match = options.find(
-    o => o.name.toLowerCase() === value.toLowerCase()
-  );
+  // Exact match first — case AND normalisation insensitive, since the option
+  // name is Favro's and the value was typed by a human (#141).
+  const match = options.find(o => foldName(o.name) === foldName(value));
   if (!match) {
     const allowed = options.map(o => `"${o.name}"`).join(', ');
     throw new Error(

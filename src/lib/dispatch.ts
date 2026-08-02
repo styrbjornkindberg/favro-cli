@@ -24,6 +24,7 @@ import { FavroConfig } from './config';
 import CardsAPI, { Card } from './cards-api';
 import { assertScope } from './safety';
 import { classifyThrownError } from './favro-error';
+import { foldName } from './fold-name';
 import { CompensationLog, Orphan, TxCards, TxOutcome } from './tx-cards';
 import { CATEGORY_TAGS, STATE_TAGS, VerifiedTracker } from './tracker-config';
 import { RefusalError } from './refusal';
@@ -829,8 +830,11 @@ export interface RetagArgs {
   state?: string;
 }
 
+// `foldName`: `tag` is either typed by the caller or read off the card, and the
+// vocabulary is authored in the tracker config — three places one name can be
+// spelled in two normalisation forms (#141).
 const inVocabulary = (vocabulary: readonly string[], tag: string): string | undefined =>
-  vocabulary.find((role) => role.toLowerCase() === tag.trim().toLowerCase());
+  vocabulary.find((role) => foldName(role) === foldName(tag));
 
 /** One axis: the role being written, or the one already on the card. */
 function settleAxis(
