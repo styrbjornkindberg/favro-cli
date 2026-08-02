@@ -6,6 +6,9 @@
 import { registerCardsLinkCommands, VALID_LINK_TYPES } from '../commands/cards-link';
 import { LINK_TYPES, linkTypeToIsBefore } from '../lib/dependency-direction';
 import { Command } from 'commander';
+import * as os from 'os';
+import * as path from 'path';
+import * as fsSync from 'fs';
 import CardsAPI, { Card, CardLink } from '../lib/cards-api';
 import FavroHttpClient from '../lib/http-client';
 import * as config from '../lib/config';
@@ -60,15 +63,25 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
   let consoleErrorSpy: jest.SpyInstance;
   let exitSpy: jest.SpyInstance;
 
+  const originalConfigDir = process.env.FAVRO_CONFIG_DIR;
+
   beforeEach(() => {
     jest.clearAllMocks();
+    // `resolveBoardId` writes a real name cache — give the suite a throwaway
+    // dir so a run never reads or clobbers the developer's own ~/.favro.
+    process.env.FAVRO_CONFIG_DIR = fsSync.mkdtempSync(path.join(os.tmpdir(), 'favro-cards-link-test-'));
     (config.resolveApiKey as jest.Mock).mockResolvedValue('test-key');
+    // `clearAllMocks` clears calls, not implementations — without this the one
+    // scope-locked test below leaks its lock into every test after it.
+    (config.readConfig as jest.Mock).mockResolvedValue(undefined);
     consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
     consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => { throw new Error('process.exit'); });
   });
 
   afterEach(() => {
+    if (originalConfigDir === undefined) delete process.env.FAVRO_CONFIG_DIR;
+    else process.env.FAVRO_CONFIG_DIR = originalConfigDir;
     consoleSpy.mockRestore();
     consoleErrorSpy.mockRestore();
     exitSpy.mockRestore();
@@ -253,6 +266,59 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
 
     expect(mockMoveCard).toHaveBeenCalledWith('card-src', { toBoardId: 'board-2', position: undefined });
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('✓ Card card-src moved'));
+  });
+
+  /**
+   * `--to-board` advertises "by name or boardId", and for a scope-LOCKED user
+   * the first thing that touches the value is the lock, not `moveCard` (#82).
+   * The lock GETs `/widgets/<id>`; handed the name it 404s and prints "Scope
+   * check failed: Board Backlog - Web Hub not found" — #82's own complaint,
+   * reintroduced at a new seam, and `--force` does not rescue it because the
+   * 404 happens before the force branch is reached.
+   *
+   * Nothing here is stubbed between the flag and the URL: `BoardsAPI`,
+   * `checkResolvedScope` and `assertScope` are all real, and the assertion is
+   * on the path the client was actually asked for.
+   */
+  test('a scope-locked user can pass a board NAME to --to-board (#82)', async () => {
+    const HUB_ID = 'w-hub-0001';
+    const HUB_NAME = 'Backlog - Web Hub';
+    const { mockMoveCard } = buildMockApi();
+
+    const requested: string[] = [];
+    const notFound = () => {
+      const err: any = new Error('Request failed with status code 404');
+      err.response = { status: 404 };
+      return err;
+    };
+    (FavroHttpClient as jest.MockedClass<typeof FavroHttpClient>).mockImplementation(() => ({
+      organizationId: 'org-1',
+      get: jest.fn(async (url: string) => {
+        requested.push(url);
+        if (url === '/widgets') {
+          return { entities: [{ widgetCommonId: HUB_ID, name: HUB_NAME, collectionIds: ['coll-1'] }] };
+        }
+        // The origin board and the settled destination are both in the lock.
+        if (url === `/widgets/${HUB_ID}` || url === '/widgets/board-2') {
+          return { name: HUB_NAME, collectionIds: ['coll-1'] };
+        }
+        // Anything else under /widgets/ is an unsettled reference on the wire.
+        throw notFound();
+      }),
+    } as any));
+    (config.readConfig as jest.Mock).mockResolvedValue({
+      scopeCollectionId: 'coll-1',
+      scopeCollectionName: 'Locked',
+    });
+
+    const cardsCmd = new Command('cards');
+    registerCardsLinkCommands(cardsCmd);
+    await cardsCmd.parseAsync(['node', 'cards', 'move', 'card-src', '--to-board', HUB_NAME, '-y']);
+
+    expect(requested).toContain(`/widgets/${HUB_ID}`);
+    expect(requested.filter((u) => u.includes(HUB_NAME))).toEqual([]);
+    expect(exitSpy).not.toHaveBeenCalled();
+    expect(mockMoveCard).toHaveBeenCalledWith('card-src', { toBoardId: HUB_NAME, position: undefined });
   });
 
   test('moves card to target board with position top', async () => {

@@ -1,5 +1,6 @@
 import FavroHttpClient, { PaginatedResponse } from './http-client';
 import { Getter, getAllPages } from './paginate';
+import BoardsAPI from './boards-api';
 import { Tag, cachedTags } from './tags-api';
 import ColumnDirectory, { ColumnResolutionError } from './column-directory';
 import CardReferenceResolver, { CardResolutionError, isSequentialReference } from './card-reference';
@@ -522,14 +523,38 @@ export class CardsAPI {
     return this.referenceResolver;
   }
 
+  /**
+   * Settle a board reference — a NAME or an id — to the `widgetCommonId` the
+   * wire wants. Every board-shaped argument on this class goes through here.
+   *
+   * This is the one guard, at the one seam, and it is not defensive: Favro
+   * never refuses a board name in this slot. `GET /cards` answers **200 with an
+   * empty page** for a widgetCommonId nobody has, and a write lands nowhere —
+   * so a name forwarded raw is zero rows, silently, and there is no
+   * classified not-found to escalate on the way `getBoard` can. Resolution has
+   * to happen BEFORE the request is built (#82).
+   *
+   * It is `BoardsAPI.resolveBoardId`, not a second resolver: an exact id passes
+   * straight through off the cached listing, and an unknown or duplicated name
+   * refuses in the one wording — "missing or not visible to your key", every
+   * colliding id listed. Three commands refusing three ways is the next version
+   * of this bug.
+   */
+  private async boardIdOf(board?: string): Promise<string | undefined> {
+    if (!board) return undefined;
+    return new BoardsAPI(this.client).resolveBoardId(board);
+  }
+
   /** Translate a card reference to the `cardId` a path segment wants. */
   async resolveCardId(reference: string, options?: { widgetCommonId?: string }): Promise<string> {
-    return this.references.toCardId(reference, options);
+    const boardId = await this.boardIdOf(options?.widgetCommonId);
+    return this.references.toCardId(reference, { widgetCommonId: boardId });
   }
 
   /** Translate a card reference to the `cardCommonId` comments/tasks/tasklists want. */
   async resolveCardCommonId(reference: string, options?: { widgetCommonId?: string }): Promise<string> {
-    return this.references.toCardCommonId(reference, options);
+    const boardId = await this.boardIdOf(options?.widgetCommonId);
+    return this.references.toCardCommonId(reference, { widgetCommonId: boardId });
   }
 
   private get columns(): ColumnDirectory {
@@ -601,8 +626,13 @@ export class CardsAPI {
         opts.status,
       );
     }
+    // Board FIRST, column second, and the order is load-bearing: column
+    // resolution run against an unresolved board refused with "No column named
+    // Done on board Backlog - Web Hub" — a structured refusal naming the wrong
+    // problem entirely (#82).
+    const boardId = await this.boardIdOf(opts.boardId);
     const columnId = opts.status
-      ? await this.columns.resolveColumnId(opts.status, opts.boardId)
+      ? await this.columns.resolveColumnId(opts.status, boardId)
       : undefined;
     const path = '/cards';
     // Favro clamps this to 100 regardless; asking for the page maximum is the
@@ -610,8 +640,8 @@ export class CardsAPI {
     const params: Record<string, unknown> = { limit: 100 };
 
     // Favro uses widgetCommonId to scope cards to a board
-    if (opts.boardId) {
-      params.widgetCommonId = opts.boardId;
+    if (boardId) {
+      params.widgetCommonId = boardId;
     }
 
     // Column narrowing rides the wire, not a client-side pass over one page.
@@ -649,7 +679,8 @@ export class CardsAPI {
    * Get a single card with optional includes (board, collection, custom-fields, links, comments).
    */
   async getCard(cardRef: string, options?: GetCardOptions): Promise<Card> {
-    const scope = options?.board ? { widgetCommonId: options.board } : undefined;
+    const boardId = await this.boardIdOf(options?.board);
+    const scope = boardId ? { widgetCommonId: boardId } : undefined;
     return this.references.escalateOnNotFound(cardRef, (cardId) => this.getCardById(cardId, options), scope);
   }
 
@@ -666,16 +697,12 @@ export class CardsAPI {
     // Hydrate board/collection if requested and not already present
     if (includes.includes('board') && card.boardId && !card.board) {
       try {
-        const { BoardsAPI } = await import('./boards-api');
-        const boardsApi = new BoardsAPI(this.client);
-        card.board = await boardsApi.getBoard(card.boardId) as unknown as typeof card.board;
+        card.board = await new BoardsAPI(this.client).getBoard(card.boardId) as unknown as typeof card.board;
       } catch { /* best effort */ }
     }
     if (includes.includes('collection') && card.collectionId && !card.collection) {
       try {
-        const { BoardsAPI } = await import('./boards-api');
-        const boardsApi = new BoardsAPI(this.client);
-        card.collection = await boardsApi.getCollection(card.collectionId) as unknown as typeof card.collection;
+        card.collection = await new BoardsAPI(this.client).getCollection(card.collectionId) as unknown as typeof card.collection;
       } catch { /* best effort */ }
     }
     // Custom fields are returned inline on card responses from Favro API,
@@ -758,10 +785,11 @@ export class CardsAPI {
    * Move a card to a different board.
    */
   async moveCard(cardRef: string, req: MoveCardRequest): Promise<Card> {
+    const boardId = await this.boardIdOf(req.toBoardId);
     const cardId = await this.references.toCardId(cardRef);
     // Favro uses PUT /cards/:cardId with widgetCommonId to move cards
     return this.client.put<Card>(`/cards/${cardId}`, {
-      widgetCommonId: req.toBoardId,
+      widgetCommonId: boardId,
       position: req.position,
     });
   }
@@ -777,24 +805,24 @@ export class CardsAPI {
    */
   async createCard(data: CreateCardRequest): Promise<Card> {
     const { status, assignees, tags, blockedBy, blocks, ...rest } = data;
-    // Map boardId → widgetCommonId for callers using the old field name
+    // Map boardId → widgetCommonId for callers using the old field name, and
+    // settle whichever spelling arrived: a NAME in this slot creates nothing
+    // and reports success-shaped nonsense, so it never reaches the POST (#82).
     const payload: Record<string, unknown> = { ...rest };
-    if (payload.boardId && !payload.widgetCommonId) {
-      payload.widgetCommonId = payload.boardId;
-      delete payload.boardId;
-    }
+    const boardId = await this.boardIdOf(
+      (payload.widgetCommonId ?? payload.boardId) as string | undefined,
+    );
+    delete payload.boardId;
+    if (boardId) payload.widgetCommonId = boardId;
     mapDescription(payload);
 
     if (status !== undefined) {
-      payload.columnId = await this.columns.resolveColumnId(
-        status,
-        payload.widgetCommonId as string | undefined,
-      );
+      payload.columnId = await this.columns.resolveColumnId(status, boardId);
     }
 
     if (payload.parentCardId !== undefined) {
       payload.parentCardId = await this.references.toCardId(String(payload.parentCardId), {
-        widgetCommonId: payload.widgetCommonId as string | undefined,
+        widgetCommonId: boardId,
       });
     }
 
@@ -899,10 +927,13 @@ export class CardsAPI {
     const cardId = await this.references.toCardId(cardRef);
     const payload: Record<string, unknown> = { ...data };
     mapDescription(payload);
-    if (payload.boardId !== undefined) {
-      payload.widgetCommonId = payload.boardId;
-      delete payload.boardId;
-    }
+    // Same settling as `createCard`: a board NAME on a PUT moves the card
+    // nowhere and answers 200 (#82).
+    const boardId = await this.boardIdOf(
+      (payload.widgetCommonId ?? payload.boardId) as string | undefined,
+    );
+    delete payload.boardId;
+    if (boardId) payload.widgetCommonId = boardId;
 
     // At most one read, shared by every field that has to diff against the card.
     let current: Card | undefined;
@@ -913,8 +944,8 @@ export class CardsAPI {
     if (payload.status !== undefined) {
       const status = String(payload.status);
       delete payload.status;
-      const boardId = (payload.widgetCommonId as string | undefined) ?? (await currentCard()).boardId;
-      payload.columnId = await this.columns.resolveColumnId(status, boardId);
+      const columnBoardId = boardId ?? (await currentCard()).boardId;
+      payload.columnId = await this.columns.resolveColumnId(status, columnBoardId);
     }
 
     // Favro ignores both `assignees` and `assignmentIds` on PUT (200, no change)
@@ -1041,8 +1072,9 @@ export class CardsAPI {
       cardSequentialId: sequentialId,
       unique: true,
     };
-    if (options?.widgetCommonId) {
-      params.widgetCommonId = options.widgetCommonId;
+    const boardId = await this.boardIdOf(options?.widgetCommonId);
+    if (boardId) {
+      params.widgetCommonId = boardId;
     }
 
     const response = await markdownReader(this.client)

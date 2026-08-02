@@ -2,17 +2,45 @@
  * Comprehensive tests for CardsAPI
  * CLA-1774: Unit Tests — All Commands
  */
+import * as os from 'os';
+import * as path from 'path';
+import * as fs from 'fs/promises';
 import CardsAPI from '../lib/cards-api';
 import FavroHttpClient from '../lib/http-client';
+import { writeCache } from '../lib/name-cache';
 
 /** Card writes carry `descriptionFormat` on the query string (issue #17). */
 const MARKDOWN_QUERY = { params: { descriptionFormat: 'markdown' } };
+
+const ORG = 'org-1';
+
+/**
+ * The boards these tests name.
+ *
+ * Every card-shaped entry point settles its board reference before the wire
+ * (#82), so a board this suite has never heard of would now refuse rather than
+ * reach `mockClient`. Seeding the name cache keeps that resolution free — a
+ * cached id matches with no fetch at all — so each test below still asserts the
+ * one call it is about, with its own `mockResolvedValue` chains untouched.
+ */
+const KNOWN_BOARDS = ['board-1', 'board-2', 'board-xyz', 'bad-board'].map((id) => ({
+  id,
+  name: `Board ${id}`,
+}));
+
+const originalConfigDir = process.env.FAVRO_CONFIG_DIR;
+let tmpDir: string;
 
 describe('Cards API', () => {
   let api: CardsAPI;
   let mockClient: jest.Mocked<Pick<FavroHttpClient, 'get' | 'post' | 'patch' | 'put' | 'delete'>>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    // A real file, in a directory of this test's own — never the developer's.
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'favro-cards-api-test-'));
+    process.env.FAVRO_CONFIG_DIR = tmpDir;
+    await writeCache(ORG, 'boards', KNOWN_BOARDS);
+
     mockClient = {
       get: jest.fn(),
       post: jest.fn(),
@@ -20,7 +48,14 @@ describe('Cards API', () => {
       put: jest.fn(),
       delete: jest.fn(),
     };
+    (mockClient as unknown as { organizationId: string }).organizationId = ORG;
     api = new CardsAPI(mockClient as any);
+  });
+
+  afterEach(async () => {
+    if (originalConfigDir === undefined) delete process.env.FAVRO_CONFIG_DIR;
+    else process.env.FAVRO_CONFIG_DIR = originalConfigDir;
+    await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
   // --- listCards ---

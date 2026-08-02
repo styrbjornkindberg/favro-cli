@@ -4,13 +4,14 @@
  *
  * Commands:
  *   favro batch update --from-csv cards.csv [--dry-run] [--board <id>]
- *   favro batch move --board <source-id> --to-board <target-id> --filter "status:Completed" [--dry-run]
- *   favro batch assign --board <board-id> --filter "status:Backlog" --to @me [--dry-run]
+ *   favro batch move --board <board> --to-board <board> --filter "status:Completed" [--dry-run]
+ *   favro batch assign --board <board> --filter "status:Backlog" --to @me [--dry-run]
  */
 
 import { Command } from 'commander';
 import * as fsPromises from 'fs/promises';
 import CardsAPI, { Card } from '../lib/cards-api';
+import BoardsAPI from '../lib/boards-api';
 import { createFavroClient } from '../lib/client-factory';
 import { logError } from '../lib/error-handler';
 import { resolveAssignee } from '../lib/assignee';
@@ -283,8 +284,8 @@ export function registerBatchMoveCommand(batch: Command): void {
       '  assignee:<user>  Match by assignee\n' +
       '  tag:<tag>        Match by tag'
     )
-    .requiredOption('--board <id>', 'Source board ID')
-    .option('--to-board <id>', 'Target board ID to move cards to')
+    .requiredOption('--board <board>', 'Source board, by name or boardId')
+    .option('--to-board <board>', 'Target board to move cards to, by name or boardId')
     .option('--status <value>', 'Set target status')
     .option(
       '--filter <expression>',
@@ -316,10 +317,13 @@ export function registerBatchMoveCommand(batch: Command): void {
 
         const client = await createFavroClient();
         
-        const { readConfig } = await import('../lib/config');
-        const { checkScope, confirmAction } = await import('../lib/safety');
-        await checkScope(options.board, client, await readConfig(), options.force);
-        
+        const { checkResolvedScope, confirmAction } = await import('../lib/safety');
+        // `--board` is a name or a boardId, but the lock GETs `/widgets/<id>` —
+        // handed a name it 404s into "Board … not found", a refusal naming the
+        // wrong problem (#82). Settle first; the thunk keeps an unlocked user
+        // off the network entirely.
+        await checkResolvedScope(client, () => new BoardsAPI(client).resolveBoardId(options.board), options.force);
+
         if (!options.dryRun) {
           if (!(await confirmAction(`Apply batch move to cards from board ${options.board}?`, { yes: options.yes }))) {
             console.log('Aborted.');
@@ -429,7 +433,7 @@ export function registerBatchAssignCommand(batch: Command): void {
       '  assignee:<user>  Match by assignee\n' +
       '  tag:<tag>        Match by tag'
     )
-    .requiredOption('--board <id>', 'Board ID to assign cards on')
+    .requiredOption('--board <board>', 'Board to assign cards on, by name or boardId')
     .requiredOption('--to <user>', 'User to assign cards to (use @me for yourself)')
     .option(
       '--filter <expression>',
@@ -460,10 +464,10 @@ export function registerBatchAssignCommand(batch: Command): void {
         // (userIds), so the dedupe below can actually match.
         const assigneeId = await resolveAssignee(client, options.to);
 
-        const { readConfig } = await import('../lib/config');
-        const { checkScope, confirmAction } = await import('../lib/safety');
-        await checkScope(options.board, client, await readConfig(), options.force);
-        
+        const { checkResolvedScope, confirmAction } = await import('../lib/safety');
+        // Settles before the lock — see `batch move` above (#82).
+        await checkResolvedScope(client, () => new BoardsAPI(client).resolveBoardId(options.board), options.force);
+
         if (!options.dryRun) {
           if (!(await confirmAction(`Apply batch assign to cards on board ${options.board}?`, { yes: options.yes }))) {
             console.log('Aborted.');
