@@ -44,6 +44,15 @@ export function cacheFilePath(): string {
  * ponytail: one entry, not a Map. Two tenants alternating just thrash back to
  * the old read-every-call behaviour, which is correct if slower; a Map would
  * grow unbounded in a long-lived server for a win nobody has measured.
+ *
+ * WIDENS AN ACCEPTED RISK, deliberately. ADR-0003 records the posture as "a
+ * second CLI process writing the cache mid-command is not seen". Only THIS
+ * process's `writeFile` clears the memo, so for a long-lived `favro-mcp-http`
+ * that window is no longer one command but the life of the server, bounded by
+ * the 15-minute TTL: another shell running `favro tags create` used to be
+ * visible on the next read and now is not. TTL-bounded, so stale at worst,
+ * never lost. Cheapest fix if that bites is an `fs.stat` mtime check before
+ * trusting the memo — more code than the win, today.
  */
 let memo: { path: string; data: CacheFile } | undefined;
 
@@ -55,12 +64,23 @@ async function readFile(): Promise<CacheFile> {
   const file = cacheFilePath();
   if (memo && memo.path === file) return memo.data;
 
+  let raw: string;
+  try {
+    raw = await fs.readFile(file, 'utf-8');
+  } catch {
+    // Absent, or a transient EACCES/EMFILE. NOT memoized: pinning "no cache"
+    // for the life of the process over one failed open is a bad trade, and the
+    // no-file case is one cheap ENOENT per read.
+    return {};
+  }
+
   let data: CacheFile = {};
   try {
-    const parsed = JSON.parse(await fs.readFile(file, 'utf-8'));
+    const parsed = JSON.parse(raw);
     if (parsed && typeof parsed === 'object') data = parsed as CacheFile;
   } catch {
-    // Absent or corrupt reads as "no cache" — never throws.
+    // Corrupt reads as "no cache". Memoized: re-parsing the same bad bytes
+    // cannot start succeeding.
   }
   memo = { path: file, data };
   return data;

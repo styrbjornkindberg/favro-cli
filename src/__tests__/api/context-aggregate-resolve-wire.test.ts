@@ -21,11 +21,16 @@ import { AddressInfo } from 'net';
 
 // resolveNameToId reads and writes the on-disk name cache. Redirect it before
 // anything imports the config module.
-process.env.FAVRO_CONFIG_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'favro-resolve-wire-'));
+const TMP_CONFIG_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'favro-resolve-wire-'));
+process.env.FAVRO_CONFIG_DIR = TMP_CONFIG_DIR;
 
 import FavroHttpClient from '../../lib/http-client';
 import { ContextAPI } from '../../api/context';
 import AggregateAPI from '../../api/aggregate';
+
+afterAll(() => {
+  fs.rmSync(TMP_CONFIG_DIR, { recursive: true, force: true });
+});
 
 interface Received {
   method: string;
@@ -198,6 +203,40 @@ describe('AggregateAPI.getCollectionSnapshot — no substring fallback', () => {
     try {
       const snapshot = await aggregate.getCollectionSnapshot('Web Hub');
       expect(snapshot.collections.map((c) => c.id)).toEqual([COLL_WEB]);
+    } finally {
+      await close();
+    }
+  });
+
+  // The fast path survived the deletion — only the substring fallback and the
+  // bare `catch {}` that reached it are gone. Same shape the board side keeps,
+  // which is the point: the two resolve alike or the next reader has to work
+  // out why not.
+  test('an id opens with a direct read, not a listing scan', async () => {
+    const { aggregate, urls, close } = await startServer(
+      favro([], [{ collectionId: COLL_WEB, name: 'Web Hub' }]),
+    );
+    try {
+      await aggregate.getCollectionSnapshot(COLL_WEB);
+      // Resolution OPENS with the read. It does not open by listing the org
+      // and scanning for the id, which is what dropping the fast path did.
+      expect(urls()[0]).toBe(`/collections/${COLL_WEB}`);
+    } finally {
+      await close();
+    }
+  });
+
+  // A one-word name is id-shaped, so it is tried as an id first and only
+  // Favro's classified "Page not found" escalates it to the name lookup.
+  test('a one-word name escalates on the wire’s classified not-found', async () => {
+    const { aggregate, urls, close } = await startServer(
+      favro([], [{ collectionId: COLL_WEB, name: 'Hub' }]),
+    );
+    try {
+      const snapshot = await aggregate.getCollectionSnapshot('Hub');
+      expect(snapshot.collections.map((c) => c.id)).toEqual([COLL_WEB]);
+      expect(urls()[0]).toBe('/collections/Hub');
+      expect(urls()).toContain('/collections?limit=100');
     } finally {
       await close();
     }

@@ -6,8 +6,12 @@
  * so a third `tagId` shape in some future org fails loudly instead of silently
  * misclassifying 11% of the tags again.
  *
- * The samples are the ones already carried by the wire suites — the same ids
- * `tags-users-assignee-wire.test.ts` and `api/activity-wire.test.ts` use.
+ * The samples are the ones already carried by the wire suites, each taken from
+ * a suite that uses it IN THAT ROLE — `tags-users-assignee-wire.test.ts` and
+ * `api/activity-wire.test.ts` for users and tags, `cards-api-reference-wire.
+ * test.ts` for the two card keyspaces. A sample lifted from some other role
+ * would only assert a hand-picked hex string against a hex regex, which is
+ * circular and catches nothing.
  */
 import {
   BASE62_17,
@@ -26,8 +30,10 @@ const PATTERN: Record<IdShape, RegExp> = { 'hex-24': HEX_24, 'base62-17': BASE62
 const SAMPLES: Record<ShapedResource, string[]> = {
   userId: ['pk3qK36WHjnJt5jwr', 'aB3dE5gH7jK9mN1pQ', 'zY8xW6vU4tS2rQ0oP', 'mM4nN6bB8vV0cC2xZ'],
   tagId: ['0b49b86eba332b1b342f844c', '1a2b3c4d5e6f7a8b9c0d1e2f', '4HGKcSnW2xuXvnQqN', 'Zq8LmNp3RtVw5Xy7K'],
-  cardId: ['c0a732ee70173a2443981111'],
-  cardCommonId: ['c1b732ee70173a2443982222'],
+  // cards-api-reference-wire.test.ts:29-30 — CARD_ID and COMMON_ID, the two
+  // halves of the shared keyspace, in the roles the resolver translates between.
+  cardId: ['713db3018af39956227d4279', '5a5a5a5a5a5a5a5a5a5a5a5a'],
+  cardCommonId: ['9f1c2d3e4a5b6c7d8e9f0a1b'],
   boardId: [],
   collectionId: [],
 };
@@ -61,7 +67,8 @@ describe('the declared shape table', () => {
   test('a resource with no declared shape never matches anything', () => {
     // `boardId`/`collectionId` are hints with no shape: a one-word board name
     // ("Backlog") is not distinguishable from an id by shape, so nothing here
-    // may answer "that is an id".
+    // may answer "that is an id" — not even a real collection id
+    // (boards-collections-resolve-wire.test.ts:92) that is hex-24 in fact.
     for (const resource of resources) {
       if (ID_SHAPES[resource].shapes.length > 0) continue;
       expect(hasIdShape(resource, 'c0a732ee70173a2443981111')).toBe(false);
