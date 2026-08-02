@@ -223,20 +223,44 @@ export function registerInitCommand(program: Command): void {
         const membersApi = new FavroApiClient(client);
         const allUsers = await membersApi.getMembers().catch(() => []);
 
-        // Get collection member IDs from raw API response (sharedToUsers)
-        let collectionUserIds: Set<string> | undefined;
-        try {
-          const rawColl = await client.get<any>(`/collections/${collectionId}`);
-          if (rawColl?.sharedToUsers && Array.isArray(rawColl.sharedToUsers)) {
-            collectionUserIds = new Set(rawColl.sharedToUsers.map((u: any) => u.userId));
-          }
-        } catch {
-          // Fall back to no filtering
+        // Get collection member IDs from raw API response (sharedToUsers).
+        //
+        // FAILS CLOSED. This is a privacy filter: `/users` is org-scoped, so
+        // without it `team` is every person in the organisation, name and
+        // email, written to a file this same command force-adds to .gitignore
+        // precisely because it carries those. The old `catch {}` left
+        // `collectionUserIds` undefined and the loop below then applied NO
+        // filter, so a 403 on `/collections/:id` — a token without collection
+        // read — turned "the six people on this collection" into "all 140 in
+        // the org". An absent `sharedToUsers` took the same path, though it
+        // means "unknown", not "shared with everyone".
+        //
+        // Unknown membership now yields NOBODY rather than everybody. It does
+        // not refuse outright: one sub-fetch failing should not block a
+        // bootstrap whose boards and custom fields are still correct. But an
+        // empty `team` with no explanation is its own quiet lie, so the reason
+        // goes to stderr AND into the file, where the agents that read it
+        // will not mistake it for "this collection has no members".
+        const membership = await client
+          .get<any>(`/collections/${collectionId}`)
+          .then((raw) =>
+            Array.isArray(raw?.sharedToUsers)
+              ? new Set<string>(raw.sharedToUsers.map((u: any) => u.userId))
+              : undefined,
+          )
+          .catch(() => undefined);
+
+        if (membership === undefined) {
+          console.error(
+            `⚠ Could not read the collection's membership — writing an EMPTY team rather than ` +
+              `every user in the organisation. Re-run with a key that can read ` +
+              `/collections/${collectionId} to populate it.`,
+          );
         }
 
         const team: Record<string, ContextTeamMember> = {};
         for (const m of allUsers) {
-          if (collectionUserIds && !collectionUserIds.has(m.id)) continue;
+          if (!membership?.has(m.id)) continue;
           team[m.id] = { name: m.name, email: m.email, role: m.role };
         }
 
@@ -256,6 +280,17 @@ export function registerInitCommand(program: Command): void {
           notes: {
             cardIds: 'Cards may have different cardIds across boards. Use cardCommonId for cross-board operations (tasks, tasklists, widgets). Use board-specific cardId for column moves.',
             moveCards: 'Use --column flag (not --status) to move cards between kanban columns. --status sets completion metadata, not column position.',
+            // Present only when the filter could not run. An empty `team` with
+            // no note would read as "this collection has no members".
+            ...(membership === undefined
+              ? {
+                  team:
+                    "The collection's membership could not be read, so `team` is EMPTY rather " +
+                    'than every user in the organisation. It is not a claim that the collection ' +
+                    'has no members. Re-run `favro init --refresh` with a key that can read the ' +
+                    'collection to populate it.',
+                }
+              : {}),
           },
         };
 

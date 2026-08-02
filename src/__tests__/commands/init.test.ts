@@ -250,7 +250,19 @@ describe('init — the file it writes', () => {
     expect(Object.keys(writtenContext().team)).toEqual(['u-1']);
   });
 
-  test('keeps everyone when the collection membership cannot be read', async () => {
+  // This test used to read "keeps everyone when the collection membership
+  // cannot be read", and it passed. That was the bug, asserted: the `catch {}`
+  // around the membership fetch left `collectionUserIds` undefined, the loop
+  // below applied NO filter, and a 403 on `/collections/:id` turned "the six
+  // people on this collection" into "all 140 people in the org, with emails,
+  // written to a file this same command force-adds to .gitignore".
+  //
+  // A privacy filter that cannot run must not be skipped. The command still
+  // completes — one sub-fetch failing should not block a bootstrap — but it
+  // completes with nobody rather than everybody, says so on stderr, and
+  // records the reason in the file so an agent reading it does not conclude
+  // the collection is empty.
+  test('writes NOBODY, loudly, when the collection membership cannot be read', async () => {
     clientGet.mockRejectedValue(new Error('403'));
     MockMembers.prototype.getMembers = jest.fn().mockResolvedValue([
       { id: 'u-1', name: 'Alice', email: 'alice@example.com' },
@@ -259,7 +271,35 @@ describe('init — the file it writes', () => {
 
     await runCli(['init']);
 
-    expect(Object.keys(writtenContext().team)).toEqual(['u-1', 'u-2']);
+    const written = writtenContext();
+    expect(written.team).toEqual({});
+    expect(JSON.stringify(written)).not.toContain('bob@example.com');
+    expect(errors()).toMatch(/could not read.*membership/i);
+    expect(written.notes.team).toMatch(/could not be read/i);
+  });
+
+  test('a membership response with no sharedToUsers is also treated as unreadable', async () => {
+    // `sharedToUsers` absent is not "shared with everyone" — it is the same
+    // unknown as a 403, and it used to take the same fail-open path.
+    clientGet.mockResolvedValue({});
+    MockMembers.prototype.getMembers = jest.fn().mockResolvedValue([
+      { id: 'u-1', name: 'Alice', email: 'alice@example.com' },
+    ]);
+
+    await runCli(['init']);
+
+    expect(writtenContext().team).toEqual({});
+  });
+
+  test('a readable EMPTY membership is a real answer, not a failure', async () => {
+    // Distinct from the two above: the filter RAN and matched nobody. No
+    // warning, no note — the file is correct as written.
+    clientGet.mockResolvedValue({ sharedToUsers: [] });
+
+    await runCli(['init']);
+
+    expect(writtenContext().team).toEqual({});
+    expect(writtenContext().notes.team).toBeUndefined();
   });
 });
 
