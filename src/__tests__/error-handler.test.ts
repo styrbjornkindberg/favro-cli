@@ -4,7 +4,6 @@
  */
 import {
   logError,
-  suggestBoard,
   notFoundError,
   invalidDateError,
   rateLimitMessage,
@@ -59,18 +58,6 @@ describe('logError', () => {
     const output = stripAnsi(stderrSpy.mock.calls.map((c: any[]) => c[0]).join(''));
     expect(output).toContain('Error:');
     expect(output).toContain('[object Object]');
-  });
-});
-
-describe('suggestBoard', () => {
-  test('returns helpful message with available boards', () => {
-    const msg = suggestBoard('Q2-Dev', ['Q2-Marketing', 'Q2-Eng', 'Q1-Archive']);
-    expect(msg).toBe("Board 'Q2-Dev' not found. Available: Q2-Marketing, Q2-Eng, Q1-Archive");
-  });
-
-  test('returns message without list when no boards available', () => {
-    const msg = suggestBoard('Missing', []);
-    expect(msg).toBe("Board 'Missing' not found. No boards available.");
   });
 });
 

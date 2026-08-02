@@ -72,16 +72,13 @@ export function logError(error: unknown, verbose = false): void {
   }
 }
 
-/**
- * Suggest closest board name when the target board is not found.
- * Returns a helpful message like:
- *   "Board 'Q2-Dev' not found. Available: Q2-Marketing, Q2-Eng, Q1-Archive"
- */
-export function suggestBoard(boardName: string, availableBoards: string[]): string {
-  const list = availableBoards.join(', ');
-  const msg = `Board '${boardName}' not found.`;
-  return list ? `${msg} Available: ${list}` : `${msg} No boards available.`;
-}
+// `suggestBoard` lived here until #117. Its only two callers were the 404
+// branches of `release-check` and `risks`, and both were unreachable: every
+// board reference now goes through `resolveBoardId` → `resolveNameToId`, which
+// refuses an unknown name BEFORE any request with a `NameResolutionError` that
+// lists every visible board. That refusal is strictly more informative, is a
+// `RefusalError` (so `retryable: false`), and reaches stdout as an envelope
+// rather than a bare `console.error`.
 
 /**
  * Format a "not found" error with suggestions.

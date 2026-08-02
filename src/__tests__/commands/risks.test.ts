@@ -1,18 +1,19 @@
 /**
  * Tests for risks command
  * FAVRO-038: Release Check & Risk Dashboard
+ *
+ * Migrated to the command runner in #117 (step 5 of ADR-0002): JSON is the
+ * default, `--json` is gone, and `riskLevel` carries the verdict the exit code
+ * reports.
  */
 import { Command } from 'commander';
-import { registerRisksCommand } from '../../commands/risks';
+import { registerRisksCommand, risksHandler } from '../../commands/risks';
 import CardsAPI, { Card } from '../../lib/cards-api';
-import FavroHttpClient from '../../lib/http-client';
 import * as config from '../../lib/config';
-import BoardsAPI from '../../lib/boards-api';
 
 jest.mock('../../lib/cards-api');
 jest.mock('../../lib/http-client');
 jest.mock('../../lib/config');
-jest.mock('../../lib/boards-api');
 
 const sampleCards: Card[] = [
   {
@@ -41,9 +42,9 @@ const sampleCards: Card[] = [
     status: 'To Do',
     assignees: ['charlie'],
     tags: [],
-    dueDate: '2026-05-01',
+    dueDate: '2027-05-01',
     createdAt: '2026-02-01T00:00:00Z',
-    updatedAt: '2026-03-01T00:00:00Z', // 26+ days old on 2026-03-27
+    updatedAt: '2026-03-01T00:00:00Z',
   },
   {
     cardId: 'card-4',
@@ -51,7 +52,7 @@ const sampleCards: Card[] = [
     status: 'To Do',
     assignees: [],
     tags: [],
-    dueDate: '2026-06-01',
+    dueDate: '2027-06-01',
     createdAt: '2026-03-03T00:00:00Z',
     updatedAt: '2026-03-20T00:00:00Z',
   },
@@ -73,214 +74,258 @@ const sampleCards: Card[] = [
     tags: [],
     dueDate: '2027-04-15',
     createdAt: '2026-03-05T00:00:00Z',
-    updatedAt: new Date().toISOString(), // Always fresh — prevents stale detection
+    updatedAt: new Date().toISOString(),
   },
 ];
 
-function buildProgram(mockListCards: jest.Mock) {
-  (FavroHttpClient as jest.MockedClass<typeof FavroHttpClient>).mockImplementation(() => ({} as any));
-  (CardsAPI as jest.MockedClass<typeof CardsAPI>).mockImplementation(() => ({
-    listCards: mockListCards,
-    getCard: jest.fn(),
-    createCard: jest.fn(),
-    updateCard: jest.fn(),
-  } as any));
-  (config.resolveApiKey as jest.Mock).mockResolvedValue('test-token');
+let listCards: jest.Mock;
 
+function buildProgram(): Command {
   const program = new Command();
+  program.option('--verbose').option('--human').option('--pretty');
+  // Before `.command()`, exactly as `cli.ts:134` does it.
+  program.exitOverride();
   registerRisksCommand(program);
   return program;
 }
 
+const runCli = (args: string[]): Promise<unknown> =>
+  buildProgram().parseAsync(['node', 'favro', ...args]);
+
 describe('risks command', () => {
   let consoleLogSpy: jest.SpyInstance;
   let consoleErrorSpy: jest.SpyInstance;
-  let processExitSpy: jest.SpyInstance;
+  let exitSpy: jest.SpyInstance;
+
+  const stdout = (): string => consoleLogSpy.mock.calls.map((c) => String(c[0])).join('\n');
+  const json = (): any => JSON.parse(stdout());
 
   beforeEach(() => {
+    jest.clearAllMocks();
+    listCards = jest.fn().mockResolvedValue(sampleCards);
+    (CardsAPI as jest.MockedClass<typeof CardsAPI>).mockImplementation(
+      () => ({ listCards } as any),
+    );
+    (config.resolveApiKey as jest.Mock).mockResolvedValue('test-token');
     consoleLogSpy = jest.spyOn(console, 'log').mockImplementation();
     consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation();
-    processExitSpy = jest.spyOn(process, 'exit').mockImplementation(() => {
-      throw new Error('process.exit');
-    });
-    jest.clearAllMocks();
+    exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    process.exitCode = undefined;
   });
 
   afterEach(() => {
     consoleLogSpy.mockRestore();
     consoleErrorSpy.mockRestore();
-    processExitSpy.mockRestore();
+    exitSpy.mockRestore();
+    process.exitCode = undefined;
   });
 
-  it('should identify overdue cards', async () => {
-    const mockListCards = jest.fn().mockResolvedValue([sampleCards[0]]);
-    const program = buildProgram(mockListCards);
+  // ─── the JSON default (#113/#117) ──────────────────────────────────────────
 
-    await program.parseAsync(['node', 'favro', 'risks', 'board-1']);
+  it('emits the report as JSON with no flag at all', async () => {
+    listCards.mockResolvedValue([sampleCards[0]]);
 
-    expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('RISK DASHBOARD REPORT'));
-    expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('🔴 Overdue'));
+    await runCli(['risks', 'board-1']);
+
+    const report = json();
+    expect(report.board).toBe('board-1');
+    expect(report.summary.overdue).toBe(1);
+    expect(report.risks.overdue[0].cardId).toBe('card-1');
   });
 
-  it('should identify blocked cards', async () => {
-    const mockListCards = jest.fn().mockResolvedValue([sampleCards[1]]);
-    const program = buildProgram(mockListCards);
+  it('no longer declares --json', async () => {
+    const risks = buildProgram().commands.find((c) => c.name() === 'risks')!;
+    expect(risks.options.map((o) => o.long)).not.toContain('--json');
 
-    await program.parseAsync(['node', 'favro', 'risks', 'board-1']);
-
-    expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('🚫 BLOCKED'));
+    await expect(runCli(['risks', 'board-1', '--json'])).rejects.toThrow(/unknown option/i);
   });
 
-  it('should identify stale cards', async () => {
-    const mockListCards = jest.fn().mockResolvedValue([sampleCards[2]]);
-    const program = buildProgram(mockListCards);
+  // ─── the verdict, as declared data ─────────────────────────────────────────
 
-    await program.parseAsync(['node', 'favro', 'risks', 'board-1']);
+  it('declares riskLevel healthy and exits 0 on a clean board', async () => {
+    listCards.mockResolvedValue([sampleCards[5]]);
 
-    expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('⏳ STALE'));
+    await runCli(['risks', 'board-1']);
+
+    expect(json().riskLevel).toBe('healthy');
+    expect(process.exitCode).toBe(0);
   });
 
-  it('should identify unassigned cards', async () => {
-    const mockListCards = jest.fn().mockResolvedValue([sampleCards[3]]);
-    const program = buildProgram(mockListCards);
+  it('declares riskLevel critical and exits 1 when a card is overdue or blocked', async () => {
+    listCards.mockResolvedValue([sampleCards[0], sampleCards[1]]);
 
-    await program.parseAsync(['node', 'favro', 'risks', 'board-1']);
+    await runCli(['risks', 'board-1']);
 
-    expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('👤 UNASSIGNED'));
+    expect(json().riskLevel).toBe('critical');
+    expect(process.exitCode).toBe(1);
   });
 
-  it('should identify cards with missing fields', async () => {
-    const mockListCards = jest.fn().mockResolvedValue([sampleCards[4]]);
-    const program = buildProgram(mockListCards);
+  // Soft risks still SAY medium/high — the payload is the report. They do not
+  // fail the build: `hasMissingFields` counts `!card.dueDate`, so gating exit
+  // on "not healthy" made the code a constant 1 on any ordinary backlog, and an
+  // exit code that never varies is one users silence with `|| true`.
+  it('declares riskLevel medium on soft risks alone, and still exits 0', async () => {
+    listCards.mockResolvedValue([sampleCards[3]]); // unassigned only
 
-    await program.parseAsync(['node', 'favro', 'risks', 'board-1']);
+    await runCli(['risks', 'board-1']);
 
-    expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('⚠️  MISSING FIELDS'));
+    const report = json();
+    expect(report.riskLevel).toBe('medium');
+    expect(report.summary.overdue).toBe(0);
+    expect(report.summary.blocked).toBe(0);
+    expect(process.exitCode).toBe(0);
   });
 
-  it('should report healthy board correctly', async () => {
-    const mockListCards = jest.fn().mockResolvedValue([sampleCards[5]]);
-    const program = buildProgram(mockListCards);
+  it('declares riskLevel high when soft risks pass ten cards, and still exits 0', async () => {
+    listCards.mockResolvedValue(
+      Array.from({ length: 11 }, (_, i) => ({ ...sampleCards[3], cardId: `card-${i}` })),
+    );
 
-    await program.parseAsync(['node', 'favro', 'risks', 'board-1']);
+    await runCli(['risks', 'board-1']);
 
-    expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('All cards are healthy'));
+    expect(json().riskLevel).toBe('high');
+    expect(process.exitCode).toBe(0);
   });
 
-  it('should output JSON when --json flag is used', async () => {
-    const mockListCards = jest.fn().mockResolvedValue([sampleCards[0]]);
-    const program = buildProgram(mockListCards);
+  it('a negative finding and a wire failure are distinguishable by stdout', async () => {
+    listCards.mockResolvedValue([sampleCards[0]]);
+    await runCli(['risks', 'board-1']);
 
-    await program.parseAsync(['node', 'favro', 'risks', 'board-1', '--json']);
+    expect(process.exitCode).toBe(1);
+    expect(json().riskLevel).toBe('critical');
+    expect(json().error).toBeUndefined();
 
-    const logCalls = consoleLogSpy.mock.calls;
-    expect(logCalls.some(call => call[0].includes('"board"'))).toBe(true);
-    expect(logCalls.some(call => call[0].includes('"overdue"'))).toBe(true);
+    consoleLogSpy.mockClear();
+    process.exitCode = undefined;
+    listCards.mockRejectedValue(new Error('API failed'));
+    await runCli(['risks', 'board-1']);
+
+    expect(process.exitCode).toBe(1);
+    expect(json().error.message).toBe('API failed');
+    expect(json().riskLevel).toBeUndefined();
+    expect(exitSpy).not.toHaveBeenCalled();
   });
+
+  // ─── the permanent hole (#86) ──────────────────────────────────────────────
 
   it('reports staleness as unreachable rather than flagging cards', async () => {
-    // Favro sends no last-modified field on a card, so days-since-update cannot
-    // be computed. The report says so instead of listing every card as stale.
-    const mockListCards = jest.fn().mockResolvedValue([sampleCards[2]]);
-    const program = buildProgram(mockListCards);
+    listCards.mockResolvedValue([sampleCards[2]]);
 
-    await program.parseAsync(['node', 'favro', 'risks', 'board-1']);
+    await runCli(['risks', 'board-1']);
 
-    expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('⏳ STALE: unreachable'));
-  });
-
-  it('should report risk levels correctly', async () => {
-    const mockListCards = jest.fn().mockResolvedValue([
-      sampleCards[0], // Overdue
-      sampleCards[1], // Blocked
+    const report = json();
+    expect(report.risks.stale).toEqual([]);
+    expect(report.unreachable).toEqual([
+      { id: 'stale', reason: expect.stringContaining('no last-modified field') },
     ]);
-    const program = buildProgram(mockListCards);
-
-    await program.parseAsync(['node', 'favro', 'risks', 'board-1']);
-
-    expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('🔴 CRITICAL'));
   });
 
-  it('should handle multiple risk categories for single card', async () => {
-    const multiRiskCard: Card = {
+  it('a healthy verdict still carries the staleness hole', async () => {
+    // The check nobody can run does not move the verdict — `critical` turns on
+    // overdue/blocked, both computable — but it is still stated, so "healthy"
+    // never reads as "everything was checked".
+    listCards.mockResolvedValue([sampleCards[5]]);
+
+    await runCli(['risks', 'board-1']);
+
+    expect(json().riskLevel).toBe('healthy');
+    expect(json().unreachable).toHaveLength(1);
+    expect(process.exitCode).toBe(0);
+  });
+
+  // ─── the human render ──────────────────────────────────────────────────────
+
+  it('renders the dashboard under --human', async () => {
+    listCards.mockResolvedValue([sampleCards[0]]);
+
+    await runCli(['risks', 'board-1', '--human']);
+
+    const text = stdout();
+    expect(text).toContain('RISK DASHBOARD REPORT');
+    expect(text).toContain('🔴 Overdue');
+    expect(text).toContain('card-1');
+    expect(text).toContain('Overdue task');
+    expect(text).toContain('Overall Risk Level: 🔴 CRITICAL');
+  });
+
+  it('names the staleness hole under --human, in the shared wording', async () => {
+    listCards.mockResolvedValue([sampleCards[3]]);
+
+    await runCli(['risks', 'board-1', '--human']);
+
+    expect(stdout()).toContain('⏳ STALE: unreachable — Favro sends no last-modified field');
+  });
+
+  it('says the board is healthy under --human when nothing is at risk', async () => {
+    listCards.mockResolvedValue([sampleCards[5]]);
+
+    await runCli(['risks', 'board-1', '--human']);
+
+    const text = stdout();
+    expect(text).toContain('✓ All cards are healthy!');
+    expect(text).toContain('Overall Risk Level: ✅ HEALTHY');
+  });
+
+  it('still names the staleness hole under --human on a HEALTHY board, above the verdict', async () => {
+    // The hole loop used to live inside the `else` of `total === 0`, so this
+    // exact run printed "✓ All cards are healthy!" and never mentioned that
+    // staleness had not been checked — while the JSON for the same run carried
+    // `unreachable`. Two modes, one command, disagreeing about whether a check
+    // ran, and the mode a human reads was the one that fail-opened.
+    listCards.mockResolvedValue([sampleCards[5]]);
+
+    await runCli(['risks', 'board-1', '--human']);
+
+    const text = stdout();
+    expect(text).toContain('⏳ STALE: unreachable —');
+    // A footnote does not undo a headline: the hole is stated BEFORE the
+    // all-clear and before the verdict line.
+    expect(text.indexOf('⏳ STALE')).toBeLessThan(text.indexOf('✓ All cards are healthy!'));
+    expect(text.indexOf('⏳ STALE')).toBeLessThan(text.indexOf('Overall Risk Level'));
+  });
+
+  it('lists every risk category a single card falls into', async () => {
+    listCards.mockResolvedValue([{
       cardId: 'card-multi',
       name: 'Multiple risks',
       status: 'In Progress',
-      assignees: [], // Unassigned
-      tags: ['blocked'], // Blocked
-      dueDate: '2026-03-01', // Overdue
+      assignees: [],
+      tags: ['blocked'],
+      dueDate: '2026-03-01',
       createdAt: '2026-03-01T00:00:00Z',
-      updatedAt: '2026-03-01T00:00:00Z', // Stale
-    };
+      updatedAt: '2026-03-01T00:00:00Z',
+    } as Card]);
 
-    const mockListCards = jest.fn().mockResolvedValue([multiRiskCard]);
-    const program = buildProgram(mockListCards);
+    await runCli(['risks', 'board-1']);
 
-    await program.parseAsync(['node', 'favro', 'risks', 'board-1']);
-
-    expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('🔴 Overdue'));
-    expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('🚫 BLOCKED'));
-    expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('👤 UNASSIGNED'));
+    const report = json();
+    expect(report.summary.overdue).toBe(1);
+    expect(report.summary.blocked).toBe(1);
+    expect(report.summary.unassigned).toBe(1);
+    expect(report.summary.missingFields).toBe(1);
+    // One card, counted once.
+    expect(report.summary.total).toBe(1);
   });
 
-  it('should handle empty board', async () => {
-    const mockListCards = jest.fn().mockResolvedValue([]);
-    const program = buildProgram(mockListCards);
+  it('handles an empty board', async () => {
+    listCards.mockResolvedValue([]);
 
-    await program.parseAsync(['node', 'favro', 'risks', 'board-1']);
+    await runCli(['risks', 'board-1']);
 
-    expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('Total cards:  0'));
+    const report = json();
+    expect(report.totalCards).toBe(0);
+    expect(report.riskLevel).toBe('healthy');
+    expect(process.exitCode).toBe(0);
   });
 
-  it('should report high risk level for many at-risk cards', async () => {
-    const mockListCards = jest
-      .fn()
-      .mockResolvedValue(Array(15).fill(null).map((_, i) => ({
-        ...sampleCards[0],
-        cardId: `card-${i}`,
-      })));
-    const program = buildProgram(mockListCards);
+  it('the handler returns the report, the formatter and the exit code', async () => {
+    const result = await risksHandler(
+      { api: { cards: { listCards: jest.fn().mockResolvedValue([sampleCards[0]]) } } } as never,
+      'board-1',
+    );
 
-    await program.parseAsync(['node', 'favro', 'risks', 'board-1']);
-
-    // When 15 overdue cards, risk is CRITICAL (>10 at-risk cards)
-    expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('🔴 CRITICAL'));
-  });
-
-  it('should handle missing updatedAt as stale', async () => {
-    const noUpdateCard: Card = {
-      cardId: 'card-no-update',
-      name: 'Never updated',
-      status: 'To Do',
-      assignees: ['user'],
-      tags: [],
-      dueDate: '2026-05-01',
-      createdAt: '2026-03-01T00:00:00Z',
-      updatedAt: undefined, // No update
-    };
-
-    const mockListCards = jest.fn().mockResolvedValue([noUpdateCard]);
-    const program = buildProgram(mockListCards);
-
-    await program.parseAsync(['node', 'favro', 'risks', 'board-1']);
-
-    expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('⏳ STALE'));
-  });
-
-  it('should handle API errors gracefully', async () => {
-    const mockListCards = jest.fn().mockRejectedValue(new Error('API failed'));
-    const program = buildProgram(mockListCards);
-
-    await expect(program.parseAsync(['node', 'favro', 'risks', 'board-1'])).rejects.toThrow();
-  });
-
-  it('should include card IDs and names in risk reports', async () => {
-    const mockListCards = jest.fn().mockResolvedValue([sampleCards[0]]);
-    const program = buildProgram(mockListCards);
-
-    await program.parseAsync(['node', 'favro', 'risks', 'board-1']);
-
-    expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('card-1'));
-    expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('Overdue task'));
+    expect(result.item.riskLevel).toBe('critical');
+    expect(result.exitCode).toBe(1);
+    expect(typeof result.human).toBe('function');
   });
 });
