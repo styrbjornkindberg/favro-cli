@@ -10,73 +10,9 @@
 import { Command } from 'commander';
 import { logError } from '../lib/error-handler';
 import { createFavroClient } from '../lib/client-factory';
-import { ContextAPI, BoardContextSnapshot, ContextCard } from '../api/context';
-import { renderBoard, renderStatusBar, RenderColumn, RenderCard } from '../lib/board-renderer';
+import { ContextAPI } from '../api/context';
+import { renderBoard, renderStatusBar, snapshotToColumns } from '../lib/board-renderer';
 import { c } from '../lib/theme';
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function snapshotToColumns(snapshot: BoardContextSnapshot): RenderColumn[] {
-  // Build column map
-  const columnMap = new Map<string, RenderCard[]>();
-
-  // Initialize columns from board metadata
-  for (const col of snapshot.columns) {
-    columnMap.set(col.name, []);
-  }
-
-  // If no columns defined, use status grouping
-  if (snapshot.columns.length === 0) {
-    const statuses = new Set(snapshot.cards.map(c => c.status ?? 'Unknown'));
-    for (const s of statuses) {
-      columnMap.set(s, []);
-    }
-  }
-
-  // Place cards in columns
-  for (const card of snapshot.cards) {
-    // Try to match by columnId first, fall back to status
-    let placed = false;
-
-    if (card.columnId) {
-      const col = snapshot.columns.find(c => c.id === card.columnId);
-      if (col && columnMap.has(col.name)) {
-        columnMap.get(col.name)!.push(toRenderCard(card));
-        placed = true;
-      }
-    }
-
-    if (!placed) {
-      const status = card.status ?? 'Unknown';
-      if (!columnMap.has(status)) {
-        columnMap.set(status, []);
-      }
-      columnMap.get(status)!.push(toRenderCard(card));
-    }
-  }
-
-  return Array.from(columnMap.entries()).map(([name, cards]) => ({ name, cards }));
-}
-
-/**
- * `blocked` is deliberately not set from `blockedBy` (#61). Nothing clears a
- * Favro `isBefore` edge when the blocker finishes, so an edge count asserts
- * "blocked" forever — and the badge sits ahead of the done marker, so a
- * finished card carrying a stale edge rendered as blocked. Judging doneness
- * costs a per-blocker sweep (`judgeBlockers`) that a board render does not pay
- * for. The renderer still flags a genuinely blocked card off its column name
- * (`board-renderer.ts:48`), the same evidence `favro standup` uses.
- */
-function toRenderCard(card: ContextCard): RenderCard {
-  return {
-    id: card.id,
-    title: card.title,
-    assignee: card.owner,
-    tags: card.tags,
-    status: card.status,
-    due: card.due,
-  };
-}
 
 // ─── Command ──────────────────────────────────────────────────────────────────
 

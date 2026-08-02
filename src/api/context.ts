@@ -87,8 +87,10 @@ export interface WorkflowStep {
 /**
  * Build workflow steps from ordered columns.
  * Each step gets a position, auto-detected semantic stage, and a pointer to the next column.
+ *
+ * The one home (#89) — `api/aggregate.ts` held a byte-identical copy.
  */
-function buildWorkflow(columns: Array<{ id: string; name: string }>): WorkflowStep[] {
+export function buildWorkflow(columns: Array<{ id: string; name: string }>): WorkflowStep[] {
   return columns.map((col, i) => ({
     columnId: col.id,
     columnName: col.name,
@@ -96,6 +98,45 @@ function buildWorkflow(columns: Array<{ id: string; name: string }>): WorkflowSt
     stage: detectStage(col.name),
     nextColumn: i < columns.length - 1 ? columns[i + 1].name : undefined,
   }));
+}
+
+/**
+ * A card's effort, in whatever the board happens to call it.
+ *
+ * The one home (#89) — this existed in four places with three return types
+ * (`next`, `team`, `workload`, `api/sprint-plan`). `undefined` is the reconciled
+ * answer for "no effort recorded", because 0 is a legitimate estimate and a
+ * caller summing efforts wants to say `?? 0` itself rather than have an absent
+ * field silently weigh the same as a zero one.
+ *
+ * The field is matched by NAME, on the card's own field order — Favro has no
+ * effort concept, so this is a guess at a custom field and stays one.
+ *
+ * Reconciling the four changed behaviour for two callers, deliberately:
+ *
+ *   - `favro next` — an empty effort field (`{Effort: null}`) used to reach
+ *     `Number(null) === 0` and score the card as a zero-effort *quick win*. It
+ *     is now `undefined` and scores no bonus.
+ *   - `favro sprint plan` — this was the copy with the 8-entry literal key list,
+ *     so three things move. Iteration order flips from a fixed key priority to
+ *     the card's own field order (`{Estimate: 8, Effort: 3}` was 3, is now 8).
+ *     Name matching broadens to a substring regex, which picks up `Effort
+ *     (hours)` and also `Checkpoints`. And `{Effort: ''}` was `Number('') === 0`
+ *     and is now `undefined`, which `compareSprintCards` sorts as `Infinity` —
+ *     the card moves from first in its priority band to last and stops
+ *     contributing to `cumulative` / `withinBudget`.
+ */
+const EFFORT_FIELD = /effort|story.?points?|points?|estimate/i;
+
+export function extractEffort(card: ContextCard): number | undefined {
+  for (const [key, val] of Object.entries(card.customFields ?? {})) {
+    if (!EFFORT_FIELD.test(key)) continue;
+    // An empty effort field is not an effort of 0 — keep looking at the rest.
+    if (val === undefined || val === null || val === '') continue;
+    const n = Number(val);
+    if (!isNaN(n)) return n;
+  }
+  return undefined;
 }
 
 /**

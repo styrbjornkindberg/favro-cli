@@ -189,4 +189,38 @@ describe('card identifier resolution on the wire', () => {
     const commentsCall = received.find((r) => r.url.startsWith('/api/v1/comments'));
     expect(commentsCall?.url).toContain(`cardCommonId=${COMMON_ID}`);
   });
+
+  // A card read that answers 200 without a `cardCommonId` is off-contract, and
+  // the resolver used to substitute the reference for it (#89). That is the one
+  // wrong answer this endpoint cannot report: it takes `cardCommonId` as a query
+  // or body value, never a path segment, so a `cardId` in that slot is a
+  // well-formed request for a card that does not exist. Refuse instead.
+
+  it('refuses when a card read comes back with no cardCommonId, rather than substituting the reference', async () => {
+    const { client, received, close } = await startServer((req) => {
+      if (req.url?.startsWith(`/api/v1/cards/${CARD_ID}`)) {
+        return { status: 200, body: card({ cardCommonId: undefined }) };
+      }
+      return { status: 200, body: { entities: [] } };
+    });
+
+    const attempt = new CommentsApiClient(client).listComments(CARD_ID);
+    await expect(attempt).rejects.toThrow(/no cardCommonId/);
+    await close();
+
+    expect(received.some((r) => r.url.startsWith('/api/v1/comments'))).toBe(false);
+  });
+
+  it('refuses the same way down the sequentialId path', async () => {
+    const { client, close } = await startServer((req) => {
+      if (req.url?.startsWith('/api/v1/cards?')) {
+        return { status: 200, body: { entities: [card({ cardCommonId: undefined })] } };
+      }
+      return { status: 200, body: { entities: [] } };
+    });
+
+    const attempt = new CommentsApiClient(client).listComments('CLA-1804');
+    await expect(attempt).rejects.toThrow(/no cardCommonId/);
+    await close();
+  });
 });

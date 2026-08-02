@@ -14,6 +14,7 @@ import BoardsAPI, { Board } from '../lib/boards-api';
 import CardsAPI, { Card } from '../lib/cards-api';
 import { c, stripAnsi } from '../lib/theme';
 import { renderBoard, renderStatusBar, RenderColumn, RenderCard } from '../lib/board-renderer';
+import { isOverdue } from '../lib/card-predicates';
 
 // ─── enquirer import (CJS) ───────────────────────────────────────────────────
 
@@ -58,8 +59,10 @@ function renderCardDetail(card: Card): string {
     lines.push(`  ${c.label('Tags')}        ${card.tags.map(t => c.tag(t)).join('  ')}`);
   }
   if (card.dueDate) {
-    const isOverdue = new Date(card.dueDate) < new Date();
-    const dueFmt = isOverdue ? c.error(`⏰ ${card.dueDate} (overdue)`) : c.value(card.dueDate);
+    // Was a third inline copy (#89): `new Date(dueDate) < new Date()`, which
+    // compared against *now* rather than local midnight, so a card due today
+    // rendered as overdue from 00:00 onwards.
+    const dueFmt = isOverdue(card) ? c.error(`⏰ ${card.dueDate} (overdue)`) : c.value(card.dueDate);
     lines.push(`  ${c.label('Due')}         ${dueFmt}`);
   }
   if (card.createdAt) {

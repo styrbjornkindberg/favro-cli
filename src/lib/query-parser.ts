@@ -135,9 +135,6 @@ export function knownFields(cards: ReadonlyArray<Record<string, unknown>> = []):
   return fields;
 }
 
-/** Fields whose values come from a closed vocabulary — see `validateQueryValues`. */
-const CLOSED_VOCABULARY_FIELDS = ['tag', 'label', 'status', 'assignee'];
-
 /** Bare keywords that are a whole predicate on their own. */
 const BARE_KEYWORDS = ['unblocked'];
 

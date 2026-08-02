@@ -13,6 +13,7 @@ import { Command } from 'commander';
 import { createFavroClient } from '../lib/client-factory';
 import { resolveUserId, readConfig } from '../lib/config';
 import AggregateAPI, { AggregateCard } from '../api/aggregate';
+import { extractEffort } from '../api/context';
 import { outputResult, resolveFormat } from '../lib/output';
 import { logError } from '../lib/error-handler';
 
@@ -51,17 +52,6 @@ export function extractPriority(card: AggregateCard): { label: string; score: nu
     }
   }
   return { label: 'unset', score: 0 };
-}
-
-export function extractEffort(card: AggregateCard): number | undefined {
-  if (!card.customFields) return undefined;
-  for (const [key, val] of Object.entries(card.customFields)) {
-    if (/effort|story.?points?|points?|estimate/i.test(key)) {
-      const n = Number(val);
-      return isNaN(n) ? undefined : n;
-    }
-  }
-  return undefined;
 }
 
 export function scoreCard(card: AggregateCard): { score: number; reasons: string[] } {

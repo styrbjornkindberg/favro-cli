@@ -8,6 +8,7 @@ import { readConfig } from '../lib/config';
 import AggregateAPI, { AggregateCard } from '../api/aggregate';
 import { outputResult, resolveFormat } from '../lib/output';
 import { logError } from '../lib/error-handler';
+import { daysSince } from '../lib/time';
 
 const DONE_STAGES = ['done', 'approved', 'archived'];
 
@@ -31,13 +32,6 @@ interface StaleResult {
   unassignedStale: StaleCard[];
   total: number;
   generatedAt: string;
-}
-
-function daysSince(dateStr?: string): number {
-  if (!dateStr) return Infinity;
-  const d = new Date(dateStr);
-  if (isNaN(d.getTime())) return Infinity;
-  return Math.floor((Date.now() - d.getTime()) / (1000 * 60 * 60 * 24));
 }
 
 function formatHuman(data: StaleResult): string {

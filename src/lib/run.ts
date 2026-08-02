@@ -35,7 +35,9 @@ import { CardsAPI } from './cards-api';
 import { BoardsAPI } from './boards-api';
 import { CollectionsAPI } from './collections-api';
 import { ColumnsAPI } from './columns-api';
-import { CommentsAPI } from './comments-api';
+// The comments client lives under `api/`, not `lib/` — #89 deleted the `lib/`
+// twin, which did not resolve `cardCommonId`. This one does.
+import { CommentsApiClient } from '../api/comments';
 import { TagsAPI } from './tags-api';
 import { TasksAPI } from './tasks-api';
 import { TaskListsAPI } from './tasklists-api';
@@ -81,7 +83,7 @@ export function apiNamespace(client: FavroHttpClient) {
     get boards() { return once('boards', () => new BoardsAPI(client)); },
     get collections() { return once('collections', () => new CollectionsAPI(client)); },
     get columns() { return once('columns', () => new ColumnsAPI(client)); },
-    get comments() { return once('comments', () => new CommentsAPI(client)); },
+    get comments() { return once('comments', () => new CommentsApiClient(client)); },
     get tags() { return once('tags', () => new TagsAPI(client)); },
     get tasks() { return once('tasks', () => new TasksAPI(client)); },
     get tasklists() { return once('tasklists', () => new TaskListsAPI(client)); },

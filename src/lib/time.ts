@@ -42,6 +42,21 @@ export function parseSince(since: string | undefined): Date | undefined {
 }
 
 /**
+ * Whole days between `dateStr` and now, floored.
+ *
+ * `Infinity` — not 0 — is the answer when there is no date or it will not
+ * parse: a card nobody can date is infinitely stale, and a 0 would read as
+ * "touched today" to every staleness threshold. One home for what `health` and
+ * `stale` each held verbatim (#89).
+ */
+export function daysSince(dateStr?: string): number {
+  if (!dateStr) return Infinity;
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return Infinity;
+  return Math.floor((Date.now() - d.getTime()) / (1000 * 60 * 60 * 24));
+}
+
+/**
  * Format a timestamp in both relative and absolute (ISO 8601) form.
  * E.g.: "2 hours ago (2026-03-25T14:30:00.000Z)"
  */

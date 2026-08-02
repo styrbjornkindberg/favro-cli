@@ -1,5 +1,5 @@
 /**
- * `buildWorkloads` / `extractEffort` — issue #76.
+ * `buildWorkloads` — issue #76.
  *
  * The rollup used to live inline in the commander action, which left it
  * unreachable without a wire seam it does not need — it is pure aggregation over
@@ -7,7 +7,7 @@
  * the reason. The threshold itself is not restated: the deleted test's version of
  * this assertion was `expect(9 > 8).toBe(true)`, which tested JavaScript.
  */
-import { buildWorkloads, extractEffort } from '../../commands/workload';
+import { buildWorkloads } from '../../commands/workload';
 import { AggregateCard } from '../../api/aggregate';
 
 const card = (over: Partial<AggregateCard> & { id: string }): AggregateCard =>
@@ -21,19 +21,9 @@ const MEMBERS = [
   { id: 'u2', name: 'Linus', email: 'linus@example.com' },
 ];
 
-describe('extractEffort', () => {
-  it('reads a number off any field whose name suggests an estimate', () => {
-    expect(extractEffort(card({ id: '1', customFields: { Effort: 5 } }))).toBe(5);
-    expect(extractEffort(card({ id: '1', customFields: { 'Story Points': '3' } }))).toBe(3);
-    expect(extractEffort(card({ id: '1', customFields: { Estimate: 8 } }))).toBe(8);
-  });
-
-  it('falls back to 0 rather than undefined — this one feeds a running sum', () => {
-    expect(extractEffort(card({ id: '1' }))).toBe(0);
-    expect(extractEffort(card({ id: '1', customFields: { Team: 'Platform' } }))).toBe(0);
-    expect(extractEffort(card({ id: '1', customFields: { Effort: 'large' } }))).toBe(0);
-  });
-});
+// `extractEffort` moved to its one home in `api/context` (#89) and now answers
+// `undefined` rather than 0 for "nothing recorded" — the running sum below is
+// where the 0 belongs, and `buildWorkloads` pins it.
 
 describe('buildWorkloads — overload threshold', () => {
   it('does not flag a member sitting on 8 active cards', () => {

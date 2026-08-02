@@ -14,6 +14,7 @@ import { readConfig } from '../lib/config';
 import AggregateAPI, { AggregateBoard, AggregateCard } from '../api/aggregate';
 import { outputResult, resolveFormat } from '../lib/output';
 import { logError } from '../lib/error-handler';
+import { daysSince } from '../lib/time';
 
 // 'approved' and 'done' are unreachable here — `nonDone` strips DONE_STAGES
 // before the flow numerator is computed. Kept so the list reads as the full set
@@ -45,13 +46,6 @@ interface HealthResult {
   overallScore: number;
   overallSignal: 'green' | 'yellow' | 'red';
   generatedAt: string;
-}
-
-function daysSince(dateStr?: string): number {
-  if (!dateStr) return Infinity;
-  const d = new Date(dateStr);
-  if (isNaN(d.getTime())) return Infinity;
-  return Math.floor((Date.now() - d.getTime()) / (1000 * 60 * 60 * 24));
 }
 
 export function scoreBoard(cards: AggregateCard[]): BoardHealth['breakdown'] {

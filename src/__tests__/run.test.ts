@@ -27,7 +27,9 @@ const API_MODULES: ReadonlyArray<readonly [string, string]> = [
   ['../lib/boards-api', 'BoardsAPI'],
   ['../lib/collections-api', 'CollectionsAPI'],
   ['../lib/columns-api', 'ColumnsAPI'],
-  ['../lib/comments-api', 'CommentsAPI'],
+  // Comments live under `api/`: #89 deleted the `lib/` twin that skipped the
+  // `cardCommonId` resolution.
+  ['../api/comments', 'CommentsApiClient'],
   ['../lib/tags-api', 'TagsAPI'],
   ['../lib/tasks-api', 'TasksAPI'],
   ['../lib/tasklists-api', 'TaskListsAPI'],

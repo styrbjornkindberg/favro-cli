@@ -1018,13 +1018,16 @@ cards
         process.exit(0);
       }
 
-      // --comment: add a comment via the comments API (non-destructive)
+      // --comment: add a comment via the comments API (non-destructive).
+      // The client owns the `cardId` → `cardCommonId` translation the endpoint
+      // needs (#89) — resolving it here would be the second implementation.
+      // It costs one redundant `GET /cards/<id>`: `card.cardCommonId` is already
+      // in hand from the read above, but passing it would be that second
+      // implementation again. One call is the price of one resolver.
       if (options.comment) {
         const commentText = options.comment.replace(/\\n/g, '\n');
-        const { CommentsAPI } = await import('./lib/comments-api');
-        const commentsApi = new CommentsAPI(client!);
-        const cardCommonId = card.cardCommonId ?? cardId;
-        await commentsApi.add(cardCommonId, commentText);
+        const { CommentsApiClient } = await import('./api/comments');
+        await new CommentsApiClient(client!).addComment(cardId, commentText);
         console.log(`✓ Comment added to card "${card.name}"`);
       }
 

@@ -6,6 +6,7 @@ import { Command } from 'commander';
 import { createFavroClient } from '../lib/client-factory';
 import { readConfig } from '../lib/config';
 import AggregateAPI, { AggregateCard } from '../api/aggregate';
+import { extractEffort } from '../api/context';
 import { outputResult, resolveFormat } from '../lib/output';
 import { logError } from '../lib/error-handler';
 
@@ -34,17 +35,6 @@ interface WorkloadResult {
   alerts: string[];
   total: number;
   generatedAt: string;
-}
-
-export function extractEffort(card: AggregateCard): number {
-  if (!card.customFields) return 0;
-  for (const [key, val] of Object.entries(card.customFields)) {
-    if (/effort|story.?points?|points?|estimate/i.test(key)) {
-      const n = Number(val);
-      return isNaN(n) ? 0 : n;
-    }
-  }
-  return 0;
 }
 
 /**
@@ -79,7 +69,7 @@ export function buildWorkloads(
       }
       const mw = memberMap.get(uid)!;
       mw.totalCards++;
-      mw.totalEffort += extractEffort(card);
+      mw.totalEffort += extractEffort(card) ?? 0;
       if (ACTIVE_STAGES.includes(card.stage ?? '')) mw.activeCards++;
       if ((card.blockedBy && card.blockedBy.length > 0)) mw.dependencyCards++;
       mw.cards.push({

@@ -5,14 +5,15 @@
 
 import {
   priorityScore,
-  extractEffort,
   extractPriority,
   isBacklogCard,
   compareSprintCards,
   SprintPlanAPI,
   type SprintCard,
 } from '../../api/sprint-plan';
-import type { ContextCard } from '../../api/context';
+// `extractEffort` moved to its one home in `api/context` (#89); `sprint-plan`
+// is now a caller like the rest.
+import { extractEffort, type ContextCard } from '../../api/context';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -206,7 +207,10 @@ describe('compareSprintCards', () => {
 
 const mockGetSnapshot = jest.fn();
 
+// Only the class is stubbed. The module's pure helpers — `extractEffort` since
+// #89 — stay real, or `sprint-plan` would be scoring against `undefined`.
 jest.mock('../../api/context', () => ({
+  ...jest.requireActual('../../api/context'),
   __esModule: true,
   default: function MockContextAPI() {
     return { getSnapshot: mockGetSnapshot };

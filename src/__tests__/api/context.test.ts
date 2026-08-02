@@ -2,7 +2,7 @@
  * Unit tests — ContextAPI
  * CLA-1796 / FAVRO-034: Board Context Snapshot Command
  */
-import ContextAPI from '../../api/context';
+import ContextAPI, { buildWorkflow, extractEffort, ContextCard } from '../../api/context';
 import FavroHttpClient from '../../lib/http-client';
 import BoardsAPI from '../../lib/boards-api';
 import CardsAPI from '../../lib/cards-api';
@@ -328,5 +328,60 @@ describe('ContextAPI performance', () => {
 
     expect(snapshot.cards).toHaveLength(500);
     expect(elapsed).toBeLessThan(1000);
+  });
+});
+
+// ─── Shared helpers (#89) ────────────────────────────────────────────────────
+// `buildWorkflow` and `extractEffort` each had copies elsewhere. These pin the
+// one that survives, before the other call sites are pointed at it.
+
+describe('buildWorkflow', () => {
+  it('numbers steps from 1 and points each at the next column by NAME', () => {
+    const steps = buildWorkflow([
+      { id: 'c1', name: 'Backlog' },
+      { id: 'c2', name: 'In Progress' },
+      { id: 'c3', name: 'Done' },
+    ]);
+
+    expect(steps).toEqual([
+      { columnId: 'c1', columnName: 'Backlog', position: 1, stage: 'backlog', nextColumn: 'In Progress' },
+      { columnId: 'c2', columnName: 'In Progress', position: 2, stage: 'active', nextColumn: 'Done' },
+      { columnId: 'c3', columnName: 'Done', position: 3, stage: 'done', nextColumn: undefined },
+    ]);
+  });
+
+  it('returns an empty workflow for a board with no columns', () => {
+    expect(buildWorkflow([])).toEqual([]);
+  });
+});
+
+describe('extractEffort', () => {
+  const withFields = (customFields?: Record<string, unknown>): ContextCard =>
+    ({ id: 'c1', title: 'Card', customFields }) as ContextCard;
+
+  it('reads an effort-shaped field name, whatever its casing', () => {
+    expect(extractEffort(withFields({ effort: 3 }))).toBe(3);
+    expect(extractEffort(withFields({ Effort: 5 }))).toBe(5);
+  });
+
+  it('reads the story-point spellings', () => {
+    expect(extractEffort(withFields({ 'story points': '8' }))).toBe(8);
+    expect(extractEffort(withFields({ 'Story Points': '3' }))).toBe(3);
+    expect(extractEffort(withFields({ Points: 2 }))).toBe(2);
+    expect(extractEffort(withFields({ Estimate: 8 }))).toBe(8);
+  });
+
+  it('is undefined — never 0 — when there is nothing to read', () => {
+    expect(extractEffort(withFields(undefined))).toBeUndefined();
+    expect(extractEffort(withFields({}))).toBeUndefined();
+    expect(extractEffort(withFields({ Team: 'Platform' }))).toBeUndefined();
+  });
+
+  it('is undefined for an effort field that is not a number', () => {
+    expect(extractEffort(withFields({ effort: 'large' }))).toBeUndefined();
+  });
+
+  it('keeps looking past an effort field with no value in it', () => {
+    expect(extractEffort(withFields({ effort: null, Points: 4 }))).toBe(4);
   });
 });

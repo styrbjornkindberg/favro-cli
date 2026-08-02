@@ -16,8 +16,9 @@ import {
   ContextCard,
   WorkflowStep,
   BoardContextSnapshot,
+  buildWorkflow,
 } from './context';
-import { detectStage, WorkflowStage } from '../lib/workflow-stage';
+import { WorkflowStage } from '../lib/workflow-stage';
 import { blockingEdges } from '../lib/blocking';
 
 // Re-export for convenience
@@ -73,16 +74,6 @@ export interface AggregateSnapshot {
 export interface AggregateScope {
   collectionIds?: string[];
   boardIds?: string[];
-}
-
-function buildWorkflow(columns: Array<{ id: string; name: string }>): WorkflowStep[] {
-  return columns.map((col, i) => ({
-    columnId: col.id,
-    columnName: col.name,
-    position: i + 1,
-    stage: detectStage(col.name),
-    nextColumn: i < columns.length - 1 ? columns[i + 1].name : undefined,
-  }));
 }
 
 function normalizeToAggregateCard(

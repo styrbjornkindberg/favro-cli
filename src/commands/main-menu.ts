@@ -10,7 +10,7 @@ import CollectionsAPI from '../lib/collections-api';
 import BoardsAPI from '../lib/boards-api';
 import CardsAPI from '../lib/cards-api';
 import { ContextAPI, ContextCard } from '../api/context';
-import { renderBoard, renderStatusBar, RenderColumn, RenderCard } from '../lib/board-renderer';
+import { renderBoard, renderStatusBar, snapshotToColumns } from '../lib/board-renderer';
 import { readConfig, resolveUserId } from '../lib/config';
 import { outputResult, resolveFormat } from '../lib/output';
 
@@ -82,44 +82,6 @@ async function api() {
     _context = new ContextAPI(client);
   }
   return { collections: _collections!, boards: _boards!, cards: _cards!, context: _context! };
-}
-
-// ─── Snapshot → columns helper ───────────────────────────────────────────────
-
-function snapshotToColumns(snapshot: { columns: Array<{ id: string; name: string }>; cards: ContextCard[] }): { columns: RenderColumn[]; allCards: ContextCard[] } {
-  const columnMap = new Map<string, { render: RenderCard[]; context: ContextCard[] }>();
-  for (const col of snapshot.columns) columnMap.set(col.name, { render: [], context: [] });
-  if (snapshot.columns.length === 0) {
-    const statuses = new Set(snapshot.cards.map(ca => ca.status ?? 'Unknown'));
-    for (const s of statuses) columnMap.set(s, { render: [], context: [] });
-  }
-
-  const allCards: ContextCard[] = [];
-  for (const card of snapshot.cards) {
-    // `blocked` is deliberately unset (#61) — see `board-tui.ts:toRenderCard`.
-    // An unjudged `blockedBy` edge never clears, so it cannot assert a state;
-    // the renderer flags a real blocked column off `status` instead.
-    const rc: RenderCard = { id: card.id, title: card.title, assignee: card.owner, tags: card.tags, status: card.status, due: card.due };
-    let placed = false;
-    if (card.columnId) {
-      const col = snapshot.columns.find(co => co.id === card.columnId);
-      if (col && columnMap.has(col.name)) {
-        columnMap.get(col.name)!.render.push(rc);
-        columnMap.get(col.name)!.context.push(card);
-        placed = true;
-      }
-    }
-    if (!placed) {
-      const status = card.status ?? 'Unknown';
-      if (!columnMap.has(status)) columnMap.set(status, { render: [], context: [] });
-      columnMap.get(status)!.render.push(rc);
-      columnMap.get(status)!.context.push(card);
-    }
-    allCards.push(card);
-  }
-
-  const columns: RenderColumn[] = Array.from(columnMap.entries()).map(([name, data]) => ({ name, cards: data.render }));
-  return { columns, allCards };
 }
 
 // ─── Actions ─────────────────────────────────────────────────────────────────
@@ -216,7 +178,10 @@ async function showBoardView(boardId: string, boardName: string): Promise<void> 
       return;
     }
 
-    const { columns, allCards } = snapshotToColumns(snapshot);
+    const columns = snapshotToColumns(snapshot);
+    // The local copy of `snapshotToColumns` also returned the cards it had just
+    // been handed, in the order it was handed them (#89). That is the snapshot.
+    const allCards = snapshot.cards;
 
     // Render kanban
     console.log(renderBoard(columns, { title: snapshot.board.name, compact: true }));

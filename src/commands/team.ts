@@ -5,7 +5,8 @@
 import { Command } from 'commander';
 import { createFavroClient } from '../lib/client-factory';
 import { readConfig } from '../lib/config';
-import AggregateAPI, { AggregateCard } from '../api/aggregate';
+import AggregateAPI from '../api/aggregate';
+import { extractEffort } from '../api/context';
 import { outputResult, resolveFormat } from '../lib/output';
 import { logError } from '../lib/error-handler';
 
@@ -37,17 +38,6 @@ interface TeamResult {
   bottleneck?: { name: string; dependencyCount: number };
   totalMembers: number;
   generatedAt: string;
-}
-
-function extractEffort(card: AggregateCard): number {
-  if (!card.customFields) return 0;
-  for (const [key, val] of Object.entries(card.customFields)) {
-    if (/effort|story.?points?|points?|estimate/i.test(key)) {
-      const n = Number(val);
-      return isNaN(n) ? 0 : n;
-    }
-  }
-  return 0;
 }
 
 function formatHuman(data: TeamResult): string {
@@ -119,7 +109,7 @@ export function registerTeamCommand(program: Command): void {
             }
             const tm = memberMap.get(uid)!;
             tm.totalCards++;
-            tm.effortSum += extractEffort(card);
+            tm.effortSum += extractEffort(card) ?? 0;
 
             const bName = (card as any).boardName;
             if (bName && !tm.activeBoards.includes(bName)) tm.activeBoards.push(bName);
