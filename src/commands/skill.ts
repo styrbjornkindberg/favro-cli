@@ -13,7 +13,7 @@
  */
 import { Command } from 'commander';
 import fs from 'fs';
-import { exec } from 'child_process';
+import { spawnSync } from 'child_process';
 import { logError } from '../lib/error-handler';
 import {
   listSkills,
@@ -199,13 +199,52 @@ export function registerSkillCommands(program: Command): void {
 
   skillCmd
     .command('edit <name>')
-    .description('Open a skill file in $EDITOR')
-    .action(async (name: string) => {
+    .description('Open a skill file in $EDITOR (or $VISUAL) and wait for it to close')
+    .action((name: string) => {
       try {
         const filePath = getSkillPath(name);
-        const editor = process.env.EDITOR || process.env.VISUAL || 'vi';
+        const editor = (process.env.EDITOR || process.env.VISUAL || '').trim();
+        if (!editor) {
+          // No fallback. Guessing `vi` drops a user who has never used it into a
+          // full-screen modal editor with no visible way out; naming the two
+          // variables is the shorter path to a working command.
+          console.error('No editor configured. Set $EDITOR (or $VISUAL) first, e.g. EDITOR=nano.');
+          process.exit(1);
+          return;
+        }
+
+        // `$EDITOR` routinely carries arguments (`code --wait`, `emacsclient
+        // -nw`), so it is argv, not an executable name. Split it and spawn
+        // WITHOUT a shell: the old `exec` form built one command string for
+        // `/bin/sh -c`, which ran whatever an `$EDITOR` of `vi; rm -rf ~`
+        // contained, and interpolated `filePath` into the same string.
+        // ponytail: whitespace split, so an editor whose PATH contains a space
+        // needs quote-aware parsing. Add that when someone actually has one.
+        const [bin, ...editorArgs] = editor.split(/\s+/);
+
         console.log(`Opening ${filePath} in ${editor}...`);
-        exec(`${editor} "${filePath}"`, { stdio: 'inherit' } as any);
+        // `stdio: 'inherit'` gives the child the real terminal and `spawnSync`
+        // blocks until it closes — #129: `exec` did neither, because it has no
+        // `stdio` option at all (the `as any` was there to hide that).
+        const result = spawnSync(bin, [...editorArgs, filePath], { stdio: 'inherit' });
+
+        if (result.error) {
+          console.error(`Could not start editor "${bin}": ${result.error.message}`);
+          process.exit(1);
+          return;
+        }
+        if (result.status !== 0) {
+          const how = result.signal ? `on signal ${result.signal}` : `with code ${result.status}`;
+          // favro never writes this file — the editor does, in place — so a
+          // failed edit cannot half-save anything through us.
+          console.error(`Editor "${editor}" exited ${how}. favro wrote nothing; ${filePath} is as the editor left it.`);
+          process.exit(1);
+          return;
+        }
+
+        // The editor has almost certainly repainted the terminal, so say what
+        // was closed rather than leaving the user staring at their old prompt.
+        console.log(`✓ Closed ${filePath}`);
       } catch (error) {
         logError(error);
         process.exit(1);

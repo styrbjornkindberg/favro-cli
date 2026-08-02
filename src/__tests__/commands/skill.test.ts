@@ -12,6 +12,7 @@ import { Command } from 'commander';
 import { registerSkillCommands, isRecording, recordStep } from '../../commands/skill';
 import * as store from '../../lib/skill-store';
 import * as engine from '../../lib/skill-engine';
+import { spawnSync } from 'child_process';
 import fs from 'fs';
 
 jest.mock('../../lib/skill-store');
@@ -42,6 +43,7 @@ async function runCli(args: string[]): Promise<void> {
 
 const output = () => logSpy.mock.calls.map((c) => String(c[0])).join('\n');
 const errors = () => errorSpy.mock.calls.map((c) => String(c[0])).join('\n');
+const spawnSyncMock = () => spawnSync as unknown as jest.Mock;
 
 const runResult = (over: Partial<engine.SkillRunResult> = {}): engine.SkillRunResult => ({
   skill: 'standup',
@@ -49,6 +51,9 @@ const runResult = (over: Partial<engine.SkillRunResult> = {}): engine.SkillRunRe
   steps: [{ step: 1, command: 'standup', status: 'success', output: 'two cards' }],
   ...over,
 });
+
+// `skill edit` reads them; leave the developer's own shell environment alone.
+const savedEditorEnv = { EDITOR: process.env.EDITOR, VISUAL: process.env.VISUAL };
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -70,6 +75,10 @@ beforeEach(() => {
 
 afterEach(() => {
   jest.restoreAllMocks();
+  for (const [key, value] of Object.entries(savedEditorEnv)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
 });
 
 describe('skill list', () => {
@@ -286,18 +295,111 @@ describe('skill create / export / import / delete / edit', () => {
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
-  test('edit names the file and the editor it is opening it in', async () => {
-    // THIS DOES NOT PROVE `skill edit` WORKS — see #129. It asserts the two
-    // things before the launch, and stops there deliberately, because the
-    // launch itself is broken: `skill.ts:208` calls
-    // `exec(cmd, { stdio: 'inherit' } as any)`, and `child_process.exec` has no
-    // `stdio` option — it buffers and hands the child no TTY, so the editor
-    // never attaches to the terminal. The call is not awaited either. The `as
-    // any` is the tell. Covering the launch would mean pinning the bug.
+  // ─── skill edit (#129) ──────────────────────────────────────────────────
+  //
+  // These assert the ARGUMENTS handed to `spawnSync`, because that is where the
+  // bug lived: the old call was `exec(cmd, { stdio: 'inherit' } as any)`, and
+  // `child_process.exec` has no `stdio` option — it buffered and handed the
+  // child no TTY, so the editor never attached to the terminal. A test that
+  // only checked "some child was started" would have passed against that.
+  //
+  // They do NOT prove the child really gets the terminal — a mocked
+  // `child_process` cannot. `skill-edit-spawn.test.ts` runs the real thing.
+
+  test('edit hands the editor the terminal and blocks until it exits', async () => {
+    spawnSyncMock().mockReturnValue({ status: 0, signal: null });
+    process.env.EDITOR = 'vi';
+
     await runCli(['skill', 'edit', 'mine']);
 
     expect(store.getSkillPath).toHaveBeenCalledWith('mine');
+    expect(spawnSyncMock()).toHaveBeenCalledWith('vi', ['/home/me/.favro/skills/mine.yaml'], {
+      stdio: 'inherit',
+    });
     expect(output()).toContain('/home/me/.favro/skills/mine.yaml');
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  test('edit never routes the editor through a shell', async () => {
+    // `$EDITOR` is user-controlled, and the old `exec` form ran it through
+    // `/bin/sh -c`. An argv spawn has no shell to inject into.
+    spawnSyncMock().mockReturnValue({ status: 0, signal: null });
+    process.env.EDITOR = 'vi; touch /tmp/pwned';
+
+    await runCli(['skill', 'edit', 'mine']);
+
+    const [bin, args, opts] = spawnSyncMock().mock.calls[0];
+    expect(opts.shell).toBeUndefined();
+    expect(bin).toBe('vi;');
+    expect(args).toEqual(['touch', '/tmp/pwned', '/home/me/.favro/skills/mine.yaml']);
+  });
+
+  test('an $EDITOR carrying arguments is split into argv, not passed as one name', async () => {
+    spawnSyncMock().mockReturnValue({ status: 0, signal: null });
+    process.env.EDITOR = 'code --wait';
+
+    await runCli(['skill', 'edit', 'mine']);
+
+    expect(spawnSyncMock()).toHaveBeenCalledWith(
+      'code',
+      ['--wait', '/home/me/.favro/skills/mine.yaml'],
+      { stdio: 'inherit' },
+    );
+  });
+
+  test('$VISUAL is used when $EDITOR is unset', async () => {
+    spawnSyncMock().mockReturnValue({ status: 0, signal: null });
+    delete process.env.EDITOR;
+    process.env.VISUAL = 'nano';
+
+    await runCli(['skill', 'edit', 'mine']);
+
+    expect(spawnSyncMock()).toHaveBeenCalledWith('nano', ['/home/me/.favro/skills/mine.yaml'], {
+      stdio: 'inherit',
+    });
+  });
+
+  test('with no editor configured it refuses by name rather than guessing one', async () => {
+    delete process.env.EDITOR;
+    delete process.env.VISUAL;
+
+    await runCli(['skill', 'edit', 'mine']);
+
+    expect(spawnSyncMock()).not.toHaveBeenCalled();
+    expect(errors()).toContain('EDITOR');
+    expect(errors()).toContain('VISUAL');
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  test('an editor that does not exist is reported, not swallowed', async () => {
+    spawnSyncMock().mockReturnValue({ error: new Error('spawn nosuchedit ENOENT'), status: null });
+    process.env.EDITOR = 'nosuchedit';
+
+    await runCli(['skill', 'edit', 'mine']);
+
+    expect(errors()).toContain('nosuchedit');
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  test('a non-zero editor exit fails the command and promises no write-back', async () => {
+    spawnSyncMock().mockReturnValue({ status: 3, signal: null });
+    process.env.EDITOR = 'vi';
+
+    await runCli(['skill', 'edit', 'mine']);
+
+    expect(errors()).toContain('exited with code 3');
+    expect(errors()).toContain('wrote nothing');
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  test('an editor killed by a signal reports the signal, not a null code', async () => {
+    spawnSyncMock().mockReturnValue({ status: null, signal: 'SIGKILL' });
+    process.env.EDITOR = 'vi';
+
+    await runCli(['skill', 'edit', 'mine']);
+
+    expect(errors()).toContain('SIGKILL');
+    expect(exitSpy).toHaveBeenCalledWith(1);
   });
 });
 
