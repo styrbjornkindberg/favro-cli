@@ -99,7 +99,6 @@ const OUT_OF_REMIT: Record<string, string> = {
   'src/cli.ts cards create': '#99 — write echo, not a read; reportDispatch owns the machine shape',
   'src/commands/dependencies.ts dependencies add': '#99 — write echo of the post-link edge set',
   'src/cli.ts cards export': '#99 — a serialisation format, shared with --out; CSV is its sibling',
-  'src/commands/cards-export.ts cards': '#99 — a serialisation format, shared with --out',
 };
 
 /** Exempt either way: debt and decision are both non-failing, for different reasons. */

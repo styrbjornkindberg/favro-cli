@@ -43,7 +43,7 @@ import * as path from 'path';
 
 import { ParseError } from '../lib/query-parser';
 import { resolveQuery } from '../lib/query-values';
-import { applyFilters } from '../commands/cards-export';
+import { applyFilters } from '../lib/cards-export';
 import CardsAPI, { Card } from '../lib/cards-api';
 import * as clientFactory from '../lib/client-factory';
 import { buildProgram } from '../cli';
@@ -216,7 +216,7 @@ describe('the parse-then-validate protocol is one call', () => {
 
   test('the scan looks at the files it claims to', () => {
     const sources = productionSources();
-    expect(sources).toContain(path.join('commands', 'cards-export.ts'));
+    expect(sources).toContain(path.join('lib', 'cards-export.ts'));
     expect(sources).toContain('cli.ts');
     expect(sources.some((f) => f.includes('__tests__'))).toBe(false);
   });
@@ -225,11 +225,12 @@ describe('the parse-then-validate protocol is one call', () => {
 // ─── arm three: the command a user actually types ────────────────────────────
 
 /**
- * Arms one and two never reach a command. `commands/cards-export.ts` exports a
- * `registerCardsExportCommand` that nothing but its own tests registers — the
- * live `cards export` is inline in `cli.ts` — so the export suite can be fully
- * green while the live path answers a plausible zero rows. This arm drives
- * `buildProgram()`, the program `bin/favro` builds.
+ * Arms one and two never reach a command: they call `applyFilters` directly.
+ * `lib/cards-export.ts` used to carry a `registerCardsExportCommand` twin that
+ * nothing but its own tests registered — the live `cards export` is inline in
+ * `cli.ts` — so the export suite could be fully green while the live path
+ * answered a plausible zero rows. The twin is gone (#139); this arm is what
+ * replaced it, and it drives `buildProgram()`, the program `bin/favro` builds.
  */
 describe('the live cards export refuses a filter it cannot settle', () => {
   const listCards = jest.fn(async () => CARDS);

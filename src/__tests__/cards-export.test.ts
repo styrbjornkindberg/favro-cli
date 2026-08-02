@@ -1,13 +1,21 @@
 /**
- * Tests for cards export command and CSV/JSON formatting
+ * Tests for `cards export` and the CSV/JSON formatting behind it.
  * FAVRO-009: Cards Export Command
+ *
+ * The command arm drives `buildProgram()` — the program `bin/favro` builds —
+ * and nothing else. It used to drive `registerCardsExportCommand`, a second
+ * registration in `commands/cards-export.ts` that `cli.ts` never called (#139).
+ * Both routed through `applyFilters`, so the suite LOOKED like end-to-end
+ * coverage of the export: deleting the live `applyFilters` call left every one
+ * of these tests green. A twin close enough to pass the real path's tests is
+ * worse than no test at all.
  */
-import { Command } from 'commander';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
-import { registerCardsExportCommand, applyFilter, applyFilters } from '../commands/cards-export';
+import { buildProgram } from '../cli';
+import { applyFilter, applyFilters } from '../lib/cards-export';
 import { ParseError } from '../lib/query-parser';
 import {
   STUB_BOARD,
@@ -408,29 +416,33 @@ describe('Large exports (10k+ cards)', () => {
 });
 
 // ----------------------------
-// registerCardsExportCommand tests
+// `cards export`, as a user types it — through buildProgram()
 // ----------------------------
 
-describe('registerCardsExportCommand', () => {
+describe('cards export (live command)', () => {
   let tmpDir: string;
+  /** Every path here writes progress and refusals to stderr; captured, not printed. */
+  let said: jest.SpyInstance;
   const originalEnv = process.env.FAVRO_API_TOKEN;
+  const printed = (): string => said.mock.calls.map((c) => String(c[0])).join('\n');
 
   beforeEach(() => {
-    // Use a temp dir WITHIN cwd so path traversal check passes
+    said = jest.spyOn(console, 'error').mockImplementation(() => {});
+    // Inside cwd, because the --out guard rejects anything outside it: the file
+    // a refusal test proves is NOT written has to be somewhere it could be.
     tmpDir = fs.mkdtempSync(path.join(process.cwd(), '.test-tmp-'));
-    // Set token so tests don't fail on missing token check
     process.env.FAVRO_API_TOKEN = 'test-token';
     (config.resolveApiKey as jest.Mock).mockResolvedValue('test-token');
-    // A filter now settles its values against the org before it runs (#83), so
-    // the client the command builds has to be able to answer /tags and /widgets.
+    (config.readConfig as jest.Mock).mockResolvedValue({});
+    // A filter settles its values against the org before it runs (#83), so the
+    // client `createFavroClient` builds has to answer /tags, /widgets, /users.
     (FavroHttpClient as jest.MockedClass<typeof FavroHttpClient>)
       .mockImplementation(() => stubVocabularyClient());
   });
 
   afterEach(() => {
-    // Clean up temp files
+    said.mockRestore();
     try { fs.rmSync(tmpDir, { recursive: true }); } catch (_) {}
-    // Restore env
     if (originalEnv === undefined) {
       delete process.env.FAVRO_API_TOKEN;
     } else {
@@ -439,285 +451,132 @@ describe('registerCardsExportCommand', () => {
     jest.clearAllMocks();
   });
 
-  function mockApi(cards: Card[]) {
-    (CardsAPI as jest.MockedClass<typeof CardsAPI>).mockImplementation(() => ({
-      listCards: jest.fn().mockResolvedValue(cards),
-      getCard: jest.fn(),
-      createCard: jest.fn(),
-      updateCard: jest.fn(),
-      deleteCard: jest.fn(),
-      searchCards: jest.fn(),
-    } as any));
+  /** The board fetch, as a spy, so a test can assert what reached the API. */
+  function mockApi(cards: Card[]): jest.Mock {
+    const listCards = jest.fn().mockResolvedValue(cards);
+    (CardsAPI as jest.MockedClass<typeof CardsAPI>)
+      .mockImplementation(() => ({ listCards } as any));
+    return listCards;
   }
 
-  test('registers export command on program', () => {
-    const program = new Command();
-    registerCardsExportCommand(program);
-    const cmd = program.commands.find(c => c.name() === 'cards');
-    expect(cmd).toBeDefined();
-  });
+  const runExport = (...args: string[]): Promise<unknown> =>
+    buildProgram().parseAsync(['node', 'favro', 'cards', 'export', ...args]);
 
-  test('exports cards to CSV file', async () => {
+  /** Run an argv expected to refuse, and return what it printed. */
+  async function expectRefusal(...args: string[]): Promise<string> {
+    const exit = jest.spyOn(process, 'exit')
+      .mockImplementation(() => { throw new Error('process.exit'); });
+    try {
+      await expect(runExport(...args)).rejects.toThrow('process.exit');
+      return printed();
+    } finally {
+      exit.mockRestore();
+    }
+  }
+
+  test('exports cards to a CSV file', async () => {
     mockApi(sampleCards);
     const outFile = path.join(tmpDir, 'export.csv');
 
-    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
-    const program = new Command();
-    registerCardsExportCommand(program);
+    await runExport(STUB_BOARD, '--format', 'csv', '--out', outFile);
 
-    await program.parseAsync([
-      'node', 'test',
-      'cards', 'export', 'board-123',
-      '--format', 'csv',
-      '--out', outFile,
-    ]);
-
-    expect(fs.existsSync(outFile)).toBe(true);
     const content = fs.readFileSync(outFile, 'utf-8');
-    // Check header
     expect(content).toContain('"id"');
     expect(content).toContain('"title"');
-    // Check data
     expect(content).toContain('"card-001"');
     expect(content).toContain('"Fix login bug"');
-
-    consoleSpy.mockRestore();
   });
 
-  test('exports cards to JSON file', async () => {
+  test('exports cards to a pretty-printed JSON file', async () => {
     mockApi(sampleCards);
     const outFile = path.join(tmpDir, 'export.json');
 
-    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
-    const program = new Command();
-    registerCardsExportCommand(program);
+    await runExport(STUB_BOARD, '--format', 'json', '--out', outFile);
 
-    await program.parseAsync([
-      'node', 'test',
-      'cards', 'export', 'board-123',
-      '--format', 'json',
-      '--out', outFile,
-    ]);
-
-    expect(fs.existsSync(outFile)).toBe(true);
     const content = fs.readFileSync(outFile, 'utf-8');
+    expect(content).toMatch(/\n  /);
     const parsed = JSON.parse(content);
-    expect(Array.isArray(parsed)).toBe(true);
-    expect(parsed.length).toBe(sampleCards.length);
+    expect(parsed).toHaveLength(sampleCards.length);
     expect(parsed[0].id).toBe('card-001');
     expect(parsed[0].title).toBe('Fix login bug');
-
-    consoleSpy.mockRestore();
   });
 
-  test('JSON output is valid UTF-8 and pretty-printed', async () => {
-    mockApi([sampleCards[0]]);
-    const outFile = path.join(tmpDir, 'pretty.json');
-
-    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
-    const program = new Command();
-    registerCardsExportCommand(program);
-
-    await program.parseAsync([
-      'node', 'test',
-      'cards', 'export', 'board-123',
-      '--format', 'json',
-      '--out', outFile,
-    ]);
-
-    const content = fs.readFileSync(outFile, 'utf-8');
-    // Pretty-printed = contains indentation
-    expect(content).toMatch(/\n  /);
-    consoleSpy.mockRestore();
-  });
-
-  test('applies --filter before export', async () => {
+  test('--filter narrows what reaches the file', async () => {
     mockApi(sampleCards);
     const outFile = path.join(tmpDir, 'filtered.json');
 
-    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
-    const program = new Command();
-    registerCardsExportCommand(program);
+    await runExport(STUB_BOARD, '--format', 'json', '--filter', 'status:todo', '--out', outFile);
 
-    await program.parseAsync([
-      'node', 'test',
-      'cards', 'export', STUB_BOARD,
-      '--format', 'json',
-      '--filter', 'status:todo',
-      '--out', outFile,
-    ]);
-
-    const content = fs.readFileSync(outFile, 'utf-8');
-    const parsed = JSON.parse(content);
-    expect(parsed.length).toBe(1);
+    const parsed = JSON.parse(fs.readFileSync(outFile, 'utf-8'));
+    expect(parsed).toHaveLength(1);
     expect(parsed[0].status).toBe('todo');
-
-    consoleSpy.mockRestore();
   });
 
   test('a --filter naming a column this board does not have refuses (#83)', async () => {
-    // The whole ticket: this used to write an empty file and call it the export.
-    mockApi(sampleCards);
+    // The whole of #83: this used to write an empty file and call it the export.
+    const listCards = mockApi(sampleCards);
     const outFile = path.join(tmpDir, 'refused.json');
-    const exitSpy = jest.spyOn(process, 'exit')
-      .mockImplementation(() => { throw new Error('process.exit'); });
-    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
 
-    await expect(program2([
-      'node', 'test',
-      'cards', 'export', STUB_BOARD,
-      '--format', 'json',
-      '--filter', 'status:Shipped',
-      '--out', outFile,
-    ])).rejects.toThrow('process.exit');
+    const said = await expectRefusal(
+      STUB_BOARD, '--format', 'json', '--filter', 'status:Shipped', '--out', outFile,
+    );
 
     expect(fs.existsSync(outFile)).toBe(false);
-    const said = errorSpy.mock.calls.map((c) => String(c[0])).join('\n');
     expect(said).toContain('Shipped');
-
-    errorSpy.mockRestore();
-    exitSpy.mockRestore();
+    // Settled BEFORE the fetch. Paging a whole board only to throw it away is
+    // the most expensive read this CLI makes, and `cards list` spends none of
+    // it on the same refusal.
+    expect(listCards).not.toHaveBeenCalled();
   });
 
-  /** A fresh program, registered and run — the refusal path needs its own. */
-  function program2(argv: string[]): Promise<unknown> {
-    const p = new Command();
-    registerCardsExportCommand(p);
-    return p.parseAsync(argv);
-  }
-
-  test('exits with error for invalid format', async () => {
+  test('exits with an error for an unsupported --format', async () => {
     mockApi(sampleCards);
-    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    const exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => { throw new Error('process.exit'); });
-
-    const program = new Command();
-    registerCardsExportCommand(program);
-
-    await expect(
-      program.parseAsync([
-        'node', 'test',
-        'cards', 'export', 'board-123',
-        '--format', 'xlsx',
-        '--out', path.join(tmpDir, 'out.xlsx'),
-      ])
-    ).rejects.toThrow('process.exit');
-
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid format'));
-
-    consoleSpy.mockRestore();
-    exitSpy.mockRestore();
+    const said = await expectRefusal(
+      STUB_BOARD, '--format', 'xlsx', '--out', path.join(tmpDir, 'out.xlsx'),
+    );
+    expect(said).toContain('Invalid format');
   });
 
-  test('handles API error gracefully', async () => {
+  test('an API failure is reported, not thrown at the user', async () => {
     (CardsAPI as jest.MockedClass<typeof CardsAPI>).mockImplementation(() => ({
       listCards: jest.fn().mockRejectedValue(new Error('Network error')),
-      getCard: jest.fn(),
-      createCard: jest.fn(),
-      updateCard: jest.fn(),
-      deleteCard: jest.fn(),
-      searchCards: jest.fn(),
     } as any));
 
-    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    const exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => { throw new Error('process.exit'); });
-
-    const program = new Command();
-    registerCardsExportCommand(program);
-
-    await expect(
-      program.parseAsync([
-        'node', 'test',
-        'cards', 'export', 'board-123',
-        '--format', 'json',
-        '--out', path.join(tmpDir, 'fail.json'),
-      ])
-    ).rejects.toThrow('process.exit');
-
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Network error'));
-
-    consoleSpy.mockRestore();
-    exitSpy.mockRestore();
+    const said = await expectRefusal(
+      STUB_BOARD, '--format', 'json', '--out', path.join(tmpDir, 'fail.json'),
+    );
+    expect(said).toContain('Network error');
   });
 
-  // Fix #2: FAVRO_API_TOKEN missing should exit with error
-  test('exits with error when FAVRO_API_TOKEN is not set', async () => {
+  test('exits with an error when no API key is configured', async () => {
     delete process.env.FAVRO_API_TOKEN;
     (config.resolveApiKey as jest.Mock).mockResolvedValue(null);
     mockApi(sampleCards);
 
-    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    const exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => { throw new Error('process.exit'); });
-
-    const program = new Command();
-    registerCardsExportCommand(program);
-
-    await expect(
-      program.parseAsync([
-        'node', 'test',
-        'cards', 'export', 'board-123',
-        '--format', 'json',
-        '--out', path.join(tmpDir, 'out.json'),
-      ])
-    ).rejects.toThrow('process.exit');
-
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('API key'));
-
-    consoleSpy.mockRestore();
-    exitSpy.mockRestore();
+    const said = await expectRefusal(
+      STUB_BOARD, '--format', 'json', '--out', path.join(tmpDir, 'out.json'),
+    );
+    expect(said).toContain('API key');
   });
 
   // #44 replaced three `--limit` tests here. `cards export` no longer has the
   // flag at all: it fetched a cap and called the result "the export", which is
   // the same silent-partial-answer defect as `cards list --limit`.
   test('the export fetch is uncapped — no limit reaches the API', async () => {
-    mockApi(sampleCards);
-    const outFile = path.join(tmpDir, 'uncapped.json');
+    const listCards = mockApi(sampleCards);
 
-    const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
-    const listCardsSpy = jest.fn().mockResolvedValue(sampleCards);
-    (CardsAPI as jest.MockedClass<typeof CardsAPI>).mockImplementation(() => ({
-      listCards: listCardsSpy,
-    } as any));
+    await runExport(STUB_BOARD, '--format', 'json', '--out', path.join(tmpDir, 'uncapped.json'));
 
-    const program = new Command();
-    registerCardsExportCommand(program);
-
-    await program.parseAsync([
-      'node', 'test',
-      'cards', 'export', 'board-123',
-      '--format', 'json',
-      '--out', outFile,
-    ]);
-
-    expect(listCardsSpy).toHaveBeenCalledWith('board-123');
-
-    consoleSpy.mockRestore();
+    expect(listCards).toHaveBeenCalledWith(STUB_BOARD);
   });
 
   // Fix #3: path traversal protection
-  test('exits with error when --out path is outside cwd', async () => {
+  test('exits with an error when --out is outside cwd', async () => {
     mockApi(sampleCards);
-
-    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    const exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => { throw new Error('process.exit'); });
-
-    const program = new Command();
-    registerCardsExportCommand(program);
-
-    await expect(
-      program.parseAsync([
-        'node', 'test',
-        'cards', 'export', 'board-123',
-        '--format', 'json',
-        '--out', '/tmp/traversal-attack.json',
-      ])
-    ).rejects.toThrow('process.exit');
-
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Output path must be within current directory'));
-
-    consoleSpy.mockRestore();
-    exitSpy.mockRestore();
+    const said = await expectRefusal(
+      STUB_BOARD, '--format', 'json', '--out', '/tmp/traversal-attack.json',
+    );
+    expect(said).toContain('Output path must be within current directory');
   });
 
 });

@@ -2,7 +2,7 @@
  * Integration Tests for Enhanced Query Parser in CLI Commands
  * CLA-1780 / FIX #1: Verify parser is wired into CLI commands
  */
-import { applyFilter, applyFilters } from '../../commands/cards-export';
+import { applyFilter, applyFilters } from '../../lib/cards-export';
 import { Card } from '../../lib/cards-api';
 import { ParseError } from '../../lib/query-parser';
 import { stubFilterContext, useTempConfigDir } from '../../test-support/filter-vocabulary';

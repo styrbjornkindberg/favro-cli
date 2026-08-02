@@ -94,7 +94,6 @@ const ALLOWLIST: readonly string[] = [
   'src/commands/browse.ts',
   'src/commands/cards-archive.ts',
   'src/commands/cards-delete.ts',
-  'src/commands/cards-export.ts',
   'src/commands/cards-link.ts',
   'src/commands/cards-tracker.ts',
   'src/commands/columns.ts',
