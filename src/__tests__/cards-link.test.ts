@@ -4,6 +4,7 @@
  * CLA-1786 (FAVRO-024): Card Relationship Operations
  */
 import { registerCardsLinkCommands, VALID_LINK_TYPES } from '../commands/cards-link';
+import { LINK_TYPES, linkTypeToIsBefore } from '../lib/dependency-direction';
 import { Command } from 'commander';
 import CardsAPI, { Card, CardLink } from '../lib/cards-api';
 import FavroHttpClient from '../lib/http-client';
@@ -134,6 +135,45 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
     // 'related' and 'duplicates' have no Favro representation (issue #12).
     expect(VALID_LINK_TYPES).not.toContain('related');
     expect(VALID_LINK_TYPES).not.toContain('duplicates');
+  });
+
+  /**
+   * The vocabulary is CLOSED, and the translator honours the same closure
+   * (#120 item 3).
+   *
+   * `linkTypeToIsBefore` used to accept a third token, `blocked-by`, that
+   * `LINK_TYPES` never published. It mapped to the right direction, so it never
+   * gave a wrong answer — but `cards link` validates against `LINK_TYPES` and
+   * refused it while `dependencies add` passed it straight to the translator
+   * and accepted it. One `--type` flag, two accepted sets, and the wider one
+   * was the one nobody had written down.
+   *
+   * What this file can and cannot hold, said plainly, because the first version
+   * of this test got it wrong: it looped over `LINK_TYPES` asserting only that
+   * the result was a boolean, which passes for a WRONG DIRECTION, and left the
+   * real weight on the two hardcoded lines — the repeat-the-list pattern #120
+   * exists to delete. So the direction is asserted per label BY NAME here (a
+   * backwards edge is a data-corrupting bug and deserves a literal), while
+   * EXHAUSTIVENESS over `LINK_TYPES` is the compiler's job: `IS_BEFORE` is a
+   * `Record` keyed on the tuple, so a new label with no direction is TS2741.
+   * A test cannot check that; a type can.
+   */
+  test('linkTypeToIsBefore maps each published label to its own direction', () => {
+    expect(linkTypeToIsBefore('depends-on')).toBe(true);
+    expect(linkTypeToIsBefore('blocks')).toBe(false);
+    // Not a spelling of the two above: the labels disagree, so neither line can
+    // be passing by accident on a constant.
+    expect(linkTypeToIsBefore('depends-on')).not.toBe(linkTypeToIsBefore('blocks'));
+    // Every published label is covered by name — this fails the moment one is
+    // added, which is the nudge to decide its direction here too.
+    expect([...LINK_TYPES].sort()).toEqual(['blocks', 'depends-on']);
+  });
+
+  test('linkTypeToIsBefore refuses every label LINK_TYPES does not publish', () => {
+    for (const undeclared of ['blocked-by', 'related', 'duplicates', 'depends', 'precedes']) {
+      expect(LINK_TYPES).not.toContain(undeclared);
+      expect(() => linkTypeToIsBefore(undeclared)).toThrow(/cannot be stored in Favro/);
+    }
   });
 
   // ─── cards link ─────────────────────────────────────────────────────────────
