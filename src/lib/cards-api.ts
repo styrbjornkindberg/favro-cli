@@ -1,4 +1,5 @@
-import FavroHttpClient from './http-client';
+import FavroHttpClient, { PaginatedResponse } from './http-client';
+import { Getter, getAllPages } from './paginate';
 import { Tag, cachedTags } from './tags-api';
 import ColumnDirectory, { ColumnResolutionError } from './column-directory';
 import CardReferenceResolver, { CardResolutionError, isSequentialReference } from './card-reference';
@@ -334,18 +335,6 @@ export interface UpdateCardRequest {
   archive?: boolean;
 }
 
-/**
- * Paginated response from Favro API.
- * The API uses cursor-based pagination via requestId + page cursor.
- */
-export interface PaginatedResponse<T> {
-  entities: T[];
-  requestId?: string;
-  page?: number;
-  pages?: number;
-  limit?: number;
-}
-
 export interface GetCardOptions {
   /** List of include keys: board, collection, custom-fields, links, comments, relations */
   include?: string[];
@@ -480,6 +469,43 @@ function mapDescription(payload: Record<string, unknown>): void {
   delete payload.descriptionFormat;
 }
 
+/**
+ * A reader that asks for markdown descriptions and survives Favro answering 500.
+ *
+ * Favro's markdown converter crashes on some card bodies, and it 500s the whole
+ * read rather than that one card. Retrying without `descriptionFormat` gets the
+ * cards back with plain-text descriptions, which beats an error.
+ *
+ * Stateful on purpose: once a read has fallen back, the rest of it skips the
+ * flag, so a paged read pays the failed call once instead of once per page. A
+ * one-shot caller simply never uses that memory. Shaped as a `Getter` so
+ * `getAllPages` can page through it. (#91 — this was four verbatim copies.)
+ *
+ * That one failed call is not cheap. `shouldRetry` in `http-client` retries any
+ * 5xx, so the interceptor burns four attempts at 1+2+4+8s before the rejection
+ * ever reaches this catch: "one failed call per read" is really one ~15s stall
+ * per read. Stickiness is what keeps it from being ~15s per *page*. Narrowing
+ * the interceptor to spare a 500 that carries `descriptionFormat` would remove
+ * the stall, but that is the interceptor's business, not this reader's.
+ */
+function markdownReader(client: FavroHttpClient): Getter {
+  let markdown = true;
+
+  return {
+    async get<T>(url: string, config?: any): Promise<T> {
+      const params: Record<string, unknown> = config?.params ?? {};
+      if (!markdown) return client.get<T>(url, { params });
+      try {
+        return await client.get<T>(url, { params: { ...params, descriptionFormat: 'markdown' } });
+      } catch (err) {
+        if ((err as { response?: { status?: number } })?.response?.status !== 500) throw err;
+        markdown = false;
+        return client.get<T>(url, { params });
+      }
+    },
+  };
+}
+
 export class CardsAPI {
   private columnDirectory?: ColumnDirectory;
   private referenceResolver?: CardReferenceResolver;
@@ -579,90 +605,42 @@ export class CardsAPI {
       ? await this.columns.resolveColumnId(opts.status, opts.boardId)
       : undefined;
     const path = '/cards';
-    const allCards: Card[] = [];
-    let page = 0;
-    let totalPages = 1;
-    let requestId: string | undefined;
-    // Favro's API can 500 when descriptionFormat=markdown if any card on the
-    // board has a description that crashes their markdown converter. Once we
-    // detect this, drop the flag for the remainder of this call so we still
-    // return cards (plain-text descriptions instead of markdown).
-    let useMarkdownDescription = true;
+    // Favro clamps this to 100 regardless; asking for the page maximum is the
+    // only thing it affects.
+    const params: Record<string, unknown> = { limit: 100 };
 
-    while (page < totalPages) {
-      // Favro clamps this to 100 regardless; asking for the page maximum is the
-      // only thing it affects.
-      const params: Record<string, unknown> = { limit: 100 };
-      if (useMarkdownDescription) {
-        params.descriptionFormat = 'markdown';
-      }
-
-      // Favro uses widgetCommonId to scope cards to a board
-      if (opts.boardId) {
-        params.widgetCommonId = opts.boardId;
-      }
-
-      // Column narrowing rides the wire, not a client-side pass over one page.
-      if (columnId) {
-        params.columnId = columnId;
-      }
-
-      // Collection-scoped cross-board queries
-      if (opts.collectionId) {
-        params.collectionId = opts.collectionId;
-      }
-
-      // Deduplicate cards that appear on multiple boards in the same collection
-      if (opts.unique) {
-        params.unique = true;
-      }
-
-      // `archived` rides the wire. Favro's default includes archived cards, so
-      // omitting it is what 'all' means — the live-only default is the ask.
-      const archived = opts.archived ?? 'false';
-      if (archived !== 'all') {
-        params.archived = archived === 'true';
-      }
-
-      // On subsequent pages, use requestId to continue pagination
-      if (requestId) {
-        params.requestId = requestId;
-        params.page = page;
-      }
-
-      let response: PaginatedResponse<Card>;
-      try {
-        response = await this.client.get<PaginatedResponse<Card>>(path, { params });
-      } catch (err) {
-        // Fall back to default (non-markdown) description format on 500 — works around
-        // a Favro server-side markdown-converter crash triggered by certain card content.
-        const status = (err as { response?: { status?: number } })?.response?.status;
-        if (status === 500 && useMarkdownDescription) {
-          useMarkdownDescription = false;
-          delete params.descriptionFormat;
-          response = await this.client.get<PaginatedResponse<Card>>(path, { params });
-        } else {
-          throw err;
-        }
-      }
-
-      const entities = (response.entities as unknown as RawCard[] ?? []).map(normalizeCard);
-      allCards.push(...entities);
-
-      // Update pagination state from response
-      if (response.requestId) {
-        requestId = response.requestId;
-        totalPages = response.pages ?? 1;
-        page = (response.page ?? 0) + 1;
-      } else {
-        // No pagination info — single-page response
-        break;
-      }
-
-      // Stop if we got fewer entities than requested (last page)
-      if (entities.length === 0) break;
+    // Favro uses widgetCommonId to scope cards to a board
+    if (opts.boardId) {
+      params.widgetCommonId = opts.boardId;
     }
 
+    // Column narrowing rides the wire, not a client-side pass over one page.
+    if (columnId) {
+      params.columnId = columnId;
+    }
+
+    // Collection-scoped cross-board queries
+    if (opts.collectionId) {
+      params.collectionId = opts.collectionId;
+    }
+
+    // Deduplicate cards that appear on multiple boards in the same collection
+    if (opts.unique) {
+      params.unique = true;
+    }
+
+    // `archived` rides the wire. Favro's default includes archived cards, so
+    // omitting it is what 'all' means — the live-only default is the ask.
+    const archived = opts.archived ?? 'false';
+    if (archived !== 'all') {
+      params.archived = archived === 'true';
+    }
+
+    // One reader for the whole paged read: once a page 500s on markdown, the
+    // remaining pages skip the flag rather than paying the failed call again.
+    const raw = await getAllPages<RawCard>(markdownReader(this.client), path, params);
+
+    const allCards = raw.map(normalizeCard);
     await this.hydrateNames(allCards);
     return allCards;
   }
@@ -676,21 +654,12 @@ export class CardsAPI {
   }
 
   private async getCardById(cardId: string, options?: GetCardOptions): Promise<Card> {
-    const params: Record<string, unknown> = { descriptionFormat: 'markdown' };
+    const params: Record<string, unknown> = {};
     const includes = options?.include ?? [];
     if (includes.length > 0) {
       params.include = includes.join(',');
     }
-    let rawCard: RawCard;
-    try {
-      rawCard = await this.client.get<RawCard>(`/cards/${cardId}`, { params });
-    } catch (err) {
-      const status = (err as { response?: { status?: number } })?.response?.status;
-      if (status !== 500) throw err;
-      // Fall back to default format when markdown rendering crashes server-side
-      delete params.descriptionFormat;
-      rawCard = await this.client.get<RawCard>(`/cards/${cardId}`, { params });
-    }
+    const rawCard = await markdownReader(this.client).get<RawCard>(`/cards/${cardId}`, { params });
     const card = normalizeCard(rawCard);
     await this.hydrateNames([card]);
 
@@ -1071,24 +1040,15 @@ export class CardsAPI {
     const params: Record<string, unknown> = {
       cardSequentialId: sequentialId,
       unique: true,
-      descriptionFormat: 'markdown',
     };
     if (options?.widgetCommonId) {
       params.widgetCommonId = options.widgetCommonId;
     }
 
-    let response: PaginatedResponse<Card>;
-    try {
-      response = await this.client.get<PaginatedResponse<Card>>('/cards', { params });
-    } catch (err) {
-      const status = (err as { response?: { status?: number } })?.response?.status;
-      if (status !== 500) throw err;
-      // Fall back to default format when markdown rendering crashes server-side
-      delete params.descriptionFormat;
-      response = await this.client.get<PaginatedResponse<Card>>('/cards', { params });
-    }
+    const response = await markdownReader(this.client)
+      .get<PaginatedResponse<RawCard>>('/cards', { params });
 
-    const entities = ((response.entities as unknown as RawCard[]) ?? []).map(normalizeCard);
+    const entities = (response.entities ?? []).map(normalizeCard);
     // A forked card — an assignment entity with no `widgetCommonId` — has no
     // column and is unactionable, so it never takes part in resolution.
     const instances = entities.filter((c) => Boolean(c.widgetCommonId));
@@ -1119,19 +1079,10 @@ export class CardsAPI {
   }
 
   async searchCards(query: string, limit: number = 50): Promise<Card[]> {
-    let response: PaginatedResponse<Card>;
-    try {
-      response = await this.client.get<PaginatedResponse<Card>>('/cards/search', {
-        params: { q: query, limit, descriptionFormat: 'markdown' }
-      });
-    } catch (err) {
-      const status = (err as { response?: { status?: number } })?.response?.status;
-      if (status !== 500) throw err;
-      // Fall back to default format when markdown rendering crashes server-side
-      response = await this.client.get<PaginatedResponse<Card>>('/cards/search', {
-        params: { q: query, limit }
-      });
-    }
+    const response = await markdownReader(this.client).get<PaginatedResponse<Card>>(
+      '/cards/search',
+      { params: { q: query, limit } },
+    );
     return response.entities ?? [];
   }
 }

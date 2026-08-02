@@ -173,6 +173,66 @@ describe('Cards API', () => {
     expect(result).toHaveLength(1);
   });
 
+  // --- the descriptionFormat=markdown 500 fallback (#91) ---
+  //
+  // Favro 500s the whole read when one card's body crashes their markdown
+  // converter. The fallback drops the flag and retries. It is sticky for the
+  // rest of the read, which is the part with no natural witness: if the state
+  // ever escapes one read — hoisted to module scope as a "cache", say — every
+  // card read in the process silently loses markdown after the first 500, and
+  // no other test in this suite notices.
+
+  const descriptionFormatOf = (call: unknown[]) =>
+    (call[1] as { params?: Record<string, unknown> })?.params?.descriptionFormat;
+
+  test('listCards drops descriptionFormat on a 500 and stays dropped for later pages', async () => {
+    const page = (p: number) => ({
+      entities: [{ cardId: `c${p}`, name: `Card ${p}`, createdAt: '2026-01-01', updatedAt: '2026-01-01' }],
+      requestId: 'req-md',
+      pages: 2,
+      page: p,
+    });
+
+    mockClient.get
+      .mockRejectedValueOnce({ response: { status: 500 } })  // page 0, with markdown
+      .mockResolvedValueOnce(page(0))                        // page 0, retried without it
+      .mockResolvedValueOnce(page(1));                       // page 1 — must not re-attempt
+
+    const result = await api.listCards('board-1');
+
+    // Three calls, not four: the second page never pays the 500 again.
+    expect(mockClient.get).toHaveBeenCalledTimes(3);
+    const calls = mockClient.get.mock.calls;
+    expect(descriptionFormatOf(calls[0])).toBe('markdown');
+    expect(descriptionFormatOf(calls[1])).toBeUndefined();
+    expect(descriptionFormatOf(calls[2])).toBeUndefined();
+
+    // Both pages still come back — a 500 costs the markdown, never the cards.
+    expect(result.map((c) => c.cardId)).toEqual(['c0', 'c1']);
+  });
+
+  test('the fallback does not leak into the next read', async () => {
+    mockClient.get
+      .mockRejectedValueOnce({ response: { status: 500 } })
+      .mockResolvedValueOnce({ entities: [] });
+    await api.listCards('board-1');
+
+    mockClient.get.mockClear();
+    mockClient.get.mockResolvedValue({ entities: [] });
+    await api.listCards('board-1');
+
+    // A fresh read asks for markdown again. This is what fails if `markdown`
+    // is ever hoisted out of the per-read closure.
+    expect(descriptionFormatOf(mockClient.get.mock.calls[0])).toBe('markdown');
+  });
+
+  test('a non-500 failure is not retried without the flag — it just throws', async () => {
+    mockClient.get.mockRejectedValue({ response: { status: 403 } });
+
+    await expect(api.listCards('board-1')).rejects.toEqual({ response: { status: 403 } });
+    expect(mockClient.get).toHaveBeenCalledTimes(1);
+  });
+
   // --- getCard ---
 
   test('getCard fetches single card by id', async () => {

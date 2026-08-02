@@ -12,17 +12,11 @@
  * user neither follows nor has news for can read thin. It is history for humans,
  * never a source of truth for a card's state.
  */
-import FavroHttpClient from '../lib/http-client';
+import FavroHttpClient, { PaginatedResponse } from '../lib/http-client';
 import { ActivityEntry } from '../types/comments';
 import { parseSince, formatTimestamp } from '../lib/time';
 
 export { ActivityEntry, parseSince, formatTimestamp };
-
-interface PaginatedResponse<T> {
-  entities: T[];
-  requestId?: string;
-  pages?: number;
-}
 
 export interface CardActivityOptions {
   /** Only return activity at or after this time. */

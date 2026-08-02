@@ -3,6 +3,7 @@
  * CLA-1788 FAVRO-026: Members & Permissions API
  */
 import FavroHttpClient from '../lib/http-client';
+import { getAllPages } from '../lib/paginate';
 import { Member, PermissionLevel } from '../types/members';
 
 export { Member, PermissionLevel };
@@ -14,12 +15,6 @@ export function isValidEmail(email: string): boolean {
   if (!email || !email.trim()) return false;
   const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   return re.test(email.trim());
-}
-
-interface PaginatedResponse<T> {
-  entities: T[];
-  requestId?: string;
-  pages?: number;
 }
 
 interface RawMember {
@@ -49,30 +44,13 @@ export class FavroApiClient {
    * Get members, optionally filtered by boardId or collectionId.
    */
   async getMembers(opts?: { boardId?: string; collectionId?: string }): Promise<Member[]> {
-    const allMembers: Member[] = [];
-    let requestId: string | undefined;
-    let page = 1;
+    const params: Record<string, any> = { limit: 50 };
+    if (opts?.boardId) params.boardId = opts.boardId;
+    if (opts?.collectionId) params.collectionId = opts.collectionId;
 
-    while (true) {
-      const params: Record<string, any> = { limit: 50 };
-      if (opts?.boardId) params.boardId = opts.boardId;
-      if (opts?.collectionId) params.collectionId = opts.collectionId;
-      if (requestId) {
-        params.requestId = requestId;
-        params.page = page;
-      }
-
-      // Favro API uses /users not /members
-      const response = await this.client.get<PaginatedResponse<RawMember>>('/users', { params });
-      const members = (response.entities ?? []).map(normalizeMember);
-      allMembers.push(...members);
-
-      requestId = response.requestId;
-      if (!requestId || !response.pages || page >= response.pages || members.length === 0) break;
-      page++;
-    }
-
-    return allMembers;
+    // Favro API uses /users not /members
+    const raw = await getAllPages<RawMember>(this.client, '/users', params);
+    return raw.map(normalizeMember);
   }
 
   /**
