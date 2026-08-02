@@ -15,6 +15,7 @@
  */
 
 import { Command } from 'commander';
+import { parseLimit } from '../lib/read-shape';
 import { RefusalError } from '../lib/refusal';
 import { Ctx, run } from '../lib/run';
 import type { SprintCard, SprintPlanResult } from '../api/sprint-plan';
@@ -97,8 +98,12 @@ export async function sprintPlanHandler(ctx: Ctx, options: SprintPlanOptions) {
     );
   }
 
-  const budget = parseInt(options.budget ?? '40', 10);
-  if (isNaN(budget) || budget < 1) {
+  // `parseLimit`, not `parseInt`: `parseInt` takes a numeric PREFIX and stops,
+  // so `--budget 1e9` planned a ONE-POINT sprint and `--budget 40abc` silently
+  // became 40 — a well-formed, plausible, wrong answer, which is the defect
+  // class `read-shape.ts` names. Whole digits or a refusal, nothing between.
+  const budget = parseLimit(options.budget ?? '40');
+  if (budget === undefined) {
     throw new RefusalError(`--budget must be a positive number, not "${options.budget}".`);
   }
 

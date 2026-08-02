@@ -8,9 +8,13 @@
  * strings. An agent parsing the documented shape got nothing from either.
  *
  * So the assertion here is deliberately ONE parser, run over the real output of
- * all three producers. A per-command shape test would have passed all along —
- * each producer was internally consistent. What was broken is that they could
- * not be read the same way, and only a shared reader can see that.
+ * every producer. A per-command shape test would have passed all along — each
+ * producer was internally consistent. What was broken is that they could not be
+ * read the same way, and only a shared reader can see that.
+ *
+ * A NEW producer must be added to the list below in the same change that adds
+ * it. #116 made `getSnapshot` the fourth, and the shared reader is the only
+ * thing that would have caught it shipping a fifth shape.
  */
 import * as http from 'http';
 import * as os from 'os';
@@ -22,6 +26,7 @@ import CardsAPI from '../lib/cards-api';
 import { judgeBlockers } from '../lib/blocking';
 import { findTopBlockers } from '../commands/overview';
 import { STALE_UNREACHABLE } from '../commands/risks';
+import { ContextAPI, type BoardContextSnapshot } from '../api/context';
 import type { AggregateCard } from '../api/aggregate';
 
 const ORG = 'org-1';
@@ -132,12 +137,58 @@ function fromRisks(): unknown {
   return { unreachable: STALE_UNREACHABLE };
 }
 
+/**
+ * What `context --json` puts on stdout, minus everything but the marker — the
+ * FOURTH producer (#116), and the one that reaches furthest: `standup`,
+ * `sprint-plan` and `query` all carry this same array straight off the snapshot,
+ * so a drift here is a drift on four commands at once.
+ *
+ * The snapshot's holes are whole FACETS, not card ids, which is exactly why it
+ * belongs in this file rather than in a shape test of its own: `id` meaning
+ * something different is fine, `id` being a different TYPE is what #86 is about.
+ */
+async function fromContext(cardsRefuse = true): Promise<BoardContextSnapshot> {
+  // A stand-in whose card fetch refuses and whose every other facet answers.
+  const server = http.createServer((req, res) => {
+    req.on('data', () => { /* no bodies on this path */ });
+    req.on('end', () => {
+      const url = req.url ?? '';
+      const send = (status: number, body: unknown): void => {
+        res.writeHead(status, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(body));
+      };
+      if (cardsRefuse && url.split('?')[0].endsWith('/cards')) return send(403, { message: 'Access denied' });
+      if (url.split('?')[0].endsWith('/widgets')) {
+        return send(200, { entities: [{ widgetCommonId: BOARD, name: 'Board A', collectionIds: ['coll-a'] }] });
+      }
+      return send(200, { entities: [] });
+    });
+  });
+  running.push(server);
+
+  const client = await new Promise<FavroHttpClient>((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      const { port } = server.address() as AddressInfo;
+      resolve(new FavroHttpClient({
+        baseURL: `http://127.0.0.1:${port}/api/v1`,
+        auth: { organizationId: ORG },
+      }));
+    });
+  });
+
+  const snapshot = await new ContextAPI(client).getSnapshot(BOARD);
+  // The snapshot IS what stdout carries (rule 1: a single read stays bare), so
+  // there is nothing to reshape here — that is the assertion.
+  return snapshot;
+}
+
 describe('the unreachable marker reads the same from every producer (#86)', () => {
-  it('parses identically from cards list, overview and risks', async () => {
+  it('parses identically from cards list, overview, risks and context', async () => {
     const produced = [
       ['cards list', await fromCardsList()],
       ['overview', await fromOverview()],
       ['risks', fromRisks()],
+      ['context', await fromContext()],
     ] as const;
 
     for (const [command, payload] of produced) {
@@ -166,5 +217,15 @@ describe('the unreachable marker reads the same from every producer (#86)', () =
 
     expect(unreachable).toEqual([]);
     expect(parseUnreachable({})).toEqual([]);
+  });
+
+  it('a context snapshot that read everything omits the key entirely (#116)', async () => {
+    // The distinction the whole marker rests on, on the producer four commands
+    // share: `cards: []` with NO `unreachable` means the board is empty. An
+    // `unreachable: []` here would read as a hole to any truthiness check.
+    const snapshot = await fromContext(false);
+    expect(snapshot.cards).toEqual([]);
+    expect('unreachable' in snapshot).toBe(false);
+    expect(JSON.stringify(snapshot)).not.toContain('unreachable');
   });
 });
