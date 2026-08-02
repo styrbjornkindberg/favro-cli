@@ -8,7 +8,25 @@ are in remit.
 
 ---
 
-## 1. READ THIS FIRST — a live regression on main
+## 1. RESOLVED — the --human regression is fixed and merged
+
+(Kept for the record; #115 merged, main is green at 141 suites / 2514 tests.)
+
+### The trap it leaves behind
+
+`--json` is now a parse error on the eight persona commands. **Do not fix it by
+declaring `--json` on the root.** That was tried and reverted: a root `--json`
+swallows the leaf `--json` on every *unmigrated* command that still declares one
+(`cards update --from-csv`, `cards link`, `cards unlink`, `cards list`) — 6 tests
+red. It is the same bug in the other direction. A root `--json` is only safe once
+no leaf declares one, i.e. after #119. Until then: per-command, or not at all.
+
+The general rule, now measured twice: **a leaf can own a flag; it cannot shadow
+an ancestor's.** `cli.ts` enables neither `positionalOptions` nor
+`passThroughOptions`, so the root's `parseOptions` scans the whole argv and
+swallows any flag it declared, wherever it appears.
+
+### The original regression, for the record
 
 **`--human` is dead on all eight persona commands** (`next`, `overview`,
 `health`, `my-cards`, `workload`, `stale`, `my-standup`, `team`). They print
@@ -32,10 +50,10 @@ ancestor's option") and that claim is false. It slipped through because #114's
 byte-identity harness covered the twelve commands it migrated, not the eight it
 broke in passing.
 
-**The fix is written and waiting**: branch `worktree-agent-ae05dbec5d1f993d6`
-(#115) deletes all eight leaf declarations and adds `persona-human-flag.test.ts`,
-table-driven, one case per command. Its review was in flight when the session
-ended — re-run it, then merge. Do not write a competing hotfix.
+Fixed by #115 (`ab36b0d` + `a211127`), merged. Still open from its review:
+`overview`'s human output advises `--json`, which errors; and the `userId not
+configured` refusal reports `retryable: true` at three sites (throw
+`RefusalError` rather than `Error` — `isRetryable` returns false for one).
 
 ---
 
@@ -47,9 +65,8 @@ conflict-free and then failed — a clean `merge-tree` means nothing here.
 
 | Issue | Branch | State |
 |---|---|---|
-| #115 | `worktree-agent-ae05dbec5d1f993d6` | 2 commits. Self-verified 141/2508. **Review was running; redo it.** Fixes the regression above. |
 | #83 | `worktree-agent-a19ba83752db3fa9c` | 1 commit + 2 uncommitted files. **Review completed: MERGE WITH FIXES, two items — see below.** Base is 31 commits stale; reviewer merged current main in a scratch worktree, conflict-free, 141 suites / 2513 tests. |
-| #84 | `worktree-agent-a6de9c5412acbb85d` | 1 commit. Never reported, never reviewed. Inspect before trusting. |
+| #84 | `worktree-agent-a6de9c5412acbb85d` | **2 commits — carries #83's commit as its parent.** Reported in full, not reviewed. Self-verified 142 suites / 2527 tests. Reviewing it reviews #83 too; `git diff 86dbeb7..HEAD` isolates #84. |
 
 ### #83's two review fixes, in full
 
