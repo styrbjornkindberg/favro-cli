@@ -88,7 +88,8 @@ describe('widgets list', () => {
     await runCli(['widgets', 'list', '--card', 'ccid-1', '--json']);
 
     expect(tableSpy).not.toHaveBeenCalled();
-    expect(JSON.parse(output())).toHaveLength(2);
+    // An envelope, not a bare array — the shape every list read emits (#99).
+    expect(JSON.parse(output()).rows).toHaveLength(2);
   });
 
   test('reports zero widgets rather than failing', async () => {

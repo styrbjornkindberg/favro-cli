@@ -10,6 +10,7 @@
 import { Command } from 'commander';
 import { createFavroClient } from '../lib/client-factory';
 import { logError } from '../lib/error-handler';
+import { capRows, noteTruncation, writeEnvelope } from '../lib/read-shape';
 import { FavroWebhooksAPI, VALID_WEBHOOK_EVENTS } from '../api/webhooks';
 
 export function registerWebhooksCommand(program: Command): void {
@@ -22,6 +23,7 @@ export function registerWebhooksCommand(program: Command): void {
     .command('list')
     .description('List all configured webhooks')
     .option('--format <format>', 'Output format: table or json', 'table')
+    .option('--limit <n>', 'Cap how many rows are printed; sets "truncated"')
     .action(async (options) => {
       const verbose = program.opts()?.verbose ?? false;
       try {
@@ -29,22 +31,25 @@ export function registerWebhooksCommand(program: Command): void {
         const api = new FavroWebhooksAPI(client);
 
         const webhooks = await api.list();
+        // The fetch already ran to completion; `--limit` cuts the PRINT (#99).
+        const envelope = capRows(webhooks, options.limit);
 
         if (options.format === 'json') {
-          console.log(JSON.stringify(webhooks, null, 2));
+          writeEnvelope(envelope, Boolean(program.opts()?.pretty));
         } else {
-          if (webhooks.length === 0) {
+          if (envelope.rows.length === 0) {
             console.log('No webhooks configured.');
             return;
           }
-          console.log(`Found ${webhooks.length} webhook(s):`);
-          const rows = webhooks.map(w => ({
+          console.log(`Found ${envelope.rows.length} webhook(s):`);
+          const rows = envelope.rows.map(w => ({
             ID: w.id,
             Event: w.event,
             'Target URL': w.targetUrl.length > 50 ? w.targetUrl.slice(0, 47) + '...' : w.targetUrl,
             Created: w.createdAt ? w.createdAt.slice(0, 10) : '—',
           }));
           console.table(rows);
+          noteTruncation(envelope, webhooks.length);
         }
       } catch (error) {
         logError(error, verbose);

@@ -59,8 +59,10 @@ describe('columns list', () => {
   test('--json keeps the three fields untouched', async () => {
     await run('board-1', '--json');
 
-    const printed = JSON.parse(logSpy.mock.calls.map((c) => c[0]).find((c: string) => c.startsWith('[')));
-    expect(printed[0]).toMatchObject({ cardCount: 3, timeSum: 90, estimationSum: 5 });
+    // An envelope, not a bare array — the shape every list read emits (#99).
+    const printed = JSON.parse(logSpy.mock.calls.map((c) => c[0]).find((c: string) => c.startsWith('{')));
+    expect(printed.truncated).toBeUndefined();
+    expect(printed.rows[0]).toMatchObject({ cardCount: 3, timeSum: 90, estimationSum: 5 });
   });
 
   test('has no --count flag — counting by fetching every card is what it avoids', async () => {
