@@ -55,8 +55,13 @@ function startServer(options: { pages?: number; perPage?: number; status?: numbe
       const url = req.url ?? '';
 
       if (url.startsWith('/api/v1/widgets') || url.startsWith('/api/v1/tags')) {
+        // `/widgets` carries the board, because every card read now settles
+        // `--board` against the listing before it reaches the wire (#82).
+        const entities = url.startsWith('/api/v1/widgets')
+          ? [{ widgetCommonId: BOARD, name: 'Board A', columns: [] }]
+          : [];
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ entities: [] }));
+        res.end(JSON.stringify({ entities }));
         return;
       }
 

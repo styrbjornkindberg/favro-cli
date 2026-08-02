@@ -42,6 +42,13 @@ a **widget**: the id is `widgetCommonId`, the endpoint is `/widgets/`, and
 boardless, columnless entity Favro creates on assignment — and is unactionable by
 construction.
 
+Every board-shaped argument accepts a **name or an id**, settled by `resolveBoardId`
+before the value reaches the wire. That is not convenience: Favro answers **200 with
+an empty page** for a `widgetCommonId` nobody has, and a write to one lands nowhere —
+so an unsettled name is zero rows rather than an error, and there is no classified
+not-found to escalate on (#82). A one-word board name is id-shaped, so shape never
+decides which of the two it is (`ID_SHAPES.boardId` declares no shape at all).
+
 **column-as-status** — a card's status *is* its column. There is no `state` field on
 the wire, so the open/closed axis is two `columnId`s and nothing else
 (`src/lib/tracker-config.ts`). Columns are resolved by id or by name through

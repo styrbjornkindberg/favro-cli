@@ -360,7 +360,7 @@ export function registerGitCommands(program: Command): void {
   gitCmd
     .command('todos')
     .description('Scan codebase for TODO/FIXME/HACK comments')
-    .option('--board <boardId>', 'Board ID for creating cards (defaults to linked board)')
+    .option('--board <board>', 'Board for creating cards, by name or boardId (defaults to linked board)')
     .option('--create', 'Create Favro cards from TODOs')
     .option('--dry-run', 'Preview what cards would be created')
     .option('-y, --yes', 'Skip confirmation')

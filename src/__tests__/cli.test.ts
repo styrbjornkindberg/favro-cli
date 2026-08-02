@@ -15,6 +15,18 @@ import { resolveApiKey } from '../lib/config';
 
 jest.mock('../lib/cards-api');
 jest.mock('../lib/http-client');
+// `cards list` settles its board BEFORE the filter validator sees it (#82), so
+// the reference these tests pass is a real resolver call. Here it only has to
+// hand the reference back — what the resolver itself does is pinned on the wire
+// in `board-resolution-wire.test.ts`, and these assertions are about
+// `listCards`.
+jest.mock('../lib/boards-api', () => ({
+  __esModule: true,
+  default: jest.fn().mockImplementation(() => ({
+    resolveBoardId: async (board: string) =>
+      board === 'Backlog - Web Hub' ? 'w-hub-0001' : board,
+  })),
+}));
 jest.mock('../lib/config', () => ({
   resolveApiKey: jest.fn().mockResolvedValue(undefined),
   loadConfig: jest.fn().mockResolvedValue({}),
@@ -231,6 +243,41 @@ describe('cli.ts — CLA-1785 critic fixes: limit cap and null guard', () => {
     ).rejects.toThrow('process.exit');
 
     expect(mockListCards).not.toHaveBeenCalled();
+  });
+
+  // #82: the filter validator runs BEFORE the fetch, so it is the first thing
+  // to see the board. Handed a NAME it looked a column up on a board that does
+  // not exist and refused with "No column named done on board Backlog - Web
+  // Hub" — the wrong problem, named confidently. Both consumers now read one
+  // settled id.
+  test('cards list settles the board before the filter validator and the fetch', async () => {
+    const mockListCards = jest.fn().mockResolvedValue([]);
+    (CardsAPI as jest.MockedClass<typeof CardsAPI>).mockImplementation(() => ({
+      listCards: mockListCards,
+    } as any));
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const queryValues = require('../lib/query-values') as typeof import('../lib/query-values');
+    const validate = jest
+      .spyOn(queryValues, 'validateQueryValues')
+      .mockImplementation(async (query) => query);
+
+    try {
+      const program = buildProgram();
+      await program.parseAsync([
+        'node', 'cli', 'cards', 'list', 'Backlog - Web Hub', '--filter', 'status:Done',
+      ]);
+
+      expect(validate).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ boardId: 'w-hub-0001' }),
+      );
+      expect(mockListCards).toHaveBeenCalledWith(
+        expect.objectContaining({ boardId: 'w-hub-0001' }),
+      );
+    } finally {
+      validate.mockRestore();
+    }
   });
 
   test('--archived rides the wire, and a bad value is refused', async () => {

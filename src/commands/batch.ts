@@ -283,7 +283,7 @@ export function registerBatchMoveCommand(batch: Command): void {
       '  assignee:<user>  Match by assignee\n' +
       '  tag:<tag>        Match by tag'
     )
-    .requiredOption('--board <id>', 'Source board ID')
+    .requiredOption('--board <board>', 'Source board, by name or boardId')
     .option('--to-board <id>', 'Target board ID to move cards to')
     .option('--status <value>', 'Set target status')
     .option(
@@ -429,7 +429,7 @@ export function registerBatchAssignCommand(batch: Command): void {
       '  assignee:<user>  Match by assignee\n' +
       '  tag:<tag>        Match by tag'
     )
-    .requiredOption('--board <id>', 'Board ID to assign cards on')
+    .requiredOption('--board <board>', 'Board to assign cards on, by name or boardId')
     .requiredOption('--to <user>', 'User to assign cards to (use @me for yourself)')
     .option(
       '--filter <expression>',

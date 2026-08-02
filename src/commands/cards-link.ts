@@ -190,12 +190,12 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
     .description(
       'Move a card to a different board.\n\n' +
       'Examples:\n' +
-      '  favro cards move <card> --to-board <boardId>\n' +
-      '  favro cards move <card> --to-board <boardId> --position top\n' +
-      '  favro cards move <card> --to-board <boardId> --position bottom\n\n' +
+      '  favro cards move <card> --to-board <board>\n' +
+      '  favro cards move <card> --to-board <board> --position top\n' +
+      '  favro cards move <card> --to-board <board> --position bottom\n\n' +
       `Valid positions: ${VALID_POSITIONS.join(', ')}`
     )
-    .requiredOption('--to-board <boardId>', 'Destination board ID')
+    .requiredOption('--to-board <board>', 'Destination board, by name or boardId')
     .option('--position <pos>', `Position on board: ${VALID_POSITIONS.join('|')}`)
     .option('--json', 'Output updated card as JSON')
     .option('-y, --yes', 'Skip confirmation prompt')

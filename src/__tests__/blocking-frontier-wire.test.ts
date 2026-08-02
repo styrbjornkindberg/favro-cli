@@ -54,6 +54,20 @@ function startServer(wire: Wire): Promise<{ client: FavroHttpClient; received: R
       const url = req.url ?? '';
       received.push({ method: req.method ?? '', url });
 
+      // The board listing every card read now resolves `--board` against
+      // (#82): a board reference — name or id — is settled before it can reach
+      // `widgetCommonId`, so a Favro stand-in has to know its own boards.
+      if (url.startsWith('/api/v1/widgets')) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          entities: [
+            { widgetCommonId: TRACKER_BOARD, name: 'Tracker', columns: [] },
+            { widgetCommonId: OTHER_BOARD, name: 'Other', columns: [] },
+          ],
+        }));
+        return;
+      }
+
       const query = new URL(url, 'http://x').searchParams;
       const commonId = query.get('cardCommonId');
 

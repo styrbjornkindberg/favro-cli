@@ -61,7 +61,7 @@ export function registerCommentsCommand(program: Command): void {
       '  favro comments list <card>\n' +
       '  favro comments list <card> --json\n' +
       '  favro comments list <card> --limit 50\n\n' +
-      'Tip: Use `favro cards list --board <id>` to find card IDs.'
+      'Tip: Use `favro cards list --board <board>` to find card IDs.'
     )
     .option('--limit <number>', 'Maximum number of comments to print (default: 100)', '100')
     .option('--json', 'Output as JSON')
@@ -118,7 +118,7 @@ export function registerCommentsCommand(program: Command): void {
       'Examples:\n' +
       '  favro comments add <card> --text "Looks good to me"\n' +
       '  favro comments add <card> --text "Blocked by API issue" --json\n\n' +
-      'Tip: Use `favro cards list --board <id>` to find card IDs.'
+      'Tip: Use `favro cards list --board <board>` to find card IDs.'
     )
     .requiredOption('--text <comment>', 'Comment text to add')
     .option('--json', 'Output as JSON')
