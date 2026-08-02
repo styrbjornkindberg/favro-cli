@@ -10,12 +10,10 @@
  *   4. Return top N ranked cards with reasoning
  */
 import { Command } from 'commander';
-import { createFavroClient } from '../lib/client-factory';
-import { resolveUserId, readConfig } from '../lib/config';
-import AggregateAPI, { AggregateCard } from '../api/aggregate';
+import { resolveUserId } from '../lib/config';
+import { AggregateCard } from '../api/aggregate';
 import { extractEffort } from '../api/context';
-import { outputResult, resolveFormat } from '../lib/output';
-import { logError } from '../lib/error-handler';
+import { Ctx, run } from '../lib/run';
 
 const CANDIDATE_STAGES = ['queued', 'backlog', 'active'];
 
@@ -120,6 +118,66 @@ function formatHuman(data: NextResult): string {
   return lines.join('\n');
 }
 
+interface NextOptions {
+  collection?: string;
+  count: string;
+  limit: string;
+}
+
+export async function nextHandler(ctx: Ctx, options: NextOptions) {
+  const userId = await resolveUserId();
+  if (!userId) {
+    throw new Error('userId not configured. Run `favro auth login` to resolve your identity.');
+  }
+
+  const count = parseInt(options.count, 10) || 5;
+  const cardLimit = parseInt(options.limit, 10) || 1000;
+
+  let snapshot;
+  if (options.collection) {
+    snapshot = await ctx.api.aggregate.getCollectionSnapshot(options.collection, cardLimit);
+  } else if (ctx.config.scopeCollectionId) {
+    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({ collectionIds: [ctx.config.scopeCollectionId] }, cardLimit);
+  } else {
+    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({}, cardLimit);
+  }
+
+  // Filter to my cards in candidate stages
+  const myCards = snapshot.allCards.filter(c =>
+    (c.assignees?.includes(userId) || c.owner === userId) &&
+    CANDIDATE_STAGES.includes(c.stage ?? ''),
+  );
+
+  // Score and rank
+  const scored = myCards.map(c => {
+    const { score, reasons } = scoreCard(c);
+    return {
+      id: c.id,
+      title: c.title,
+      board: c.boardName ?? 'unknown',
+      collection: c.collectionName,
+      stage: c.stage,
+      column: c.column,
+      due: c.due,
+      priority: extractPriority(c).label,
+      effort: extractEffort(c),
+      score,
+      reasons,
+    } as ScoredCard;
+  });
+
+  scored.sort((a, b) => b.score - a.score);
+
+  const result: NextResult = {
+    userId,
+    suggestions: scored.slice(0, count),
+    total: myCards.length,
+    generatedAt: new Date().toISOString(),
+  };
+
+  return { item: result, human: formatHuman };
+}
+
 export function registerNextCommand(program: Command): void {
   program
     .command('next')
@@ -127,73 +185,7 @@ export function registerNextCommand(program: Command): void {
     .option('--collection <name>', 'Filter to a specific collection')
     .option('--count <n>', 'Number of suggestions', '5')
     .option('--limit <n>', 'Max cards per collection', '1000')
-    .option('--human', 'Human-readable formatted output')
-    .option('--json', 'JSON output (default)')
-    .action(async (options) => {
-      const verbose = program.opts()?.verbose ?? false;
-      try {
-        const userId = await resolveUserId();
-        if (!userId) {
-          console.error('Error: userId not configured. Run `favro auth login` to resolve your identity.');
-          process.exit(1);
-        }
-
-        const client = await createFavroClient();
-        const api = new AggregateAPI(client);
-        const config = await readConfig();
-        const count = parseInt(options.count, 10) || 5;
-        const cardLimit = parseInt(options.limit, 10) || 1000;
-
-        let snapshot;
-        if (options.collection) {
-          snapshot = await api.getCollectionSnapshot(options.collection, cardLimit);
-        } else if (config.scopeCollectionId) {
-          snapshot = await api.getMultiBoardSnapshot({ collectionIds: [config.scopeCollectionId] }, cardLimit);
-        } else {
-          snapshot = await api.getMultiBoardSnapshot({}, cardLimit);
-        }
-
-        // Filter to my cards in candidate stages
-        const myCards = snapshot.allCards.filter(c =>
-          (c.assignees?.includes(userId) || c.owner === userId) &&
-          CANDIDATE_STAGES.includes(c.stage ?? ''),
-        );
-
-        // Score and rank
-        const scored = myCards.map(c => {
-          const { score, reasons } = scoreCard(c);
-          return {
-            id: c.id,
-            title: c.title,
-            board: c.boardName ?? 'unknown',
-            collection: c.collectionName,
-            stage: c.stage,
-            column: c.column,
-            due: c.due,
-            priority: extractPriority(c).label,
-            effort: extractEffort(c),
-            score,
-            reasons,
-          } as ScoredCard;
-        });
-
-        scored.sort((a, b) => b.score - a.score);
-        const suggestions = scored.slice(0, count);
-
-        const result: NextResult = {
-          userId,
-          suggestions,
-          total: myCards.length,
-          generatedAt: new Date().toISOString(),
-        };
-
-        const format = resolveFormat(options);
-        outputResult(result, { format }, formatHuman);
-      } catch (err: any) {
-        logError(err, verbose);
-        process.exit(1);
-      }
-    });
+    .action(run(nextHandler));
 }
 
 export default registerNextCommand;

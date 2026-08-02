@@ -3,11 +3,9 @@
  * v2.0 LLM-first command: outputs JSON by default.
  */
 import { Command } from 'commander';
-import { createFavroClient } from '../lib/client-factory';
-import { resolveUserId, readConfig } from '../lib/config';
-import AggregateAPI, { AggregateCard } from '../api/aggregate';
-import { outputResult, resolveFormat } from '../lib/output';
-import { logError } from '../lib/error-handler';
+import { resolveUserId } from '../lib/config';
+import { AggregateCard } from '../api/aggregate';
+import { Ctx, run } from '../lib/run';
 
 interface MyCardsResult {
   userId: string;
@@ -106,6 +104,73 @@ function formatHuman(data: MyCardsResult): string {
   return lines.join('\n');
 }
 
+interface MyCardsOptions {
+  collection?: string;
+  status?: string;
+  limit: string;
+}
+
+export async function myCardsHandler(ctx: Ctx, options: MyCardsOptions) {
+  const userId = await resolveUserId();
+  if (!userId) {
+    throw new Error('userId not configured. Run `favro auth login` to resolve your identity.');
+  }
+
+  const cardLimit = parseInt(options.limit, 10) || 1000;
+
+  let snapshot;
+  if (options.collection) {
+    snapshot = await ctx.api.aggregate.getCollectionSnapshot(options.collection, cardLimit);
+  } else if (ctx.config.scopeCollectionId) {
+    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({ collectionIds: [ctx.config.scopeCollectionId] }, cardLimit);
+  } else {
+    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({}, cardLimit);
+  }
+
+  let myCards = filterMyCards(snapshot.allCards, userId);
+
+  // Apply status filter
+  if (options.status) {
+    const stage = options.status.toLowerCase();
+    myCards = myCards.filter(c => c.stage === stage);
+  }
+
+  // Group by collection → board
+  const collectionMap = new Map<string, Map<string, AggregateCard[]>>();
+  for (const card of myCards) {
+    const collName = card.collectionName ?? 'Unknown';
+    if (!collectionMap.has(collName)) collectionMap.set(collName, new Map());
+    const boardMap = collectionMap.get(collName)!;
+    const bName = card.boardName ?? 'Unknown';
+    if (!boardMap.has(bName)) boardMap.set(bName, []);
+    boardMap.get(bName)!.push(card);
+  }
+
+  const result: MyCardsResult = {
+    userId,
+    collections: Array.from(collectionMap.entries()).map(([collName, boardMap]) => ({
+      name: collName,
+      boards: Array.from(boardMap.entries()).map(([bName, cards]) => ({
+        name: bName,
+        cards: cards.map(c => ({
+          id: c.id,
+          title: c.title,
+          stage: c.stage,
+          column: c.column,
+          due: c.due,
+          tags: c.tags,
+          boardName: c.boardName,
+        })),
+      })),
+    })),
+    suggestedNext: pickSuggestedNext(myCards),
+    total: myCards.length,
+    generatedAt: new Date().toISOString(),
+  };
+
+  return { item: result, human: formatHuman };
+}
+
 export function registerMyCardsCommand(program: Command): void {
   program
     .command('my-cards')
@@ -113,79 +178,7 @@ export function registerMyCardsCommand(program: Command): void {
     .option('--collection <name>', 'Filter to a specific collection')
     .option('--status <filter>', 'Filter by workflow stage (e.g., active, queued)')
     .option('--limit <n>', 'Max cards per collection', '1000')
-    .option('--human', 'Human-readable formatted output')
-    .option('--json', 'JSON output (default)')
-    .action(async (options) => {
-      const verbose = program.opts()?.verbose ?? false;
-      try {
-        const userId = await resolveUserId();
-        if (!userId) {
-          console.error('Error: userId not configured. Run `favro auth login` to resolve your identity.');
-          process.exit(1);
-        }
-
-        const client = await createFavroClient();
-        const api = new AggregateAPI(client);
-        const config = await readConfig();
-        const cardLimit = parseInt(options.limit, 10) || 1000;
-
-        let snapshot;
-        if (options.collection) {
-          snapshot = await api.getCollectionSnapshot(options.collection, cardLimit);
-        } else if (config.scopeCollectionId) {
-          snapshot = await api.getMultiBoardSnapshot({ collectionIds: [config.scopeCollectionId] }, cardLimit);
-        } else {
-          snapshot = await api.getMultiBoardSnapshot({}, cardLimit);
-        }
-
-        let myCards = filterMyCards(snapshot.allCards, userId);
-
-        // Apply status filter
-        if (options.status) {
-          const stage = options.status.toLowerCase();
-          myCards = myCards.filter(c => c.stage === stage);
-        }
-
-        // Group by collection → board
-        const collectionMap = new Map<string, Map<string, AggregateCard[]>>();
-        for (const card of myCards) {
-          const collName = card.collectionName ?? 'Unknown';
-          if (!collectionMap.has(collName)) collectionMap.set(collName, new Map());
-          const boardMap = collectionMap.get(collName)!;
-          const bName = card.boardName ?? 'Unknown';
-          if (!boardMap.has(bName)) boardMap.set(bName, []);
-          boardMap.get(bName)!.push(card);
-        }
-
-        const result: MyCardsResult = {
-          userId,
-          collections: Array.from(collectionMap.entries()).map(([collName, boardMap]) => ({
-            name: collName,
-            boards: Array.from(boardMap.entries()).map(([bName, cards]) => ({
-              name: bName,
-              cards: cards.map(c => ({
-                id: c.id,
-                title: c.title,
-                stage: c.stage,
-                column: c.column,
-                due: c.due,
-                tags: c.tags,
-                boardName: c.boardName,
-              })),
-            })),
-          })),
-          suggestedNext: pickSuggestedNext(myCards),
-          total: myCards.length,
-          generatedAt: new Date().toISOString(),
-        };
-
-        const format = resolveFormat(options);
-        outputResult(result, { format }, formatHuman);
-      } catch (err: any) {
-        logError(err, verbose);
-        process.exit(1);
-      }
-    });
+    .action(run(myCardsHandler));
 }
 
 export default registerMyCardsCommand;
