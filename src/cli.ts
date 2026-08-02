@@ -88,7 +88,7 @@ import { runMainMenu } from './commands/main-menu';
 import { logError, latchVerbose } from './lib/error-handler';
 import { ProgressBar } from './lib/progress';
 import { createFavroClient } from './lib/client-factory';
-import { capRows, omitBulk, writeEnvelope } from './lib/read-shape';
+import { capRows, noteTruncation, omitBulk, writeEnvelope } from './lib/read-shape';
 
 /**
  * Build the CLI program (exported for testing).
@@ -392,7 +392,7 @@ cards
           ...capped,
           rows: omitBulk('card', capped.rows, keep),
           ...(unreachable.length > 0 ? { unreachable } : {}),
-        });
+        }, Boolean(program.opts()?.pretty));
       } else {
         console.log(`Found ${capped.rows.length} card(s):`);
         if (capped.rows.length > 0) {
@@ -406,9 +406,8 @@ cards
           }));
           console.table(rows);
         }
-        if (capped.truncated) {
-          console.log(`(truncated to ${limit} of ${cardList.length} — raise --limit to see the rest)`);
-        }
+        // The wording every other list read now shares — it started here.
+        noteTruncation(capped, cardList.length);
         if (unreachable.length > 0) {
           console.log(`(${unreachable.length} blocker(s) could not be checked, so their cards stayed blocked:)`);
           unreachable.forEach((u) => console.log(`  ${u.id} — ${u.reason}`));

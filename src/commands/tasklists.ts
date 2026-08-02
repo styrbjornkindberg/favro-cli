@@ -14,6 +14,7 @@ import { createFavroClient } from '../lib/client-factory';
 import { readConfig } from '../lib/config';
 import { logError } from '../lib/error-handler';
 import { boardOfCard, checkResolvedScope, confirmAction, dryRunLog } from '../lib/safety';
+import { capRows, noteTruncation, writeEnvelope } from '../lib/read-shape';
 
 type Client = ConstructorParameters<typeof CardsAPI>[0];
 
@@ -37,6 +38,7 @@ export function registerTaskListsCommands(program: Command): void {
   cmd
     .command('list <card>')
     .description('List all task lists on a card')
+    .option('--limit <n>', 'Cap how many rows are printed; sets "truncated"')
     .option('--json', 'Output as JSON')
     .action(async (cardCommonId: string, options) => {
       const verbose = cmd.opts()?.verbose ?? false;
@@ -44,17 +46,20 @@ export function registerTaskListsCommands(program: Command): void {
         const client = await createFavroClient();
         const api = new TaskListsAPI(client);
         const lists = await api.listTaskLists(cardCommonId);
+        // The fetch already ran to completion; `--limit` cuts the PRINT (#99).
+        const envelope = capRows(lists, options.limit);
 
         if (options.json) {
-          console.log(JSON.stringify(lists, null, 2));
+          writeEnvelope(envelope, Boolean(program.opts()?.pretty));
         } else {
-          console.log(`Found ${lists.length} task list(s) on card ${cardCommonId}:`);
-          const rows = lists.map(l => ({
+          console.log(`Found ${envelope.rows.length} task list(s) on card ${cardCommonId}:`);
+          const rows = envelope.rows.map(l => ({
             ID: l.taskListId,
             Name: l.name,
             Position: l.position ?? '—',
           }));
           console.table(rows);
+          noteTruncation(envelope, lists.length);
         }
       } catch (error: any) {
         logError(error, verbose);

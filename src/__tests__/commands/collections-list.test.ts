@@ -87,6 +87,20 @@ describe('collections list command', () => {
     expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify({ rows: [sampleCollections[0]] }));
   });
 
+  test('--limit caps the print and marks the cut (#99)', async () => {
+    // Enveloped since #44 but uncapped, so `truncated` was unreachable on this
+    // command however many collections came back.
+    const mockList = jest.fn().mockResolvedValue(sampleCollections);
+    const program = buildProgram(mockList);
+    await program.parseAsync(['node', 'test', 'collections', 'list', '--limit', '1']);
+
+    // The read still ran to completion — the cap is on the print alone.
+    expect(mockList).toHaveBeenCalledWith(100);
+    expect(consoleSpy).toHaveBeenCalledWith(
+      JSON.stringify({ rows: [sampleCollections[0]], truncated: true }),
+    );
+  });
+
   test('shows message for empty collections', async () => {
     const mockList = jest.fn().mockResolvedValue([]);
     const program = buildProgram(mockList);

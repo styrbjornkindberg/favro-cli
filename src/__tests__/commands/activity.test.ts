@@ -102,9 +102,10 @@ describe('favro activity <cardId>', () => {
 
     await runCli(['activity', CARD]);
 
+    // No cap reaches the client (#99) — `--limit` caps the print, not the read.
     expect(MockActivityApiClient.prototype.getCardActivity).toHaveBeenCalledWith(
       CARD,
-      expect.objectContaining({ limit: 200 })
+      { since: undefined, until: undefined }
     );
     const output = consoleSpy.mock.calls.flat().join('\n');
     expect(output).toContain('CARD DESCRIPTION CHANGED');
@@ -127,10 +128,12 @@ describe('favro activity <cardId>', () => {
 
     await runCli(['activity', CARD, '--format', 'json']);
 
+    // An envelope, not a bare array — the shape every list read emits (#99).
     const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
-    expect(parsed).toHaveLength(2);
-    expect(parsed[0].time).toBe('2026-03-26T12:00:00.000Z');
-    expect(parsed[0].byUserId).toBe('pk3qK36WHjnJt5jwr');
+    expect(parsed.rows).toHaveLength(2);
+    expect(parsed.truncated).toBeUndefined();
+    expect(parsed.rows[0].time).toBe('2026-03-26T12:00:00.000Z');
+    expect(parsed.rows[0].byUserId).toBe('pk3qK36WHjnJt5jwr');
   });
 
   it('accepts --json as shorthand', async () => {
@@ -160,13 +163,27 @@ describe('favro activity <cardId>', () => {
     expect(options.until).toBeInstanceOf(Date);
   });
 
-  it('passes --limit through', async () => {
+  it('caps what --limit prints and marks the cut in JSON (#99)', async () => {
     MockActivityApiClient.prototype.getCardActivity = jest.fn().mockResolvedValue(SAMPLE_ACTIVITY);
 
-    await runCli(['activity', CARD, '--limit', '5']);
+    await runCli(['activity', CARD, '--limit', '1', '--json']);
 
+    // No limit reaches the client at all — the read returns the whole feed.
     const options = MockActivityApiClient.prototype.getCardActivity.mock.calls[0][1]!;
-    expect(options.limit).toBe(5);
+    expect(options).not.toHaveProperty('limit');
+
+    const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
+    expect(parsed.rows).toHaveLength(1);
+    expect(parsed.truncated).toBe(true);
+  });
+
+  it('says in human mode what `truncated` says in JSON mode', async () => {
+    MockActivityApiClient.prototype.getCardActivity = jest.fn().mockResolvedValue(SAMPLE_ACTIVITY);
+
+    await runCli(['activity', CARD, '--limit', '1']);
+
+    const output = consoleSpy.mock.calls.flat().join('\n');
+    expect(output).toContain('truncated to 1 of 2');
   });
 
   it('rejects an unparseable --since before calling the API', async () => {

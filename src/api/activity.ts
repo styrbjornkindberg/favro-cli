@@ -23,8 +23,6 @@ export interface CardActivityOptions {
   since?: Date;
   /** Only return activity at or before this time. */
   until?: Date;
-  /** Max entries to return. Applied client-side — Favro ignores a `limit` param. */
-  limit?: number;
 }
 
 export class ActivityApiClient {
@@ -36,8 +34,14 @@ export class ActivityApiClient {
    * `since` / `until` are pushed to Favro as ISO 8601 strings and filter
    * server-side; an unparseable value is a 400, so callers must pass real Dates.
    *
+   * Returns the whole feed, and takes no `limit` (#99). It used to slice the
+   * result client-side, which cut rows off the end with nothing on the wire or
+   * in the output saying so — the same silent cut #136 removed from
+   * `listComments`, minus the wasted pages. `--limit` now caps what is PRINTED,
+   * via `capRows` at the command layer, the one place the cut is visible.
+   *
    * @param cardId   Card ID — the board instance whose activity is wanted
-   * @param options  Time window and result cap
+   * @param options  Time window
    */
   async getCardActivity(cardId: string, options: CardActivityOptions = {}): Promise<ActivityEntry[]> {
     const params: Record<string, unknown> = {};
@@ -52,8 +56,7 @@ export class ActivityApiClient {
       { params }
     );
 
-    const entries = response.entities ?? [];
-    return options.limit !== undefined ? entries.slice(0, options.limit) : entries;
+    return response.entities ?? [];
   }
 }
 

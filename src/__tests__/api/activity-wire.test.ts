@@ -137,13 +137,16 @@ describe('ActivityApiClient.getCardActivity — wire shape', () => {
     }
   });
 
-  it('never sends limit — Favro ignores it, so the cap is client-side', async () => {
+  it('never sends limit, and never cuts the result either (#99)', async () => {
     // The server returns 5 rows regardless, mirroring `?limit=2` → 22 rows live.
+    // This read used to take a `limit` and slice the result client-side, which
+    // dropped rows with nothing anywhere saying so. The cap moved to `capRows`
+    // in the command, where it sets `truncated`; the client returns the feed.
     const { api, received, close } = await startServer([row(), row(), row(), row(), row()]);
     try {
-      const entries = await api.getCardActivity(CARD, { limit: 2 });
+      const entries = await api.getCardActivity(CARD);
       expect(received[0].url).not.toContain('limit');
-      expect(entries).toHaveLength(2);
+      expect(entries).toHaveLength(5);
     } finally {
       await close();
     }
