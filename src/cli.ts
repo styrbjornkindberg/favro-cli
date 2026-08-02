@@ -57,8 +57,6 @@ import { registerCommentsCommand } from './commands/comments';
 import { registerActivityCommand } from './commands/activity';
 import { registerWebhooksCommand } from './commands/webhooks';
 import { registerContextCommand } from './commands/context';
-import { registerProposeCommand } from './commands/propose';
-import { registerExecuteCommand } from './commands/execute';
 import { registerQueryCommand } from './commands/query';
 import { registerStandupCommand } from './commands/standup';
 import { registerSprintPlanCommand } from './commands/sprint-plan';
@@ -87,7 +85,7 @@ import { registerTeamCommand } from './commands/team';
 import { registerInitCommand } from './commands/init';
 import { registerTrackerInitCommand } from './commands/tracker-init';
 import { runMainMenu } from './commands/main-menu';
-import { logError } from './lib/error-handler';
+import { logError, latchVerbose } from './lib/error-handler';
 import { ProgressBar } from './lib/progress';
 import { createFavroClient } from './lib/client-factory';
 import { capRows, omitBulk, writeEnvelope } from './lib/read-shape';
@@ -121,6 +119,11 @@ program
   // three releases behind the published 2.4.1 before anyone noticed.
   .version(require('../package.json').version as string)
   .option('--verbose', 'Show stack traces for errors');
+
+// The flag is declared here and nowhere else, so it is resolved here and
+// nowhere else (#85). Without this, `.opts()` being own-options-only left
+// `--verbose` dead on every command below the root. See `latchVerbose`.
+latchVerbose(program);
 
 // ─── auth commands ────────────────────────────────────────────────────────────
 registerAuthCommand(program);
@@ -1146,12 +1149,6 @@ cards
 
   // ─── context command ─────────────────────────────────────────────────────────
   registerContextCommand(program);
-
-  // ─── propose command ─────────────────────────────────────────────────────────
-  registerProposeCommand(program);
-
-  // ─── execute command ─────────────────────────────────────────────────────────
-  registerExecuteCommand(program);
 
   // ─── query command ───────────────────────────────────────────────────────────
   registerQueryCommand(program);

@@ -41,7 +41,7 @@ const TOP_COMMANDS = [
   'auth', 'scope', 'boards', 'cards', 'collections', 'columns', 'tags',
   'tasks', 'tasklists', 'dependencies', 'attachments', 'users', 'members',
   'comments', 'webhooks', 'batch', 'batch-smart', 'context', 'query',
-  'standup', 'sprint-plan', 'propose', 'execute',
+  'standup', 'sprint-plan',
   'risks', 'release-check', 'ai', 'skill', 'git',
   'use', 'help', 'exit', 'quit', 'clear',
 ];
