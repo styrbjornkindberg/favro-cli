@@ -67,11 +67,16 @@
  * decision (an ADR whose subject IS a deleted command, so it will always name
  * it). At seven entries, with each reason naming what would delete it, a second
  * list would be ceremony; `scope-lock-coverage.test.ts` splits its two because
- * it carries twenty-one. Revisit if this one grows.
+ * the distinction there was argued issue by issue across #102/#103/#104 and its
+ * decided list runs to nine on its own. Revisit if this one grows.
  *
  * Every entry is checked for STALENESS: an allowlisted line that has been fixed,
  * or that no longer exists under that key, fails the build. A list nobody prunes
  * turns into a permanent exemption that reads like debt.
+ *
+ * TODAY: 35 tracked docs, 626 documented invocations, 597 of them naming a real
+ * command, against 148 argv paths. The floors below are kept near those numbers
+ * on purpose — see the self-check test.
  */
 import { execSync } from 'child_process';
 import * as fs from 'fs';
@@ -252,10 +257,12 @@ function inspect(inv: Invocation): Finding | undefined {
   if (!cmd) return finding(positional[0], 'no such command');
   // A group named with no subcommand (`favro batch`, `favro cards --help`) is a
   // reference to the family, not a claim that it runs — commander prints help.
-  // Only a group followed by a word that is not one of its subcommands is a lie.
+  // `favro cards <subcommand>` is the same: a shape, not a claim. Only a group
+  // followed by a real word that is not one of its subcommands is a lie.
   if (
     depth === 1 &&
     positional[1] &&
+    !PLACEHOLDER.test(positional[1]) &&
     !(cmd as { _actionHandler?: unknown })._actionHandler &&
     cmd.commands.length
   ) {
@@ -307,6 +314,21 @@ function inspect(inv: Invocation): Finding | undefined {
 const FINDINGS = INVOCATIONS.map(inspect).filter((f): f is Finding => !!f);
 const LIVE_KEYS = new Set(FINDINGS.map((f) => f.key));
 
+/**
+ * Invocations whose leading word(s) name a real command. This, not the raw
+ * invocation count, is what proves the two halves actually met: a tokenizer
+ * that mangled every fragment would still enumerate 600-odd invocations and
+ * still report no findings, because a mangled token resolves to nothing and
+ * falls out of `inspect` as a placeholder rather than as a violation.
+ */
+const RESOLVED = INVOCATIONS.filter((inv) => {
+  const positional = inv.tokens.filter((t) => !t.startsWith('-'));
+  return (
+    positional.length > 0 &&
+    (SURFACE.has(positional.slice(0, 2).join(' ')) || SURFACE.has(positional[0]))
+  );
+}).length;
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('every command the docs teach is a command the binary answers to', () => {
@@ -318,10 +340,10 @@ describe('every command the docs teach is a command the binary answers to', () =
     // heavy slack stops gripping while #80 keeps deleting commands.
     expect(DOC_FILES.length).toBeGreaterThan(30); // 35 today
     expect(SURFACE.size).toBeGreaterThan(140); // 148 today: 125 actions + groups
-    expect(INVOCATIONS.length).toBeGreaterThan(550); // 629 today
-    // …and the scan resolved the great majority of them, so a tokenizer that
-    // mangled every fragment could not hide behind an empty findings list.
-    expect(INVOCATIONS.length - FINDINGS.length).toBeGreaterThan(550);
+    expect(INVOCATIONS.length).toBeGreaterThan(600); // 626 today
+    // …and almost all of them met the real surface. See RESOLVED above: this is
+    // the assertion a silently-matching-nothing walker cannot pass.
+    expect(RESOLVED).toBeGreaterThan(570); // 597 today; the rest are `<placeholder>` and bare `favro --help`
   });
 
   it('detects each of the three shapes it claims to detect', () => {
