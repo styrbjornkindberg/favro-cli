@@ -214,13 +214,9 @@ describe('init — the guards around the write', () => {
 
     await runCli(['init']);
 
+    expect(mockFs.writeFile).not.toHaveBeenCalled();
     expect(errors()).toContain('already exists');
     expect(exitSpy).toHaveBeenCalledWith(1);
-    // No "wrote nothing" assertion here on purpose: this `process.exit(1)` sits
-    // inside the `try` whose `catch {}` means "the file does not exist", so any
-    // stub that lets execution continue — returning OR throwing — runs on past
-    // the guard. The real `process.exit` terminates, so the exit code above is
-    // the whole observable behaviour.
   });
 
   test('--refresh overwrites it deliberately', async () => {
