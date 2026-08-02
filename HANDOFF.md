@@ -1,29 +1,25 @@
 # Handoff
 
-State as of main after the #141/#144/#145 batch merge. **151 suites / 2834 tests**,
+State as of main after #117. **152 suites / 2857 tests**,
 typecheck clean, no cycles.
 
-## 0. START HERE — one branch is finished and unreviewed
+## 0. START HERE — #118 is next, and nothing is left mid-flight
 
-`worktree-agent-acc40fa3f1ec6585b`, commit `e0ea5b4` — **issue #117**, step 5 of the
-runner migration (`release-check`, `risks`, `diff`). Self-verified at 150 suites /
-2819 tests against main `52f3bed`, but **no independent review has run**. Every
-branch this run has had a real defect found at review, so do not merge it on the
-implementer's report. Review it first, then merge, then close #117.
+No branch is unreviewed. Every worktree branch is merged or abandoned; `git branch
+--list 'worktree-agent-*'` with `git log main..<branch>` shows what is genuinely ahead.
 
-What its review most needs to check:
-- `diff` had #116's fail-open shape and now spreads `snapshot.unreachable`; verify the
-  hole genuinely forbids exit 0 and that the human notice prints *above* the verdict,
-  not as a footnote under "No changes detected".
-- **The exit-code change is new behaviour, not a migration.** #117's premise is
-  factually wrong — it cites lines that were the error boundary's exit, and none of
-  these commands ever carried a finding code. The ticket's acceptance criterion still
-  demands it, so it was implemented, but a CI job running `favro risks <board>` that
-  passed yesterday now fails whenever anything is at risk, and `release-check` is
-  noisy because `missing-due-date` counts toward `totalIssues`. Worth a human call.
-- `health` was deliberately left without an exit code (its cut is a score, not a
-  finding list), so the answer-code family is inconsistent until that is decided.
-- `suggestBoard` was deleted as unreachable — verify that.
+Next in the chain is **#118** (step 6: the streaming commands and the four anonymous
+ones), then **#119** (step 7, which is the one allowed to delete the runner allowlist).
+Steps 1–5 are merged. Read #116's and #117's diffs first — they are the shape to match.
+
+Two things #117 leaves for a human, both recorded on the issue:
+- **`health` still has no exit code**, deliberately. Its cut is red-versus-yellow, a
+  score rather than a finding list, and picking it is a product decision. The
+  answer-code family is inconsistent until that lands. One line plus a test.
+- **`risks` always emits `unreachable` while `diff` emits it only when non-empty.**
+  Both are defensible alone — `risks`' staleness hole is permanent — but an agent
+  that learns diff's "hole ⇒ distrust the read" rule will misread every `risks`
+  report. Worth settling before more commands adopt the shape.
 
 Always re-query counts rather than trusting a number written here — a stale tally
 that reads as current has already caused one wrong report this run.
