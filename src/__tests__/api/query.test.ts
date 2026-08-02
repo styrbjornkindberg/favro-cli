@@ -210,6 +210,25 @@ describe('matchCard', () => {
     expect(result).toBeNull();
   });
 
+  it('does not match every assignee when the matched member has no email', () => {
+    // FAIL-OPEN, and the code produces the input itself: `context.ts:345`
+    // normalises a board-member fallback with `email: m.email ?? ''`. The
+    // owner filter falls back to the context member list, and it used to probe
+    // each assignee with `includes(member.email)` — an empty email is an empty
+    // needle, and `''` is a substring of EVERY string, so one member without
+    // an address made `--owner <that member>` match the whole board.
+    //
+    // Carol is found by name; the card is Dave's. Without the empty-needle
+    // guard this returns a match.
+    const withCarol: BoardContextSnapshot = {
+      ...ctx,
+      members: [...ctx.members, { id: 'm-3', name: 'Carol Danvers', email: '', role: 'member' }],
+    };
+    const card = makeCard({ assignees: ['dave@example.com'] });
+
+    expect(matchCard(card, { owner: 'carol' }, withCarol)).toBeNull();
+  });
+
   it('matches @me to any assigned card', () => {
     const card = makeCard({ assignees: ['anyone@example.com'] });
     const result = matchCard(card, { owner: 'me' }, ctx);
