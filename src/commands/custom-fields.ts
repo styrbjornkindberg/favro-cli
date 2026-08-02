@@ -17,6 +17,7 @@ import CustomFieldsAPI, {
 } from '../lib/custom-fields-api';
 import { createFavroClient } from '../lib/client-factory';
 import { logError } from '../lib/error-handler';
+import { capRows, noteTruncation, writeEnvelope } from '../lib/read-shape';
 
 // ─── Formatters ──────────────────────────────────────────────────────────────
 
@@ -103,6 +104,7 @@ export function registerCustomFieldsCommands(program: Command): void {
   cfCmd
     .command('list <board-id>')
     .description('List all custom fields defined for a board')
+    .option('--limit <n>', 'Cap how many rows are printed; sets "truncated"')
     .option('--json', 'Output as JSON')
     .action(async (boardId: string, options) => {
       const verbose = program.opts()?.verbose ?? false;
@@ -112,12 +114,15 @@ export function registerCustomFieldsCommands(program: Command): void {
         const api = new CustomFieldsAPI(client);
 
         const fields = await api.listFields(boardId);
+        // The fetch already ran to completion; `--limit` cuts the PRINT (#99).
+        const envelope = capRows(fields, options.limit);
 
         if (options.json) {
-          console.log(JSON.stringify(fields, null, 2));
+          writeEnvelope(envelope);
         } else {
-          console.log(`Found ${fields.length} custom field(s) for board ${boardId}:`);
-          formatFieldsTable(fields);
+          console.log(`Found ${envelope.rows.length} custom field(s) for board ${boardId}:`);
+          formatFieldsTable(envelope.rows);
+          noteTruncation(envelope, fields.length);
         }
       } catch (error) {
         logError(error, verbose);
@@ -208,6 +213,7 @@ export function registerCustomFieldsCommands(program: Command): void {
     .command('values <field-id>')
     .description('List all possible values (options) for a select-type custom field')
     .option('--board <board-id>', 'Board ID to scope the field lookup')
+    .option('--limit <n>', 'Cap how many rows are printed; sets "truncated"')
     .option('--json', 'Output as JSON')
     .action(async (fieldId: string, options) => {
       const verbose = program.opts()?.verbose ?? false;
@@ -217,15 +223,18 @@ export function registerCustomFieldsCommands(program: Command): void {
         const api = new CustomFieldsAPI(client);
 
         const opts = await api.listFieldValues(fieldId, options.board);
+        // The fetch already ran to completion; `--limit` cuts the PRINT (#99).
+        const envelope = capRows(opts, options.limit);
 
         if (options.json) {
-          console.log(JSON.stringify(opts, null, 2));
+          writeEnvelope(envelope);
         } else {
-          if (opts.length === 0) {
+          if (envelope.rows.length === 0) {
             console.log('No options found. This field may not be a select type.');
           } else {
-            console.log(`Found ${opts.length} option(s) for field ${fieldId}:`);
-            formatOptionsTable(opts);
+            console.log(`Found ${envelope.rows.length} option(s) for field ${fieldId}:`);
+            formatOptionsTable(envelope.rows);
+            noteTruncation(envelope, opts.length);
           }
         }
       } catch (error) {

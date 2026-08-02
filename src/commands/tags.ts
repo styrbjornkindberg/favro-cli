@@ -10,7 +10,7 @@ import TagsAPI from '../lib/tags-api';
 import { createFavroClient } from '../lib/client-factory';
 import { logError } from '../lib/error-handler';
 import { confirmAction, dryRunLog } from '../lib/safety';
-import { writeEnvelope } from '../lib/read-shape';
+import { capRows, noteTruncation, writeEnvelope } from '../lib/read-shape';
 import { invalidateCache } from '../lib/name-cache';
 
 export function registerTagsCommands(program: Command): void {
@@ -19,6 +19,7 @@ export function registerTagsCommands(program: Command): void {
   tagsCommand
     .command('list')
     .description('List all tags in the workspace')
+    .option('--limit <n>', 'Cap how many rows are printed; sets "truncated"')
     .option('--json', 'Output as JSON')
     .action(async (options) => {
       const verbose = tagsCommand.opts()?.verbose ?? false;
@@ -26,19 +27,23 @@ export function registerTagsCommands(program: Command): void {
         const client = await createFavroClient();
         const api = new TagsAPI(client);
         const tags = await api.listTags();
+        // The fetch already ran to completion; `--limit` cuts the PRINT (#99).
+        // Enveloped since #44, but with no cap it could never say `truncated`.
+        const envelope = capRows(tags, options.limit);
 
         if (options.json) {
           // A list read: envelope, compact. A tag row has no bulk field — the
           // 27 KB is 249 rows, which `favro tags get` answers for a single tag.
-          writeEnvelope({ rows: tags });
+          writeEnvelope(envelope);
         } else {
-          console.log(`Found ${tags.length} tag(s):`);
-          const rows = tags.map(t => ({
+          console.log(`Found ${envelope.rows.length} tag(s):`);
+          const rows = envelope.rows.map(t => ({
             ID: t.tagId,
             Name: t.name,
             Color: t.color || 'none',
           }));
           console.table(rows);
+          noteTruncation(envelope, tags.length);
         }
       } catch (error: any) {
         logError(error, verbose);

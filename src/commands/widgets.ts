@@ -10,6 +10,7 @@ import WidgetsAPI from '../lib/widgets-api';
 import { createFavroClient } from '../lib/client-factory';
 import { logError } from '../lib/error-handler';
 import { checkScope, confirmAction, dryRunLog } from '../lib/safety';
+import { capRows, noteTruncation, writeEnvelope } from '../lib/read-shape';
 import { readConfig } from '../lib/config';
 
 export function registerWidgetsCommands(program: Command): void {
@@ -19,6 +20,7 @@ export function registerWidgetsCommands(program: Command): void {
     .command('list')
     .description('List all board widgets/instances of a specific card')
     .requiredOption('--card <card>', 'The central cardCommonId to trace')
+    .option('--limit <n>', 'Cap how many rows are printed; sets "truncated"')
     .option('--json', 'Output as JSON')
     .action(async (options) => {
       const verbose = widgetsCommand.opts()?.verbose ?? false;
@@ -26,18 +28,21 @@ export function registerWidgetsCommands(program: Command): void {
         const client = await createFavroClient();
         const api = new WidgetsAPI(client);
         const widgets = await api.listWidgetsForCard(options.card);
+        // The fetch already ran to completion; `--limit` cuts the PRINT (#99).
+        const envelope = capRows(widgets, options.limit);
 
         if (options.json) {
-          console.log(JSON.stringify(widgets, null, 2));
+          writeEnvelope(envelope);
         } else {
-          console.log(`Found ${widgets.length} widget(s) for card ${options.card}:`);
-          const rows = widgets.map(w => ({
+          console.log(`Found ${envelope.rows.length} widget(s) for card ${options.card}:`);
+          const rows = envelope.rows.map(w => ({
             BoardID: w.boardId || (w.collectionIds ? w.collectionIds.join(',') : '—'),
             WidgetID: w.widgetCommonId,
             Type: w.type,
             Name: w.name,
           }));
           console.table(rows);
+          noteTruncation(envelope, widgets.length);
         }
       } catch (error: any) {
         logError(error, verbose);

@@ -56,6 +56,7 @@ const VALID_LIST_INCLUDES = ['stats', 'velocity'];
 interface ListOptions {
   collection?: string;
   include?: string;
+  limit?: string;
 }
 
 /**
@@ -92,11 +93,13 @@ export async function listBoardsHandler(
         return ext;
       });
 
-  // A list read: the runner writes the envelope, compact. `boards` has no bulk
-  // field to omit, and no output cap — `normalizeWidget` already keeps a row
-  // small, so the cost here is row count alone.
+  // A list read: the runner writes the envelope, compact, and applies the cap.
+  // `boards` has no bulk field to omit, so the cost here is row count alone —
+  // which is exactly what `--limit` answers, and 322 rows is the measured worst
+  // case (#99).
   return {
     rows: boards,
+    limit: options.limit,
     human: (rows: ExtendedBoard[]) => {
       console.log(`Found ${rows.length} board(s):`);
       if (include?.includes('stats') || include?.includes('velocity')) {
@@ -117,6 +120,7 @@ export function registerBoardsListCommand(boardsParent: Command): void {
       '--include <options>',
       'Comma-separated data to include: stats, velocity',
     )
+    .option('--limit <n>', 'Cap how many rows are printed; sets "truncated"')
     .action(run(listBoardsHandler));
 }
 

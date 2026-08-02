@@ -13,6 +13,7 @@ import { createFavroClient } from '../lib/client-factory';
 import { readConfig } from '../lib/config';
 import { logError } from '../lib/error-handler';
 import { boardOfCard, checkResolvedScope, confirmAction, dryRunLog } from '../lib/safety';
+import { capRows, noteTruncation, writeEnvelope } from '../lib/read-shape';
 
 export function registerTasksCommands(program: Command): void {
   const tasksCommand = program.command('tasks').description('Manage granular checklists inside a single card');
@@ -20,6 +21,7 @@ export function registerTasksCommands(program: Command): void {
   tasksCommand
     .command('list <card>')
     .description('List all tasks (checklist items) on a card')
+    .option('--limit <n>', 'Cap how many rows are printed; sets "truncated"')
     .option('--json', 'Output as JSON')
     .action(async (cardCommonId: string, options) => {
       const verbose = tasksCommand.opts()?.verbose ?? false;
@@ -27,17 +29,20 @@ export function registerTasksCommands(program: Command): void {
         const client = await createFavroClient();
         const api = new TasksAPI(client);
         const tasks = await api.listTasks(cardCommonId);
+        // The fetch already ran to completion; `--limit` cuts the PRINT (#99).
+        const envelope = capRows(tasks, options.limit);
 
         if (options.json) {
-          console.log(JSON.stringify(tasks, null, 2));
+          writeEnvelope(envelope);
         } else {
-          console.log(`Found ${tasks.length} task(s) on card ${cardCommonId}:`);
-          const rows = tasks.map(t => ({
+          console.log(`Found ${envelope.rows.length} task(s) on card ${cardCommonId}:`);
+          const rows = envelope.rows.map(t => ({
             Status: t.completed ? '[x]' : '[ ]',
             Name: t.name,
             ID: t.taskId,
           }));
           console.table(rows);
+          noteTruncation(envelope, tasks.length);
         }
       } catch (error: any) {
         logError(error, verbose);

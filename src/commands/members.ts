@@ -11,6 +11,7 @@
 import { Command } from 'commander';
 import { createFavroClient } from '../lib/client-factory';
 import { logError } from '../lib/error-handler';
+import { capRows, noteTruncation, writeEnvelope } from '../lib/read-shape';
 import { FavroApiClient, isValidEmail } from '../api/members';
 
 export function registerMembersCommand(program: Command): void {
@@ -24,6 +25,7 @@ export function registerMembersCommand(program: Command): void {
     .description('List all members, optionally filtered by board or collection')
     .option('--board <board-id>', 'Filter members by board ID')
     .option('--collection <coll-id>', 'Filter members by collection ID')
+    .option('--limit <n>', 'Cap how many rows are printed; sets "truncated"')
     .option('--json', 'Output as JSON')
     .action(async (options) => {
       const verbose = program.opts()?.verbose ?? false;
@@ -41,21 +43,25 @@ export function registerMembersCommand(program: Command): void {
           collectionId: options.collection,
         });
 
+        // The fetch already ran to completion; `--limit` cuts the PRINT (#99).
+        const envelope = capRows(members, options.limit);
+
         if (options.json) {
-          console.log(JSON.stringify(members, null, 2));
+          writeEnvelope(envelope);
         } else {
-          if (members.length === 0) {
+          if (envelope.rows.length === 0) {
             console.log('No members found.');
             return;
           }
-          console.log(`Found ${members.length} member(s):`);
-          const rows = members.map(m => ({
+          console.log(`Found ${envelope.rows.length} member(s):`);
+          const rows = envelope.rows.map(m => ({
             ID: m.id,
             Name: m.name || '—',
             Email: m.email,
             Role: m.role,
           }));
           console.table(rows);
+          noteTruncation(envelope, members.length);
         }
       } catch (error) {
         logError(error, verbose);

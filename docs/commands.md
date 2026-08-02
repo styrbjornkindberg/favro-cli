@@ -48,6 +48,15 @@ to completion, filter, cap last, and say `"truncated": true` when the cap bit.
 `cards export` lost `--limit` entirely: a cap there could only export part of a
 board and still call itself the export.
 
+Every list read takes `--limit` now, not just `cards list` — `columns`, `tags`,
+`users`, `groups`, `members`, `tasks`, `tasklists`, `widgets`, `webhooks`,
+`custom-fields list` / `values`, `dependencies list`, `activity`, `skill list`,
+`boards list`, `collections list` and `cards dependencies` / `blocking` /
+`blocked-by`. Uncapped by default, so a read with no `--limit` prints
+everything; pass one and the cut is marked `truncated` in JSON and printed as
+`(truncated to N of M …)` in human output. An unparseable `--limit` is no cap,
+never an empty list.
+
 ### Card bodies and custom fields are omitted from list output
 
 `cards list` omits `description` / `detailedDescription` and `customFields` from

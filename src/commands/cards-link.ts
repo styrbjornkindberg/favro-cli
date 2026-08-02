@@ -14,6 +14,7 @@ import { createFavroClient } from '../lib/client-factory';
 // on the intent, and a direct `api.linkCard` here would have none of them.
 import { dispatch, AddedEdge, EdgeArgs } from '../lib/dispatch';
 import { reportDispatch } from '../lib/report-dispatch';
+import { capRows, noteTruncation, writeEnvelope } from '../lib/read-shape';
 
 // 'related' and 'duplicates' are gone — Favro has no API representation for them,
 // so they were being silently discarded. See lib/dependency-direction.ts.
@@ -302,6 +303,7 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
       'Examples:\n' +
       '  favro cards dependencies CARD-ID\n'
     )
+    .option('--limit <n>', 'Cap how many rows are printed; sets "truncated"')
     .option('--json', 'Output as JSON')
     .action(async (cardId: string, options) => {
       const verbose = cardsCmd.parent?.opts()?.verbose ?? cardsCmd.opts()?.verbose ?? false;
@@ -311,20 +313,24 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
         const api = new CardsAPI(client);
 
         const links = await api.getCardLinks(cardId);
+        // The filter runs over the WHOLE edge set, then the cap runs over the
+        // filtered rows — that order is the point of capping the print (#99).
         const deps = links.filter(l => l.isBefore);
+        const envelope = capRows(deps, options.limit);
 
         if (options.json) {
-          console.log(JSON.stringify(deps, null, 2));
+          writeEnvelope(envelope);
           return;
         }
 
-        if (deps.length === 0) {
+        if (envelope.rows.length === 0) {
           console.log(`Card ${cardId} has no dependencies.`);
           return;
         }
 
         console.log(`Dependencies of card ${cardId}:`);
-        deps.forEach(l => console.log(`  → ${l.cardId}${l.cardName ? ` (${l.cardName})` : ''}`));
+        envelope.rows.forEach(l => console.log(`  → ${l.cardId}${l.cardName ? ` (${l.cardName})` : ''}`));
+        noteTruncation(envelope, deps.length);
       } catch (error: any) {
         if (String(error?.message).startsWith('process.exit')) throw error;
         if (error?.response?.status === 404) {
@@ -346,6 +352,7 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
       'Examples:\n' +
       '  favro cards blocking CARD-ID\n'
     )
+    .option('--limit <n>', 'Cap how many rows are printed; sets "truncated"')
     .option('--json', 'Output as JSON')
     .action(async (cardId: string, options) => {
       const verbose = cardsCmd.parent?.opts()?.verbose ?? cardsCmd.opts()?.verbose ?? false;
@@ -357,19 +364,21 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
         const links = await api.getCardLinks(cardId);
         // Cards this card blocks come after it: isBefore === false.
         const blocked = links.filter(l => !l.isBefore);
+        const envelope = capRows(blocked, options.limit);
 
         if (options.json) {
-          console.log(JSON.stringify(blocked, null, 2));
+          writeEnvelope(envelope);
           return;
         }
 
-        if (blocked.length === 0) {
+        if (envelope.rows.length === 0) {
           console.log(`Card ${cardId} is not blocking any cards.`);
           return;
         }
 
         console.log(`Cards blocked by ${cardId}:`);
-        blocked.forEach(l => console.log(`  ⛔ ${l.cardId}${l.cardName ? ` (${l.cardName})` : ''}`));
+        envelope.rows.forEach(l => console.log(`  ⛔ ${l.cardId}${l.cardName ? ` (${l.cardName})` : ''}`));
+        noteTruncation(envelope, blocked.length);
       } catch (error: any) {
         if (String(error?.message).startsWith('process.exit')) throw error;
         if (error?.response?.status === 404) {
@@ -389,6 +398,7 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
       'Examples:\n' +
       '  favro cards blocked-by CARD-ID\n'
     )
+    .option('--limit <n>', 'Cap how many rows are printed; sets "truncated"')
     .option('--json', 'Output as JSON')
     .action(async (cardId: string, options) => {
       const verbose = cardsCmd.parent?.opts()?.verbose ?? cardsCmd.opts()?.verbose ?? false;
@@ -401,19 +411,21 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
         // isBefore === true. Same edge set as `cards dependencies`.
         const links = await api.getCardLinks(cardId);
         const blockedBy = links.filter(l => l.isBefore);
+        const envelope = capRows(blockedBy, options.limit);
 
         if (options.json) {
-          console.log(JSON.stringify(blockedBy, null, 2));
+          writeEnvelope(envelope);
           return;
         }
 
-        if (blockedBy.length === 0) {
+        if (envelope.rows.length === 0) {
           console.log(`Card ${cardId} is not blocked by any cards.`);
           return;
         }
 
         console.log(`Cards blocking ${cardId}:`);
-        blockedBy.forEach(l => console.log(`  🚫 ${l.cardId}${l.cardName ? ` (${l.cardName})` : ''}`));
+        envelope.rows.forEach(l => console.log(`  🚫 ${l.cardId}${l.cardName ? ` (${l.cardName})` : ''}`));
+        noteTruncation(envelope, blockedBy.length);
       } catch (error: any) {
         if (String(error?.message).startsWith('process.exit')) throw error;
         if (error?.response?.status === 404) {

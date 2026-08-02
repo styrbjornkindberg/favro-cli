@@ -10,6 +10,7 @@
 import { Command } from 'commander';
 import { createFavroClient } from '../lib/client-factory';
 import { logError } from '../lib/error-handler';
+import { capRows, noteTruncation, writeEnvelope } from '../lib/read-shape';
 import ActivityApiClient, { parseSince, formatTimestamp } from '../api/activity';
 
 /** Parse a relative time window, reporting errors against the flag it came from. */
@@ -40,7 +41,7 @@ export function registerActivityCommand(program: Command): void {
     )
     .option('--since <time>', 'Only show activity after: 2h, 1d, 7d, 1w, etc.')
     .option('--until <time>', 'Only show activity before: 2h, 1d, 7d, 1w, etc.')
-    .option('--limit <n>', 'Maximum number of activity entries (default: 200)', '200')
+    .option('--limit <n>', 'Cap how many entries are printed (default: 200); sets "truncated"', '200')
     .option('--format <format>', 'Output format: table or json (default: table)', 'table')
     .option('--json', 'Shorthand for --format json')
     .action(async (cardId: string, options) => {
@@ -81,14 +82,18 @@ export function registerActivityCommand(program: Command): void {
         const client = await createFavroClient();
         const api = new ActivityApiClient(client);
 
-        const entries = await api.getCardActivity(cardId, { since, until, limit });
+        const entries = await api.getCardActivity(cardId, { since, until });
+        // The read already returned the whole feed; `--limit` cuts the PRINT,
+        // and the cut says so (#99). It used to slice inside the client.
+        const envelope = capRows(entries, limit);
+        const shown = envelope.rows;
 
         if (format === 'json') {
-          console.log(JSON.stringify(entries, null, 2));
+          writeEnvelope(envelope);
           return;
         }
 
-        if (entries.length === 0) {
+        if (shown.length === 0) {
           const window = since ? ` since ${since.toISOString()}` : '';
           console.log(
             `No activity found for card "${cardId}"${window}.\n` +
@@ -97,12 +102,12 @@ export function registerActivityCommand(program: Command): void {
           return;
         }
 
-        const cardName = entries[0].cardName;
+        const cardName = shown[0].cardName;
         const label = cardName ? `${cardName} (${cardId})` : cardId;
         const sinceLabel = options.since ? ` (last ${options.since})` : '';
-        console.log(`\n📋 Activity for ${label}${sinceLabel} — ${entries.length} entry/entries:\n`);
+        console.log(`\n📋 Activity for ${label}${sinceLabel} — ${shown.length} entry/entries:\n`);
 
-        for (const entry of entries) {
+        for (const entry of shown) {
           const ts = formatTimestamp(entry.time);
           const who = entry.byUserId ? ` by ${entry.byUserId}` : '';
           console.log(`  [${(entry.type ?? 'activity').toUpperCase()}]${who} — ${ts}`);
@@ -111,7 +116,8 @@ export function registerActivityCommand(program: Command): void {
           console.log();
         }
 
-        console.log(`Total: ${entries.length} entry/entries shown.`);
+        console.log(`Total: ${shown.length} entry/entries shown.`);
+        noteTruncation(envelope, entries.length);
       } catch (error) {
         logError(error, verbose);
         process.exit(1);

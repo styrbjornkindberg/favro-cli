@@ -91,10 +91,33 @@ function reasonFor(error: unknown): string {
  * partial set and answered a plausible wrong number. The fetch now runs to
  * completion and filters run over all of it; this is the last step, and it says
  * so with `truncated`.
+ *
+ * `limit` is `number | string` because commander hands a flag over as a string
+ * and every one of the eighteen call sites would otherwise re-type the same
+ * `parseInt`. Parsing here rather than eighteen times is also what makes the
+ * unparseable case answer once: a `--limit banana` is NO cap, never an empty
+ * list. It read as one until #99 — `NaN < 1` is false, so the old guard fell
+ * through to `slice(0, NaN)` and returned zero rows marked `truncated`.
  */
-export function capRows<T>(rows: T[], limit?: number): ListEnvelope<T> {
-  if (limit === undefined || limit < 1 || rows.length <= limit) return { rows };
-  return { rows: rows.slice(0, limit), truncated: true };
+export function capRows<T>(rows: T[], limit?: number | string): ListEnvelope<T> {
+  const cap = typeof limit === 'string' ? parseInt(limit, 10) : limit;
+  // Written as `!(cap >= 1)` and not `cap < 1`, so NaN takes this branch.
+  if (cap === undefined || !(cap >= 1) || rows.length <= cap) return { rows };
+  return { rows: rows.slice(0, cap), truncated: true };
+}
+
+/**
+ * Say in human mode what `truncated` says in JSON mode — the one wording, so a
+ * cut reads the same whichever list read made it.
+ *
+ * Prints nothing when nothing was cut, which is what keeps every existing
+ * table byte-identical for a caller who passed no `--limit`.
+ */
+export function noteTruncation<T>(envelope: ListEnvelope<T>, total: number): void {
+  if (!envelope.truncated) return;
+  console.log(
+    `(truncated to ${envelope.rows.length} of ${total} — raise --limit to see the rest)`,
+  );
 }
 
 /**

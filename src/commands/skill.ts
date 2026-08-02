@@ -15,6 +15,7 @@ import { Command } from 'commander';
 import fs from 'fs';
 import { exec } from 'child_process';
 import { logError } from '../lib/error-handler';
+import { capRows, noteTruncation, writeEnvelope } from '../lib/read-shape';
 import {
   listSkills,
   loadSkill,
@@ -52,26 +53,31 @@ export function registerSkillCommands(program: Command): void {
   skillCmd
     .command('list')
     .description('List all available skills (builtin + user)')
+    .option('--limit <n>', 'Cap how many rows are printed; sets "truncated"')
     .option('--json', 'Output as JSON')
     .action((options) => {
       try {
         const skills = listSkills();
+        // A local read rather than a Favro one, but the same contract: an agent
+        // parses one list shape whatever the source (#99).
+        const envelope = capRows(skills, options.limit);
 
         if (options.json) {
-          console.log(JSON.stringify(skills, null, 2));
+          writeEnvelope(envelope);
           return;
         }
 
-        if (skills.length === 0) {
+        if (envelope.rows.length === 0) {
           console.log('No skills installed.\n  Create one: favro skill create <name>');
           return;
         }
 
-        console.log(`Available skills (${skills.length}):\n`);
-        for (const s of skills) {
+        console.log(`Available skills (${envelope.rows.length}):\n`);
+        for (const s of envelope.rows) {
           const tag = s.source === 'builtin' ? '  [builtin]' : '  [user]   ';
           console.log(`${tag} ${s.name.padEnd(20)} ${s.description}`);
         }
+        noteTruncation(envelope, skills.length);
       } catch (error) {
         logError(error);
         process.exit(1);

@@ -11,6 +11,7 @@ import { linkTypeToIsBefore } from '../lib/dependency-direction';
 import { createFavroClient } from '../lib/client-factory';
 import { logError } from '../lib/error-handler';
 import { checkScope, confirmAction, dryRunLog } from '../lib/safety';
+import { capRows, noteTruncation, writeEnvelope } from '../lib/read-shape';
 import { readConfig } from '../lib/config';
 
 export function registerDependenciesCommands(program: Command): void {
@@ -19,6 +20,7 @@ export function registerDependenciesCommands(program: Command): void {
   depsCommand
     .command('list <card>')
     .description('List dependencies for a card')
+    .option('--limit <n>', 'Cap how many rows are printed; sets "truncated"')
     .option('--json', 'Output as JSON')
     .action(async (cardId: string, options) => {
       const verbose = depsCommand.opts()?.verbose ?? false;
@@ -26,17 +28,20 @@ export function registerDependenciesCommands(program: Command): void {
         const client = await createFavroClient();
         const api = new CardsAPI(client);
         const links = await api.getCardLinks(cardId);
+        // The fetch already ran to completion; `--limit` cuts the PRINT (#99).
+        const envelope = capRows(links, options.limit);
 
         if (options.json) {
-          console.log(JSON.stringify(links, null, 2));
+          writeEnvelope(envelope);
         } else {
-          console.log(`Found ${links.length} dependencies for card ${cardId}:`);
-          const rows = links.map(lnk => ({
+          console.log(`Found ${envelope.rows.length} dependencies for card ${cardId}:`);
+          const rows = envelope.rows.map(lnk => ({
             Direction: lnk.isBefore ? 'before (blocks this card)' : 'after (blocked by this card)',
             Target: lnk.cardId,
             Name: lnk.cardName || '—',
           }));
           console.table(rows);
+          noteTruncation(envelope, links.length);
         }
       } catch (error: any) {
         logError(error, verbose);
