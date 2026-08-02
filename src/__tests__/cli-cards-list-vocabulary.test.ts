@@ -28,16 +28,15 @@
  */
 import { buildProgram } from '../cli';
 import CardsAPI, { Card } from '../lib/cards-api';
-import {
-  STUB_BOARD,
-  stubVocabularyClient,
-  useTempConfigDir,
-} from '../test-support/filter-vocabulary';
+import { STUB_BOARD, STUB_USER_IDS, useTempConfigDir } from '../test-support/filter-vocabulary';
 
 jest.mock('../lib/cards-api');
 jest.mock('../lib/client-factory', () => {
   const { stubVocabularyClient: stub } = jest.requireActual('../test-support/filter-vocabulary');
-  const createFavroClient = jest.fn(async () => stub());
+  // Opaque userIds: `alice` shares no substring with the id her card carries,
+  // so an assertion that `--assignee alice` finds that card can only pass if
+  // the name was really resolved. See `STUB_USER_IDS`.
+  const createFavroClient = jest.fn(async () => stub({ opaqueIds: true }));
   return { __esModule: true, createFavroClient, default: createFavroClient };
 });
 
@@ -53,13 +52,13 @@ const CARDS: Card[] = [
     cardId: 'c-bug',
     name: 'Fix login',
     tags: ['bug'],
-    assignees: ['alice@example.com'],
+    assignees: [STUB_USER_IDS.alice],
   } as Card,
   {
     cardId: 'c-debug',
     name: 'Add debug logging',
     tags: ['debug'],
-    assignees: ['bob@example.com'],
+    assignees: [STUB_USER_IDS.bob],
   } as Card,
 ];
 
@@ -150,6 +149,24 @@ describe('--assignee resolves through the closed vocabulary', () => {
     const printed = await refusal('--assignee', 'nobody');
     expect(printed).toContain('nobody');
     expect(printed).toContain('favro users');
+  });
+});
+
+describe('an empty value is a bad value, not an absent flag', () => {
+  test.each([['--tag'], ['--assignee'], ['--filter']])(
+    '%s "" refuses instead of widening to the whole board',
+    async (flag) => {
+      // `--tag "$SPRINT_TAG"` with the variable unset asked to NARROW. Treating
+      // it as "no flag passed" answers the whole board — a fail-open on the
+      // branch whose thesis is that a filtering flag never answers plausibly.
+      const printed = await refusal(flag, '');
+      expect(printed).toContain(flag);
+      expect(listCards).not.toHaveBeenCalled();
+    }
+  );
+
+  test('whitespace is not a value either', async () => {
+    expect(await refusal('--tag', '   ')).toContain('--tag');
   });
 });
 

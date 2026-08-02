@@ -226,12 +226,27 @@ describe('the parse-then-validate protocol is one call', () => {
  * that is a convention scan over a name this repo chose, not a vocabulary it
  * has to look up.
  *
- * ponytail: line-based. A match split across lines would slip past. It has
- * never been written that way here; move to the TypeScript AST, as
+ * WHY THE SPAN IS `[^;]` AND NOT `[^\n]`
+ * A line-based version of this arm shipped first, and it was vacuous against
+ * the very code #84 deleted — Prettier had wrapped that filter at the arrow:
+ *
+ *   cardList = cardList.filter(c => (c.assignees ?? []).some(
+ *     a => a.toLowerCase().includes(options.assignee.toLowerCase())
+ *   ));
+ *
+ * `[^\n]*` cannot cross that break, so the one arm whose whole job is to stop
+ * the THIRD occurrence did not see either of the first two. A statement span
+ * does. `.toLowerCase()` is then required before `.includes(` to keep the wider
+ * span off exact membership written across lines — `cards-api.ts`'s
+ * `currentIds.includes(id)` is correct and must stay unflagged.
+ *
+ * ponytail: statement-based. The ceiling is a `;` INSIDE the expression — a
+ * nested block body between the array and the `.includes(` would cut the span
+ * short. Nothing here is written that way; move to the TypeScript AST, as
  * `scope-lock-coverage.test.ts` does, if one ever is.
  */
 const SUBSTRING_OVER_VOCABULARY =
-  /\b(?:tags|assignees)\b[^\n]*\.(?:some|find|filter|every)\([^\n]*\.includes\(\s*(?!['"`])/;
+  /\b(?:tags|assignees)\b[^;]*\.(?:some|find|filter|every)\([^;]*\.toLowerCase\(\)\.includes\(\s*(?!['"`])/;
 
 /**
  * DEBT: the filtering surfaces that still substring-match, keyed by file and
@@ -245,7 +260,11 @@ const SUBSTRING_DEBT: Record<string, string> = {
   [path.join('api', 'query.ts')]:
     '#95 — the second, regex-based grammar behind `favro query`; re-pointed or deleted there',
   [path.join('commands', 'batch.ts')]:
-    '#138 — `parseFilterExpression`, a third `--filter` grammar on a WRITE command',
+    '#138 — `parseFilterExpression`, a third `--filter` grammar on a WRITE command. ' +
+    'Its worst caller is not the one #138 names: `cards update --board <b> --label bug ' +
+    '--status done` (cli.ts, `filterExprs.push(`tag:${options.label}`)`) routes through ' +
+    'the same `buildFilterFn`, so in an org holding both `bug` and `debug` that command ' +
+    'WRITES to the `debug` cards too. Batch move/assign is the same grammar, lower stakes.',
 };
 
 /** Every production file whose source still matches element-wise. */
@@ -271,5 +290,21 @@ describe('tag and assignee membership is exact, everywhere', () => {
   test('the flag row that #84 fixed is one of the files scanned, and is clean', () => {
     expect(productionSources()).toContain('cli.ts');
     expect(substringMatchers()).not.toContain('cli.ts');
+  });
+
+  test('the scan catches the deleted shape, wrapped the way Prettier wrapped it', () => {
+    // Verbatim from `86dbeb7:src/cli.ts`. A line-based span missed this, which
+    // is why the span is `[^;]` — re-narrow it and this test goes red.
+    const deleted = [
+      'cardList = cardList.filter(c => (c.assignees ?? []).some(',
+      '  a => a.toLowerCase().includes(options.assignee.toLowerCase())',
+      '));',
+    ].join('\n');
+    expect(SUBSTRING_OVER_VOCABULARY.test(deleted)).toBe(true);
+
+    // …without flagging exact membership, which is correct and common.
+    expect(
+      SUBSTRING_OVER_VOCABULARY.test('const add = tags.filter(t => !currentIds.includes(t));')
+    ).toBe(false);
   });
 });

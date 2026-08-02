@@ -295,8 +295,8 @@ Get board details including columns, members, and stats.
 | `--archived <mode>` | `true`, `false` (default) or `all`. On the wire. |
 | `--body` | Keep card descriptions in the output |
 | `--include custom-fields` | Keep `customFields` in the output |
-| `--assignee <user>` | Filter by assignee |
-| `--tag <tag>` | Filter by tag |
+| `--assignee <user>` | Narrow to one assignee — a name, an email, a userId or `@me`. Same as `--filter "assignee:…"`. |
+| `--tag <tag>` | Narrow to one tag, by exact name. Same as `--filter "tag:…"`; an unknown name is refused. |
 
 The board is always fetched to completion, so `--filter`, `--assignee` and
 `--tag` filter the whole board rather than one truncated page.

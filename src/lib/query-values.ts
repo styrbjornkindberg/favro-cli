@@ -81,7 +81,10 @@ export interface FilterFlags {
  * already share. Built as AST nodes rather than spliced into the filter string:
  * a tag named `in progress` or `a:b` must not become grammar.
  *
- * Returns `undefined` when no filtering flag was passed at all.
+ * Returns `undefined` when no filtering flag was passed at all. A flag passed
+ * with an EMPTY value is not that: `--tag "$SPRINT_TAG"` with the variable
+ * unset asked to narrow to one tag, and answering the whole board instead is a
+ * fail-open on the exact axis this function exists to close. It refuses.
  *
  * @throws ParseError / RefusalError — whatever the closed vocabulary raises.
  */
@@ -92,6 +95,7 @@ export async function resolveCardFilter(
   const nodes: QueryNode[] = [];
   const raw: string[] = [];
 
+  refuseEmpty('filter', flags.filter);
   if (flags.filter) {
     raw.push(flags.filter);
     const parsed = parseQuery(flags.filter);
@@ -103,6 +107,7 @@ export async function resolveCardFilter(
     ['assignee', flags.assignee],
   ];
   for (const [field, value] of predicates) {
+    refuseEmpty(field, value);
     if (!value) continue;
     // `=`, never `~`: exact is the only thing that resolves. See `checkTag`.
     nodes.push({ kind: 'field', field, operator: '=', value });
@@ -113,7 +118,25 @@ export async function resolveCardFilter(
   const ast = nodes.length === 0
     ? null
     : nodes.reduce((left, right): QueryNode => ({ kind: 'and', left, right }));
-  return validateQueryValues({ ast, raw: raw.join(' AND ') }, ctx);
+  // Parenthesise on composition. The AST is already right — the reduce ANDs
+  // whole parsed nodes — but `--filter "a OR b" --tag bug` flattens to
+  // `a OR b AND tag:bug`, which re-parses to the WRONG tree. Nothing re-parses
+  // `raw` today; a trap laid for the first reader who does is still a trap.
+  const composed = raw.length === 1 ? raw[0] : raw.map((r) => `(${r})`).join(' AND ');
+  return validateQueryValues({ ast, raw: composed }, ctx);
+}
+
+/**
+ * A flag passed with an empty value narrows nothing, and treating it as an
+ * absent flag answers the whole board — the fail-open direction. Refuse.
+ */
+function refuseEmpty(field: string, value: string | undefined): void {
+  if (value === undefined || value.trim() !== '') return;
+  throw new ParseError(
+    `--${field} was passed with an empty value — it narrows nothing, and ignoring ` +
+      `it would answer the whole board. Pass a value, or drop the flag.`,
+    { kind: 'unknown-value', field, value }
+  );
 }
 
 /**
@@ -166,6 +189,18 @@ async function mapValues(
  * is in the vocabulary: `tag:bu` used to validate against `bug` and then match
  * no card at all, which is the plausible zero rows this module exists to
  * abolish (#84).
+ *
+ * CASE COLLISIONS DO NOT REFUSE, deliberately — #84's "ambiguity refuses and
+ * lists every colliding id" is an `assignee:` criterion (`resolveAssignee`
+ * meets it, naming userId, name and email per collision). A tag has no id to
+ * disambiguate TO: it is filtered by name, and an org holding both `Bug` and
+ * `bug` gets the cards of both. "Cards tagged bug, any casing" is a coherent
+ * answer to a coherent question; "assign this to one of two Alices" is not.
+ *
+ * Returns the TYPED value, not the canonical spelling — unlike `resolveStatus`,
+ * which must return the column's own name because a `columnId` was accepted as
+ * input. That works because `compareValues` lowercases both sides, which is the
+ * same case-insensitivity this function validated under.
  */
 async function checkTag(value: string, ctx: ValueContext, operator: Operator): Promise<string> {
   const orgId = ctx.client.organizationId;
