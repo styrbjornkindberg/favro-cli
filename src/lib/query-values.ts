@@ -17,12 +17,31 @@ import ColumnDirectory from './column-directory';
 import { cachedTags } from './name-cache';
 import { invalidateCache } from './name-cache';
 import { resolveAssignee } from './assignee';
-import { ParseError, Query, QueryNode, FieldPredicate } from './query-parser';
+import { parseQuery, ParseError, Query, QueryNode, FieldPredicate } from './query-parser';
 
 export interface ValueContext {
   client: FavroHttpClient;
   /** The board whose columns settle a `status:` value. */
   boardId?: string;
+}
+
+/**
+ * Parse a `--filter` string AND settle its closed-vocabulary values — the whole
+ * protocol, in ONE call (#83).
+ *
+ * `parseQuery` on its own is half of it. It fails closed on field NAMES with no
+ * network, and says nothing about VALUES; a caller that stops there refuses
+ * `tag:` with a typo'd *field* and answers a plausible `0 rows` for a typo'd
+ * *tag*. `cards export` stopped there while `cards list` did not, so the same
+ * grammar carried opposite guarantees depending on which command you typed.
+ * Composing the two steps here is what makes the second one
+ * unskippable: `src/__tests__/filter-fail-closed-coverage.test.ts` fails the
+ * build if any command reaches for `parseQuery` directly again.
+ *
+ * @throws ParseError — carrying `detail`, for every refusal either half raises.
+ */
+export async function resolveQuery(filter: string, ctx: ValueContext): Promise<Query> {
+  return validateQueryValues(parseQuery(filter), ctx);
 }
 
 /**
