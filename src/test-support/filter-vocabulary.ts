@@ -21,8 +21,13 @@ export const STUB_BOARD = 'board-stub';
 /** Column names the stub board has. Anything else refuses. */
 export const STUB_COLUMNS = ['todo', 'in-progress', 'done'];
 
-/** Tag names the stub org has. Anything else refuses. */
-export const STUB_TAGS = ['bug', 'urgent', 'docs', 'release', 'high-priority'];
+/**
+ * Tag names the stub org has. Anything else refuses.
+ *
+ * `bug` and `debug` are both here on purpose (#84): a tag whose name CONTAINS
+ * another real tag's name is what makes a substring match look right.
+ */
+export const STUB_TAGS = ['bug', 'debug', 'urgent', 'docs', 'release', 'high-priority'];
 
 /** Users the stub org has, keyed the way the card fixtures spell them. */
 export const STUB_USERS = ['alice', 'bob', 'carol'];

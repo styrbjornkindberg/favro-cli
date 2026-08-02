@@ -204,3 +204,72 @@ describe('the parse-then-validate protocol is one call', () => {
     expect(sources.some((f) => f.includes('__tests__'))).toBe(false);
   });
 });
+
+// ─── arm three: nobody substring-matches a card's tags or assignees ──────────
+
+/**
+ * `--tag` and `--assignee` were the same bug wearing a flag instead of a filter
+ * (#84): a raw lowercase `includes()` over the fetched cards, on the same flag
+ * row as a `--filter` that settles `tag:` and `assignee:` against Favro's own
+ * lists. `--tag typoo` answered zero rows; `--tag bug` also matched `debug`.
+ *
+ * A substring match that happens to hit exactly one tag is not "close enough" —
+ * it is right by luck, and it turns wrong the day someone creates a second tag
+ * containing it. Nothing here should be deciding tag or assignee membership on
+ * its own, so this arm reads the source for anyone who still does.
+ *
+ * WHAT COUNTS
+ * Element-wise string matching over a card's `tags`/`assignees` against a value
+ * the caller supplied — `(card.tags ?? []).some(t => t…includes(value))`. Not
+ * `array.includes(x)`, which is exact membership and correct. Not a hardcoded
+ * literal (`tags.some(t => t.includes('blocked'))` in `risks.ts` and friends):
+ * that is a convention scan over a name this repo chose, not a vocabulary it
+ * has to look up.
+ *
+ * ponytail: line-based. A match split across lines would slip past. It has
+ * never been written that way here; move to the TypeScript AST, as
+ * `scope-lock-coverage.test.ts` does, if one ever is.
+ */
+const SUBSTRING_OVER_VOCABULARY =
+  /\b(?:tags|assignees)\b[^\n]*\.(?:some|find|filter|every)\([^\n]*\.includes\(\s*(?!['"`])/;
+
+/**
+ * DEBT: the filtering surfaces that still substring-match, keyed by file and
+ * valued with the issue that will delete the line. Both are a SECOND grammar
+ * rather than a missing guard, so both die by deletion, not by a patch here.
+ *
+ * Do NOT add to this list to make a red build green — a new entry is a new
+ * surface answering the same question a different way, which is the defect.
+ */
+const SUBSTRING_DEBT: Record<string, string> = {
+  [path.join('api', 'query.ts')]:
+    '#95 — the second, regex-based grammar behind `favro query`; re-pointed or deleted there',
+  [path.join('commands', 'batch.ts')]:
+    '#138 — `parseFilterExpression`, a third `--filter` grammar on a WRITE command',
+};
+
+/** Every production file whose source still matches element-wise. */
+function substringMatchers(): string[] {
+  return productionSources().filter((rel) =>
+    SUBSTRING_OVER_VOCABULARY.test(fs.readFileSync(path.join(SRC, rel), 'utf8'))
+  );
+}
+
+describe('tag and assignee membership is exact, everywhere', () => {
+  test('no production module substring-matches a card tag or assignee', () => {
+    const offenders = substringMatchers().filter((rel) => !(rel in SUBSTRING_DEBT));
+    expect(offenders).toEqual([]);
+  });
+
+  test('every debt entry is still real, so a fixed one fails the build', () => {
+    const stale = Object.keys(SUBSTRING_DEBT).filter(
+      (rel) => !substringMatchers().includes(rel)
+    );
+    expect(stale).toEqual([]);
+  });
+
+  test('the flag row that #84 fixed is one of the files scanned, and is clean', () => {
+    expect(productionSources()).toContain('cli.ts');
+    expect(substringMatchers()).not.toContain('cli.ts');
+  });
+});
