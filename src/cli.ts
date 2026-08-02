@@ -346,9 +346,8 @@ cards
       // instead of costing a whole board read and answering a plausible 0 rows.
       let query: import('./lib/query-parser').Query | undefined;
       if (options.filter) {
-        const { parseQuery } = await import('./lib/query-parser');
-        const { validateQueryValues } = await import('./lib/query-values');
-        query = await validateQueryValues(parseQuery(options.filter), {
+        const { resolveQuery } = await import('./lib/query-values');
+        query = await resolveQuery(options.filter, {
           client,
           boardId: effectiveBoardId,
         });
@@ -1113,7 +1112,12 @@ cards
       const filters: string[] = options.filter ?? [];
       if (filters.length > 0) {
         const before = cardList.length;
-        cardList = applyFilters(cardList, filters);
+        // The same protocol `cards list` runs: parse AND settle the values, so
+        // a typo'd tag or column refuses instead of exporting zero rows (#83).
+        // ponytail: settled AFTER the fetch, where `cards list` settles before
+        // it. Same refusal either way; the cost is one wasted board read. Move
+        // it ahead of the fetch if that read ever hurts.
+        cardList = await applyFilters(cardList, filters, { client, boardId: board });
         console.error(`\u2139 Filters applied: ${before} \u2192 ${cardList.length} card(s)`);
       }
 
