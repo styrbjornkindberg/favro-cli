@@ -286,7 +286,19 @@ function commandPath(actionCall: ts.CallExpression): string {
 function actionBody(arg: ts.Expression | undefined): ts.Node | undefined {
   if (!arg) return undefined;
   if (isFunctionish(arg)) return arg;
-  if (ts.isCallExpression(arg)) return calleeDeclaration(arg);
+  if (ts.isCallExpression(arg)) {
+    // `.action(run(handler))` (#113/#114): the runner is the wrapper, the
+    // handler is the command. Resolving the call to `run` itself would read
+    // every migrated write as a non-write — the writes would silently leave
+    // this ratchet's sight one migration step at a time, and the exemptions
+    // below would go stale for the wrong reason. A factory with no inline
+    // function (`archiveAction(cardsCmd, true)`) still resolves as before.
+    const handler = arg.arguments
+      .map((a) => (isFunctionish(a) ? a : unalias(checker.getSymbolAtLocation(a))?.declarations?.[0]))
+      .find(isFunctionish);
+    if (handler) return handler;
+    return calleeDeclaration(arg);
+  }
   const decl = unalias(checker.getSymbolAtLocation(arg))?.declarations?.[0];
   return isFunctionish(decl) ? decl : undefined;
 }

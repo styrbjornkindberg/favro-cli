@@ -4,9 +4,14 @@
  * favro collections delete <id> [--yes] [--force]
  */
 import { Command } from 'commander';
-import CollectionsAPI from '../lib/collections-api';
-import { createFavroClient } from '../lib/client-factory';
-import { logError } from '../lib/error-handler';
+import { checkCollectionScope, confirmAction } from '../lib/safety';
+import { run } from '../lib/run';
+
+interface DeleteOptions {
+  dryRun?: boolean;
+  yes?: boolean;
+  force?: boolean;
+}
 
 export function registerCollectionsDeleteCommand(collectionsParent: Command): void {
   collectionsParent
@@ -15,38 +20,30 @@ export function registerCollectionsDeleteCommand(collectionsParent: Command): vo
     .option('--dry-run', 'Preview without making API calls')
     .option('-y, --yes', 'Skip confirmation prompt')
     .option('--force', 'Bypass scope check')
-    .action(async (id: string, options) => {
-      const verbose = collectionsParent.parent?.opts()?.verbose ?? false;
-      try {
-        if (options.dryRun) {
-          console.log(`[dry-run] Would delete collection ${id}`);
-          return;
-        }
-
-        const { readConfig } = await import('../lib/config');
-        const { checkCollectionScope, confirmAction } = await import('../lib/safety');
-
-        checkCollectionScope(id, await readConfig(), options.force);
-
-        if (!(await confirmAction(`Delete collection ${id}? This cannot be undone.`, { yes: options.yes }))) {
-          console.log('Aborted.');
-          return;
-        }
-
-        const client = await createFavroClient();
-        const api = new CollectionsAPI(client);
-        await api.deleteCollection(id);
-
-        console.log(`✓ Collection deleted: ${id}`);
-      } catch (error: any) {
-        if (error?.response?.status === 404) {
-          console.error(`✗ Collection not found: ${id}. Use 'favro collections list' to see available collections.`);
-          process.exit(1);
-        }
-        logError(error, verbose);
-        process.exit(1);
+    .action(run(async (ctx, id: string, options: DeleteOptions) => {
+      if (options.dryRun) {
+        console.log(`[dry-run] Would delete collection ${id}`);
+        return;
       }
-    });
+
+      checkCollectionScope(id, ctx.config, options.force);
+
+      if (!(await confirmAction(`Delete collection ${id}? This cannot be undone.`, { yes: options.yes }))) {
+        console.log('Aborted.');
+        return;
+      }
+
+      await ctx.api.collections.deleteCollection(id).catch((error: any) => {
+        if (error?.response?.status === 404) {
+          throw new Error(`Collection not found: ${id}. Use 'favro collections list' to see available collections.`);
+        }
+        throw error;
+      });
+
+      // ponytail: the streaming arm, printed in JSON mode too — exactly what it
+      // did before. See the same note on `boards delete`.
+      console.log(`✓ Collection deleted: ${id}`);
+    }));
 }
 
 export default registerCollectionsDeleteCommand;

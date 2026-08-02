@@ -29,7 +29,8 @@ function buildProgram(mockGetCollection: jest.Mock) {
   } as any));
 
   const parent = new Command();
-  parent.option('--verbose', 'verbose');
+  parent.option('--verbose', 'verbose').option('--human').option('--pretty');
+  parent.exitOverride();
   const collectionsCmd = parent.command('collections');
   registerCollectionsGetCommand(collectionsCmd);
   return parent;
@@ -38,21 +39,23 @@ function buildProgram(mockGetCollection: jest.Mock) {
 describe('collections get command', () => {
   let consoleSpy: jest.SpyInstance;
   let consoleErrorSpy: jest.SpyInstance;
-  let exitSpy: jest.SpyInstance;
 
   beforeEach(() => {
+    process.exitCode = undefined;
     consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
     consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => { throw new Error('process.exit'); });
     jest.spyOn(config, 'resolveApiKey').mockResolvedValue('test-token');
   });
 
-  afterEach(() => jest.restoreAllMocks());
+  afterEach(() => {
+    jest.restoreAllMocks();
+    process.exitCode = undefined;
+  });
 
   test('gets collection by id and prints details', async () => {
     const mockGet = jest.fn().mockResolvedValue(sampleCollection);
     const program = buildProgram(mockGet);
-    await program.parseAsync(['node', 'test', 'collections', 'get', 'coll-1']);
+    await program.parseAsync(['node', 'test', 'collections', 'get', 'coll-1', '--human']);
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Marketing'));
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('coll-1'));
     expect(mockGet).toHaveBeenCalledWith('coll-1', undefined);
@@ -65,11 +68,11 @@ describe('collections get command', () => {
     expect(mockGet).toHaveBeenCalledWith('coll-1', ['boards', 'stats']);
   });
 
-  test('outputs json when --json flag provided', async () => {
+  test('with no flags it emits the bare item — a single read stays unwrapped', async () => {
     const mockGet = jest.fn().mockResolvedValue(sampleCollection);
     const program = buildProgram(mockGet);
-    await program.parseAsync(['node', 'test', 'collections', 'get', 'coll-1', '--json']);
-    expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify(sampleCollection, null, 2));
+    await program.parseAsync(['node', 'test', 'collections', 'get', 'coll-1']);
+    expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify(sampleCollection));
   });
 
   // #41: the command no longer invents a "not found" line. CollectionsAPI
@@ -81,9 +84,8 @@ describe('collections get command', () => {
       new Error('No collection named "bad-id" — it is missing or not visible to your key.\nRun \'favro collections list\' to see what your key can reach.')
     );
     const program = buildProgram(mockGet);
-    await expect(
-      program.parseAsync(['node', 'test', 'collections', 'get', 'bad-id'])
-    ).rejects.toThrow('process.exit');
+    await program.parseAsync(['node', 'test', 'collections', 'get', 'bad-id', '--human']);
+    expect(process.exitCode).toBe(1);
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('missing or not visible to your key'));
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('bad-id'));
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('favro collections list'));
@@ -95,18 +97,16 @@ describe('collections get command', () => {
     });
     const mockGet = jest.fn().mockRejectedValue(err);
     const program = buildProgram(mockGet);
-    await expect(
-      program.parseAsync(['node', 'test', 'collections', 'get', 'bad-id'])
-    ).rejects.toThrow('process.exit');
+    await program.parseAsync(['node', 'test', 'collections', 'get', 'bad-id', '--human']);
+    expect(process.exitCode).toBe(1);
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('missing or not visible to your key'));
   });
 
   test('exits with error for invalid --include values', async () => {
     const mockGet = jest.fn().mockResolvedValue(sampleCollection);
     const program = buildProgram(mockGet);
-    await expect(
-      program.parseAsync(['node', 'test', 'collections', 'get', 'coll-1', '--include', 'bogus,garbage'])
-    ).rejects.toThrow('process.exit');
+    await program.parseAsync(['node', 'test', 'collections', 'get', 'coll-1', '--include', 'bogus,garbage', '--human']);
+    expect(process.exitCode).toBe(1);
     expect(mockGet).not.toHaveBeenCalled();
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid --include values'));
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('bogus'));
@@ -122,25 +122,23 @@ describe('collections get command', () => {
     const mockGet = jest.fn().mockResolvedValue(collWithBoards);
     const tableSpy = jest.spyOn(console, 'table').mockImplementation(() => {});
     const program = buildProgram(mockGet);
-    await program.parseAsync(['node', 'test', 'collections', 'get', 'coll-1', '--include', 'boards']);
+    await program.parseAsync(['node', 'test', 'collections', 'get', 'coll-1', '--include', 'boards', '--human']);
     expect(tableSpy).toHaveBeenCalled();
   });
 
   test('exits when API key missing', async () => {
     jest.spyOn(config, 'resolveApiKey').mockResolvedValue(null as any);
     const program = buildProgram(jest.fn());
-    await expect(
-      program.parseAsync(['node', 'test', 'collections', 'get', 'coll-1'])
-    ).rejects.toThrow('process.exit');
+    await program.parseAsync(['node', 'test', 'collections', 'get', 'coll-1', '--human']);
+    expect(process.exitCode).toBe(1);
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('API key'));
   });
 
   test('exits on generic API error', async () => {
     const mockGet = jest.fn().mockRejectedValue(new Error('Server error'));
     const program = buildProgram(mockGet);
-    await expect(
-      program.parseAsync(['node', 'test', 'collections', 'get', 'coll-1'])
-    ).rejects.toThrow('process.exit');
+    await program.parseAsync(['node', 'test', 'collections', 'get', 'coll-1', '--human']);
+    expect(process.exitCode).toBe(1);
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Server error'));
   });
 });
