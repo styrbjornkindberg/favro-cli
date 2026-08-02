@@ -303,6 +303,12 @@ describe('a board-less read is untouched (#82)', () => {
  * `boardIdOf`. That one is not fooled by a rebinding, and it does not care
  * what the local is called or which file it lives in.
  *
+ * The asymmetry is deliberate, not an oversight: the name check reads
+ * `cards-api.ts` only, because in `widgets-api.ts` the RETURNED `Widget`
+ * legitimately spells `widgetCommonId:` with Favro's own echo, and that is not
+ * a wire write. A regex cannot tell a request body from a response shape, so
+ * that file is held by the provenance check alone.
+ *
  * If you are here because this failed: the value you put on `widgetCommonId`
  * did not come from `boardIdOf(…)`. Route it through, bind it to `boardId`,
  * and add a row to `ENTRY_POINTS`.
