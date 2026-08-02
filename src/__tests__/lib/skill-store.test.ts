@@ -22,6 +22,7 @@ import {
   importSkill,
   deleteSkill,
   getUserSkillsDir,
+  getSkillPath,
   SkillDefinition,
 } from '../../lib/skill-store';
 
@@ -235,5 +236,26 @@ steps:
 
   test('throws on invalid YAML', () => {
     expect(() => importSkill('name: test\nsteps: not-an-array')).toThrow();
+  });
+});
+
+describe('getSkillPath treats a skill name as a filename, not a path', () => {
+  // `path.join` collapses `..`, so these resolved outside the skills directory.
+  // The bug was dormant while `skill edit` could not open an editor (#129) —
+  // opening one turned it into arbitrary read-and-edit of any .yaml on disk,
+  // reachable through `favro_run` where the name comes from model output.
+  test.each([
+    ['../../outside/target', 'parent traversal'],
+    ['..', 'bare parent'],
+    ['sub/nested', 'forward slash'],
+    ['sub\\nested', 'backslash'],
+    ['/etc/passwd', 'absolute path'],
+  ])('refuses %s (%s)', (name) => {
+    expect(() => getSkillPath(name)).toThrow(/Invalid skill name/);
+  });
+
+  test('a plain name still resolves, and still reports a genuine miss', () => {
+    // The guard must not swallow the not-found case it sits in front of.
+    expect(() => getSkillPath('definitely-not-a-real-skill')).toThrow(/Skill not found/);
   });
 });

@@ -20,6 +20,7 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import * as path from 'path';
 import { z } from 'zod';
+import { splitCommand } from './lib/split-command';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { version } = require('../package.json') as { version: string };
 
@@ -28,26 +29,6 @@ const execFileAsync = promisify(execFile);
 /** Path to the compiled CLI binary, resolved relative to this file's location */
 const favroBin = path.resolve(__dirname, 'cli.js');
 
-/** Split a command string into tokens, respecting single and double quotes. */
-function splitCommand(command: string): string[] {
-  const tokens: string[] = [];
-  let current = '';
-  let inSingle = false;
-  let inDouble = false;
-  for (const ch of command) {
-    if (ch === "'" && !inDouble) {
-      inSingle = !inSingle;
-    } else if (ch === '"' && !inSingle) {
-      inDouble = !inDouble;
-    } else if (ch === ' ' && !inSingle && !inDouble) {
-      if (current.length > 0) { tokens.push(current); current = ''; }
-    } else {
-      current += ch;
-    }
-  }
-  if (current.length > 0) tokens.push(current);
-  return tokens;
-}
 
 export type ToolResult = {
   content: Array<{ type: 'text'; text: string }>;
