@@ -48,8 +48,47 @@ conflict-free and then failed — a clean `merge-tree` means nothing here.
 | Issue | Branch | State |
 |---|---|---|
 | #115 | `worktree-agent-ae05dbec5d1f993d6` | 2 commits. Self-verified 141/2508. **Review was running; redo it.** Fixes the regression above. |
-| #83 | `worktree-agent-a19ba83752db3fa9c` | 1 commit + 2 uncommitted files. Review was running; redo it. Base is 31 commits stale — rebase. |
+| #83 | `worktree-agent-a19ba83752db3fa9c` | 1 commit + 2 uncommitted files. **Review completed: MERGE WITH FIXES, two items — see below.** Base is 31 commits stale; reviewer merged current main in a scratch worktree, conflict-free, 141 suites / 2513 tests. |
 | #84 | `worktree-agent-a6de9c5412acbb85d` | 1 commit. Never reported, never reviewed. Inspect before trusting. |
+
+### #83's two review fixes, in full
+
+The review verified the core fix on the **live** path and reproduced the bug on
+current main (`applyFilter(cards,'tag:typoo')` → `[]`, no throw). Two fixes:
+
+1. **The `ponytail:` comment at `src/cli.ts:1097-1102` states something false.**
+   It claims settling filter values after the board fetch gives "the same
+   refusal either way." It does not. With the board read throwing 403:
+   - `cards export <board> --filter tag:typoo` → `✗ Error: Request failed with status code 403`
+   - `cards list   <board> --filter tag:typoo` → `✗ Error: No tag matching "typoo" — ... The org's tags: bug`
+
+   Same input, two diagnoses — exactly the sin sibling #82 names, *"a structured
+   refusal naming the wrong problem entirely."* Not a fail-open (still exit 1,
+   still no file), but a comment asserting parity the code lacks is worse than
+   no comment. Also measured: `listCards` runs once on export, zero times on
+   list — the CLI's most expensive read, spent before a refusal that needed no
+   board data. One-line fix keeps the lazy shape:
+   ```ts
+   if (filters.length > 0) await applyFilters([], filters, { client, boardId: board });
+   ```
+   before `api.listCards(board)`. If that is judged not worth it, rewrite the
+   comment to say the refusal differs when the board read itself fails.
+
+2. **The only end-to-end regression test drives a dead twin.**
+   `cards-export.test.ts:558` registers `registerCardsExportCommand`, which is
+   genuinely dead — referenced only by its own file and tests, with a malformed
+   registration string. The live command is inline at `cli.ts:1041`. Both do
+   route through `applyFilters` and the reviewer confirmed the live path
+   refuses correctly, but **no committed test drives it**: delete
+   `cli.ts:1102`'s `applyFilters` call and the suite still goes green. Add one
+   test at `buildProgram()` level asserting `cards export <board> --filter
+   tag:typoo` exits 1 and writes nothing.
+
+Two suggestions, not blocking: the ratchet matches text rather than calls (the
+reviewer judged this appropriately blunt — keep it, but add a docblock line so
+the next person who trips it does not loosen the regex), and `ParseErrorDetail`
+has zero production readers anywhere, so the new `unsupported-here` kind joins
+five others nothing consumes — pre-existing debt, worth its own issue.
 
 ## 3. Work that was in flight and is now dead
 
