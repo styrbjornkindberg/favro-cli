@@ -29,9 +29,13 @@ Always re-query counts rather than trusting a number written here — a stale ta
 that reads as current has already caused one wrong report this run.
 
 ```bash
-gh issue list --state open --limit 200 --json number | grep -c '"number"'
-gh issue list --state open --label ready-for-agent --limit 200 --json number | grep -c '"number"'
+gh issue list --state open --limit 200 --json number -q '.[].number' | wc -l
+gh issue list --state open --label ready-for-agent --limit 200 --json number -q '.[].number' | wc -l
 ```
+
+Use `-q '.[].number' | wc -l`, not `grep -c`. `gh` returns the whole array on one
+line, so `grep -c` counts **1** and reads as a plausible answer — it reported
+"1 open issue" here once. The repo's own fail-closed doctrine, applied to its tooling.
 
 ## 1. How the work runs
 
