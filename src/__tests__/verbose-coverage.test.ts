@@ -125,7 +125,11 @@ describe('--verbose reaches every command that can report an error', () => {
   const leaves = actionCommands(buildProgram());
 
   it('finds the commands it is meant to be reading', () => {
-    expect(leaves.length).toBeGreaterThan(100);
+    // 125 today. Kept close to the real count on purpose: this floor exists to
+    // catch a walker that resolves nothing (a commander rename of the private
+    // `_actionHandler` returns 0), and a floor with 25 commands of slack stops
+    // gripping as #80 keeps deleting. Raise it when the surface grows.
+    expect(leaves.length).toBeGreaterThan(120);
   });
 
   it('resolves true on every action in the real command surface', async () => {

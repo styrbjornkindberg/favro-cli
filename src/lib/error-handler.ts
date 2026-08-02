@@ -47,9 +47,8 @@ export function isVerbose(): boolean {
 }
 
 /**
- * Format an error for display.
- * - Normal mode: "Error: [message]" (no stack trace)
- * - Verbose mode: Full stack trace
+ * Format an error for display. The stack trace is printed when the run asked
+ * for one, and only then.
  *
  * `verbose` is an override, never a veto: a caller that passes `false` (or
  * nothing) still gets the stack when the run was started with `--verbose`.
