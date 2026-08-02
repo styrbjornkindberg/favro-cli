@@ -122,7 +122,7 @@
  * or that no longer exists under that key in that number, fails the build. A
  * list nobody prunes turns into a permanent exemption that reads like debt.
  *
- * TODAY: 35 tracked docs, 632 documented invocations across 24 files, 602 of
+ * TODAY: 35 tracked docs, 631 documented invocations across 24 files, 601 of
  * them naming a real command, against 148 argv paths. The floors below are kept
  * near those numbers on purpose — see the self-check test.
  */
@@ -473,10 +473,10 @@ describe('every command the docs teach is a command the binary answers to', () =
     // heavy slack stops gripping while #80 keeps deleting commands.
     expect(DOC_FILES.length).toBeGreaterThan(30); // 35 today
     expect(SURFACE.size).toBeGreaterThan(140); // 148 today: 125 actions + groups
-    expect(INVOCATIONS.length).toBeGreaterThan(600); // 626 today
+    expect(INVOCATIONS.length).toBeGreaterThan(600); // 631 today
     // …and almost all of them met the real surface. See RESOLVED above: this is
     // the assertion a silently-matching-nothing walker cannot pass.
-    expect(RESOLVED).toBeGreaterThan(570); // 597 today; the rest are `<placeholder>` and bare `favro --help`
+    expect(RESOLVED).toBeGreaterThan(570); // 601 today; the rest are `<placeholder>` and bare `favro --help`
     expect(new Set(INVOCATIONS.map((i) => i.file)).size).toBeGreaterThan(22); // 24 today
   });
 
