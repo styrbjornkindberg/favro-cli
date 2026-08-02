@@ -88,6 +88,14 @@ export interface Intent<A = any, R = unknown> {
    * The board this write lands on, for the mandatory scope lock. `undefined`
    * when the intent touches no board (the lock then has nothing to check).
    *
+   * A `widgetCommonId` under its internal alias `boardId` (#120 item 4). The
+   * two names are one keyspace, deliberately: `cards-api.ts` normalises
+   * Favro's wire `widgetCommonId` to `boardId` on every card, and `assertScope`
+   * spends it straight back on the wire as `GET /widgets/${boardId}`. The alias
+   * is what makes `board()` returning `undefined` MEAN something — a card with
+   * no `widgetCommonId` is an assignment fork, which is a real card the lock
+   * cannot see, not an absent field.
+   *
    * An array when one invocation writes to several boards — a multi-create with
    * per-entry boards. EVERY board is checked; taking the first would let one
    * in-scope entry smuggle the rest of the batch past the lock.

@@ -79,9 +79,13 @@ can never take the forward one, and reversing is delete-then-add.
 `src/lib/dependency-direction.ts`, `src/lib/tx-cards.ts`.
 
 **edge direction** — Favro says before/after; this CLI says blocks/blocked-by. One
-edge, two vocabularies. `depends-on` / `blocked-by` map to `isBefore: true`; `blocks`
-maps to `isBefore: false`. There is no unordered "related to" — Favro cannot store one,
-so it is not modelled with an edge or a parent.
+edge, two vocabularies. `depends-on` maps to `isBefore: true`; `blocks` maps to
+`isBefore: false`. Those two are the whole of `LINK_TYPES`, and `--type` accepts
+nothing else — `blocked-by` names the same direction as `depends-on` in prose and on
+the surfaces that publish it (the `cards blocked-by` subcommand, the `blocked-by:`
+query predicate, `cards create --blocked-by`), but it is not a `--type` value (#120).
+There is no unordered "related to" — Favro cannot store one, so it is not modelled with
+an edge or a parent.
 
 ## The mechanics
 
@@ -150,28 +154,21 @@ failure.
 
 ## Known mismatches
 
-Places where the code does not yet speak the glossary. Recorded, not fixed — file as
-follow-ups.
+Places where the code does not yet speak the glossary. **An entry here is a debt, not a
+decision** — #120 exists because recording a mismatch had been standing in for resolving
+one. Every entry names the issue that will close it; a resolved entry leaves the list
+rather than being struck through, because git remembers.
 
-1. **Two `Collection` interfaces.** `src/lib/collections-api.ts:12` (with `boardCount`,
-   `memberCount`) and `src/lib/boards-api.ts:91` (without). Same name, different shape.
+1. **Two `Collection` interfaces.** `src/lib/collections-api.ts` (with `boardCount`,
+   `memberCount`) and `src/lib/boards-api.ts` (without). Same name, different shape, and
+   the type is only the symptom — `resolveCollectionId`, `listCollections` and
+   `getCollection` all exist twice too. **#123** collapses the surface; both declarations
+   carry a comment saying so. Structurally harmless meanwhile (the narrow shape is a
+   strict subset, so the two are mutually assignable). The live defect in the pair is
+   behavioural, and also #123's: one `resolveCollectionId` accepts names, the other does
+   not, and the card path calls the one that does not.
 
-2. **`ScopeError` is not a `RefusalError`.** Every identifier resolver now raises one
-   (see #81), but `ScopeError` (`src/lib/safety.ts:46`) still extends bare `Error`.
-   A scope refusal is a deterministic decline by the definition above — retrying it
-   cannot change the answer — so the concept and the class still cover different sets
-   at this one site.
-
-3. **`blocked-by` is accepted but not declared.** `LINK_TYPES` lists two labels
-   (`depends-on`, `blocks`) while `linkTypeToIsBefore` accepts three — `blocked-by`
-   maps to `isBefore: true` but never appears in the exported vocabulary
-   (`src/lib/dependency-direction.ts:14` vs `:22`).
-
-4. **`boardId` vs `widgetCommonId`.** The board id is renamed at the API layer but the
-   wire name resurfaces above it — `assertScope` GETs `/widgets/${boardId}`, and
-   `Intent.board` documents `widgetCommonId` semantics under the name `boardId`. An
-   alias, not a bug, but two names for one keyspace.
-
-5. **`tagId` is not one keyspace.** Two measured shapes inside one organization —
-   hex-24 and base62-17 (`src/lib/tags-api.ts:20`). Any classifier that assumes one
-   misses ~11% of tags.
+The other four entries were discharged by #120 and #122. One was not a mismatch at all
+but a bug: `ScopeError` extended bare `Error`, so a scope violation reported
+`retryable: true` and told agents to retry a decline only `favro scope set` can change.
+See `src/lib/safety.ts` for the trace, and `refusal-drift.test.ts` for the ratchet.

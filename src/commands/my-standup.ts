@@ -3,11 +3,9 @@
  * v2.0 LLM-first command: outputs JSON by default.
  */
 import { Command } from 'commander';
-import { createFavroClient } from '../lib/client-factory';
-import { resolveUserId, readConfig } from '../lib/config';
-import AggregateAPI, { AggregateCard } from '../api/aggregate';
-import { outputResult, resolveFormat } from '../lib/output';
-import { logError } from '../lib/error-handler';
+import { resolveUserId } from '../lib/config';
+import { AggregateCard } from '../api/aggregate';
+import { Ctx, run } from '../lib/run';
 import { isBlocked } from '../api/standup';
 
 const COMPLETED_STAGES = ['done', 'approved', 'archived'];
@@ -96,6 +94,65 @@ function formatHuman(data: MyStandupResult): string {
   return lines.join('\n');
 }
 
+interface MyStandupOptions {
+  collection?: string;
+  days: string;
+  limit: string;
+}
+
+export async function myStandupHandler(ctx: Ctx, options: MyStandupOptions) {
+  const userId = await resolveUserId();
+  if (!userId) {
+    throw new Error('userId not configured. Run `favro auth login` to resolve your identity.');
+  }
+
+  const dueSoonDays = parseInt(options.days, 10) || 3;
+  const cardLimit = parseInt(options.limit, 10) || 1000;
+
+  let snapshot;
+  if (options.collection) {
+    snapshot = await ctx.api.aggregate.getCollectionSnapshot(options.collection, cardLimit);
+  } else if (ctx.config.scopeCollectionId) {
+    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({ collectionIds: [ctx.config.scopeCollectionId] }, cardLimit);
+  } else {
+    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({}, cardLimit);
+  }
+
+  // Filter to my cards
+  const myCards = snapshot.allCards.filter(c =>
+    c.assignees?.includes(userId) || c.owner === userId,
+  );
+
+  // Classify
+  const completed: StandupCard[] = [];
+  const inProgress: StandupCard[] = [];
+  const blocked: StandupCard[] = [];
+  const dueSoon: StandupCard[] = [];
+
+  for (const card of myCards) {
+    const group = classifyCard(card, dueSoonDays);
+    const sc = toStandupCard(card, group);
+    switch (group) {
+      case 'completed': completed.push(sc); break;
+      case 'in-progress': inProgress.push(sc); break;
+      case 'blocked': blocked.push(sc); break;
+      case 'due-soon': dueSoon.push(sc); break;
+    }
+  }
+
+  const result: MyStandupResult = {
+    userId,
+    completed,
+    inProgress,
+    blocked,
+    dueSoon,
+    total: myCards.length,
+    generatedAt: new Date().toISOString(),
+  };
+
+  return { item: result, human: formatHuman };
+}
+
 export function registerMyStandupCommand(program: Command): void {
   program
     .command('my-standup')
@@ -103,71 +160,7 @@ export function registerMyStandupCommand(program: Command): void {
     .option('--collection <name>', 'Filter to a specific collection')
     .option('--days <n>', 'Days ahead for due-soon threshold', '3')
     .option('--limit <n>', 'Max cards per collection', '1000')
-    .option('--human', 'Human-readable formatted output')
-    .option('--json', 'JSON output (default)')
-    .action(async (options) => {
-      const verbose = program.opts()?.verbose ?? false;
-      try {
-        const userId = await resolveUserId();
-        if (!userId) {
-          console.error('Error: userId not configured. Run `favro auth login` to resolve your identity.');
-          process.exit(1);
-        }
-
-        const client = await createFavroClient();
-        const api = new AggregateAPI(client);
-        const config = await readConfig();
-        const dueSoonDays = parseInt(options.days, 10) || 3;
-        const cardLimit = parseInt(options.limit, 10) || 1000;
-
-        let snapshot;
-        if (options.collection) {
-          snapshot = await api.getCollectionSnapshot(options.collection, cardLimit);
-        } else if (config.scopeCollectionId) {
-          snapshot = await api.getMultiBoardSnapshot({ collectionIds: [config.scopeCollectionId] }, cardLimit);
-        } else {
-          snapshot = await api.getMultiBoardSnapshot({}, cardLimit);
-        }
-
-        // Filter to my cards
-        const myCards = snapshot.allCards.filter(c =>
-          c.assignees?.includes(userId) || c.owner === userId,
-        );
-
-        // Classify
-        const completed: StandupCard[] = [];
-        const inProgress: StandupCard[] = [];
-        const blocked: StandupCard[] = [];
-        const dueSoon: StandupCard[] = [];
-
-        for (const card of myCards) {
-          const group = classifyCard(card, dueSoonDays);
-          const sc = toStandupCard(card, group);
-          switch (group) {
-            case 'completed': completed.push(sc); break;
-            case 'in-progress': inProgress.push(sc); break;
-            case 'blocked': blocked.push(sc); break;
-            case 'due-soon': dueSoon.push(sc); break;
-          }
-        }
-
-        const result: MyStandupResult = {
-          userId,
-          completed,
-          inProgress,
-          blocked,
-          dueSoon,
-          total: myCards.length,
-          generatedAt: new Date().toISOString(),
-        };
-
-        const format = resolveFormat(options);
-        outputResult(result, { format }, formatHuman);
-      } catch (err: any) {
-        logError(err, verbose);
-        process.exit(1);
-      }
-    });
+    .action(run(myStandupHandler));
 }
 
 export default registerMyStandupCommand;

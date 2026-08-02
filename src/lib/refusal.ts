@@ -12,9 +12,15 @@
  * codebase can extend it without an import cycle back through `dispatch`. The
  * table tests `error instanceof RefusalError` and nothing else — so a NEW
  * refusal declared as a subclass of any existing one (`AssigneeError`,
- * `CardResolutionError`, `TrackerConfigError`, `ReverseEdgeError`, …) inherits
- * the behaviour with nothing to remember. Anything raising a bare `Error` is
- * treated as a failure, which is the safe default: it unwinds.
+ * `CardResolutionError`, `TrackerConfigError`, `ReverseEdgeError`, `ScopeError`,
+ * …) inherits the behaviour with nothing to remember. Anything raising a bare
+ * `Error` is treated as a failure, which is the safe default: it unwinds.
+ *
+ * Note the last of those: a refusal is not only a failed LOOKUP. `ScopeError`
+ * is a policy decline with nothing to resolve, and it extended bare `Error`
+ * long after every resolver had been converted, so a scope violation reported
+ * `retryable: true` (#120). The test is the `instanceof`, not the word
+ * "resolution" — `refusal-drift.test.ts` holds the whole set.
  */
 export class RefusalError extends Error {
   constructor(message: string) {

@@ -89,6 +89,22 @@ export interface ExtendedBoard extends Board {
   velocity?: VelocityData[];
 }
 
+/**
+ * The narrower of the TWO `Collection` interfaces, and the one on its way out.
+ *
+ * `collections-api.ts` declares the same name with `boardCount`/`memberCount`
+ * on top. Not deliberate, and NOT fixed here: the interface is a symptom of the
+ * whole duplicated collections surface below (`resolveCollectionId`,
+ * `listCollections`, `getCollection`, … all exist twice), and #123 owns
+ * collapsing it — *"one `resolveCollectionId` and one `Collection` interface;
+ * the card path resolves names"*. Deleting the type without the methods that
+ * return it would be a rename that collides with that work.
+ *
+ * Harmless meanwhile: this shape is a strict subset, so a value from the wider
+ * one satisfies it and no read can be short a field it was promised. The real
+ * defect in the pair is behavioural, not structural — one `resolveCollectionId`
+ * accepts names and the other does not — and that is #123's to settle.
+ */
 export interface Collection {
   collectionId: string;
   name: string;
