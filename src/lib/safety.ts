@@ -2,6 +2,7 @@ import * as readline from 'readline';
 import { FavroConfig } from './config';
 import FavroHttpClient from './http-client';
 import { logError } from './error-handler';
+import { RefusalError } from './refusal';
 import { c } from './theme';
 
 /**
@@ -42,8 +43,29 @@ export async function confirmAction(message: string, flags?: { yes?: boolean }):
  * guardrail into a CLI-only one and kills a skill run mid-transaction with the
  * compensation log unread. So the check throws, and the CLI is the only place
  * that turns the throw into an exit code.
+ *
+ * A `RefusalError` (#120), because a scope violation is the definition of a
+ * deterministic decline: the lock is configuration, so the identical call
+ * refuses identically until someone runs `favro scope set`. It was a bare
+ * `Error` until now, and that was not cosmetic — `isRetryable` claims
+ * `retryable: false` only for a `RefusalError` or a classifiable HTTP response,
+ * and a `ScopeError` is neither, so it fell through to the transient arm and
+ * came back TRUE — advice to retry a refusal only `favro scope set` can change.
+ *
+ * Reachable on ONE path today, latent on a second. `dispatch` calls
+ * `assertScope` outside its own try, so the throw escapes the table
+ * uninstrumented; the skill engine catches it as `abortCause` and, if an
+ * earlier step already wrote, asks `isRetryable(outcome, abortCause)` at the
+ * end-of-run unwind. That is live, and measured: a two-step skill whose second
+ * step straddles the lock reported `retryable: true` before this change and
+ * `false` after, with nothing else touched. The runner's error boundary
+ * (`run.ts`'s `retryableFrom`) asks the identical question and would get the
+ * identical answer, but no `run()` handler dispatches or calls `assertScope`
+ * yet — the two that touch scope go through `checkScope`, which still exits.
+ * It goes live as #115–#119 migrate the write surface, and #133 makes
+ * `checkScope` throw.
  */
-export class ScopeError extends Error {
+export class ScopeError extends RefusalError {
   constructor(
     message: string,
     readonly boardId: string,

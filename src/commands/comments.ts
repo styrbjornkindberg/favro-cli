@@ -11,6 +11,7 @@ import { createFavroClient } from '../lib/client-factory';
 import { logError } from '../lib/error-handler';
 import { boardOfCard, boardOfComment, checkResolvedScope, confirmAction } from '../lib/safety';
 import CommentsApiClient from '../api/comments';
+import { capRows, writeEnvelope } from '../lib/read-shape';
 import { formatTimestamp } from '../lib/time';
 
 export function registerCommentsCommand(program: Command): void {
@@ -62,7 +63,7 @@ export function registerCommentsCommand(program: Command): void {
       '  favro comments list <card> --limit 50\n\n' +
       'Tip: Use `favro cards list --board <id>` to find card IDs.'
     )
-    .option('--limit <number>', 'Maximum number of comments to fetch (default: 100)', '100')
+    .option('--limit <number>', 'Maximum number of comments to print (default: 100)', '100')
     .option('--json', 'Output as JSON')
     .action(async (cardId: string, options) => {
       const verbose = program.opts()?.verbose ?? false;
@@ -74,10 +75,16 @@ export function registerCommentsCommand(program: Command): void {
         const client = await createFavroClient();
         const api = new CommentsApiClient(client);
 
-        const comments = await api.listComments(cardId, limit);
+        // The fetch runs to completion; `--limit` cuts the PRINT, and the cut
+        // says so (#136). The old shape capped the fetch and then printed that
+        // count as the total, so a card with 150 comments answered "100".
+        // Both modes read the same `envelope.truncated`, so they cannot disagree.
+        const all = await api.listComments(cardId);
+        const envelope = capRows(all, limit);
+        const comments = envelope.rows;
 
         if (options.json) {
-          console.log(JSON.stringify(comments, null, 2));
+          writeEnvelope(envelope, Boolean(program.opts()?.pretty));
           return;
         }
 
@@ -86,7 +93,10 @@ export function registerCommentsCommand(program: Command): void {
           return;
         }
 
-        console.log(`\n💬 Comments on card "${cardId}" — ${comments.length} comment(s):\n`);
+        const count = envelope.truncated
+          ? `showing ${comments.length} of ${all.length} comment(s)`
+          : `${comments.length} comment(s)`;
+        console.log(`\n💬 Comments on card "${cardId}" — ${count}:\n`);
         for (const comment of comments) {
           const ts = formatTimestamp(comment.createdAt);
           const author = comment.author ? ` by ${comment.author}` : '';

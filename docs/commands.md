@@ -399,7 +399,7 @@ bodies, whole. It has no `--limit` — the board is fetched to completion.
 
 | Command | Description |
 |---------|-------------|
-| `comments list <cardId>` | List comments on a card |
+| `comments list <cardId>` | List comments on a card. `--limit <n>` caps what is **printed** (default: 100) and sets `truncated`; the fetch always runs to completion |
 | `comments get <commentId>` | Get a single comment |
 | `comments add <cardId> --text "..."` | Add a comment ⚠️ |
 | `comments update <commentId> --text "..."` | Update a comment ⚠️ |

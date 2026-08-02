@@ -1276,7 +1276,7 @@ favro comments list <cardId> [--limit <n>] [--json]
 
 | Option | Default | Description |
 |---|---|---|
-| `--limit <number>` | `100` | Maximum number of comments to fetch |
+| `--limit <number>` | `100` | Maximum number of comments to **print**. The fetch always runs to completion; when the cap cuts rows the output says so |
 | `--json` | — | Output as JSON |
 
 **Output:**
@@ -1288,6 +1288,18 @@ favro comments list <cardId> [--limit <n>] [--json]
 
   [comment-002] by bob — 2026-03-14 09:11
     Updated the implementation to handle edge case.
+```
+
+Over the cap, the header names both numbers rather than presenting the capped
+count as the total:
+```
+💬 Comments on card "card-abc123" — showing 100 of 150 comment(s):
+```
+
+`--json` emits the list envelope every list read emits, not a bare array —
+`truncated: true` is present only when `--limit` cut rows off a complete fetch:
+```json
+{"rows":[{"commentId":"comment-001","...":"..."}],"truncated":true}
 ```
 
 **Examples:**

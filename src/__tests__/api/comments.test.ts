@@ -91,17 +91,37 @@ describe('CommentsApiClient.listComments', () => {
     expect(comments.length).toBeGreaterThanOrEqual(2);
   });
 
-  it('respects the limit parameter', async () => {
-    const client = makeMockClient([{
-      entities: [
-        { commentId: 'c-1', text: 'A', createdAt: '2024-01-01T00:00:00Z' },
-        { commentId: 'c-2', text: 'B', createdAt: '2024-01-02T00:00:00Z' },
-        { commentId: 'c-3', text: 'C', createdAt: '2024-01-03T00:00:00Z' },
-      ],
-    }]);
+  it('reads past the first page rather than stopping at 100 (#136)', async () => {
+    // The old shape took a `limit` defaulting to 100 and passed it to the pager
+    // as `max`, capping the FETCH — so a card with more than a page of comments
+    // returned exactly 100 and the command printed that as the total. Two full
+    // pages here: 150 back, or the cap is still in the client.
+    const page = (from: number, count: number) => ({
+      entities: Array.from({ length: count }, (_, i) => ({
+        commentId: `c-${from + i}`,
+        text: `Comment ${from + i}`,
+        createdAt: '2024-01-01T00:00:00Z',
+      })),
+      requestId: 'req-1',
+      pages: 2,
+    });
+    const client = {
+      get: jest.fn()
+        .mockResolvedValueOnce({ cardId: 'card-1', cardCommonId: 'card-1' })
+        .mockResolvedValueOnce(page(1, 100))
+        .mockResolvedValueOnce(page(101, 50)),
+    };
     const api = new CommentsApiClient(client as any);
-    const comments = await api.listComments('card-1', 2);
-    expect(comments.length).toBeLessThanOrEqual(2);
+
+    const comments = await api.listComments('card-1');
+
+    expect(comments).toHaveLength(150);
+    expect(comments[149].commentId).toBe('c-150');
+    // No `limit` on the wire either: a fetch cap is what this ticket removed.
+    expect(client.get).toHaveBeenLastCalledWith(
+      '/comments',
+      { params: expect.not.objectContaining({ limit: expect.anything() }) },
+    );
   });
 });
 
