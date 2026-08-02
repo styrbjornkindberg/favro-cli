@@ -5,6 +5,7 @@
  * Works with raw terminal stdout — no React/ink dependency.
  */
 import { c, stripAnsi, padEnd, tableHeader } from './theme';
+import type { ContextCard } from '../api/context';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -35,6 +36,60 @@ export interface RenderOptions {
   showIds?: boolean;
   /** Compact mode (one line per card) */
   compact?: boolean;
+}
+
+// ─── Snapshot → columns ───────────────────────────────────────────────────────
+
+/**
+ * `blocked` is deliberately not set from `blockedBy` (#61). Nothing clears a
+ * Favro `isBefore` edge when the blocker finishes, so an edge count asserts
+ * "blocked" forever — and the badge sits ahead of the done marker, so a
+ * finished card carrying a stale edge rendered as blocked. Judging doneness
+ * costs a per-blocker sweep (`judgeBlockers`) that a board render does not pay
+ * for. The renderer still flags a genuinely blocked card off its column name
+ * (`statusIcon` below), the same evidence `favro standup` uses.
+ */
+function toRenderCard(card: ContextCard): RenderCard {
+  return {
+    id: card.id,
+    title: card.title,
+    assignee: card.owner,
+    tags: card.tags,
+    status: card.status,
+    due: card.due,
+  };
+}
+
+/**
+ * Lay a board snapshot out as render columns — the one home (#89) for what
+ * `board` and the interactive menu each held a copy of.
+ *
+ * A card is placed by `columnId` when the board declares that column, and falls
+ * back to its status name otherwise, so a card whose column the snapshot did not
+ * carry still appears somewhere instead of vanishing. Declared columns survive
+ * empty; status columns only exist once something lands in them.
+ */
+export function snapshotToColumns(
+  snapshot: { columns: Array<{ id: string; name: string }>; cards: ContextCard[] },
+): RenderColumn[] {
+  const columnMap = new Map<string, RenderCard[]>();
+  for (const col of snapshot.columns) columnMap.set(col.name, []);
+
+  // A board with no columns is grouped by status instead.
+  if (snapshot.columns.length === 0) {
+    for (const card of snapshot.cards) columnMap.set(card.status ?? 'Unknown', []);
+  }
+
+  for (const card of snapshot.cards) {
+    const col = card.columnId
+      ? snapshot.columns.find(candidate => candidate.id === card.columnId)
+      : undefined;
+    const name = col && columnMap.has(col.name) ? col.name : (card.status ?? 'Unknown');
+    if (!columnMap.has(name)) columnMap.set(name, []);
+    columnMap.get(name)!.push(toRenderCard(card));
+  }
+
+  return Array.from(columnMap.entries()).map(([name, cards]) => ({ name, cards }));
 }
 
 // ─── Card Formatting ──────────────────────────────────────────────────────────

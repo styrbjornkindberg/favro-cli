@@ -11,7 +11,9 @@
  *
  * `scoreCard` reads the clock for due urgency, so the system time is fixed.
  */
-import { scoreCard, extractPriority, extractEffort } from '../../commands/next';
+import { scoreCard, extractPriority } from '../../commands/next';
+// `extractEffort` moved to its one home in `api/context` (#89).
+import { extractEffort } from '../../api/context';
 import { AggregateCard } from '../../api/aggregate';
 
 const NOW = '2026-06-15T12:00:00.000Z';

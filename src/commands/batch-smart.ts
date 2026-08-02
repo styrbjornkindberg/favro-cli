@@ -14,6 +14,7 @@ import { Command } from 'commander';
 import CardsAPI, { Card, UpdateCardRequest } from '../lib/cards-api';
 import { logError } from '../lib/error-handler';
 import { createFavroClient } from '../lib/client-factory';
+import { isOverdue, isBlocked } from '../lib/card-predicates';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -261,26 +262,6 @@ export function buildCardFilter(filterStr: string): (card: Card) => boolean {
   }
 
   return (card) => filters.every(f => f(card));
-}
-
-// ---------------------------------------------------------------------------
-// Card predicates
-// ---------------------------------------------------------------------------
-
-export function isOverdue(card: Card): boolean {
-  if (!card.dueDate) return false;
-  // Use local midnight for timezone-correct comparison
-  const [year, month, day] = card.dueDate.split('-').map(Number);
-  const dueDate = new Date(year, month - 1, day);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  return dueDate < today;
-}
-
-export function isBlocked(card: Card): boolean {
-  if (card.tags && card.tags.some(t => t.toLowerCase().includes('blocked'))) return true;
-  if (card.status && card.status.toLowerCase().includes('blocked')) return true;
-  return false;
 }
 
 // ---------------------------------------------------------------------------

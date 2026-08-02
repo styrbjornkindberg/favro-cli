@@ -11,8 +11,6 @@ import {
   buildRollbackRequest,
   formatPreview,
   executeOperationsAtomic,
-  isOverdue,
-  isBlocked,
   CardOperation,
 } from '../../commands/batch-smart';
 import CardsAPI, { Card } from '../../lib/cards-api';
@@ -360,55 +358,9 @@ describe('buildCardFilter', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// isOverdue
-// ---------------------------------------------------------------------------
-
-describe('isOverdue', () => {
-  it('returns true for past due date', () => {
-    const card = overdueCard();
-    expect(isOverdue(card)).toBe(true);
-  });
-
-  it('returns false for future due date', () => {
-    const card = futureCard();
-    expect(isOverdue(card)).toBe(false);
-  });
-
-  it('returns false for card with no dueDate', () => {
-    const card = makeCard({ dueDate: undefined });
-    expect(isOverdue(card)).toBe(false);
-  });
-
-  it('returns false for today (not yet overdue)', () => {
-    // Use local date formatting to avoid UTC offset issues (lesson from CLA-1780)
-    const today = new Date();
-    const year = today.getFullYear();
-    const month = String(today.getMonth() + 1).padStart(2, '0');
-    const day = String(today.getDate()).padStart(2, '0');
-    const todayStr = `${year}-${month}-${day}`;
-    const card = makeCard({ dueDate: todayStr });
-    expect(isOverdue(card)).toBe(false);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// isBlocked
-// ---------------------------------------------------------------------------
-
-describe('isBlocked', () => {
-  it('returns true if tags include "blocked"', () => {
-    expect(isBlocked(makeCard({ tags: ['blocked', 'urgent'] }))).toBe(true);
-  });
-
-  it('returns true if status includes "blocked"', () => {
-    expect(isBlocked(makeCard({ status: 'Blocked' }))).toBe(true);
-  });
-
-  it('returns false for normal cards', () => {
-    expect(isBlocked(makeCard({ tags: ['urgent'], status: 'In Progress' }))).toBe(false);
-  });
-});
+// `isOverdue` / `isBlocked` moved to `lib/card-predicates` (#89) — their tests
+// went with them, to `__tests__/lib/card-predicates.test.ts`. The filter tests
+// above still exercise both through `buildCardFilter`.
 
 // ---------------------------------------------------------------------------
 // buildUpdateRequest / buildRollbackRequest
