@@ -1,7 +1,14 @@
 import FavroHttpClient from './http-client';
-import { cachedUsers } from './name-cache';
+import { cachedList } from './name-cache';
 import { MISSING_WORDING } from './favro-error';
 import { RefusalError } from './refusal';
+import { isUserId } from './id-shapes';
+
+/**
+ * Re-exported from the shape table (#122). `isUserId` and its measured shape
+ * live in `id-shapes.ts` now; this keeps every existing import working.
+ */
+export { isUserId };
 
 export interface User {
   userId: string;
@@ -20,14 +27,6 @@ export interface PaginatedResponse<T> {
   entities: T[];
   requestId?: string;
   pages?: number;
-}
-
-/** `userId` is NEVER hex-24 — 135/135 measured are base62-17. */
-const BASE62_17 = /^[0-9A-Za-z]{17}$/;
-
-/** True when the string has the shape of a `userId`. */
-export function isUserId(value: string): boolean {
-  return BASE62_17.test(value.trim());
 }
 
 export type UserKey = 'email' | 'userId' | 'name';
@@ -195,6 +194,18 @@ export class UsersAPI {
   async deleteGroup(groupId: string): Promise<void> {
     await this.client.delete(`/usergroups/${groupId}`);
   }
+}
+
+/**
+ * Org users, cached.
+ *
+ * Lives here rather than in `name-cache` because the leaf cache must not import
+ * its own consumers — that was one of the two import cycles #122 kills. The
+ * cache takes a `fetch` callback; the caller owns the API class.
+ */
+export function cachedUsers(client: FavroHttpClient, organizationId?: string): Promise<User[]> {
+  const api = new UsersAPI(client);
+  return cachedList<User>(organizationId, 'users', () => api.listUsers());
 }
 
 export default UsersAPI;

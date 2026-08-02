@@ -94,3 +94,10 @@ jobs:
       # checked before #121, so it is one gate, not two.
       - name: TypeScript type check (source + tests)
         run: npm run typecheck
+
+      # Meaningful as a gate only since #122: `name-cache` used to import the
+      # two API classes that import it back, so the graph was never clean and a
+      # check would have been permanently red. `--extensions ts` is load-bearing
+      # — without it madge finds 0 files and passes for the wrong reason.
+      - name: Import cycle check
+        run: npm run check:cycles

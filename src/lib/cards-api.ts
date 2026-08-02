@@ -1,8 +1,8 @@
 import FavroHttpClient from './http-client';
-import { Tag } from './tags-api';
+import { Tag, cachedTags } from './tags-api';
 import ColumnDirectory, { ColumnResolutionError } from './column-directory';
 import CardReferenceResolver, { CardResolutionError, isSequentialReference } from './card-reference';
-import { cachedTags, invalidateCache } from './name-cache';
+import { invalidateCache } from './name-cache';
 import { isUserId } from './users-api';
 import { resolveAssignee } from './assignee';
 import { RefusalError } from './refusal';

@@ -280,22 +280,42 @@ export class AggregateAPI {
   }
 
   /**
-   * Convenience: get snapshot for a single collection by name or ID.
+   * Snapshot for a single collection, by id or by exact name.
+   *
+   * What was deleted here (#122, ADR-0003) is the substring fallback —
+   * `all.find(c => c.name.toLowerCase().includes(lower))`, first hit wins, no
+   * ambiguity refusal — and the bare `catch { }` that reached it on ANY error,
+   * so a 500 was answered with somebody else's collection.
+   *
+   * What was NOT deleted is the direct read. `getCollection` is the same
+   * escalate-on-classified-not-found shape the board side keeps
+   * (`ContextAPI.resolveBoard` → `BoardsAPI.getBoard`): an id costs one
+   * `GET /collections/{id}`, and only a classified not-found falls through to
+   * `resolveCollectionId`, which paginates the listing to completion and
+   * refuses an unknown or a duplicated name with every colliding id listed.
+   * Two reasons to keep it, and the honest weight of each:
+   *
+   * - **Symmetry.** Boards and collections resolve the same way, or the next
+   *   reader has to find out why not. This is the load-bearing one.
+   * - **A collection that reads by id but is absent from the listing** —
+   *   archived, or scoped oddly — keeps working instead of refusing. Nobody
+   *   here has measured whether that case exists.
+   *
+   * Not a reason: saving the listing. `getMultiBoardSnapshot` →
+   * `listBoardsByCollection` resolves the collection again downstream, so on a
+   * cold cache the sweep happens either way (warm, the second is free). An
+   * earlier draft of this claimed the fast path saved nine commands a sweep;
+   * the wire test disproved it.
+   *
+   * Trade taken knowingly: the refusal then names `favro collections get
+   * <collectionId>` rather than each caller's own `--collection` flag. That is
+   * a command that exists today, which is the requirement; threading a
+   * `useIdWith` through `getCollection` to sharpen the wording is not worth a
+   * parameter on the read path.
    */
   async getCollectionSnapshot(collectionRef: string, cardLimit?: number): Promise<AggregateSnapshot> {
-    // Try direct ID first
-    try {
-      const coll = await this.collectionsApi.getCollection(collectionRef);
-      if (coll) return this.getMultiBoardSnapshot({ collectionIds: [coll.collectionId] }, cardLimit);
-    } catch { /* fall through */ }
-
-    // Name search
-    const all = await this.collectionsApi.listCollections();
-    const lower = collectionRef.toLowerCase();
-    const match = all.find(c => c.name.toLowerCase() === lower)
-      ?? all.find(c => c.name.toLowerCase().includes(lower));
-    if (!match) throw new Error(`Collection not found: "${collectionRef}"`);
-    return this.getMultiBoardSnapshot({ collectionIds: [match.collectionId] }, cardLimit);
+    const coll = await this.collectionsApi.getCollection(collectionRef);
+    return this.getMultiBoardSnapshot({ collectionIds: [coll.collectionId] }, cardLimit);
   }
 
   private buildStats(cards: AggregateCard[]): AggregateStats {

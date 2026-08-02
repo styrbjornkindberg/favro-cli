@@ -110,34 +110,31 @@ beforeEach(() => {
 
 // ─── resolveBoard ─────────────────────────────────────────────────────────────
 
+// `resolveBoard` is one call into the resolver now (#122) — no local listing,
+// no substring fallback. What it *resolves to* is BoardsAPI's contract and is
+// pinned against a real wire in `boards-collections-resolve-wire.test.ts` and
+// `context-aggregate-resolve-wire.test.ts`; all this mocked suite can honestly
+// assert is that nothing is done to the argument on the way in or the answer
+// on the way out.
 describe('ContextAPI.resolveBoard()', () => {
-  it('resolves board by direct ID lookup', async () => {
-    const api = buildAPI();
-    const board = await api.resolveBoard('boards-1234');
-    expect(board.boardId).toBe('boards-1234');
-    expect(MockBoardsAPI.prototype.getBoard).toHaveBeenCalledWith('boards-1234');
-  });
-
-  it('falls back to name search when ID lookup fails', async () => {
-    MockBoardsAPI.prototype.getBoard.mockRejectedValue(new Error('Not found'));
+  it('hands the reference to the resolver untouched', async () => {
     const api = buildAPI();
     const board = await api.resolveBoard('Sprint 42');
     expect(board.boardId).toBe('boards-1234');
-    expect(MockBoardsAPI.prototype.listBoards).toHaveBeenCalled();
+    expect(MockBoardsAPI.prototype.getBoard).toHaveBeenCalledWith('Sprint 42');
   });
 
-  it('matches board by partial name (case-insensitive)', async () => {
-    MockBoardsAPI.prototype.getBoard.mockRejectedValue(new Error('Not found'));
+  it('never lists boards itself — the 100-board cap is gone with the fallback', async () => {
     const api = buildAPI();
-    const board = await api.resolveBoard('sprint');
-    expect(board.boardId).toBe('boards-1234');
+    await api.resolveBoard('Sprint 42');
+    expect(MockBoardsAPI.prototype.listBoards).not.toHaveBeenCalled();
   });
 
-  it('throws if board not found by name or ID', async () => {
-    MockBoardsAPI.prototype.getBoard.mockRejectedValue(new Error('Not found'));
-    MockBoardsAPI.prototype.listBoards.mockResolvedValue([]);
+  it('propagates the resolver’s refusal instead of guessing a partial match', async () => {
+    MockBoardsAPI.prototype.getBoard.mockRejectedValue(new Error('2 boards are named "Sprint"'));
     const api = buildAPI();
-    await expect(api.resolveBoard('unknown-board')).rejects.toThrow('Board not found');
+    await expect(api.resolveBoard('Sprint')).rejects.toThrow('2 boards are named "Sprint"');
+    expect(MockBoardsAPI.prototype.listBoards).not.toHaveBeenCalled();
   });
 });
 

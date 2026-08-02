@@ -14,7 +14,7 @@
  */
 import FavroHttpClient from './http-client';
 import ColumnDirectory from './column-directory';
-import { cachedTags } from './name-cache';
+import { cachedTags } from './tags-api';
 import { invalidateCache } from './name-cache';
 import { resolveAssignee } from './assignee';
 import { ParseError, Query, QueryNode, FieldPredicate } from './query-parser';
