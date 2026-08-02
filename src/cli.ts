@@ -346,9 +346,8 @@ cards
       // instead of costing a whole board read and answering a plausible 0 rows.
       let query: import('./lib/query-parser').Query | undefined;
       if (options.filter) {
-        const { parseQuery } = await import('./lib/query-parser');
-        const { validateQueryValues } = await import('./lib/query-values');
-        query = await validateQueryValues(parseQuery(options.filter), {
+        const { resolveQuery } = await import('./lib/query-values');
+        query = await resolveQuery(options.filter, {
           client,
           boardId: effectiveBoardId,
         });
@@ -1104,15 +1103,25 @@ cards
       const client = await createFavroClient();
       const api = new CardsAPI(client);
 
+      // The whole protocol `cards list` runs \u2014 parse AND settle the values \u2014 so
+      // a typo'd tag or column refuses instead of exporting zero rows (#83), and
+      // settled BEFORE the fetch, where `cards list` settles it. A refusal needs
+      // no board data: paging the board first spends the most expensive read
+      // this CLI makes on nothing, and when that read is what fails the user
+      // gets a 403 where `cards list` names the typo.
+      // ponytail: costs a second `resolveQuery` below, served from the name
+      // cache. Thread one query through if it ever shows up in a profile.
+      const filters: string[] = options.filter ?? [];
+      if (filters.length > 0) await applyFilters([], filters, { client, boardId: board });
+
       const spinner = new (await import('./lib/progress')).Spinner('Fetching cards');
       spinner.start();
       let cardList = await api.listCards(board);
       spinner.stop();
 
-      const filters: string[] = options.filter ?? [];
       if (filters.length > 0) {
         const before = cardList.length;
-        cardList = applyFilters(cardList, filters);
+        cardList = await applyFilters(cardList, filters, { client, boardId: board });
         console.error(`\u2139 Filters applied: ${before} \u2192 ${cardList.length} card(s)`);
       }
 

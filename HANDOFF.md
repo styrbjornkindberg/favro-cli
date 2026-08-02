@@ -8,7 +8,25 @@ are in remit.
 
 ---
 
-## 1. READ THIS FIRST — a live regression on main
+## 1. RESOLVED — the --human regression is fixed and merged
+
+(Kept for the record; #115 merged, main is green at 141 suites / 2514 tests.)
+
+### The trap it leaves behind
+
+`--json` is now a parse error on the eight persona commands. **Do not fix it by
+declaring `--json` on the root.** That was tried and reverted: a root `--json`
+swallows the leaf `--json` on every *unmigrated* command that still declares one
+(`cards update --from-csv`, `cards link`, `cards unlink`, `cards list`) — 6 tests
+red. It is the same bug in the other direction. A root `--json` is only safe once
+no leaf declares one, i.e. after #119. Until then: per-command, or not at all.
+
+The general rule, now measured twice: **a leaf can own a flag; it cannot shadow
+an ancestor's.** `cli.ts` enables neither `positionalOptions` nor
+`passThroughOptions`, so the root's `parseOptions` scans the whole argv and
+swallows any flag it declared, wherever it appears.
+
+### The original regression, for the record
 
 **`--human` is dead on all eight persona commands** (`next`, `overview`,
 `health`, `my-cards`, `workload`, `stale`, `my-standup`, `team`). They print
@@ -32,10 +50,10 @@ ancestor's option") and that claim is false. It slipped through because #114's
 byte-identity harness covered the twelve commands it migrated, not the eight it
 broke in passing.
 
-**The fix is written and waiting**: branch `worktree-agent-ae05dbec5d1f993d6`
-(#115) deletes all eight leaf declarations and adds `persona-human-flag.test.ts`,
-table-driven, one case per command. Its review was in flight when the session
-ended — re-run it, then merge. Do not write a competing hotfix.
+Fixed by #115 (`ab36b0d` + `a211127`), merged. Still open from its review:
+`overview`'s human output advises `--json`, which errors; and the `userId not
+configured` refusal reports `retryable: true` at three sites (throw
+`RefusalError` rather than `Error` — `isRetryable` returns false for one).
 
 ---
 
@@ -47,9 +65,8 @@ conflict-free and then failed — a clean `merge-tree` means nothing here.
 
 | Issue | Branch | State |
 |---|---|---|
-| #115 | `worktree-agent-ae05dbec5d1f993d6` | 2 commits. Self-verified 141/2508. **Review was running; redo it.** Fixes the regression above. |
 | #83 | `worktree-agent-a19ba83752db3fa9c` | 1 commit + 2 uncommitted files. **Review completed: MERGE WITH FIXES, two items — see below.** Base is 31 commits stale; reviewer merged current main in a scratch worktree, conflict-free, 141 suites / 2513 tests. |
-| #84 | `worktree-agent-a6de9c5412acbb85d` | 1 commit. Never reported, never reviewed. Inspect before trusting. |
+| #84 | `worktree-agent-a6de9c5412acbb85d` | **2 commits — carries #83's commit as its parent.** Reported in full, not reviewed. Self-verified 142 suites / 2527 tests. Reviewing it reviews #83 too; `git diff 86dbeb7..HEAD` isolates #84. |
 
 ### #83's two review fixes, in full
 
@@ -95,11 +112,80 @@ five others nothing consumes — pre-existing debt, worth its own issue.
 The agents are gone; the worktrees survive. Check each before restarting from
 scratch.
 
-- **#99** (`worktree-agent-a2309472d2c816a4b`) — **29 uncommitted files, 0
-  commits.** The largest body of unsaved work. Read it before you decide whether
-  to salvage or redo.
-- **#82** (`worktree-agent-afa54d8a0d15ff264`) — nothing committed, nothing
-  dirty. Restart it.
+### #82 finished and committed — needs review, then merge
+
+`worktree-agent-afa54d8a0d15ff264`, `94e8d44` + `63cdfcc` (merge of main @
+`906242b`). Self-verified **on the merge result**: typecheck clean, cycles
+clean, **142 suites / 2570 tests**. Not independently reviewed.
+
+**Nine entry points forwarded a raw board reference into `widgetCommonId`, not
+the two the ticket names** — `listCards`, `getCard`, `createCard`, `updateCard`,
+`moveCard`, `findCardBySequentialId`, `resolveCardId`, `resolveCardCommonId`,
+and the bare-string `listCards(board)` shorthand. Fixing only the two named
+would have left six siblings answering zero rows. One guard at the convergence:
+`CardsAPI.boardIdOf` → `BoardsAPI.resolveBoardId`, resolving board **before**
+column so the refusal stops naming the wrong problem.
+
+Reused #122's existing refusal wording and `NameResolutionError`'s `ambiguous`
+kind rather than inventing a second phrasing. Corrects one claim in this
+handoff's earlier record: #122 *provided* criteria 3 and 4 but only met them for
+`next` (which goes via `ContextAPI.resolveBoard`); every `CardsAPI` path was
+still open, and criteria 1, 2 and 5 entirely so. #91 did not reduce the symptom
+— the zero rows were never a page-1 skip.
+
+Cost it names honestly: a board id absent from `GET /widgets` now refuses rather
+than reads. Unavoidable if existence is validated at all — a bogus
+`widgetCommonId` returns 200, not a classified not-found. Warm path costs no
+network.
+
+**Two things it reported rather than absorbed, both worth tickets:**
+
+- **`assertScope` takes a raw board reference** — `GET /widgets/{boardId}` with
+  whatever the caller hands it, at six sites (`cards-link.ts:223`,
+  `batch.ts:321/465`, `batch-smart.ts:463`, `git.ts:430`, `cli.ts:851`). Under a
+  configured lock a board *name* fails there before reaching the new seam. It
+  fails **closed and loudly**, never zero rows, and it is pre-existing — but the
+  convergent one-line fix belongs in `safety.ts`, which #120 was actively moving.
+- **`columns list`, `custom-fields list --board`, `members list --board`** have
+  the same 200-empty fail-open through their own API classes. Not card-shaped so
+  outside #82's criteria, and their help text honestly says "Board ID".
+
+### #99 finished and committed — needs review, then merge
+
+`worktree-agent-a2309472d2c816a4b`, commits `28f6ad6` → `23cac6c` (merge of
+main) → `cf0d5d0`. Clean tree. Self-verified **on the merge result**: typecheck
+clean, cycles clean, **142 suites / 2552 tests**. Not independently reviewed —
+that is the only thing standing between it and merge.
+
+It enumerated 21 array-emitting sites with a TS-checker detector rather than by
+name-guessing: 4 already compliant (3 of which had no `--limit`, so `truncated`
+was structurally unreachable), 17 fixed, 1 left to #136, 4 decided out of remit
+and recorded (write echoes own their shape via `reportDispatch`; `cards export`
+is a serialisation format shared with `--out`, where an envelope would make the
+file and the pipe disagree).
+
+Two real bugs found in passing:
+
+- **`activity` was silently cutting rows** — `--limit` was sliced client-side
+  inside `getCardActivity` with nothing saying so. `limit` is now gone from
+  `CardActivityOptions` entirely, #136's shape, so it cannot return a layer down.
+- **Latent NaN bug in `capRows`**: `--limit banana` → `NaN < 1` is false →
+  `slice(0, NaN)` → **zero rows, marked `truncated`**. Guard rewritten as
+  `!(cap >= 1)`.
+
+It also touched `src/lib/run.ts` — `RowsResult.limit` widened, and one
+`noteTruncation` after `writeHuman` so a `human` formatter (which receives rows,
+not the envelope, and so cannot see `truncated`) reports the cut. Additive, and
+it gives #115's eight persona commands truncation-reporting for free.
+
+Its ratchet `list-envelope-coverage.test.ts` fired unprompted when #136 merged —
+the staleness arm caught the stale allowlist line.
+
+**Worth filing, found but not fixed:** the eight persona commands' `--limit`
+flags are *fetch* caps of exactly the #44/#91 class (`parseInt(options.limit,10)
+|| 1000` fed into the read). The ratchet does not catch them because they emit
+report objects rather than arrays. Same for `git todos` (`{total, items}`) and
+`git branches` (`{branches, linkedBoard}`).
 
 ## 4. Blocked, and why
 

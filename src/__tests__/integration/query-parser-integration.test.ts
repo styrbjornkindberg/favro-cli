@@ -4,6 +4,13 @@
  */
 import { applyFilter, applyFilters } from '../../commands/cards-export';
 import { Card } from '../../lib/cards-api';
+import { ParseError } from '../../lib/query-parser';
+import { stubFilterContext, useTempConfigDir } from '../../test-support/filter-vocabulary';
+
+useTempConfigDir();
+
+/** The org every filter here is settled against — see #83. */
+const ctx = () => stubFilterContext();
 
 describe('Query Parser CLI Integration', () => {
   const sampleCards: Card[] = [
@@ -40,107 +47,116 @@ describe('Query Parser CLI Integration', () => {
   ];
 
   describe('Basic field filtering', () => {
-    test('filters by status with : operator', () => {
-      const result = applyFilter(sampleCards, 'status:done');
+    test('filters by status with : operator', async () => {
+      const result = await applyFilter(sampleCards, 'status:done', ctx());
       expect(result).toHaveLength(1);
       expect(result[0].cardId).toBe('card-001');
     });
 
-    test('filters by status with = operator', () => {
-      const result = applyFilter(sampleCards, 'status=done');
+    test('filters by status with = operator', async () => {
+      const result = await applyFilter(sampleCards, 'status=done', ctx());
       expect(result).toHaveLength(1);
       expect(result[0].cardId).toBe('card-001');
     });
 
-    test('filters by assignee using ~ (contains)', () => {
-      const result = applyFilter(sampleCards, 'assignee~alice');
+    test('filters by assignee using ~ (contains)', async () => {
+      const result = await applyFilter(sampleCards, 'assignee~alice', ctx());
       expect(result).toHaveLength(2);
       expect(result.map(c => c.cardId).sort()).toEqual(['card-001', 'card-003']);
     });
 
-    test('filters by tag', () => {
-      const result = applyFilter(sampleCards, 'tag:bug');
+    test('filters by tag', async () => {
+      const result = await applyFilter(sampleCards, 'tag:bug', ctx());
       expect(result).toHaveLength(1);
       expect(result[0].cardId).toBe('card-002');
     });
   });
 
   describe('AND operator (CRITICAL FIX #1)', () => {
-    test('filters with AND: "status:done AND assignee~alice"', () => {
-      const result = applyFilter(sampleCards, 'status:done AND assignee~alice');
+    test('filters with AND: "status:done AND assignee~alice"', async () => {
+      const result = await applyFilter(sampleCards, 'status:done AND assignee~alice', ctx());
       expect(result).toHaveLength(1);
       expect(result[0].cardId).toBe('card-001');
     });
 
-    test('filters with multiple AND: "status:in-progress AND tag:bug AND assignee~bob"', () => {
-      const result = applyFilter(sampleCards, 'status:in-progress AND tag:bug AND assignee~bob');
+    test('filters with multiple AND: "status:in-progress AND tag:bug AND assignee~bob"', async () => {
+      const result = await applyFilter(sampleCards, 'status:in-progress AND tag:bug AND assignee~bob', ctx());
       expect(result).toHaveLength(1);
       expect(result[0].cardId).toBe('card-002');
     });
 
-    test('AND with no matching cards returns empty', () => {
-      const result = applyFilter(sampleCards, 'status:done AND tag:bug');
+    test('AND with no matching cards returns empty', async () => {
+      const result = await applyFilter(sampleCards, 'status:done AND tag:bug', ctx());
       expect(result).toHaveLength(0);
     });
   });
 
   describe('OR operator (CRITICAL FIX #1)', () => {
-    test('filters with OR: "status:done OR status:in-progress"', () => {
-      const result = applyFilter(sampleCards, 'status:done OR status:in-progress');
+    test('filters with OR: "status:done OR status:in-progress"', async () => {
+      const result = await applyFilter(sampleCards, 'status:done OR status:in-progress', ctx());
       expect(result).toHaveLength(2);
       expect(result.map(c => c.cardId).sort()).toEqual(['card-001', 'card-002']);
     });
 
-    test('filters with OR across fields: "status:done OR assignee~carol"', () => {
-      const result = applyFilter(sampleCards, 'status:done OR assignee~carol');
+    test('filters with OR across fields: "status:done OR assignee~carol"', async () => {
+      const result = await applyFilter(sampleCards, 'status:done OR assignee~carol', ctx());
       expect(result).toHaveLength(2);
       expect(result.map(c => c.cardId).sort()).toEqual(['card-001', 'card-003']);
     });
 
-    test('OR with no matches returns empty', () => {
-      const result = applyFilter(sampleCards, 'status:completed OR status:archived');
+    test('OR with no matches returns empty', async () => {
+      // Both arms name real columns, so this is a true empty — not a typo
+      // dressed up as one. `status:completed` refuses now (#83).
+      const result = await applyFilter(sampleCards, 'status:todo AND tag:release', ctx());
       expect(result).toHaveLength(0);
+    });
+
+    test('OR over a column this board does not have refuses (#83)', async () => {
+      await expect(
+        applyFilter(sampleCards, 'status:completed OR status:archived', ctx())
+      ).rejects.toThrow(/completed/);
     });
   });
 
   describe('Parentheses (CRITICAL FIX #1)', () => {
-    test('filters with parentheses: "(status:done OR status:in-progress) AND assignee~alice"', () => {
-      const result = applyFilter(sampleCards, '(status:done OR status:in-progress) AND assignee~alice');
+    test('filters with parentheses: "(status:done OR status:in-progress) AND assignee~alice"', async () => {
+      const result = await applyFilter(sampleCards, '(status:done OR status:in-progress) AND assignee~alice', ctx());
       expect(result).toHaveLength(1);
       expect(result[0].cardId).toBe('card-001');
     });
 
-    test('filters with nested parentheses: "status:done OR (assignee~alice AND tag:docs)"', () => {
-      const result = applyFilter(sampleCards, 'status:done OR (assignee~alice AND tag:docs)');
+    test('filters with nested parentheses: "status:done OR (assignee~alice AND tag:docs)"', async () => {
+      const result = await applyFilter(sampleCards, 'status:done OR (assignee~alice AND tag:docs)', ctx());
       expect(result).toHaveLength(2);
       expect(result.map(c => c.cardId).sort()).toEqual(['card-001', 'card-003']);
     });
   });
 
   describe('applyFilters — Multiple filter expressions with AND logic', () => {
-    test('applies filters as AND: ["status:done", "assignee~alice"]', () => {
-      const result = applyFilters(sampleCards, ['status:done', 'assignee~alice']);
+    test('applies filters as AND: ["status:done", "assignee~alice"]', async () => {
+      const result = await applyFilters(sampleCards, ['status:done', 'assignee~alice'], ctx());
       expect(result).toHaveLength(1);
       expect(result[0].cardId).toBe('card-001');
     });
 
-    test('applies three filters with AND: ["status:in-progress", "tag:bug", "assignee~bob"]', () => {
-      const result = applyFilters(sampleCards, ['status:in-progress', 'tag:bug', 'assignee~bob']);
+    test('applies three filters with AND: ["status:in-progress", "tag:bug", "assignee~bob"]', async () => {
+      const result = await applyFilters(sampleCards, ['status:in-progress', 'tag:bug', 'assignee~bob'], ctx());
       expect(result).toHaveLength(1);
       expect(result[0].cardId).toBe('card-002');
     });
 
-    test('returns all cards when filters array is empty', () => {
-      const result = applyFilters(sampleCards, []);
+    test('returns all cards when filters array is empty', async () => {
+      const result = await applyFilters(sampleCards, [], ctx());
       expect(result).toHaveLength(sampleCards.length);
     });
   });
 
   describe('Complex queries combining all features', () => {
-    test('complex: "(status:done OR status:in-progress) AND (assignee~alice OR tag:urgent)"', () => {
-      const result = applyFilter(
+    test('complex: "(status:done OR status:in-progress) AND (assignee~alice OR tag:urgent)"', async () => {
+      const result = await applyFilter(
         sampleCards,
-        '(status:done OR status:in-progress) AND (assignee~alice OR tag:urgent)'
+        '(status:done OR status:in-progress) AND (assignee~alice OR tag:urgent)',
+        ctx()
       );
       // card-001 (done, alice) ✓
       // card-002 (in-progress, urgent) ✓
@@ -149,67 +165,59 @@ describe('Query Parser CLI Integration', () => {
       expect(result.map(c => c.cardId).sort()).toEqual(['card-001', 'card-002']);
     });
 
-    test('complex with contains and exact match: "assignee~alice AND tag:docs"', () => {
-      const result = applyFilter(sampleCards, 'assignee~alice AND tag:docs');
+    test('complex with contains and exact match: "assignee~alice AND tag:docs"', async () => {
+      const result = await applyFilter(sampleCards, 'assignee~alice AND tag:docs', ctx());
       expect(result).toHaveLength(1);
       expect(result[0].cardId).toBe('card-003');
     });
   });
 
   describe('Operator precedence (AND > OR)', () => {
-    test('AND has higher precedence than OR: "status:done OR status:in-progress AND tag:bug"', () => {
+    test('AND has higher precedence than OR: "status:done OR status:in-progress AND tag:bug"', async () => {
       // Should parse as: status:done OR (status:in-progress AND tag:bug)
       // card-001 (done) ✓
       // card-002 (in-progress AND bug) ✓
       // card-003 (todo) ✗
-      const result = applyFilter(sampleCards, 'status:done OR status:in-progress AND tag:bug');
+      const result = await applyFilter(sampleCards, 'status:done OR status:in-progress AND tag:bug', ctx());
       expect(result).toHaveLength(2);
       expect(result.map(c => c.cardId).sort()).toEqual(['card-001', 'card-002']);
     });
   });
 
   describe('Error handling', () => {
-    test('invalid syntax exits process (tested via mock)', () => {
-      const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-      const exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => { throw new Error('exit'); });
-
-      expect(() => applyFilter(sampleCards, 'status:done AND AND')).toThrow('exit');
-      expect(errorSpy).toHaveBeenCalled();
-
-      errorSpy.mockRestore();
-      exitSpy.mockRestore();
+    // The refusal is RAISED, not printed and exited (#83): the command's own
+    // catch reports it, so export and list say the same words about the same
+    // input and both carry the structured `detail` an agent can read.
+    test('invalid syntax refuses', async () => {
+      await expect(applyFilter(sampleCards, 'status:done AND AND', ctx()))
+        .rejects.toBeInstanceOf(ParseError);
     });
 
-    test('unclosed parenthesis exits process', () => {
-      const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-      const exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => { throw new Error('exit'); });
-
-      expect(() => applyFilter(sampleCards, '(status:done')).toThrow('exit');
-
-      errorSpy.mockRestore();
-      exitSpy.mockRestore();
+    test('unclosed parenthesis refuses', async () => {
+      await expect(applyFilter(sampleCards, '(status:done', ctx()))
+        .rejects.toThrow(/Unclosed parenthesis/i);
     });
   });
 
   describe('Real-world use cases', () => {
-    test('export active work: "status:in-progress OR status:todo"', () => {
-      const result = applyFilter(sampleCards, 'status:in-progress OR status:todo');
+    test('export active work: "status:in-progress OR status:todo"', async () => {
+      const result = await applyFilter(sampleCards, 'status:in-progress OR status:todo', ctx());
       expect(result).toHaveLength(2);
     });
 
-    test('export alice\'s work: "assignee~alice"', () => {
-      const result = applyFilter(sampleCards, 'assignee~alice');
+    test('export alice\'s work: "assignee~alice"', async () => {
+      const result = await applyFilter(sampleCards, 'assignee~alice', ctx());
       expect(result).toHaveLength(2);
     });
 
-    test('export urgent high-priority: "tag:urgent OR tag:high-priority"', () => {
-      const result = applyFilter(sampleCards, 'tag:urgent OR tag:high-priority');
+    test('export urgent high-priority: "tag:urgent OR tag:high-priority"', async () => {
+      const result = await applyFilter(sampleCards, 'tag:urgent OR tag:high-priority', ctx());
       expect(result).toHaveLength(1);
       expect(result[0].cardId).toBe('card-002');
     });
 
-    test('export release-ready (done + release): "status:done AND tag:release"', () => {
-      const result = applyFilter(sampleCards, 'status:done AND tag:release');
+    test('export release-ready (done + release): "status:done AND tag:release"', async () => {
+      const result = await applyFilter(sampleCards, 'status:done AND tag:release', ctx());
       expect(result).toHaveLength(1);
       expect(result[0].cardId).toBe('card-001');
     });
