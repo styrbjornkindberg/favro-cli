@@ -189,28 +189,32 @@ export function registerInitCommand(program: Command): void {
         const fieldsApi = new CustomFieldsAPI(client);
         const customFields: Record<string, ContextCustomField> = {};
         const boardIds = new Set(rawBoards.map(b => b.boardId));
-        try {
-          const allFields = await fieldsApi.listFields(); // fetch all once
-          for (const field of allFields) {
-            if (!field.name) continue;
-            // Keep only board-local fields belonging to our boards
-            if (field.widgetCommonId && !boardIds.has(field.widgetCommonId)) continue;
-            // Skip org-wide shared fields (no widgetCommonId) — too noisy
-            if (!field.widgetCommonId) continue;
-            const entry: ContextCustomField = {
-              fieldId: field.fieldId,
-              type: field.type,
-            };
-            if (field.options && field.options.length > 0) {
-              entry.options = {};
-              for (const opt of field.options) {
-                entry.options[opt.name] = opt.optionId;
-              }
+        // Only the FETCH is tolerated. The transform below is outside any
+        // catch, because the two used to share a `try` and
+        // `customFields[field.name] = entry` mutates the outer map inside the
+        // loop: a throw at field N left 1..N-1 in place, swallowed the error,
+        // and fell through to `writeFile`. That produced a context.json which
+        // looked complete while silently missing every custom field after the
+        // bad one — and every agent reading it afterwards could not set those
+        // fields and had no way to learn they existed.
+        const allFields = await fieldsApi.listFields().catch(() => []);
+        for (const field of allFields) {
+          if (!field.name) continue;
+          // Keep only board-local fields belonging to our boards
+          if (field.widgetCommonId && !boardIds.has(field.widgetCommonId)) continue;
+          // Skip org-wide shared fields (no widgetCommonId) — too noisy
+          if (!field.widgetCommonId) continue;
+          const entry: ContextCustomField = {
+            fieldId: field.fieldId,
+            type: field.type,
+          };
+          if (field.options && field.options.length > 0) {
+            entry.options = {};
+            for (const opt of field.options) {
+              entry.options[opt.name] = opt.optionId;
             }
-            customFields[field.name] = entry;
           }
-        } catch {
-          // Custom fields fetch may fail
+          customFields[field.name] = entry;
         }
 
         // Fetch team members — /users is org-scoped, so we filter by the

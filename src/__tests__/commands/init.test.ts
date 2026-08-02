@@ -184,6 +184,41 @@ describe('init — the file it writes', () => {
     expect(fields.Priority).toEqual({ fieldId: 'f-1', type: 'Single select', options: { High: 'o-1' } });
   });
 
+  test('a malformed field stops the write instead of silently truncating the map', async () => {
+    // The `catch {}` used to wrap the whole 20-line transform, not just the
+    // fetch it was written for. `customFields[field.name] = entry` mutates the
+    // outer object INSIDE the loop, so a throw at field N left 1..N-1 in the
+    // map, swallowed the error, and fell through to `writeFile`. The result
+    // was a context.json that looked complete while missing every custom field
+    // after the bad one — and every agent reading it later could not set those
+    // fields and had no way to know they existed.
+    MockFields.prototype.listFields = jest.fn().mockResolvedValue([
+      { fieldId: 'f-1', name: 'First', type: 'Text', widgetCommonId: 'board-a' },
+      { fieldId: 'f-2', name: 'Bad', type: 'Single select', widgetCommonId: 'board-a', options: [null] },
+      { fieldId: 'f-3', name: 'Third', type: 'Text', widgetCommonId: 'board-a' },
+    ]);
+
+    await runCli(['init']);
+
+    expect(mockFs.writeFile).not.toHaveBeenCalledWith(
+      '/repo/.favro/context.json',
+      expect.any(String),
+      'utf-8',
+    );
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  test('a custom-field FETCH that fails still degrades to no fields, as before', async () => {
+    // The control for the test above: only the fetch was ever meant to be
+    // tolerated, and it still is.
+    MockFields.prototype.listFields = jest.fn().mockRejectedValue(new Error('403'));
+
+    await runCli(['init']);
+
+    expect(writtenContext().customFields).toEqual({});
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
   test('a column with no name keeps the rest of the board’s workflow', async () => {
     // `detectStage(name)` called `name.toLowerCase()` unguarded, so a nameless
     // column threw a TypeError that the surrounding `catch {}` swallowed —
