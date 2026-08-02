@@ -10,6 +10,7 @@
   },
   "scripts": {
     "build": "tsc",
+    "typecheck": "tsc --noEmit -p tsconfig.test.json",
     "test": "jest",
     "test:coverage": "jest --coverage",
     "check:cycles": "madge --circular --extensions ts src",
