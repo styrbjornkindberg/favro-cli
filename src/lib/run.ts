@@ -28,7 +28,7 @@ import { readConfig, FavroConfig } from './config';
 import { capRows, writeEnvelope } from './read-shape';
 import { reportDispatch } from './report-dispatch';
 import { DispatchResult, isRetryable } from './dispatch';
-import { logError } from './error-handler';
+import { isVerbose, logError } from './error-handler';
 import { classifyThrownError } from './favro-error';
 
 import { CardsAPI } from './cards-api';
@@ -62,6 +62,13 @@ import { FavroWebhooksAPI } from '../api/webhooks';
  * Lazy is load-bearing, not tidiness: a command wanting `CardsAPI` must not pay
  * for the other seventeen. Written as eighteen explicit getters rather than a
  * table so that each `new` is greppable and the type falls out of the code.
+ *
+ * ponytail: lazy about `new`, NOT about `require`. The eighteen imports above
+ * are eager, so requiring this module pulls 98 modules that `cards-api` alone
+ * does not (44 → 142, measured). Nothing today pays for it — `cli.ts` already
+ * imports most of the graph — but #119 must not claim a startup win without
+ * measuring `dist/` first. Making it lazy means `await import()` in the
+ * getters, which makes every `ctx.api.x` a promise; that is the price.
  */
 export function apiNamespace(client: FavroHttpClient) {
   const built = new Map<string, unknown>();
@@ -124,8 +131,24 @@ interface WithExitCode {
   exitCode?: number;
 }
 
+/**
+ * The three arms are mutually exclusive, and the `?: never` members are what
+ * make that true. TypeScript's excess-property check against a union admits any
+ * key present in ANY member, so without these `{ dispatch, item }` compiles and
+ * the runner silently drops one of them.
+ */
+interface NotRows {
+  rows?: never;
+}
+interface NotItem {
+  item?: never;
+}
+interface NotDispatch {
+  dispatch?: never;
+}
+
 /** A list read. Always an envelope, whether or not its author considered it. */
-export interface RowsResult<T> extends WithExitCode {
+export interface RowsResult<T> extends WithExitCode, NotItem, NotDispatch {
   rows: T[];
   /** `--limit`. Caps what is PRINTED; the fetch already ran to completion. */
   limit?: number;
@@ -134,14 +157,24 @@ export interface RowsResult<T> extends WithExitCode {
 }
 
 /** A single read. Stays bare — rule 1 of `read-shape.ts`. */
-export interface ItemResult<T> extends WithExitCode {
+export interface ItemResult<T> extends WithExitCode, NotRows, NotDispatch {
   item: T;
   human?: (item: T) => string | void;
 }
 
-/** A write that went through the shared dispatch table. */
-export interface DispatchArm {
-  dispatch: DispatchResult;
+/**
+ * A write that went through the shared dispatch table.
+ *
+ * It carries the VALUE, and that is not decoration: `reportDispatch` writes
+ * nothing at all on `ok`, so every call site today follows it with its own
+ * `✓ Created …` print. An arm that only reported failure would make a
+ * successful write print nothing — the silent-no-output failure ADR-0002 exists
+ * to kill, moved to the success path.
+ */
+export interface DispatchArm<T> extends WithExitCode, NotRows, NotItem {
+  dispatch: DispatchResult<T>;
+  /** Renders `dispatch.value` in human mode. The `✓ …` line lives here. */
+  human?: (value: T) => string | void;
 }
 
 /**
@@ -149,7 +182,24 @@ export interface DispatchArm {
  * `auth login` and anything driving `ProgressBar` own their stdout and say so
  * in the type.
  */
-export type Result<T> = RowsResult<T> | ItemResult<T> | DispatchArm | void;
+export type Result<T> = RowsResult<T> | ItemResult<T> | DispatchArm<T> | void;
+
+/**
+ * The constraint `run` puts on a handler's return.
+ *
+ * `any`, deliberately and with a named cost: one type parameter shared by the
+ * whole handler cannot describe a handler that branches — `opts.count ? { item:
+ * Count } : { rows: Board[] }` is a real shape in a dozen of #114's files, and
+ * under `Result<T>` it does not compile. `unknown` cannot replace `any` here:
+ * `(rows: Board[]) => string` is not assignable to `(rows: unknown[]) => string`
+ * under `strictFunctionTypes`, so it would break every `human` formatter.
+ *
+ * What this gives up: `{ rows: Board[], human: (rows: Count[]) => … }` no longer
+ * fails to compile. The arms stay exclusive (above), and `emit` reads only keys
+ * every arm agrees on, so the loss is confined to a formatter disagreeing with
+ * its own rows.
+ */
+export type AnyResult = RowsResult<any> | ItemResult<any> | DispatchArm<any> | void;
 
 // ─── format resolution ───────────────────────────────────────────────────────
 
@@ -180,12 +230,6 @@ function mergedOpts(command?: Command): Record<string, unknown> {
     : command.opts();
 }
 
-function rootOf(command: Command): Command {
-  let node = command;
-  while (node.parent) node = node.parent;
-  return node;
-}
-
 /**
  * Commander appends the `Command` to the action arguments. Detected by shape
  * rather than by position, because the number of declared arguments varies per
@@ -205,12 +249,12 @@ export interface RunOptions {
 
 type Action<A extends unknown[]> = (...args: A) => Promise<void>;
 
-export function run<T, A extends unknown[]>(
-  handler: (ctx: Ctx, ...args: A) => Result<T> | Promise<Result<T>>,
+export function run<R extends AnyResult, A extends unknown[]>(
+  handler: (ctx: Ctx, ...args: A) => R | Promise<R>,
 ): Action<A>;
-export function run<T, A extends unknown[]>(
+export function run<R extends AnyResult, A extends unknown[]>(
   options: RunOptions,
-  handler: (ctx: AnonymousCtx, ...args: A) => Result<T> | Promise<Result<T>>,
+  handler: (ctx: AnonymousCtx, ...args: A) => R | Promise<R>,
 ): Action<A>;
 export function run(
   optionsOrHandler: RunOptions | ((ctx: never, ...args: never[]) => unknown),
@@ -227,22 +271,25 @@ export function run(
     // goes to, and reading commander state cannot itself fail.
     const command = commandFrom(args);
     const format = resolveFormat(command);
-    const verbose = command ? Boolean(rootOf(command).opts().verbose) : false;
 
     try {
       const config = await readConfig();
-      const base = { config, verbose };
+      // `isVerbose()` is #85's latch, set by the root `preAction` hook. Reading
+      // it rather than re-deriving from `command` keeps ONE mechanism for the
+      // flag that #85 just collapsed from fifteen.
+      const base = { config, verbose: isVerbose() };
       const ctx: Ctx | AnonymousCtx = anonymous
         ? base
         : await withClient(base, mergedOpts(command));
 
-      emit((await handler(ctx, ...args)) as Result<unknown>, format);
+      emit((await handler(ctx, ...args)) as AnyResult, format);
     } catch (error) {
       if (format.json) {
         const envelope = { message: messageOf(error), retryable: retryableFrom(error) };
         console.log(JSON.stringify({ error: envelope }));
       } else {
-        logError(error, verbose);
+        // No second argument: `logError` reads the same latch.
+        logError(error);
       }
       process.exitCode = 1;
     }
@@ -263,26 +310,44 @@ async function withClient(
 
 // ─── output ──────────────────────────────────────────────────────────────────
 
-function emit(result: Result<unknown>, format: Format): void {
+function emit(result: AnyResult, format: Format): void {
   if (!result) return;
 
-  if ('dispatch' in result) {
+  if (result.dispatch) {
     // `reportDispatch`'s returned boolean is the exit code, and the one place
     // the retry advice is worded.
-    if (reportDispatch(result.dispatch, format.json)) process.exitCode = 1;
-    return;
-  }
-
-  if ('rows' in result) {
+    //
+    // ponytail: in JSON mode it also puts its OWN shape on stdout for a
+    // failure — `{intent, outcome, error, …}`, not the boundary's
+    // `{error:{message, retryable}}`. Two machine shapes for one question.
+    // Left alone here because collapsing them means changing `reportDispatch`
+    // for its five existing callers, which is a call for #113 to make, not a
+    // side effect of adding the runner. Raised on the issue.
+    if (reportDispatch(result.dispatch, format.json)) {
+      process.exitCode = 1;
+      return;
+    }
+    // The success path. `reportDispatch` returns without printing on `ok`, so
+    // the value is written here or not at all. A dry run and a value-less
+    // intent both leave `value` undefined and have nothing to show.
+    if (result.dispatch.value !== undefined) {
+      writeValue(result.dispatch.value, result.human, format);
+    }
+  } else if (result.rows) {
     const envelope = capRows(result.rows, result.limit);
     if (format.json) writeEnvelope(envelope, format.pretty);
     else writeHuman(envelope.rows, result.human);
   } else {
-    if (format.json) console.log(stringify(result.item, format.pretty));
-    else writeHuman(result.item, result.human);
+    writeValue(result.item, result.human, format);
   }
 
   if (result.exitCode !== undefined) process.exitCode = result.exitCode;
+}
+
+/** A bare value: the machine shape in JSON mode, the formatter's in human. */
+function writeValue<T>(value: T, human: ((value: T) => string | void) | undefined, format: Format): void {
+  if (format.json) console.log(stringify(value, format.pretty));
+  else writeHuman(value, human);
 }
 
 /**
@@ -321,6 +386,14 @@ function messageOf(error: unknown): string {
  * left — is this failure deterministic. Reusing it rather than restating
  * `RefusalError` + `classifyThrownError` here is what stops the CLI and the
  * dispatch table drifting apart on the same question, which is #66 all over.
+ *
+ * ponytail: the ceiling. `isRetryable` reads an UNCLASSIFIABLE error as
+ * retryable, because in the dispatch table an unclassifiable error is a wire
+ * hiccup after a clean unwind. This boundary also catches errors that never
+ * touched the wire — an `ENOENT` from `--out /nope/x.csv`, a `TypeError` of our
+ * own — and calls them retryable too, which is advice an agent should not act
+ * on. Narrowing it to `classifyThrownError(error) ? … : false` contradicts the
+ * derivation ADR-0002 states, so it is raised on #113 rather than changed here.
  */
 const retryableFrom = (error: unknown): boolean => isRetryable('rolled-back', error);
 

@@ -19,6 +19,7 @@ import { run, apiNamespace, Ctx } from '../lib/run';
 import FavroHttpClient from '../lib/http-client';
 import { RefusalError } from '../lib/refusal';
 import { DispatchResult } from '../lib/dispatch';
+import { latchVerbose } from '../lib/error-handler';
 
 /** Every class `ctx.api` can build, as `[module, export]`. The laziness proof reads this. */
 const API_MODULES: ReadonlyArray<readonly [string, string]> = [
@@ -84,6 +85,8 @@ function program(): { root: Command; leaf: Command } {
   const root = new Command();
   root.exitOverride();
   root.option('--verbose').option('--pretty');
+  // The real seam: `ctx.verbose` reads #85's latch, which this hook sets.
+  latchVerbose(root);
   const leaf = root.command('thing').option('--human').exitOverride();
   return { root, leaf };
 }
@@ -210,14 +213,82 @@ describe('the runner owns the output', () => {
     expect(process.exitCode).toBe(1);
   });
 
-  it('leaves the exit code alone when a dispatch succeeded', async () => {
-    const ok: DispatchResult = { intent: 'create', outcome: 'ok', retryable: false };
+  it('writes what a successful dispatch produced — silence would be the bug', async () => {
+    // `reportDispatch` prints NOTHING on `ok`; every call site today follows it
+    // with its own `✓ Created …`. If the arm only reported failure, a
+    // successful write would emit nothing at all.
+    const ok: DispatchResult<{ cardId: string }> = {
+      intent: 'create',
+      outcome: 'ok',
+      retryable: false,
+      value: { cardId: 'CLA-1' },
+    };
     const { root, leaf } = program();
     leaf.action(run(async () => ({ dispatch: ok })));
 
     await parse(root, ['thing']);
 
+    expect(stdout()).toEqual(['{"cardId":"CLA-1"}']);
     expect(process.exitCode).toBeUndefined();
+  });
+
+  it('lets a dispatch human formatter write the ✓ line', async () => {
+    const ok: DispatchResult<{ cardId: string }> = {
+      intent: 'create',
+      outcome: 'ok',
+      retryable: false,
+      value: { cardId: 'CLA-1' },
+    };
+    const { root, leaf } = program();
+    leaf.action(
+      run(async () => ({
+        dispatch: ok,
+        human: (value: { cardId: string }) => `✓ Created ${value.cardId}`,
+      })),
+    );
+
+    await parse(root, ['thing', '--human']);
+
+    expect(stdout()).toEqual(['✓ Created CLA-1']);
+  });
+
+  it('adds nothing under a dry-run preview', async () => {
+    // `reportDispatch` printed the whole chain and there is no value.
+    const preview: DispatchResult = {
+      intent: 'create',
+      outcome: 'ok',
+      retryable: false,
+      preview: ['would create 1 card'],
+    };
+    const { root, leaf } = program();
+    leaf.action(run(async () => ({ dispatch: preview })));
+
+    await parse(root, ['thing']);
+
+    expect(stdout()).toEqual(['[dry-run] would create 1 card']);
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it('refuses a result that mixes two arms', () => {
+    const ok: DispatchResult = { intent: 'create', outcome: 'ok', retryable: false };
+    // Never invoked; the assertion is that it does not compile. Without the
+    // mutual `?: never` members these mix freely — a union's excess-property
+    // check admits any key present in any member — and `emit` would silently
+    // drop one side of each pair.
+    // @ts-expect-error — `dispatch` and `item` are different arms.
+    run(async () => ({ dispatch: ok, item: { id: 'a' } }));
+    // @ts-expect-error — so are `rows` and `item`.
+    run(async () => ({ rows: [1], item: { id: 'a' } }));
+    expect(true).toBe(true);
+  });
+
+  it('takes a handler that returns a different arm per branch', () => {
+    // Twelve of #114's files branch on a flag. One shared `T` across the whole
+    // handler cannot type this, which is why the constraint is per-arm.
+    const registered = run(async (_ctx, opts: { count?: boolean }) =>
+      opts.count ? { item: { total: 1 } } : { rows: [{ id: 'a' }] },
+    );
+    expect(typeof registered).toBe('function');
   });
 
   it('carries an answer-code result through to process.exitCode', async () => {
@@ -294,7 +365,7 @@ describe('the error boundary', () => {
 // ─── the context ─────────────────────────────────────────────────────────────
 
 describe('the context the handler receives', () => {
-  it('resolves --verbose from the ROOT program only (#85)', async () => {
+  it('takes ctx.verbose from #85’s one latch', async () => {
     const record = async (argv: string[]): Promise<boolean | undefined> => {
       // A fresh program per parse: commander keeps option values between
       // parses, so reusing one would make the second run read the first's flags.
@@ -309,11 +380,12 @@ describe('the context the handler receives', () => {
     expect(await record(['thing'])).toBe(false);
   });
 
-  it('reads the root even when the subcommand declares --verbose as well', async () => {
+  it('is verbose even where the leaf’s own opts say nothing', async () => {
     // #85 in miniature. With both nodes declaring the flag, commander stores
     // the value on the ROOT and the leaf's own opts come back empty — which is
     // exactly why `cmd.opts()?.verbose`, one of the fifteen spellings, read
-    // false for a user who had typed `--verbose`.
+    // false for a user who had typed `--verbose`. The latch does not care which
+    // node holds it.
     const { root, leaf } = program();
     leaf.option('--verbose');
     let verbose: boolean | undefined;

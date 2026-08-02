@@ -32,6 +32,14 @@
  * would still be sixty lines long when only three files were dirty, and nobody
  * reading it could tell which. When the list empties, the ban is absolute.
  *
+ * WHY THE BAN ALONE IS NOT ENOUGH
+ * "Contains none of five strings" is not "migrated". A migrator who hoisted
+ * `createFavroClient` into a shared helper instead of adopting `run()` would go
+ * clean, get struck off, and leave the ratchet green over a command the runner
+ * never touched. So a file leaving the allowlist must also IMPORT `run` —
+ * unless it is named in `RUNNER_FREE` below, which is the short, argued list of
+ * commands that legitimately have no runner to adopt.
+ *
  * TO DISCHARGE AN ENTRY: migrate the file to `run()`, then delete its line.
  * Deleting the line is not optional; the build stays red until you do.
  */
@@ -50,8 +58,25 @@ const BANNED: ReadonlyArray<{ readonly what: string; readonly pattern: RegExp }>
 ];
 
 /**
+ * `import … from '…/lib/run'`. The prefix is left loose because it depends on
+ * depth — `./lib/run` from `cli.ts`, `../lib/run` from `src/commands/`, one
+ * more `../` from any subdirectory a later step introduces.
+ */
+const IMPORTS_RUN = /from '[./]*lib\/run'/;
+
+/**
+ * Off the allowlist, and legitimately not a `run()` caller.
+ *
+ * `issue-tracker-help.ts` registers a `--help` topic: no client, no output of
+ * its own, nothing for the runner to own. It is the reason this list exists
+ * rather than a blanket "everything must import run" — but it is one file, and
+ * a second entry should have to be argued on the issue.
+ */
+const RUNNER_FREE: readonly string[] = ['src/commands/issue-tracker-help.ts'];
+
+/**
  * NOT YET MIGRATED to `run()`. Started as every file that had a preamble to
- * lose — sixty of the sixty-one scanned — and only ever shrinks, one line per
+ * lose — all but one of the files scanned — and only ever shrinks, one line per
  * file, as #114 → #119 work through them.
  *
  * Do NOT add a line to make a red build green. A new name here is either a new
@@ -90,7 +115,6 @@ const ALLOWLIST: readonly string[] = [
   'src/commands/custom-fields.ts',
   'src/commands/dependencies.ts',
   'src/commands/diff.ts',
-  'src/commands/execute.ts',
   'src/commands/git.ts',
   'src/commands/health.ts',
   'src/commands/init.ts',
@@ -100,7 +124,6 @@ const ALLOWLIST: readonly string[] = [
   'src/commands/my-standup.ts',
   'src/commands/next.ts',
   'src/commands/overview.ts',
-  'src/commands/propose.ts',
   'src/commands/query.ts',
   'src/commands/release-check.ts',
   'src/commands/risks.ts',
@@ -123,23 +146,33 @@ const ALLOWLIST: readonly string[] = [
 
 // ─── the scan ────────────────────────────────────────────────────────────────
 
-/** `src/cli.ts` plus every command module, repo-relative and slash-separated. */
+/**
+ * `src/cli.ts` plus every command module, repo-relative and slash-separated.
+ *
+ * Recursive: a future `src/commands/boards/` must not drop out of scope
+ * silently. Hand-rolled rather than `readdirSync(…, { recursive: true })`,
+ * which needs Node 20 and CI still runs the matrix on 18.
+ */
 function scannedFiles(): string[] {
-  const commands = fs
-    .readdirSync(path.join(REPO_ROOT, 'src', 'commands'))
-    .filter((name) => name.endsWith('.ts'))
-    .map((name) => `src/commands/${name}`);
-  return ['src/cli.ts', ...commands].sort();
+  const walk = (dir: string): string[] =>
+    fs.readdirSync(path.join(REPO_ROOT, dir), { withFileTypes: true }).flatMap((entry) => {
+      if (entry.isDirectory()) return walk(`${dir}/${entry.name}`);
+      return entry.name.endsWith('.ts') ? [`${dir}/${entry.name}`] : [];
+    });
+  return ['src/cli.ts', ...walk('src/commands')].sort();
 }
 
-/** Which banned spellings a file still contains. Empty means migrated. */
-function offencesIn(file: string): string[] {
-  const source = fs.readFileSync(path.join(REPO_ROOT, file), 'utf-8');
+const sourceOf = (file: string): string =>
+  fs.readFileSync(path.join(REPO_ROOT, file), 'utf-8');
+
+/** Which banned spellings a file still contains. Empty is necessary, not sufficient. */
+function offencesIn(source: string): string[] {
   return BANNED.filter(({ pattern }) => pattern.test(source)).map(({ what }) => what);
 }
 
 const files = scannedFiles();
-const offences = new Map(files.map((file) => [file, offencesIn(file)]));
+const sources = new Map(files.map((file) => [file, sourceOf(file)]));
+const offences = new Map(files.map((file) => [file, offencesIn(sources.get(file)!)]));
 const dirty = files.filter((file) => offences.get(file)!.length > 0);
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -177,7 +210,26 @@ describe('the command-runner ratchet', () => {
     expect(struck).toEqual([]);
   });
 
+  it('every file off the allowlist actually adopted run()', () => {
+    // The positive half. Without it the ban means "quiet", not "migrated": a
+    // file whose preamble moved into a shared helper reads clean and gets
+    // struck off while the runner governs nothing it does.
+    const quiet = files
+      .filter((file) => !ALLOWLIST.includes(file) && !RUNNER_FREE.includes(file))
+      .filter((file) => !IMPORTS_RUN.test(sources.get(file)!));
+    expect(quiet).toEqual([]);
+  });
+
   it('no allowlisted file has been renamed or deleted out from under the list', () => {
     expect(ALLOWLIST.filter((file) => !files.includes(file))).toEqual([]);
+  });
+
+  it('no RUNNER_FREE entry is stale', () => {
+    // Same staleness rule the scope-lock ratchet applies to its two lists: an
+    // entry that no longer exists, or that now imports `run`, has to go.
+    const stale = RUNNER_FREE.filter(
+      (file) => !files.includes(file) || IMPORTS_RUN.test(sources.get(file) ?? ''),
+    );
+    expect(stale).toEqual([]);
   });
 });
