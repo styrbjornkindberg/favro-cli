@@ -105,7 +105,13 @@ describe('scoreBoard — the four sub-scores', () => {
     ).toEqual({ flow: 0, stale: 0, dependencies: 100, overdue: 100 });
   });
 
-  it('treats a missing or unparseable createdAt as infinitely stale', () => {
+  it('still counts a missing or unparseable createdAt against the stale ratio', () => {
+    // Unchanged by #130, and deliberately so. `daysSince` no longer answers
+    // `Infinity` — it answers `undefined` — so this used to fall out of the
+    // comparison and now falls out of an explicit branch in `scoreBoard`.
+    // Whether an unassessable card *should* drag a board score down is open;
+    // see the comment at that branch. What matters here is that the answer
+    // stopped being an accident of arithmetic.
     expect(scoreBoard([card({ id: '1', stage: 'active' })]).stale).toBe(0);
     expect(scoreBoard([card({ id: '1', stage: 'active', createdAt: 'not a date' })]).stale).toBe(0);
   });

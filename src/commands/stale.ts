@@ -22,12 +22,31 @@ interface StaleCard {
   group: 'assigned-stale' | 'unassigned-stale';
 }
 
+/**
+ * A card the threshold could not be put to: Favro sent no usable `createdAt`,
+ * so its age is unknown (#130). Deliberately carries no day count — there is no
+ * honest number to put there, and the `-1` that used to stand in was both
+ * uninterpretable and, in a most-stale-first list, sorted last.
+ */
+interface UndatedCard {
+  id: string;
+  title: string;
+  board?: string;
+}
+
 interface StaleResult {
   scope: string;
   staleDays: number;
   assignedStale: StaleCard[];
   unassignedStale: StaleCard[];
   total: number;
+  /**
+   * Live cards excluded from the assessment for want of a creation date.
+   * Reported rather than dropped: a silent exclusion is the same fail-open as a
+   * fabricated number, one step quieter. Not counted in `total`, which is the
+   * number of cards actually judged stale.
+   */
+  undated: UndatedCard[];
   generatedAt: string;
 }
 
@@ -51,6 +70,16 @@ function formatHuman(data: StaleResult): string {
   }
 
   if (data.total === 0) lines.push('  No stale cards found.');
+
+  // Printed alongside "No stale cards found.", never instead of it: nothing was
+  // stale AND something was skipped are two separate facts, and suppressing the
+  // second makes the first a lie by omission.
+  if (data.undated.length > 0) {
+    lines.push(`  No creation date — not assessed (${data.undated.length}):`);
+    for (const c of data.undated) {
+      lines.push(`    • ${c.title} — ${c.board ?? 'unknown board'}`);
+    }
+  }
 
   return lines.join('\n');
 }
@@ -93,13 +122,23 @@ export async function staleHandler(ctx: Ctx, options: StaleOptions) {
 
   const assignedStale: StaleCard[] = [];
   const unassignedStale: StaleCard[] = [];
+  const undated: UndatedCard[] = [];
 
   for (const card of snapshot.allCards) {
-    // Skip done/archived cards
+    // Skip done/archived cards. Before the date check: this command has no
+    // opinion about finished work, datable or not.
     if (DONE_STAGES.includes(card.stage ?? '')) continue;
 
     // Favro sends no last-modified field; age is measured from creation.
     const days = daysSince(card.createdAt);
+
+    // No creation date means no age, and no age means no threshold applies —
+    // not that every threshold applies, which is what `Infinity` used to say
+    // (#130). The card leaves the ranked set and is named separately.
+    if (days === undefined) {
+      undated.push({ id: card.id, title: card.title, board: card.boardName });
+      continue;
+    }
 
     if (days >= staleDays) {
       const staleCard: StaleCard = {
@@ -111,7 +150,7 @@ export async function staleHandler(ctx: Ctx, options: StaleOptions) {
         column: card.column,
         assignees: card.assignees,
         due: card.due,
-        daysSinceUpdate: days === Infinity ? -1 : days,
+        daysSinceUpdate: days,
         group: (card.assignees?.length ?? 0) > 0 ? 'assigned-stale' : 'unassigned-stale',
       };
       if (staleCard.group === 'assigned-stale') {
@@ -122,7 +161,8 @@ export async function staleHandler(ctx: Ctx, options: StaleOptions) {
     }
   }
 
-  // Sort by staleness (most stale first)
+  // Sort by staleness (most stale first). Every `daysSinceUpdate` here is a
+  // measured age, so the order is a real ranking.
   assignedStale.sort((a, b) => b.daysSinceUpdate - a.daysSinceUpdate);
   unassignedStale.sort((a, b) => b.daysSinceUpdate - a.daysSinceUpdate);
 
@@ -132,6 +172,7 @@ export async function staleHandler(ctx: Ctx, options: StaleOptions) {
     assignedStale,
     unassignedStale,
     total: assignedStale.length + unassignedStale.length,
+    undated,
     generatedAt: new Date().toISOString(),
   };
 

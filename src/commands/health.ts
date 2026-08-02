@@ -59,7 +59,16 @@ export function scoreBoard(cards: AggregateCard[]): BoardHealth['breakdown'] {
   const staleCount = nonDone.filter(c => {
     // Favro sends no last-modified field; age is measured from creation.
     const days = daysSince(c.createdAt);
-    return days > 14;
+    // An undated card counts against this ratio — the behaviour `daysSince`'s
+    // old `Infinity` produced by accident, kept here on purpose while #130
+    // removes the accident from `stale`. It is NOT settled that it is right:
+    // an unknown age is not a stale age, and the honest answer is to leave the
+    // card out of both halves of the ratio. That needs somewhere to say how
+    // many were left out, and `breakdown` is four percentages with no such
+    // slot — a shape change, and a different ticket. Unlike `stale`, nothing
+    // here claims a per-card age or ranks cards against each other, so the
+    // pessimistic read costs a coarse board score, not a fabricated number.
+    return days === undefined || days > 14;
   }).length;
   const staleScore = nonDone.length > 0
     ? Math.round(((nonDone.length - staleCount) / nonDone.length) * 100)
