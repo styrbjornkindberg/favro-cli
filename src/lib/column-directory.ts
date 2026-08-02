@@ -17,6 +17,7 @@
 import FavroHttpClient from './http-client';
 import ColumnsAPI from './columns-api';
 import WidgetsAPI from './widgets-api';
+import { foldName } from './fold-name';
 import { readCache, readCacheRecord, writeCache, CACHE_TTL_MS } from './name-cache';
 import { RefusalError } from './refusal';
 
@@ -26,7 +27,11 @@ export interface ColumnRef {
   boardId: string;
 }
 
-const norm = (s: string): string => s.trim().toLowerCase();
+/**
+ * One shared fold, not a private copy: a column name typed by a human and the
+ * one Favro sent can be the same name in two normalisation forms (#141).
+ */
+const norm = foldName;
 
 /**
  * A refusal that names the candidates and the flag that settles them.

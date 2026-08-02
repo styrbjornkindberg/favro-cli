@@ -15,6 +15,7 @@
 import FavroHttpClient from './http-client';
 import ColumnDirectory from './column-directory';
 import { cachedTags } from './tags-api';
+import { foldName } from './fold-name';
 import { invalidateCache } from './name-cache';
 import { resolveAssignee } from './assignee';
 import { parseQuery, ParseError, Operator, Query, QueryNode, FieldPredicate } from './query-parser';
@@ -205,9 +206,12 @@ async function mapValues(
 async function checkTag(value: string, ctx: ValueContext, operator: Operator): Promise<string> {
   const orgId = ctx.client.organizationId;
   const hit = (names: string[]) => {
-    const wanted = value.toLowerCase();
+    // `foldName`, not `toLowerCase`: a decomposed input refused against the
+    // precomposed tag it matches on screen, and the refusal then listed a
+    // candidate identical to what had just been typed (#141).
+    const wanted = foldName(value);
     return names.some((n) =>
-      operator === '~' ? n.toLowerCase().includes(wanted) : n.toLowerCase() === wanted
+      operator === '~' ? foldName(n).includes(wanted) : foldName(n) === wanted
     );
   };
 

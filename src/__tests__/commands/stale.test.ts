@@ -320,6 +320,42 @@ describe('stale — how the survivors are split and ordered', () => {
     expect(() => json()).toThrow();
   });
 
+  test('--human heads the report with the boundary the filter actually applies (#145)', async () => {
+    // The header used to say `inactive >14 days` over a set filtered with
+    // `>= 14`, so a card at exactly 14 appeared under a heading that excluded
+    // it. Both now come off `isStale`, so the wording cannot drift from the
+    // comparison again.
+    await runCli(['stale', '--human', '--days', '14']);
+
+    expect(written()).toContain('Stale Cards (inactive 14 days or more)');
+    expect(written()).not.toContain('>14');
+  });
+
+  test('--human says "1 day" rather than "1 days" (#145)', async () => {
+    await runCli(['stale', '--human', '--days', '1']);
+
+    expect(written()).toContain('Stale Cards (inactive 1 day or more)');
+  });
+
+  test('--human names the board of a stale card, never the string "undefined"', async () => {
+    // `:80` already printed `?? 'unknown board'` for the undated list while the
+    // two stale lists printed the bare value, so a snapshot arm that sends no
+    // `boardName` — the collection arms do not always set one — emitted
+    // `• A card — undefined`.
+    MockAggregate.prototype.getMultiBoardSnapshot = jest.fn().mockResolvedValue({
+      allCards: [
+        card({ id: 'u', title: 'Loose', boardName: undefined }),
+        card({ id: 'a', title: 'Owned', boardName: undefined, assignees: ['Bo'] }),
+      ],
+    });
+
+    await runCli(['stale', '--human']);
+
+    expect(written()).not.toContain('undefined');
+    expect(written()).toContain('• Loose — unknown board');
+    expect(written()).toContain('• Owned — unknown board');
+  });
+
   test('--human says so plainly when nothing is stale', async () => {
     MockAggregate.prototype.getMultiBoardSnapshot = jest.fn().mockResolvedValue({ allCards: [] });
 

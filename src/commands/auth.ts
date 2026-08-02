@@ -12,6 +12,7 @@ import { Command } from 'commander';
 import FavroHttpClient from '../lib/http-client';
 import * as readline from 'readline';
 import { readConfig, writeConfig, configFile, resolveApiKey } from '../lib/config';
+import { foldName } from '../lib/fold-name';
 
 import { logError } from '../lib/error-handler';
 
@@ -211,7 +212,11 @@ export function registerAuthCommand(program: Command): void {
             });
             const usersResponse = await userClient.get<{ entities: Array<{ userId: string; email: string; name: string }> }>('/users');
             const users = usersResponse.entities ?? [];
-            const me = users.find((u: { email: string }) => u.email.toLowerCase() === email!.toLowerCase());
+            // `foldName`, the same fold `config.ts`'s `resolveUserId` uses on
+            // this exact comparison: the address was typed at the prompt above
+            // and the wire's was not, so an accented local part reaches the two
+            // sides in different normalisation forms (#141).
+            const me = users.find((u: { email: string }) => foldName(u.email) === foldName(email));
             if (me) {
               updated.userId = me.userId;
               process.stdout.write(` ✓ (${me.name})\n`);

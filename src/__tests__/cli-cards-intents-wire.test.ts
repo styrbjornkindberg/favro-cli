@@ -35,9 +35,12 @@ jest.mock('../lib/client-factory', () => ({
   default: jest.fn(async () => injected),
 }));
 
-// `config.ts` freezes `CONFIG_DIR` at IMPORT time, so this has to be set before
-// the CLI is loaded — a `beforeEach` would be too late and the scope lock would
-// come from the developer's own `~/.favro/config.json` (issue #65).
+// Set before the CLI is loaded. NOT because `config.ts` freezes anything —
+// #65 is the issue that made `configDir()` resolve per call, and `config.ts:43`
+// says so. The reason is the tree being required: a module that reads the
+// config during its own import would read it too early for a `beforeEach` to
+// steer, and the scope lock would come from the developer's own
+// `~/.favro/config.json`.
 const CONFIG_DIR = fsSync.mkdtempSync(path.join(os.tmpdir(), 'favro-cli-intents-config-'));
 fsSync.writeFileSync(path.join(CONFIG_DIR, 'config.json'), '{}');
 process.env.FAVRO_CONFIG_DIR = CONFIG_DIR;

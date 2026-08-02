@@ -22,6 +22,7 @@ import ColumnsAPI from '../lib/columns-api';
 import ColumnDirectory from '../lib/column-directory';
 import TagsAPI, { TagLookupError } from '../lib/tags-api';
 import { createFavroClient } from '../lib/client-factory';
+import { foldName } from '../lib/fold-name';
 import { logError } from '../lib/error-handler';
 import { detectStage, proposeColumnMapping, WorkflowStage } from '../lib/workflow-stage';
 import { classifyThrownError } from '../lib/favro-error';
@@ -39,7 +40,13 @@ import {
 const SCAFFOLD_COLUMNS = ['To Do', 'Doing', 'Done'];
 const DEFAULT_BOARD_NAME = 'Issue Tracker';
 
-const norm = (s: string) => s.trim().toLowerCase();
+/**
+ * One shared fold, not a fourth private copy: `--board` is typed by a human and
+ * `b.name` came off the wire, so the same visible board name reaches the two
+ * sides in different normalisation forms and the filter below found zero
+ * matches — which this function reports as `missing` (#141).
+ */
+const norm = foldName;
 
 export interface InitTrackerOptions {
   /** Already resolved — the caller does the scope check against it. */

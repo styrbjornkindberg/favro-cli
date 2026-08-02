@@ -161,6 +161,21 @@ describe('init — the file it writes', () => {
     expect(slug.startsWith('atgarder-forbattringar')).toBe(true);
   });
 
+  test('the slug is the same whichever normalisation form the board name arrives in', async () => {
+    // The slug is a KEY in context.json. A decomposed `Å` is a plain `A` plus a
+    // combining ring: `[åä]` never saw it and `[^a-z0-9]+` turned it into a
+    // separator, so the same visible board name produced two different keys
+    // depending on where it was typed (#141).
+    const name = 'Åtgärder & Förbättringar';
+    MockBoards.prototype.listBoardsByCollection = jest
+      .fn()
+      .mockResolvedValue([{ boardId: 'b', name: name.normalize('NFD') }]);
+
+    await runCli(['init']);
+
+    expect(Object.keys(writtenContext().boards)).toEqual(['atgarder-forbattringar']);
+  });
+
   test('a board whose columns cannot be read is still recorded, just without a workflow', async () => {
     MockColumns.prototype.listColumns = jest.fn().mockRejectedValue(new Error('400 no widgetCommonId'));
 
@@ -184,6 +199,61 @@ describe('init — the file it writes', () => {
     expect(fields.Priority).toEqual({ fieldId: 'f-1', type: 'Single select', options: { High: 'o-1' } });
   });
 
+  test('a malformed field stops the write instead of silently truncating the map', async () => {
+    // The `catch {}` used to wrap the whole 20-line transform, not just the
+    // fetch it was written for. `customFields[field.name] = entry` mutates the
+    // outer object INSIDE the loop, so a throw at field N left 1..N-1 in the
+    // map, swallowed the error, and fell through to `writeFile`. The result
+    // was a context.json that looked complete while missing every custom field
+    // after the bad one — and every agent reading it later could not set those
+    // fields and had no way to know they existed.
+    MockFields.prototype.listFields = jest.fn().mockResolvedValue([
+      { fieldId: 'f-1', name: 'First', type: 'Text', widgetCommonId: 'board-a' },
+      { fieldId: 'f-2', name: 'Bad', type: 'Single select', widgetCommonId: 'board-a', options: [null] },
+      { fieldId: 'f-3', name: 'Third', type: 'Text', widgetCommonId: 'board-a' },
+    ]);
+
+    await runCli(['init']);
+
+    expect(mockFs.writeFile).not.toHaveBeenCalledWith(
+      '/repo/.favro/context.json',
+      expect.any(String),
+      'utf-8',
+    );
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  test('a custom-field FETCH that fails still degrades to no fields, as before', async () => {
+    // The control for the test above: only the fetch was ever meant to be
+    // tolerated, and it still is.
+    MockFields.prototype.listFields = jest.fn().mockRejectedValue(new Error('403'));
+
+    await runCli(['init']);
+
+    expect(writtenContext().customFields).toEqual({});
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  test('a column with no name keeps the rest of the board’s workflow', async () => {
+    // `detectStage(name)` called `name.toLowerCase()` unguarded, so a nameless
+    // column threw a TypeError that the surrounding `catch {}` swallowed —
+    // taking the WHOLE board's workflow with it, with no warning and exit 0.
+    MockColumns.prototype.listColumns = jest.fn().mockResolvedValue([
+      { columnId: 'col-1', name: 'Backlog' },
+      { columnId: 'col-2' },
+      { columnId: 'col-3', name: 'Done' },
+    ]);
+
+    await runCli(['init']);
+
+    const workflow = writtenContext().boards['sprint-42'].workflow;
+    expect(workflow).toHaveLength(3);
+    expect(workflow[1].stage).toBe('queued');
+    // `next` is declared `string | null`, so a nameless neighbour is null —
+    // not `undefined`, which JSON drops and which the type does not allow.
+    expect(workflow[0].next).toBeNull();
+  });
+
   test('keeps only users the collection is shared with', async () => {
     MockMembers.prototype.getMembers = jest.fn().mockResolvedValue([
       { id: 'u-1', name: 'Alice', email: 'alice@example.com', role: 'admin' },
@@ -195,7 +265,19 @@ describe('init — the file it writes', () => {
     expect(Object.keys(writtenContext().team)).toEqual(['u-1']);
   });
 
-  test('keeps everyone when the collection membership cannot be read', async () => {
+  // This test used to read "keeps everyone when the collection membership
+  // cannot be read", and it passed. That was the bug, asserted: the `catch {}`
+  // around the membership fetch left `collectionUserIds` undefined, the loop
+  // below applied NO filter, and a 403 on `/collections/:id` turned "the six
+  // people on this collection" into "all 140 people in the org, with emails,
+  // written to a file this same command force-adds to .gitignore".
+  //
+  // A privacy filter that cannot run must not be skipped. The command still
+  // completes — one sub-fetch failing should not block a bootstrap — but it
+  // completes with nobody rather than everybody, says so on stderr, and
+  // records the reason in the file so an agent reading it does not conclude
+  // the collection is empty.
+  test('writes NOBODY, loudly, when the collection membership cannot be read', async () => {
     clientGet.mockRejectedValue(new Error('403'));
     MockMembers.prototype.getMembers = jest.fn().mockResolvedValue([
       { id: 'u-1', name: 'Alice', email: 'alice@example.com' },
@@ -204,7 +286,35 @@ describe('init — the file it writes', () => {
 
     await runCli(['init']);
 
-    expect(Object.keys(writtenContext().team)).toEqual(['u-1', 'u-2']);
+    const written = writtenContext();
+    expect(written.team).toEqual({});
+    expect(JSON.stringify(written)).not.toContain('bob@example.com');
+    expect(errors()).toMatch(/could not read.*membership/i);
+    expect(written.notes.team).toMatch(/could not be read/i);
+  });
+
+  test('a membership response with no sharedToUsers is also treated as unreadable', async () => {
+    // `sharedToUsers` absent is not "shared with everyone" — it is the same
+    // unknown as a 403, and it used to take the same fail-open path.
+    clientGet.mockResolvedValue({});
+    MockMembers.prototype.getMembers = jest.fn().mockResolvedValue([
+      { id: 'u-1', name: 'Alice', email: 'alice@example.com' },
+    ]);
+
+    await runCli(['init']);
+
+    expect(writtenContext().team).toEqual({});
+  });
+
+  test('a readable EMPTY membership is a real answer, not a failure', async () => {
+    // Distinct from the two above: the filter RAN and matched nobody. No
+    // warning, no note — the file is correct as written.
+    clientGet.mockResolvedValue({ sharedToUsers: [] });
+
+    await runCli(['init']);
+
+    expect(writtenContext().team).toEqual({});
+    expect(writtenContext().notes.team).toBeUndefined();
   });
 });
 
@@ -242,7 +352,10 @@ describe('init — the guards around the write', () => {
   });
 
   test('creates a .gitignore when the repo has none', async () => {
-    mockFs.readFile.mockRejectedValue(new Error('ENOENT'));
+    // `code`, not just a message: only ENOENT reads as "there is no file,
+    // create one" now, and every other read failure propagates rather than
+    // writing two lines over a file it could not see (#144).
+    mockFs.readFile.mockRejectedValue(Object.assign(new Error('ENOENT: no such file'), { code: 'ENOENT' }));
 
     await runCli(['init']);
 

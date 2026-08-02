@@ -33,8 +33,11 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 
-// `config.ts` freezes CONFIG_DIR at import time, so this has to be set before
-// the CLI is loaded — otherwise the run reads the developer's own ~/.favro.
+// Set before the CLI is loaded. NOT because `config.ts` freezes anything —
+// `configDir()` has resolved per call since #65 and says so at `config.ts:43`.
+// The reason is the tree being required: any module that reads the config
+// during its own import would read it too early, and the run would land in the
+// developer's own ~/.favro.
 const CONFIG_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'favro-cli-verbose-config-'));
 fs.writeFileSync(path.join(CONFIG_DIR, 'config.json'), '{}');
 process.env.FAVRO_CONFIG_DIR = CONFIG_DIR;

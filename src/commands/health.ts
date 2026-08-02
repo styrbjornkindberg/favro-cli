@@ -4,14 +4,14 @@
  *
  * Health score (0-100):
  *   Flow ratio: cards in active/done stages (40%)
- *   Stale ratio: % cards inactive >14 days (25%)
+ *   Stale ratio: % cards inactive DEFAULT_STALE_DAYS days or more (25%)
  *   Dependency ratio: % cards carrying a dependency edge, judged or not (20%)
  *   Overdue ratio: % cards past due date (15%)
  */
 import { Command } from 'commander';
 import { AggregateCard } from '../api/aggregate';
 import { Ctx, run } from '../lib/run';
-import { daysSince } from '../lib/time';
+import { daysSince, DEFAULT_STALE_DAYS, isStale } from '../lib/time';
 
 // 'approved' and 'done' are unreachable here — `nonDone` strips DONE_STAGES
 // before the flow numerator is computed. Kept so the list reads as the full set
@@ -55,12 +55,19 @@ export function scoreBoard(cards: AggregateCard[]): BoardHealth['breakdown'] {
     ? Math.round((flowing.length / nonDone.length) * 100)
     : 100;
 
-  // Stale ratio: % of datable non-done cards NOT inactive >14 days.
+  // Stale ratio: % of datable non-done cards NOT stale.
   // Favro sends no last-modified field; age is measured from creation, and a
   // card with no usable one drops out of BOTH halves — the same treatment
   // `overdueScore` below gives a card with no due date (#130).
+  //
+  // `isStale` and `DEFAULT_STALE_DAYS`, not a literal `d > 14`: this is the
+  // same threshold `favro stale` defaults to, deliberately, and while it was
+  // written out here the two drifted to different boundaries around the same
+  // number — a card inactive for exactly 14 days was stale to one command and
+  // healthy to the other (#145). `health` has no `--days` flag, so the default
+  // is the only value it can score against.
   const ages = nonDone.map(c => daysSince(c.createdAt)).filter((d): d is number => d !== undefined);
-  const staleCount = ages.filter(d => d > 14).length;
+  const staleCount = ages.filter(d => isStale(d, DEFAULT_STALE_DAYS)).length;
   const staleScore = ages.length > 0
     ? Math.round(((ages.length - staleCount) / ages.length) * 100)
     : 100;

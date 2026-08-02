@@ -17,6 +17,7 @@
  * evidence on its own.
  */
 import { CacheKind, readCache, writeCache } from './name-cache';
+import { foldName } from './fold-name';
 import { MISSING_WORDING } from './favro-error';
 import { RefusalError } from './refusal';
 
@@ -51,7 +52,13 @@ export class NameResolutionError extends RefusalError {
   }
 }
 
-const norm = (s: string | undefined): string => (s ?? '').trim().toLowerCase();
+/**
+ * One shared fold, not a private copy: a board or collection name typed by a
+ * human and the one Favro sent can be the same name in two normalisation
+ * forms (#141). `looksLikeName` below deliberately does NOT use it — untrimmed
+ * whitespace is evidence there, not noise.
+ */
+const norm = foldName;
 
 /** How many candidates a refusal spells out before it defers to the list command. */
 const MAX_LISTED = 10;

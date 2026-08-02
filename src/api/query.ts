@@ -16,6 +16,7 @@
  */
 
 import FavroHttpClient from '../lib/http-client';
+import { foldName } from '../lib/fold-name';
 import ContextAPI, { type BoardContextSnapshot, type ContextCard } from './context';
 import type { QueryFilter, QueryMatch, QueryResult } from '../types/query';
 
@@ -143,10 +144,16 @@ export function matchCard(
 ): string | null {
   const reasons: string[] = [];
 
+  // Every comparison below folds BOTH sides with `foldName` rather than
+  // lowercasing: one side is a card's own name from the wire, the other is
+  // whatever the caller typed, and the same visible name reaches those two in
+  // different Unicode normalisation forms (#141). `filter.due` is left alone —
+  // it is a date string, not a name.
+
   // ── Status ──────────────────────────────────────────────────────────────
   if (filter.status !== undefined) {
-    const cardStatus = (card.status ?? '').toLowerCase();
-    const filterStatus = filter.status.toLowerCase();
+    const cardStatus = foldName(card.status);
+    const filterStatus = foldName(filter.status);
     if (!cardStatus.includes(filterStatus) && cardStatus !== filterStatus) {
       return null;
     }
@@ -155,7 +162,7 @@ export function matchCard(
 
   // ── Owner / assignee ────────────────────────────────────────────────────
   if (filter.owner !== undefined) {
-    const filterOwner = filter.owner.toLowerCase();
+    const filterOwner = foldName(filter.owner);
     const assignees = card.assignees ?? [];
 
     // Support @me → match any card that has at least one assignee
@@ -164,7 +171,7 @@ export function matchCard(
     const matched = isMe
       ? assignees.length > 0
       : assignees.some(a => {
-          const al = a.toLowerCase();
+          const al = foldName(a);
           return al.includes(filterOwner) || al === filterOwner;
         });
 
@@ -175,15 +182,18 @@ export function matchCard(
 
     // Also check against member names/emails from context
     if (!matched && !isMe) {
-      const memberMatch = context.members.find(m => {
-        const ml = (m.name + ' ' + m.email).toLowerCase();
-        return ml.includes(filterOwner);
-      });
+      const memberMatch = context.members.find(m =>
+        foldName(m.name + ' ' + m.email).includes(filterOwner),
+      );
       if (memberMatch) {
+        // Empty needles are dropped, not searched for: a member with no email
+        // folded to `''`, and `includes('')` is true of every string, so the
+        // owner filter matched every assignee on the board.
+        const needles = [foldName(memberMatch.email), foldName(memberMatch.name)]
+          .filter(n => n.length > 0);
         const inCard = assignees.some(a => {
-          const al = a.toLowerCase();
-          return al.includes((memberMatch.email ?? '').toLowerCase()) ||
-                 al.includes((memberMatch.name ?? '').toLowerCase());
+          const al = foldName(a);
+          return needles.some(n => al.includes(n));
         });
         if (!inCard) return null;
       } else {
@@ -196,9 +206,9 @@ export function matchCard(
 
   // ── Label / tag ─────────────────────────────────────────────────────────
   if (filter.label !== undefined) {
-    const filterLabel = filter.label.toLowerCase();
+    const filterLabel = foldName(filter.label);
     const tags = card.tags ?? [];
-    if (!tags.some(t => t.toLowerCase().includes(filterLabel))) {
+    if (!tags.some(t => foldName(t).includes(filterLabel))) {
       return null;
     }
     reasons.push(`tag: ${filter.label}`);
@@ -206,7 +216,7 @@ export function matchCard(
 
   // ── Priority ────────────────────────────────────────────────────────────
   if (filter.priority !== undefined) {
-    const filterPriority = filter.priority.toLowerCase();
+    const filterPriority = foldName(filter.priority);
     const customFields = card.customFields ?? {};
     const priorityValue = (
       customFields['priority'] ??
@@ -217,7 +227,7 @@ export function matchCard(
     if (!priorityValue) {
       return null;
     }
-    const pv = String(priorityValue).toLowerCase();
+    const pv = foldName(String(priorityValue));
     if (!pv.includes(filterPriority)) {
       return null;
     }
@@ -248,9 +258,9 @@ export function matchCard(
 
   // ── Free-text search ────────────────────────────────────────────────────
   if (filter.text !== undefined && filter.text.length > 0) {
-    const filterText = filter.text.toLowerCase();
-    const titleMatch = card.title.toLowerCase().includes(filterText);
-    const tagMatch = (card.tags ?? []).some(t => t.toLowerCase().includes(filterText));
+    const filterText = foldName(filter.text);
+    const titleMatch = foldName(card.title).includes(filterText);
+    const tagMatch = (card.tags ?? []).some(t => foldName(t).includes(filterText));
     if (!titleMatch && !tagMatch) {
       return null;
     }

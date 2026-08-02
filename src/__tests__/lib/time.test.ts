@@ -1,7 +1,44 @@
 /**
  * Unit tests — time helpers (parseSince, formatTimestamp, formatRelative, daysSince)
  */
-import { parseSince, formatTimestamp, formatRelative, daysSince } from '../../lib/time';
+import {
+  parseSince,
+  formatTimestamp,
+  formatRelative,
+  daysSince,
+  DEFAULT_STALE_DAYS,
+  isStale,
+  staleWording,
+} from '../../lib/time';
+
+// ─── isStale / staleWording ──────────────────────────────────────────────────
+// The one boundary `favro stale` and `favro health` both use (#145). They used
+// to hold `>=` and `>` around the same number, so a card inactive for exactly
+// 14 days was stale to one command and healthy to the other. These pin the
+// choice at the seam itself, so a caller drifting off it shows up as a diff
+// here rather than as two commands quietly disagreeing.
+describe('isStale', () => {
+  it('is inclusive: a card exactly at the threshold is stale', () => {
+    expect(isStale(14, 14)).toBe(true);
+    expect(isStale(13, 14)).toBe(false);
+    expect(isStale(15, 14)).toBe(true);
+  });
+
+  it('keeps --days 0 meaning "everything", including a card made today', () => {
+    expect(isStale(0, 0)).toBe(true);
+  });
+});
+
+describe('staleWording', () => {
+  it('says what isStale does, not the exclusive boundary the header used to claim', () => {
+    expect(staleWording(DEFAULT_STALE_DAYS)).toBe('inactive 14 days or more');
+    expect(staleWording(0)).toBe('inactive 0 days or more');
+  });
+
+  it('singularises one day', () => {
+    expect(staleWording(1)).toBe('inactive 1 day or more');
+  });
+});
 
 
 // ─── daysSince ───────────────────────────────────────────────────────────────

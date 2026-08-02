@@ -8,6 +8,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
+import { foldName } from './fold-name';
 
 export interface FavroConfig {
   apiKey?: string;
@@ -167,7 +168,9 @@ export async function resolveUserId(): Promise<string | undefined> {
     const client = new FavroHttpClient({ auth: { token: auth.token, email: auth.email, organizationId: auth.organizationId } });
     const resp = await client.get<{ entities?: Array<{ userId: string; email: string }> }>('/users', { params: { limit: 100 } });
     const users = resp.entities ?? [];
-    const me = users.find(u => u.email.toLowerCase() === auth.email!.toLowerCase());
+    // `foldName`: the configured address was typed, the wire's was not, and an
+    // accented local part can reach the two in different forms (#141).
+    const me = users.find(u => foldName(u.email) === foldName(auth.email));
     if (me) {
       await writeConfig({ ...config, userId: me.userId });
       return me.userId;

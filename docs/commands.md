@@ -518,7 +518,7 @@ These commands work across boards via `--collection <name>` or the scoped collec
 | `my-standup` | Developer | Personal standup: done/active/blocked/due. *Blocked* is the card's column (`Blocked`, `On Hold`), not its dependency edges — see below |
 | `next` | Developer | AI-scored "what should I work on next?" |
 | `workload` | PM | Per-member card distribution + overload alerts |
-| `stale` | PM | Cards inactive >N days |
+| `stale` | PM | Cards inactive N days or more (`--days`, inclusive; default 14 — the same threshold `health` scores against) |
 | `overview` | PM | Collection dashboard with blockers |
 | `health` | CTO | Per-board health scores 0-100 |
 | `team` | CTO | Team utilization + bottleneck analysis |

@@ -1,6 +1,7 @@
 import FavroHttpClient from './http-client';
 import { getAllPages } from './paginate';
 import { cachedList } from './name-cache';
+import { foldName } from './fold-name';
 import { MISSING_WORDING } from './favro-error';
 import { RefusalError } from './refusal';
 import { isUserId } from './id-shapes';
@@ -77,14 +78,18 @@ export class UsersAPI {
     const value = key.trim();
     const users = await cachedUsers(this.client, this.client.organizationId);
     const kind = detectUserKey(value);
-    const lower = value.toLowerCase();
+    // `foldName`, not `toLowerCase`: a display name reaches the wire and a
+    // shell in different normalisation forms, and so does the local part of an
+    // address (#141). A `userId` is compared raw — it is an opaque id, and
+    // folding one would be inventing a match.
+    const wanted = foldName(value);
 
     const matches =
       kind === 'userId'
         ? users.filter((u) => u.userId === value)
         : kind === 'email'
-          ? users.filter((u) => (u.email ?? '').trim().toLowerCase() === lower)
-          : users.filter((u) => (u.name ?? '').trim().toLowerCase() === lower);
+          ? users.filter((u) => foldName(u.email) === wanted)
+          : users.filter((u) => foldName(u.name) === wanted);
 
     if (matches.length === 0) {
       throw new UserLookupError(
