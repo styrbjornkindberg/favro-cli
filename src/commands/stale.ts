@@ -5,7 +5,7 @@
 import { Command } from 'commander';
 import { AggregateCard } from '../api/aggregate';
 import { Ctx, run } from '../lib/run';
-import { daysSince } from '../lib/time';
+import { daysSince, DEFAULT_STALE_DAYS, isStale, staleWording } from '../lib/time';
 
 const DONE_STAGES = ['done', 'approved', 'archived'];
 
@@ -52,20 +52,22 @@ interface StaleResult {
 
 function formatHuman(data: StaleResult): string {
   const lines: string[] = [];
-  lines.push(`Stale Cards (inactive >${data.staleDays} days) — ${data.scope}\n`);
+  // Off the same helper as the filter below, not written out beside it: the
+  // header used to promise `>${staleDays}` over a set built with `>=` (#145).
+  lines.push(`Stale Cards (${staleWording(data.staleDays)}) — ${data.scope}\n`);
 
   if (data.assignedStale.length > 0) {
     lines.push(`  Assigned but stale (${data.assignedStale.length}):`);
     for (const c of data.assignedStale) {
       const who = c.assignees?.join(', ') ?? 'unknown';
-      lines.push(`    • ${c.title} — ${c.board} (${c.daysSinceUpdate}d ago, assigned: ${who})`);
+      lines.push(`    • ${c.title} — ${c.board ?? 'unknown board'} (${c.daysSinceUpdate}d ago, assigned: ${who})`);
     }
   }
 
   if (data.unassignedStale.length > 0) {
     lines.push(`  Unassigned and stale (${data.unassignedStale.length}):`);
     for (const c of data.unassignedStale) {
-      lines.push(`    • ${c.title} — ${c.board} (${c.daysSinceUpdate}d ago)`);
+      lines.push(`    • ${c.title} — ${c.board ?? 'unknown board'} (${c.daysSinceUpdate}d ago)`);
     }
   }
 
@@ -96,7 +98,7 @@ export async function staleHandler(ctx: Ctx, options: StaleOptions) {
   // it and reported `daysSinceUpdate: -1`, the value #130 exists to remove —
   // and read `--days 0` as absent. Clamp-to-declared-default, as `context.ts:50`.
   const parsedDays = parseInt(options.days, 10);
-  const staleDays = !isNaN(parsedDays) && parsedDays >= 0 ? parsedDays : 14;
+  const staleDays = !isNaN(parsedDays) && parsedDays >= 0 ? parsedDays : DEFAULT_STALE_DAYS;
   const cardLimit = parseInt(options.limit, 10) || 1000;
 
   let snapshot: { allCards: AggregateCard[] };
@@ -144,7 +146,7 @@ export async function staleHandler(ctx: Ctx, options: StaleOptions) {
       continue;
     }
 
-    if (days >= staleDays) {
+    if (isStale(days, staleDays)) {
       const staleCard: StaleCard = {
         id: card.id,
         title: card.title,
@@ -189,7 +191,7 @@ export function registerStaleCommand(program: Command): void {
     .description('Find cards with no recent activity (LLM-first JSON)')
     .option('--board <name>', 'Filter to a specific board')
     .option('--collection <name>', 'Filter to a specific collection')
-    .option('--days <n>', 'Inactivity threshold in days', '14')
+    .option('--days <n>', 'Inactivity threshold in days (inclusive)', String(DEFAULT_STALE_DAYS))
     .option('--limit <n>', 'Max cards', '1000')
     .action(run(staleHandler));
 }
