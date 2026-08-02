@@ -480,11 +480,15 @@ describe('cards export (live command)', () => {
 
     await runExport(STUB_BOARD, '--format', 'csv', '--out', outFile);
 
-    const content = fs.readFileSync(outFile, 'utf-8');
-    expect(content).toContain('"id"');
-    expect(content).toContain('"title"');
-    expect(content).toContain('"card-001"');
-    expect(content).toContain('"Fix login bug"');
+    // Asserted as ROWS, not as substrings. `toContain('"id"')` and
+    // `toContain('"card-001"')` are both satisfied by pretty-printed JSON, so
+    // the CSV arm of this branch could be swapped for the JSON one with
+    // nothing going red — the shape of the very defect #139 deletes.
+    const [header, ...rows] = fs.readFileSync(outFile, 'utf-8').trim().split('\n');
+    expect(header.startsWith('"id","title"')).toBe(true);
+    expect(rows).toHaveLength(sampleCards.length);
+    expect(rows[0]).toContain('"card-001"');
+    expect(rows[0]).toContain('"Fix login bug"');
   });
 
   test('exports cards to a pretty-printed JSON file', async () => {
@@ -562,11 +566,18 @@ describe('cards export (live command)', () => {
   // #44 replaced three `--limit` tests here. `cards export` no longer has the
   // flag at all: it fetched a cap and called the result "the export", which is
   // the same silent-partial-answer defect as `cards list --limit`.
-  test('the export fetch is uncapped — no limit reaches the API', async () => {
+  //
+  // `ListCardsOptions` carries no `limit` any more, so a cap is unspellable and
+  // the type is the real guard. What is left to bite is the CALL SHAPE: the
+  // board string alone, once, with nothing narrowing the fetch on the wire —
+  // `{ boardId, status }` and `{ boardId, archived }` are the same
+  // silent-partial-answer wearing a different option.
+  test('the export fetch is uncapped — the whole board, addressed by board alone', async () => {
     const listCards = mockApi(sampleCards);
 
     await runExport(STUB_BOARD, '--format', 'json', '--out', path.join(tmpDir, 'uncapped.json'));
 
+    expect(listCards).toHaveBeenCalledTimes(1);
     expect(listCards).toHaveBeenCalledWith(STUB_BOARD);
   });
 
