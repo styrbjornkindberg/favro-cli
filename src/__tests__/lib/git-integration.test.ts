@@ -20,6 +20,8 @@ import {
   getLastCommitMessage,
   hasStagedChanges,
   isGitRepo,
+  getDefaultBranch,
+  analyzeBranches,
   FavroProjectConfig,
 } from '../../lib/git-integration';
 
@@ -263,5 +265,46 @@ describe('git commands never reach /bin/sh', () => {
 
     process.chdir(os.tmpdir());
     expect(isGitRepo()).toBe(false);
+  });
+
+  // listBranches() threw on every call before the argv rewrite, so everything
+  // downstream of it was dead: getDefaultBranch()'s no-origin fallback, and
+  // analyzeBranches() — which `favro git sync` uses to decide which cards get
+  // moved to "Done". The fix makes that write path live for the first time, so
+  // it needs a witness: a misclassified branch moves the wrong card.
+  test('analyzeBranches classifies merged, open and current branches', () => {
+    rawGit(['commit', '-m', 'first']);
+    rawGit(['checkout', '-q', '-b', 'feature/aabbccddeeff0011-done']);
+    fs.writeFileSync(path.join(repo, 'b.txt'), 'b\n');
+    rawGit(['add', 'b.txt']);
+    rawGit(['commit', '-m', 'done work']);
+    rawGit(['checkout', '-q', 'main']);
+    rawGit(['merge', '-q', '--no-ff', '-m', 'merge', 'feature/aabbccddeeff0011-done']);
+
+    rawGit(['checkout', '-q', '-b', 'feature/1122334455667788-open']);
+    fs.writeFileSync(path.join(repo, 'c.txt'), 'c\n');
+    rawGit(['add', 'c.txt']);
+    rawGit(['commit', '-m', 'open work']);
+
+    // No origin/HEAD here, so this also exercises getDefaultBranch()'s fallback.
+    expect(getDefaultBranch()).toBe('main');
+
+    const byBranch = Object.fromEntries(
+      analyzeBranches().map(m => [m.branch, m])
+    );
+    expect(Object.keys(byBranch).sort()).toEqual([
+      'feature/1122334455667788-open',
+      'feature/aabbccddeeff0011-done',
+    ]);
+    expect(byBranch['feature/aabbccddeeff0011-done']).toEqual({
+      branch: 'feature/aabbccddeeff0011-done',
+      cardId: 'aabbccddeeff0011',
+      status: 'merged',
+    });
+    expect(byBranch['feature/1122334455667788-open']).toEqual({
+      branch: 'feature/1122334455667788-open',
+      cardId: '1122334455667788',
+      status: 'current',
+    });
   });
 });
