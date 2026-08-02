@@ -20,6 +20,7 @@
 import { Command, CommanderError } from 'commander';
 import * as path from 'path';
 import CardsAPI, { UpdateCardRequest } from './lib/cards-api';
+import BoardsAPI from './lib/boards-api';
 // The shared dispatch table. Importing it here is what makes the CLI a caller of
 // the one table rather than a second, drifting write path — and it registers
 // every intent, so intents added by later tickets are reachable with no change.
@@ -348,7 +349,6 @@ cards
       // board that does not exist and refuses with "No column named done on
       // board Backlog - Web Hub" — the wrong problem, named confidently (#82).
       // `listCards` settles its own board too; an id costs a cache read.
-      const { default: BoardsAPI } = await import('./lib/boards-api');
       const boardId = await new BoardsAPI(client).resolveBoardId(boardRef);
 
       // The filter is parsed AND its values settled against Favro's own
@@ -856,10 +856,12 @@ cards
       }
       
       try {
-        const { readConfig } = await import('./lib/config');
-        const { checkScope } = await import('./lib/safety');
-        await checkScope(options.board, client, await readConfig(), options.force);
-        
+        const { checkResolvedScope } = await import('./lib/safety');
+        // `--board` is a name or a boardId, but the lock GETs `/widgets/<id>` —
+        // handed a name it 404s into "Board … not found", a refusal naming the
+        // wrong problem (#82). The thunk keeps an unlocked user off the network.
+        await checkResolvedScope(client, () => new BoardsAPI(client!).resolveBoardId(options.board), options.force);
+
         const { buildFilterFn } = await import('./commands/batch');
         const {
           BulkTransaction,
@@ -1073,11 +1075,11 @@ cards
   .description(
     'Export all cards from a board to JSON or CSV.\n\n' +
     'Examples:\n' +
-    '  favro cards export <boardId> --format csv --out sprint.csv\n' +
-    '  favro cards export <boardId> --format json --out sprint.json\n' +
-    '  favro cards export <boardId> --format json | jq \'.[].name\'\n' +
-    '  favro cards export <boardId> --format csv --filter "assignee:alice"\n' +
-    '  favro cards export <boardId> --format json --filter "status:Done" --filter "tag:sprint-42"\n\n' +
+    '  favro cards export <board> --format csv --out sprint.csv\n' +
+    '  favro cards export <board> --format json --out sprint.json\n' +
+    '  favro cards export <board> --format json | jq \'.[].name\'\n' +
+    '  favro cards export <board> --format csv --filter "assignee:alice"\n' +
+    '  favro cards export <board> --format json --filter "status:Done" --filter "tag:sprint-42"\n\n' +
     'Filter expressions (all conditions must match — AND logic):\n' +
     '  assignee:alice    cards where alice is an assignee\n' +
     '  status:Done       cards with status "Done"\n' +

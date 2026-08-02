@@ -2,23 +2,33 @@
  * `favro widgets list|add` — behaviour (#100).
  *
  * `widgets add` puts a card on a named board, so it is a write that LANDS on a
- * board and the lock applies directly — the board id is an argument, no
- * resolution needed. `widgets list` is the read that answers "which board
- * instances does this card have", which is the `cardId` vs `cardCommonId`
- * distinction made visible.
+ * board and the lock applies directly. The board ARGUMENT is a name or an id
+ * (#82) — it settles before the lock sees it, because the lock checks a
+ * `widgetCommonId` and `GET /widgets/<name>` 404s into "Board … not found", a
+ * refusal naming the wrong problem. `widgets list` is the read that answers
+ * "which board instances does this card have", which is the `cardId` vs
+ * `cardCommonId` distinction made visible.
  */
 import { Command } from 'commander';
 import { registerWidgetsCommands } from '../../commands/widgets';
 import * as config from '../../lib/config';
 import * as safety from '../../lib/safety';
 import WidgetsAPI from '../../lib/widgets-api';
+import BoardsAPI from '../../lib/boards-api';
+import { passThroughScopeResolution } from '../../test-support/scope-passthrough';
 
 jest.mock('../../lib/http-client');
 jest.mock('../../lib/config');
 jest.mock('../../lib/safety');
 jest.mock('../../lib/widgets-api');
+jest.mock('../../lib/boards-api');
 
 const MockWidgets = WidgetsAPI as jest.MockedClass<typeof WidgetsAPI>;
+const MockBoards = BoardsAPI as jest.MockedClass<typeof BoardsAPI>;
+
+/** What the one board in this file is called, and what it settles to. */
+const BOARD_NAME = 'Backlog - Web Hub';
+const BOARD_ID = 'board-b';
 
 class ExitCalled extends Error {
   constructor(readonly code: number) {
@@ -57,6 +67,12 @@ beforeEach(() => {
   (config.readConfig as jest.Mock).mockResolvedValue({ scopeCollectionId: 'coll-1' });
   (safety.checkScope as jest.Mock).mockResolvedValue(undefined);
   (safety.confirmAction as jest.Mock).mockResolvedValue(true);
+  // `checkResolvedScope` IS the behaviour under test here — auto-mocked it
+  // resolves nothing and every assertion below would pass against a stub.
+  passThroughScopeResolution(safety, config, { prototype: { getCard: async () => undefined } });
+  MockBoards.prototype.resolveBoardId = jest.fn(async (board: string) =>
+    board === BOARD_NAME ? BOARD_ID : board,
+  );
   (safety.dryRunLog as jest.Mock).mockImplementation((verb: string, noun: string, detail: string) =>
     console.log(`[dry-run] ${verb} ${noun}: ${detail}`),
   );
@@ -133,6 +149,24 @@ describe('widgets add', () => {
     expect(MockWidgets.prototype.addWidgetToBoard).not.toHaveBeenCalled();
     expect(errors()).toContain('Scope violation');
     expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  test('a board NAME settles to an id before the lock sees it (#82)', async () => {
+    await runCli(['widgets', 'add', BOARD_NAME, 'ccid-1', '-y']);
+
+    // The lock GETs `/widgets/<id>`; handed the name it 404s and reports
+    // "Board Backlog - Web Hub not found" — #82's complaint at a new seam.
+    expect(safety.checkScope).toHaveBeenCalledWith(BOARD_ID, expect.anything(), expect.anything(), undefined);
+    expect(MockWidgets.prototype.addWidgetToBoard).toHaveBeenCalledWith(BOARD_NAME, 'ccid-1', undefined);
+  });
+
+  test('no lock configured means the board is never resolved for the lock', async () => {
+    (config.readConfig as jest.Mock).mockResolvedValue({});
+
+    await runCli(['widgets', 'add', BOARD_NAME, 'ccid-1', '-y']);
+
+    expect(safety.checkScope).not.toHaveBeenCalled();
+    expect(MockBoards.prototype.resolveBoardId).not.toHaveBeenCalled();
   });
 
   test('the lock runs before the preview, so --dry-run is not a way around it', async () => {

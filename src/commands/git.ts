@@ -406,7 +406,7 @@ export function registerGitCommands(program: Command): void {
           const boardId = options.board ?? config?.boardId;
 
           if (!boardId) {
-            console.error('\nNo board specified. Use --board <id> or run `favro git link` first.');
+            console.error('\nNo board specified. Use --board <board> — a name or a boardId — or run `favro git link` first.');
             process.exit(1);
           }
 
@@ -427,7 +427,11 @@ export function registerGitCommands(program: Command): void {
           // which is bound by the scope lock. Check BEFORE the confirm, like
           // every other caller: no point asking "create 100 cards?" and only
           // then admitting the board is locked out.
-          await checkScope(boardId, client, await readConfig(), options.force);
+          //
+          // Either source is a NAME or a boardId, and the lock GETs
+          // `/widgets/<id>` — handed a name it 404s into "Board … not found",
+          // a refusal naming the wrong problem (#82).
+          await checkResolvedScope(client, () => new BoardsAPI(client).resolveBoardId(boardId), options.force);
 
           if (!(await confirmAction(`Create ${limited.length} cards from TODOs?`, { yes: options.yes }))) {
             console.log('Aborted.');

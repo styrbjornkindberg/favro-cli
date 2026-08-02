@@ -28,6 +28,7 @@ import * as fsSync from 'fs';
 import { AddressInfo } from 'net';
 import FavroHttpClient from '../lib/http-client';
 import CardsAPI from '../lib/cards-api';
+import WidgetsAPI from '../lib/widgets-api';
 import { NameResolutionError } from '../lib/name-resolve';
 
 const ORG = 'org-1';
@@ -144,46 +145,66 @@ afterEach(async () => {
  * THE REAL SURFACE, not one example.
  *
  * `cards list --board` was the reported symptom; it was never the only caller.
- * Each row drives one `CardsAPI` entry point with a board NAME and asserts the
+ * Each row drives one card-shaped entry point with a board NAME and asserts the
  * resolved `widgetCommonId` reached Favro — and, below, that the name itself
  * reached nothing. A row per entry point is the point: patching only the path
  * the ticket named would have left every sibling answering zero rows.
+ *
+ * The table takes a CLIENT, not a `CardsAPI`: "card-shaped" is about what goes
+ * on the wire, not about which class spells it. `WidgetsAPI.addWidgetToBoard`
+ * is a `PUT /cards/:cardId` carrying `widgetCommonId` and belongs here for
+ * exactly that reason — it never touches `CardsAPI`, so a table keyed on the
+ * class would have missed it, which is the tenth-entry-point version of the
+ * bug this whole ticket is about.
  *
  * Adding a board-taking entry point without adding a row here is caught by
  * `the resolver is the only way a board reaches the wire`, further down.
  */
 const ENTRY_POINTS: Array<{
   what: string;
-  drive: (api: CardsAPI, board: string) => Promise<unknown>;
+  drive: (client: FavroHttpClient, board: string) => Promise<unknown>;
 }> = [
-  { what: 'listCards({ boardId })', drive: (api, board) => api.listCards({ boardId: board }) },
-  { what: 'listCards(board) shorthand', drive: (api, board) => api.listCards(board) },
-  { what: 'getCard(ref, { board })', drive: (api, board) => api.getCard(SEQUENTIAL, { board }) },
-  { what: 'createCard({ boardId })', drive: (api, board) => api.createCard({ name: 'x', boardId: board }) },
+  { what: 'listCards({ boardId })', drive: (c, board) => new CardsAPI(c).listCards({ boardId: board }) },
+  { what: 'listCards(board) shorthand', drive: (c, board) => new CardsAPI(c).listCards(board) },
+  { what: 'getCard(ref, { board })', drive: (c, board) => new CardsAPI(c).getCard(SEQUENTIAL, { board }) },
+  {
+    what: 'createCard({ boardId })',
+    drive: (c, board) => new CardsAPI(c).createCard({ name: 'x', boardId: board }),
+  },
   {
     what: 'createCard({ widgetCommonId })',
-    drive: (api, board) => api.createCard({ name: 'x', widgetCommonId: board }),
+    drive: (c, board) => new CardsAPI(c).createCard({ name: 'x', widgetCommonId: board }),
   },
-  { what: 'updateCard(ref, { boardId })', drive: (api, board) => api.updateCard(CARD_ID, { boardId: board }) },
-  { what: 'moveCard(ref, { toBoardId })', drive: (api, board) => api.moveCard(CARD_ID, { toBoardId: board }) },
+  {
+    what: 'updateCard(ref, { boardId })',
+    drive: (c, board) => new CardsAPI(c).updateCard(CARD_ID, { boardId: board }),
+  },
+  {
+    what: 'moveCard(ref, { toBoardId })',
+    drive: (c, board) => new CardsAPI(c).moveCard(CARD_ID, { toBoardId: board }),
+  },
   {
     what: 'findCardBySequentialId(n, { widgetCommonId })',
-    drive: (api, board) => api.findCardBySequentialId(1804, { widgetCommonId: board }),
+    drive: (c, board) => new CardsAPI(c).findCardBySequentialId(1804, { widgetCommonId: board }),
   },
   {
     what: 'resolveCardId(ref, { widgetCommonId })',
-    drive: (api, board) => api.resolveCardId(SEQUENTIAL, { widgetCommonId: board }),
+    drive: (c, board) => new CardsAPI(c).resolveCardId(SEQUENTIAL, { widgetCommonId: board }),
   },
   {
     what: 'resolveCardCommonId(ref, { widgetCommonId })',
-    drive: (api, board) => api.resolveCardCommonId(SEQUENTIAL, { widgetCommonId: board }),
+    drive: (c, board) => new CardsAPI(c).resolveCardCommonId(SEQUENTIAL, { widgetCommonId: board }),
+  },
+  {
+    what: 'addWidgetToBoard(board, card) — the `favro widgets add` write',
+    drive: (c, board) => new WidgetsAPI(c).addWidgetToBoard(board, CARD_COMMON_ID),
   },
 ];
 
 describe('every card-shaped entry point resolves --board before the wire (#82)', () => {
   it.each(ENTRY_POINTS)('$what puts the resolved id on widgetCommonId', async ({ drive }) => {
     const { client, received } = await startServer();
-    await drive(new CardsAPI(client), HUB_NAME);
+    await drive(client, HUB_NAME);
 
     const sent = everythingSent(cardCalls(received));
     expect(cardCalls(received).length).toBeGreaterThan(0);
@@ -194,7 +215,7 @@ describe('every card-shaped entry point resolves --board before the wire (#82)',
 
   it.each(ENTRY_POINTS)('$what resolves a one-word name too — shape never decides', async ({ drive }) => {
     const { client, received } = await startServer();
-    await drive(new CardsAPI(client), SOLO_NAME);
+    await drive(client, SOLO_NAME);
 
     const sent = everythingSent(cardCalls(received));
     expect(sent).toContain(SOLO_ID);
@@ -202,7 +223,7 @@ describe('every card-shaped entry point resolves --board before the wire (#82)',
 
   it.each(ENTRY_POINTS)('$what refuses an unknown board and never calls /cards', async ({ drive }) => {
     const { client, received } = await startServer();
-    const attempt = drive(new CardsAPI(client), 'No Such Board');
+    const attempt = drive(client, 'No Such Board');
 
     await expect(attempt).rejects.toBeInstanceOf(NameResolutionError);
     // The #82 wording, reused from `resolveBoard` rather than invented twice.
@@ -212,7 +233,7 @@ describe('every card-shaped entry point resolves --board before the wire (#82)',
 
   it.each(ENTRY_POINTS)('$what refuses an ambiguous board, listing every candidate id', async ({ drive }) => {
     const { client, received } = await startServer();
-    const attempt = drive(new CardsAPI(client), DUP_NAME);
+    const attempt = drive(client, DUP_NAME);
 
     const error = (await attempt.catch((e: unknown) => e)) as NameResolutionError;
     expect(error).toBeInstanceOf(NameResolutionError);
@@ -225,7 +246,7 @@ describe('every card-shaped entry point resolves --board before the wire (#82)',
 
   it.each(ENTRY_POINTS)('$what still passes a real id straight through', async ({ drive }) => {
     const { client, received } = await startServer();
-    await drive(new CardsAPI(client), HUB_ID);
+    await drive(client, HUB_ID);
 
     expect(everythingSent(cardCalls(received))).toContain(HUB_ID);
   });
@@ -270,34 +291,72 @@ describe('a board-less read is untouched (#82)', () => {
  * Nothing above goes red if an eleventh entry point is added that forwards its
  * board raw — and that is exactly how eight of the ten above survived years of
  * green suites, each one covered by a mock that answered whatever board it was
- * asked about. So the cheapest guard is to make the raw forward unspellable:
- * inside `cards-api.ts` the ONLY name a resolved board is ever bound to is
- * `boardId`, and every write of the `widgetCommonId` wire key must take it.
+ * asked about.
+ *
+ * Two scans, because one is not enough. The NAME check is the cheap one:
+ * inside `cards-api.ts` the only name a resolved board is ever bound to is
+ * `boardId`, so every `widgetCommonId` write must spell exactly that. On its
+ * own it matches provenance-free — `const boardId = opts.boardId;` launders a
+ * raw forward straight through it, which is precisely the eleventh-entry-point
+ * case this ratchet exists for. So the PROVENANCE check does the real work:
+ * whatever function writes `widgetCommonId` must itself have called
+ * `boardIdOf`. That one is not fooled by a rebinding, and it does not care
+ * what the local is called or which file it lives in.
  *
  * If you are here because this failed: the value you put on `widgetCommonId`
- * did not come from `this.boardIdOf(…)`. Route it through, bind it to
- * `boardId`, and add a row to `ENTRY_POINTS`.
+ * did not come from `boardIdOf(…)`. Route it through, bind it to `boardId`,
+ * and add a row to `ENTRY_POINTS`.
  */
-const CARDS_API = path.resolve(__dirname, '..', 'lib', 'cards-api.ts');
+const GUARDED = ['cards-api.ts', 'widgets-api.ts'].map((f) => path.resolve(__dirname, '..', 'lib', f));
+const CARDS_API = GUARDED[0];
 
 /**
- * `widgetCommonId: <value>` / `…widgetCommonId = <value>` — a WRITE.
+ * `widgetCommonId: <value>` / `…widgetCommonId = <value>` — a WRITE. Bracket
+ * notation (`params['widgetCommonId'] = …`) is the same write in a spelling
+ * that used to slip past.
  *
  * Not matched, and not wanted: the `widgetCommonId?: string` field
  * declarations, the `{ …, widgetCommonId, … }` destructures, and a local
  * `const widgetCommonId = …` (which `parseCardUrl` builds out of a URL path and
  * hands back to its caller, rather than to Favro).
  */
-const WIRE_WRITE = /(const |let |var )?widgetCommonId\s*[:=]\s*([^,;\n}]+)/g;
+const WIRE_WRITE = /(const |let |var )?['"]?widgetCommonId['"]?\s*\]?\s*[:=]\s*([^,;\n}]+)/g;
 
-/** A field declaration (`widgetCommonId?: string`), never a wire write. */
+/** A field declaration (`widgetCommonId: string`), never a wire write. */
 const NOT_A_WRITE = /^(string|\?)/;
 
-function boardValuesWrittenToTheWire(source: string): string[] {
+/**
+ * Where a function body starts: a class member at its two-space indent, or a
+ * top-level `function`. Crude on purpose — the ratchet only needs to know which
+ * body a write sits in, and its own self-check below proves the split found the
+ * bodies rather than treating each file as one blob.
+ */
+const FUNCTION_START =
+  /^(?: {2}(?:private |public |protected )?(?:static )?(?:async )?(?:get |set )?[A-Za-z_$][\w$]*\s*[(<]|(?:export )?(?:async )?function [A-Za-z_$][\w$]*)/gm;
+
+function wireWrites(source: string): RegExpExecArray[] {
   return [...source.matchAll(WIRE_WRITE)]
     .filter((m) => m[1] === undefined)
-    .map((m) => m[2].trim())
-    .filter((value) => !NOT_A_WRITE.test(value));
+    .filter((m) => !NOT_A_WRITE.test(m[2].trim())) as RegExpExecArray[];
+}
+
+function boardValuesWrittenToTheWire(source: string): string[] {
+  return wireWrites(source).map((m) => m[2].trim());
+}
+
+/** The source of the function body a given offset sits inside. */
+function enclosingBody(source: string, offset: number): string {
+  const starts = [...source.matchAll(FUNCTION_START)].map((m) => m.index as number);
+  const from = starts.filter((i) => i <= offset).pop() ?? 0;
+  const to = starts.find((i) => i > offset) ?? source.length;
+  return source.slice(from, to);
+}
+
+/** Every `widgetCommonId` write whose own function never called `boardIdOf`. */
+function unresolvedWrites(source: string): string[] {
+  return wireWrites(source)
+    .filter((m) => !/boardIdOf\s*\(/.test(enclosingBody(source, m.index as number)))
+    .map((m) => `${m[0].trim()}  (line ${source.slice(0, m.index).split('\n').length})`);
 }
 
 describe('the resolver is the only way a board reaches the wire (#82)', () => {
@@ -308,10 +367,30 @@ describe('the resolver is the only way a board reaches the wire (#82)', () => {
     expect(offenders).toEqual([]);
   });
 
-  it('the ratchet is actually looking at the file', () => {
-    // A scan that silently matched nothing would pass the test above forever.
-    const source = fsSync.readFileSync(CARDS_API, 'utf-8');
-    expect(boardValuesWrittenToTheWire(source).length).toBeGreaterThanOrEqual(5);
+  it.each(GUARDED.map((f) => [path.basename(f), f]))(
+    '%s writes widgetCommonId only from a function that called boardIdOf',
+    (_name, file) => {
+      expect(unresolvedWrites(fsSync.readFileSync(file, 'utf-8'))).toEqual([]);
+    },
+  );
+
+  it('the ratchet is actually looking at the files', () => {
+    // A scan that silently matched nothing would pass the tests above forever.
+    for (const file of GUARDED) {
+      const source = fsSync.readFileSync(file, 'utf-8');
+      expect(boardValuesWrittenToTheWire(source).length).toBeGreaterThanOrEqual(1);
+      // …and a split that found no bodies would make every write "enclosed" by
+      // the whole file, where SOME other function's boardIdOf always matches.
+      expect([...source.matchAll(FUNCTION_START)].length).toBeGreaterThanOrEqual(3);
+    }
+    expect(boardValuesWrittenToTheWire(fsSync.readFileSync(CARDS_API, 'utf-8')).length)
+      .toBeGreaterThanOrEqual(5);
+
+    // Positive probes: each scan flags the shape it exists to flag.
     expect(boardValuesWrittenToTheWire('params.widgetCommonId = opts.boardId;')).toEqual(['opts.boardId']);
+    expect(boardValuesWrittenToTheWire("params['widgetCommonId'] = opts.boardId;")).toEqual(['opts.boardId']);
+    expect(
+      unresolvedWrites('  async listCards(opts) {\n    const boardId = opts.boardId;\n    params.widgetCommonId = boardId;\n  }\n'),
+    ).toHaveLength(1);
   });
 });
