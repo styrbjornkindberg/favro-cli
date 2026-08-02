@@ -30,6 +30,8 @@
  *     it; this arm asserts nothing outside `query-values.ts` reaches for
  *     `parseQuery` on its own. Parity over two commands proves two commands. A
  *     ratchet over the real surface is what stops the third.
+ *   - THE LIVE COMMAND drives `buildProgram()`, because the two arms above call
+ *     library functions and neither reaches the command a user types.
  */
 import * as fs from 'fs';
 import * as fsp from 'fs/promises';
@@ -39,7 +41,12 @@ import * as path from 'path';
 import { ParseError } from '../lib/query-parser';
 import { resolveQuery } from '../lib/query-values';
 import { applyFilters } from '../commands/cards-export';
-import { Card } from '../lib/cards-api';
+import CardsAPI, { Card } from '../lib/cards-api';
+import * as clientFactory from '../lib/client-factory';
+import { buildProgram } from '../cli';
+
+jest.mock('../lib/cards-api');
+jest.mock('../lib/client-factory');
 
 const BOARD = 'board-1';
 
@@ -167,6 +174,13 @@ describe('cards list and cards export refuse the same filter identically', () =>
  * `parseQuery` is half of `--filter`. Composing it with the value check is what
  * `resolveQuery` is for, so these are the only two files allowed to name it:
  * the one that declares it, and the one that completes it.
+ *
+ * The scan below matches the NAME in the source text, not resolved call sites —
+ * so even a comment naming `parseQuery` trips it. That bluntness is the point:
+ * a call-graph version needs the type checker, and would still miss a dynamic
+ * `require` or a re-export, which is exactly how the half-protocol would come
+ * back. If you trip this, route the caller through `resolveQuery`, or add the
+ * file to the set above with a reason. Do not loosen the regex.
  */
 const MAY_NAME_PARSE_QUERY = new Set([
   path.join('lib', 'query-parser.ts'),
@@ -202,5 +216,81 @@ describe('the parse-then-validate protocol is one call', () => {
     expect(sources).toContain(path.join('commands', 'cards-export.ts'));
     expect(sources).toContain('cli.ts');
     expect(sources.some((f) => f.includes('__tests__'))).toBe(false);
+  });
+});
+
+// ─── arm three: the command a user actually types ────────────────────────────
+
+/**
+ * Arms one and two never reach a command. `commands/cards-export.ts` exports a
+ * `registerCardsExportCommand` that nothing but its own tests registers — the
+ * live `cards export` is inline in `cli.ts` — so the export suite can be fully
+ * green while the live path answers a plausible zero rows. This arm drives
+ * `buildProgram()`, the program `bin/favro` builds.
+ */
+describe('the live cards export refuses a filter it cannot settle', () => {
+  const listCards = jest.fn(async () => CARDS);
+  let outDir: string;
+
+  beforeEach(async () => {
+    jest.clearAllMocks();
+    // The out-path guard rejects anything outside cwd, so the file this test
+    // proves is NOT written has to be somewhere it legitimately could be.
+    outDir = await fsp.mkdtemp(path.join(process.cwd(), '.favro-export-refusal-'));
+    (clientFactory.createFavroClient as jest.Mock).mockImplementation(async () => makeClient());
+    (CardsAPI as jest.MockedClass<typeof CardsAPI>).mockImplementation(
+      () => ({ listCards } as any)
+    );
+  });
+
+  afterEach(async () => {
+    await fsp.rm(outDir, { recursive: true, force: true });
+  });
+
+  test('an unknown tag exits 1, writes no file, and never fetches the board', async () => {
+    const out = path.join(outDir, 'refused.json');
+    let code: number | undefined;
+    const exit = jest.spyOn(process, 'exit').mockImplementation(((c?: number) => {
+      code = c;
+      throw new Error('process.exit');
+    }) as never);
+    const said = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(
+      buildProgram().parseAsync([
+        'node', 'favro', 'cards', 'export', BOARD,
+        '--filter', 'tag:typoo',
+        '--out', out,
+      ])
+    ).rejects.toThrow('process.exit');
+
+    const printed = said.mock.calls.map((c) => String(c[0])).join('\n');
+    said.mockRestore();
+    exit.mockRestore();
+
+    expect(code).toBe(1);
+    expect(fs.existsSync(out)).toBe(false);
+    // A refusal names the token it could not resolve, and the candidates.
+    expect(printed).toContain('typoo');
+    expect(printed).toContain('bug');
+    // And it needs no board data to say so. Paging a whole board only to throw
+    // it away is the most expensive read this CLI makes; `cards list` spends
+    // zero of them on the same refusal.
+    expect(listCards).not.toHaveBeenCalled();
+  });
+
+  test('a filter the vocabulary accepts still writes the export', async () => {
+    const out = path.join(outDir, 'exported.json');
+    const said = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    await buildProgram().parseAsync([
+      'node', 'favro', 'cards', 'export', BOARD,
+      '--filter', 'tag:bug',
+      '--out', out,
+    ]);
+
+    said.mockRestore();
+    expect(listCards).toHaveBeenCalledWith(BOARD);
+    expect(JSON.parse(fs.readFileSync(out, 'utf8')).map((c: any) => c.id)).toEqual(['c1']);
   });
 });
