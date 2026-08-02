@@ -1,0 +1,160 @@
+/**
+ * `favro attachments upload|upload-to-comment` — behaviour (#100).
+ *
+ * The board resolution behind the scope lock is covered by
+ * `attachments-scope.test.ts` (#102). This file covers the rest of the command
+ * contract: the confirm, the `--dry-run` preview, the rendered result, and the
+ * ordering that makes the preview safe — the lock runs BEFORE the preview, so
+ * `--dry-run` is not a way around it.
+ */
+import { Command } from 'commander';
+import { registerAttachmentsCommands } from '../../commands/attachments';
+import * as config from '../../lib/config';
+import * as safety from '../../lib/safety';
+import AttachmentsAPI from '../../lib/attachments-api';
+
+jest.mock('../../lib/http-client');
+jest.mock('../../lib/config');
+jest.mock('../../lib/safety');
+jest.mock('../../lib/attachments-api');
+
+const MockAttachments = AttachmentsAPI as jest.MockedClass<typeof AttachmentsAPI>;
+
+class ExitCalled extends Error {
+  constructor(readonly code: number) {
+    super(`process.exit(${code})`);
+  }
+}
+
+let logSpy: jest.SpyInstance;
+let errorSpy: jest.SpyInstance;
+let exitSpy: jest.SpyInstance;
+
+async function runCli(args: string[]): Promise<void> {
+  const program = new Command();
+  program.option('--verbose', 'Show stack traces');
+  registerAttachmentsCommands(program);
+  program.exitOverride();
+  await program.parseAsync(['node', 'favro', ...args]).catch((e) => {
+    if (!(e instanceof ExitCalled)) throw e;
+  });
+}
+
+const output = () => logSpy.mock.calls.map((c) => String(c[0])).join('\n');
+const errors = () => errorSpy.mock.calls.map((c) => String(c[0])).join('\n');
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+  errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+  exitSpy = jest.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+    throw new ExitCalled(code ?? 0);
+  }) as never);
+
+  (config.resolveApiKey as jest.Mock).mockResolvedValue('test-token');
+  (config.readConfig as jest.Mock).mockResolvedValue({});
+  (safety.checkResolvedScope as jest.Mock).mockResolvedValue(undefined);
+  (safety.confirmAction as jest.Mock).mockResolvedValue(true);
+  (safety.dryRunLog as jest.Mock).mockImplementation((verb: string, noun: string, detail: string) =>
+    console.log(`[dry-run] ${verb} ${noun}: ${detail}`),
+  );
+
+  MockAttachments.prototype.uploadAttachment = jest
+    .fn()
+    .mockResolvedValue({ attachmentId: 'att-1', name: 'error.log' });
+  MockAttachments.prototype.uploadAttachmentToComment = jest
+    .fn()
+    .mockResolvedValue({ attachmentId: 'att-2', name: 'trace.txt' });
+});
+
+afterEach(() => {
+  jest.restoreAllMocks();
+});
+
+describe('attachments upload', () => {
+  test('uploads the named file to the named card and reports the new attachment', async () => {
+    await runCli(['attachments', 'upload', 'card-1', '--file', './error.log', '-y']);
+
+    expect(MockAttachments.prototype.uploadAttachment).toHaveBeenCalledWith('card-1', './error.log');
+    expect(output()).toContain('✓ Attachment uploaded: att-1 (error.log)');
+  });
+
+  test('--dry-run previews and uploads nothing', async () => {
+    await runCli(['attachments', 'upload', 'card-1', '--file', './error.log', '--dry-run']);
+
+    expect(MockAttachments.prototype.uploadAttachment).not.toHaveBeenCalled();
+    expect(output()).toContain('[dry-run]');
+    expect(exitSpy).toHaveBeenCalledWith(0);
+  });
+
+  test('the lock runs BEFORE the preview — a preview is not a way around it', async () => {
+    await runCli(['attachments', 'upload', 'card-1', '--file', './error.log', '--dry-run']);
+
+    const check = (safety.checkResolvedScope as jest.Mock).mock.invocationCallOrder[0];
+    const preview = (safety.dryRunLog as jest.Mock).mock.invocationCallOrder[0];
+    expect(check).toBeLessThan(preview);
+  });
+
+  test('--dry-run does not ask — previewing is not writing', async () => {
+    await runCli(['attachments', 'upload', 'card-1', '--file', './error.log', '--dry-run']);
+
+    expect(safety.confirmAction).not.toHaveBeenCalled();
+  });
+
+  test('declining the confirm uploads nothing and exits 0', async () => {
+    (safety.confirmAction as jest.Mock).mockResolvedValue(false);
+
+    await runCli(['attachments', 'upload', 'card-1', '--file', './error.log']);
+
+    expect(MockAttachments.prototype.uploadAttachment).not.toHaveBeenCalled();
+    expect(exitSpy).toHaveBeenCalledWith(0);
+  });
+
+  test('--json emits the attachment record instead of the human line', async () => {
+    await runCli(['attachments', 'upload', 'card-1', '--file', './error.log', '-y', '--json']);
+
+    expect(JSON.parse(output())).toEqual({ attachmentId: 'att-1', name: 'error.log' });
+  });
+
+  test('a refused scope stops the upload and exits 1', async () => {
+    (safety.checkResolvedScope as jest.Mock).mockRejectedValue(new Error('Scope violation: board-x'));
+
+    await runCli(['attachments', 'upload', 'card-1', '--file', './error.log', '-y']);
+
+    expect(MockAttachments.prototype.uploadAttachment).not.toHaveBeenCalled();
+    expect(errors()).toContain('Scope violation');
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  test('a failed upload exits 1 rather than reporting success', async () => {
+    MockAttachments.prototype.uploadAttachment = jest.fn().mockRejectedValue(new Error('413 payload too large'));
+
+    await runCli(['attachments', 'upload', 'card-1', '--file', './big.bin', '-y']);
+
+    expect(output()).not.toContain('✓ Attachment uploaded');
+    expect(errors()).toContain('413 payload too large');
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+});
+
+describe('attachments upload-to-comment', () => {
+  test('uploads to the comment and reports the new attachment', async () => {
+    await runCli(['attachments', 'upload-to-comment', 'cm-1', '--file', './trace.txt', '-y']);
+
+    expect(MockAttachments.prototype.uploadAttachmentToComment).toHaveBeenCalledWith('cm-1', './trace.txt');
+    expect(output()).toContain('✓ Attachment uploaded to comment: att-2 (trace.txt)');
+  });
+
+  test('--dry-run previews and uploads nothing', async () => {
+    await runCli(['attachments', 'upload-to-comment', 'cm-1', '--file', './trace.txt', '--dry-run']);
+
+    expect(MockAttachments.prototype.uploadAttachmentToComment).not.toHaveBeenCalled();
+    expect(output()).toContain('[dry-run]');
+  });
+
+  test('--force reaches the lazy scope resolver', async () => {
+    await runCli(['attachments', 'upload-to-comment', 'cm-1', '--file', './trace.txt', '-y', '--force']);
+
+    expect(safety.checkResolvedScope).toHaveBeenCalledWith(expect.anything(), expect.any(Function), true);
+  });
+});

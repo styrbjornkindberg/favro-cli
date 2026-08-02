@@ -1,0 +1,149 @@
+/**
+ * `favro query <board> <query...>` — behaviour (#100).
+ *
+ * The parser and the matcher are covered under `__tests__/api/query.test.ts`.
+ * What was not: the command layer — that a multi-word query survives commander's
+ * variadic argument as ONE string, that `--limit` reaches the fetch, and that a
+ * zero-match run prints the explanation rather than nothing at all.
+ */
+import { Command } from 'commander';
+import { registerQueryCommand } from '../../commands/query';
+import * as config from '../../lib/config';
+import QueryAPI from '../../api/query';
+
+jest.mock('../../lib/http-client');
+jest.mock('../../lib/config');
+jest.mock('../../api/query');
+
+const MockQueryAPI = QueryAPI as jest.MockedClass<typeof QueryAPI>;
+
+class ExitCalled extends Error {
+  constructor(readonly code: number) {
+    super(`process.exit(${code})`);
+  }
+}
+
+let logSpy: jest.SpyInstance;
+let errorSpy: jest.SpyInstance;
+let exitSpy: jest.SpyInstance;
+
+async function runCli(args: string[]): Promise<void> {
+  const program = new Command();
+  program.option('--verbose', 'Show stack traces');
+  registerQueryCommand(program);
+  program.exitOverride();
+  await program.parseAsync(['node', 'favro', ...args]).catch((e) => {
+    if (!(e instanceof ExitCalled)) throw e;
+  });
+}
+
+const output = () => logSpy.mock.calls.map((c) => String(c[0])).join('\n');
+const errors = () => errorSpy.mock.calls.map((c) => String(c[0])).join('\n');
+
+const result = (over: Record<string, unknown> = {}) => ({
+  matches: [
+    {
+      card: {
+        title: 'Fix login',
+        status: 'In Progress',
+        assignees: ['alice', 'bob'],
+        tags: ['bug', 'urgent'],
+      },
+      matchReason: 'status matches "In Progress"',
+    },
+  ],
+  total: 12,
+  filter: {},
+  summary: '1 of 12 cards match',
+  ...over,
+});
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+  errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+  exitSpy = jest.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+    throw new ExitCalled(code ?? 0);
+  }) as never);
+
+  (config.resolveApiKey as jest.Mock).mockResolvedValue('test-token');
+  (config.readConfig as jest.Mock).mockResolvedValue({});
+  MockQueryAPI.prototype.execute = jest.fn().mockResolvedValue(result());
+});
+
+afterEach(() => {
+  jest.restoreAllMocks();
+});
+
+describe('query', () => {
+  test('rejoins the variadic query into one string, defaulting the fetch limit to 1000', async () => {
+    await runCli(['query', 'Sprint 42', 'high', 'priority', 'status:In', 'Progress']);
+
+    expect(MockQueryAPI.prototype.execute).toHaveBeenCalledWith('Sprint 42', 'high priority status:In Progress', 1000);
+  });
+
+  test('renders the summary, then one line per match with its reason', async () => {
+    await runCli(['query', 'Sprint 42', 'status:done']);
+
+    expect(output()).toContain('1 of 12 cards match');
+    expect(output()).toContain('• Fix login [In Progress] — alice, bob #bug #urgent');
+    expect(output()).toContain('(status matches "In Progress")');
+  });
+
+  test('omits the bracket, the dash and the hashes when the card carries none of them', async () => {
+    MockQueryAPI.prototype.execute = jest.fn().mockResolvedValue(
+      result({ matches: [{ card: { title: 'Bare card' }, matchReason: 'title match' }] }),
+    );
+
+    await runCli(['query', 'Sprint 42', 'bare']);
+
+    expect(output()).toContain('• Bare card\n');
+    expect(output()).not.toContain('undefined');
+  });
+
+  test('a zero-match run still prints the explanation — silence would read as a crash', async () => {
+    MockQueryAPI.prototype.execute = jest.fn().mockResolvedValue(
+      result({ matches: [], summary: 'No cards match "status:done". The board has no Done column.' }),
+    );
+
+    await runCli(['query', 'Sprint 42', 'status:done']);
+
+    expect(output()).toContain('No cards match "status:done". The board has no Done column.');
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  test('--limit reaches the fetch, and a non-numeric one falls back to 1000 rather than NaN', async () => {
+    await runCli(['query', 'Sprint 42', 'x', '--limit', '50']);
+    expect(MockQueryAPI.prototype.execute).toHaveBeenCalledWith('Sprint 42', 'x', 50);
+
+    await runCli(['query', 'Sprint 42', 'x', '--limit', 'lots']);
+    expect(MockQueryAPI.prototype.execute).toHaveBeenLastCalledWith('Sprint 42', 'x', 1000);
+  });
+
+  test('--json emits the whole result and skips the human rendering', async () => {
+    await runCli(['query', 'Sprint 42', 'status:done', '--json']);
+
+    const printed = JSON.parse(output());
+    expect(printed.total).toBe(12);
+    expect(printed.matches).toHaveLength(1);
+    expect(output()).not.toContain('•');
+  });
+
+  test('an unresolvable board exits 1', async () => {
+    MockQueryAPI.prototype.execute = jest.fn().mockRejectedValue(new Error("Board 'Ghost' not found"));
+
+    await runCli(['query', 'Ghost', 'anything']);
+
+    expect(errors()).toContain("Board 'Ghost' not found");
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  test('points at the fail-closed filter grammar for blocking, which it does not answer', async () => {
+    const program = new Command();
+    registerQueryCommand(program);
+    const query = program.commands.find((c) => c.name() === 'query')!;
+
+    expect(query.description()).toContain('Blocking is NOT asked here');
+    expect(query.description()).toContain('--filter "unblocked"');
+  });
+});
