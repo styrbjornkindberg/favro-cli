@@ -5,9 +5,12 @@ import { parseSince, formatTimestamp, formatRelative, daysSince } from '../../li
 
 
 // ─── daysSince ───────────────────────────────────────────────────────────────
-// Pins the one surviving copy (#89). `health` and `stale` each held these five
-// lines verbatim; the contract both relied on is "unmeasurable reads as
-// infinitely stale", never 0.
+// Pins the one surviving copy (#89). It used to answer `Infinity` for an
+// undatable card, on the reading that "unmeasurable is infinitely stale". #130
+// killed that: `Infinity` is a number, and a number satisfies every
+// `>= threshold`, so both callers reported an undated card as over any limit
+// they were given. An unknown age is now `undefined` — not a large number, not
+// 0 — and each caller has to say out loud what it does with one.
 describe('daysSince', () => {
   it('returns whole days elapsed, floored', () => {
     const threeAndAHalfDays = new Date(Date.now() - 3.5 * 86_400_000).toISOString();
@@ -18,13 +21,22 @@ describe('daysSince', () => {
     expect(daysSince(new Date().toISOString())).toBe(0);
   });
 
-  it('returns Infinity when there is no date at all', () => {
-    expect(daysSince(undefined)).toBe(Infinity);
-    expect(daysSince('')).toBe(Infinity);
+  it('returns undefined when there is no date at all', () => {
+    expect(daysSince(undefined)).toBeUndefined();
+    expect(daysSince('')).toBeUndefined();
   });
 
-  it('returns Infinity for an unparseable date rather than NaN', () => {
-    expect(daysSince('not-a-date')).toBe(Infinity);
+  it('returns undefined for an unparseable date rather than NaN or Infinity', () => {
+    expect(daysSince('not-a-date')).toBeUndefined();
+  });
+
+  it('never answers a number that beats an arbitrary threshold', () => {
+    // The #130 shape, stated as a property: no unknown-age input may come back
+    // as something a `>= days` comparison accepts.
+    for (const unknown of [undefined, '', 'not-a-date', 'yesterday']) {
+      const days = daysSince(unknown);
+      expect(days === undefined || !(days >= 1)).toBe(true);
+    }
   });
 });
 
