@@ -6,6 +6,7 @@
  * Type validation for select fields against allowed options
  */
 import FavroHttpClient from './http-client';
+import { getAllPages } from './paginate';
 import { CustomFieldCache, globalFieldCache } from './profiling';
 
 export type CustomFieldType = 'text' | 'select' | 'date' | 'user' | 'link' | string;
@@ -77,13 +78,6 @@ export interface SetCustomFieldRequest {
   value: string | null;
 }
 
-interface PaginatedResponse<T> {
-  entities: T[];
-  requestId?: string;
-  pages?: number;
-  page?: number;
-}
-
 /**
  * Validate value for 'select' type fields.
  * Returns the matching option or throws with a helpful message.
@@ -146,36 +140,15 @@ export class CustomFieldsAPI {
    * Handles pagination automatically.
    */
   async listFields(boardId?: string): Promise<CustomFieldDefinition[]> {
-    const allFields: CustomFieldDefinition[] = [];
-    let requestId: string | undefined;
-    let page = 1;
-
-    while (true) {
-      const params: Record<string, unknown> = { limit: 100 };
-      // Favro /customfields is org-scoped; widgetCommonId filters to a specific board
-      if (boardId) {
-        params.widgetCommonId = boardId;
-      }
-      if (requestId) {
-        params.requestId = requestId;
-        params.page = page;
-      }
-
-      const response = await this.client.get<PaginatedResponse<RawCustomField>>(
-        // Favro endpoint: /customfields (no hyphen, org-scoped)
-        '/customfields',
-        { params }
-      );
-
-      const fields = (response.entities ?? []).map(normalizeCustomField);
-      allFields.push(...fields);
-
-      requestId = response.requestId;
-      if (!requestId || !response.pages || page >= response.pages || fields.length === 0) break;
-      page += 1;
+    const params: Record<string, unknown> = { limit: 100 };
+    // Favro /customfields is org-scoped; widgetCommonId filters to a specific board
+    if (boardId) {
+      params.widgetCommonId = boardId;
     }
 
-    return allFields;
+    // Favro endpoint: /customfields (no hyphen, org-scoped)
+    const raw = await getAllPages<RawCustomField>(this.client, '/customfields', params);
+    return raw.map(normalizeCustomField);
   }
 
   /**
@@ -230,33 +203,13 @@ export class CustomFieldsAPI {
    * Handles pagination automatically.
    */
   async getCardFieldValues(cardId: string): Promise<CustomFieldValue[]> {
-    const allValues: CustomFieldValue[] = [];
-    let requestId: string | undefined;
-    let page = 1;
-
-    while (true) {
-      const params: Record<string, unknown> = { limit: 100 };
-      if (requestId) {
-        params.requestId = requestId;
-        params.page = page;
-      }
-
-      const response = await this.client.get<PaginatedResponse<CustomFieldValue>>(
-        // Note: custom field values are returned inline on card responses;
-        // this endpoint may not exist in Favro API
-        `/cards/${cardId}/custom-fields`,
-        { params }
-      );
-
-      const values = response.entities ?? [];
-      allValues.push(...values);
-
-      requestId = response.requestId;
-      if (!requestId || !response.pages || page >= response.pages || values.length === 0) break;
-      page += 1;
-    }
-
-    return allValues;
+    // Note: custom field values are returned inline on card responses;
+    // this endpoint may not exist in Favro API
+    return getAllPages<CustomFieldValue>(
+      this.client,
+      `/cards/${cardId}/custom-fields`,
+      { limit: 100 },
+    );
   }
 
   /**

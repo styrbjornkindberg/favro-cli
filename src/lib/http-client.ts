@@ -1,6 +1,23 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
 import { rateLimitMessage } from './error-handler';
 
+/**
+ * The shape every Favro list endpoint answers with. One declaration, here,
+ * because pagination is the HTTP layer's job and not each resource module's
+ * (#91). The loop that consumes it lives in `paginate.ts` — a type survives an
+ * automock of this module, a function does not.
+ *
+ * `requestId` is the cursor: absent means there is no page after this one.
+ * `page` is the 0-based index the server believes it just served.
+ */
+export interface PaginatedResponse<T> {
+  entities: T[];
+  requestId?: string;
+  page?: number;
+  pages?: number;
+  limit?: number;
+}
+
 export interface AuthConfig {
   token?: string;
   /** User email — required for HTTP Basic Auth */
