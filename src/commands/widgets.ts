@@ -32,7 +32,7 @@ export function registerWidgetsCommands(program: Command): void {
         const envelope = capRows(widgets, options.limit);
 
         if (options.json) {
-          writeEnvelope(envelope);
+          writeEnvelope(envelope, Boolean(program.opts()?.pretty));
         } else {
           console.log(`Found ${envelope.rows.length} widget(s) for card ${options.card}:`);
           const rows = envelope.rows.map(w => ({

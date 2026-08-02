@@ -10,7 +10,7 @@
 import { Command } from 'commander';
 import { createFavroClient } from '../lib/client-factory';
 import { logError } from '../lib/error-handler';
-import { capRows, noteTruncation, writeEnvelope } from '../lib/read-shape';
+import { capRows, noteTruncation, parseLimit, writeEnvelope } from '../lib/read-shape';
 import ActivityApiClient, { parseSince, formatTimestamp } from '../api/activity';
 
 /** Parse a relative time window, reporting errors against the flag it came from. */
@@ -70,8 +70,9 @@ export function registerActivityCommand(program: Command): void {
           process.exit(1);
         }
 
-        const limitRaw = parseInt(options.limit, 10);
-        const limit = !isNaN(limitRaw) && limitRaw >= 1 ? limitRaw : 200;
+        // `parseLimit`, not a local `parseInt`: the prefix parse read
+        // `--limit 1e9` as 1 and printed one entry marked `truncated` (#99).
+        const limit = parseLimit(options.limit) ?? 200;
 
         const format = options.json ? 'json' : (options.format ?? 'table').toLowerCase();
         if (format !== 'json' && format !== 'table') {
@@ -89,7 +90,7 @@ export function registerActivityCommand(program: Command): void {
         const shown = envelope.rows;
 
         if (format === 'json') {
-          writeEnvelope(envelope);
+          writeEnvelope(envelope, Boolean(program.opts()?.pretty));
           return;
         }
 

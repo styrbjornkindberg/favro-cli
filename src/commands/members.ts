@@ -47,7 +47,7 @@ export function registerMembersCommand(program: Command): void {
         const envelope = capRows(members, options.limit);
 
         if (options.json) {
-          writeEnvelope(envelope);
+          writeEnvelope(envelope, Boolean(program.opts()?.pretty));
         } else {
           if (envelope.rows.length === 0) {
             console.log('No members found.');

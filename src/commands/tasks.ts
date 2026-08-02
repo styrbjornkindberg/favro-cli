@@ -33,7 +33,7 @@ export function registerTasksCommands(program: Command): void {
         const envelope = capRows(tasks, options.limit);
 
         if (options.json) {
-          writeEnvelope(envelope);
+          writeEnvelope(envelope, Boolean(program.opts()?.pretty));
         } else {
           console.log(`Found ${envelope.rows.length} task(s) on card ${cardCommonId}:`);
           const rows = envelope.rows.map(t => ({

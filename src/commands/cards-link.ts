@@ -26,6 +26,10 @@ const VALID_POSITIONS = ['top', 'bottom'];
  * subcommands on the `cards` parent command.
  */
 export function registerCardsLinkCommands(cardsCmd: Command): void {
+  // `--pretty` is a ROOT flag and `cardsCmd` is `cards`, so it is read through
+  // the parent — the same walk the `verbose` line in every action below does.
+  const pretty = (): boolean => Boolean(cardsCmd.parent?.opts()?.pretty ?? cardsCmd.opts()?.pretty);
+
   // ─── cards link ─────────────────────────────────────────────────────────────
   cardsCmd
     .command('link <card> <toCardId>')
@@ -319,7 +323,7 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
         const envelope = capRows(deps, options.limit);
 
         if (options.json) {
-          writeEnvelope(envelope);
+          writeEnvelope(envelope, pretty());
           return;
         }
 
@@ -367,7 +371,7 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
         const envelope = capRows(blocked, options.limit);
 
         if (options.json) {
-          writeEnvelope(envelope);
+          writeEnvelope(envelope, pretty());
           return;
         }
 
@@ -414,7 +418,7 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
         const envelope = capRows(blockedBy, options.limit);
 
         if (options.json) {
-          writeEnvelope(envelope);
+          writeEnvelope(envelope, pretty());
           return;
         }
 

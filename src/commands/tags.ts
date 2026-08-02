@@ -34,7 +34,7 @@ export function registerTagsCommands(program: Command): void {
         if (options.json) {
           // A list read: envelope, compact. A tag row has no bulk field — the
           // 27 KB is 249 rows, which `favro tags get` answers for a single tag.
-          writeEnvelope(envelope);
+          writeEnvelope(envelope, Boolean(program.opts()?.pretty));
         } else {
           console.log(`Found ${envelope.rows.length} tag(s):`);
           const rows = envelope.rows.map(t => ({

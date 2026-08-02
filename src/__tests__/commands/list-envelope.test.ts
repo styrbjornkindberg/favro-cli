@@ -157,6 +157,10 @@ let logSpy: jest.SpyInstance;
 async function runCli(read: ListRead, extra: string[]): Promise<void> {
   const program = new Command();
   program.option('--verbose', 'Show stack traces');
+  // The root's two output flags, spelled as `cli.ts` spells them — `--pretty`
+  // is only reachable from the root, so a harness without it cannot see the
+  // flag being ignored.
+  program.option('--pretty', 'Indent JSON output (default: compact)');
   read.register(program);
   program.exitOverride();
   await program.parseAsync(['node', 'favro', ...read.argv, ...extra]).catch((e) => {
@@ -209,6 +213,20 @@ describe.each(READS.map((r) => [r.name, r] as const))('%s', (_name, read) => {
     expect(envelope()).toEqual({ rows: [] });
   });
 
+  it('--pretty indents the envelope', async () => {
+    // Compact by default is #113's intent; `--pretty` at the root is the
+    // documented way back out. It parsed and did nothing on every writer this
+    // ticket added — `users list --json` went from indented on main to compact
+    // here with no flag able to restore it.
+    read.stub(THREE);
+
+    await runCli(read, [...read.json, '--pretty']);
+
+    const line = logSpy.mock.calls.map((c) => String(c[0])).find((c) => c.startsWith('{'))!;
+    expect(line).toMatch(/^\{\n {2}"rows"/);
+    expect(JSON.parse(line).rows).toHaveLength(3);
+  });
+
   it('--limit caps the rows and says so', async () => {
     read.stub(THREE);
 
@@ -237,14 +255,19 @@ describe.each(READS.map((r) => [r.name, r] as const))('%s', (_name, read) => {
     expect(capped.mock.calls[0]).toEqual(uncapped.mock.calls[0]);
   });
 
-  it('an unparseable --limit is no cap, never an empty list', async () => {
-    // `parseInt('banana')` is NaN, and `NaN < 1` is false — the guard used to
-    // fall through to `slice(0, NaN)` and answer zero rows marked `truncated`.
-    read.stub(THREE);
+  // `parseInt` stops at the first non-digit, so `1e9` parsed as 1 and a caller
+  // asking for effectively no cap got ONE row marked `truncated` — the exact
+  // "plausible wrong number" this ticket exists to remove (#44, #91, #136).
+  // `banana` was the one bad input the old guard happened to survive.
+  it.each(['banana', '1e9', '2abc', '2.7', '5,000', '1_000', '-1', ''])(
+    'an unparseable --limit (%p) is no cap, never a wrong cap',
+    async (limit) => {
+      read.stub(THREE);
 
-    await runCli(read, [...read.json, '--limit', 'banana']);
+      await runCli(read, [...read.json, '--limit', limit]);
 
-    expect(envelope().rows).toHaveLength(THREE.length);
-    expect(envelope().truncated).toBeUndefined();
-  });
+      expect(envelope().rows).toHaveLength(THREE.length);
+      expect(envelope().truncated).toBeUndefined();
+    },
+  );
 });

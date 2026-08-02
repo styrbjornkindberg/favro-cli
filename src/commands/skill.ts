@@ -63,7 +63,7 @@ export function registerSkillCommands(program: Command): void {
         const envelope = capRows(skills, options.limit);
 
         if (options.json) {
-          writeEnvelope(envelope);
+          writeEnvelope(envelope, Boolean(program.opts()?.pretty));
           return;
         }
 

@@ -85,6 +85,26 @@ function reasonFor(error: unknown): string {
 }
 
 /**
+ * A `--limit` string as a usable cap, or `undefined` if it is not one.
+ *
+ * Whole digits only, and deliberately NOT `parseInt`: `parseInt` accepts a
+ * numeric PREFIX and stops at the first non-digit, so `--limit 1e9` read as 1,
+ * `--limit 5,000` as 5 and `--limit 2.7` as 2. A caller asking for effectively
+ * no cap got ONE row back marked `truncated` — well-formed, plausible, and
+ * wrong, which is the defect class #44/#91/#136 are all instances of. Rejecting
+ * outright is the only reading that cannot answer a plausible wrong number.
+ *
+ * `undefined` means "the flag said nothing usable", and each caller decides
+ * what that means: `capRows` treats it as no cap, `activity` and `comments`
+ * fall back to their own default cap.
+ */
+export function parseLimit(limit?: string): number | undefined {
+  if (limit === undefined) return undefined;
+  const trimmed = limit.trim();
+  return /^\d+$/.test(trimmed) && Number(trimmed) >= 1 ? Number(trimmed) : undefined;
+}
+
+/**
  * Cap what is printed — never what is fetched.
  *
  * `--limit` used to truncate the *fetch*, so every client-side filter filtered a
@@ -98,10 +118,14 @@ function reasonFor(error: unknown): string {
  * unparseable case answer once: a `--limit banana` is NO cap, never an empty
  * list. It read as one until #99 — `NaN < 1` is false, so the old guard fell
  * through to `slice(0, NaN)` and returned zero rows marked `truncated`.
+ *
+ * A string goes through `parseLimit`, which takes whole digits and nothing
+ * else — `parseInt` accepted a numeric PREFIX, so `--limit 1e9` capped at 1.
  */
 export function capRows<T>(rows: T[], limit?: number | string): ListEnvelope<T> {
-  const cap = typeof limit === 'string' ? parseInt(limit, 10) : limit;
-  // Written as `!(cap >= 1)` and not `cap < 1`, so NaN takes this branch.
+  const cap = typeof limit === 'string' ? parseLimit(limit) : limit;
+  // Written as `!(cap >= 1)` and not `cap < 1`, so a NaN handed in by a numeric
+  // caller takes this branch too; a rejected string arrives as `undefined`.
   if (cap === undefined || !(cap >= 1) || rows.length <= cap) return { rows };
   return { rows: rows.slice(0, cap), truncated: true };
 }

@@ -22,11 +22,15 @@
  * stdout — never by the command's name. A name heuristic ("list") misses
  * `activity`, `cards dependencies`, `cards blocking`, `cards blocked-by` and
  * `custom-fields values`, and would flag `tags list`'s siblings that return one
- * row. So instead, two detectors:
+ * row. So instead, three detectors:
  *
  *   - BARE      = `console.log(JSON.stringify(x, …))` or the `process.stdout`
  *     twin, where the checker says `x` is an array. That is a list on stdout
  *     wearing no envelope, and it is the violation.
+ *   - SMUGGLED  = a `run()` handler returning `{ item: rows }`. The same bare
+ *     array on stdout, one indirection out: the `JSON.stringify` belongs to the
+ *     runner's `writeValue`, which lives in `src/lib/` and so falls outside the
+ *     scan. Counted as BARE, because it is.
  *   - ENVELOPED = an action whose call closure reaches `writeEnvelope`, or a
  *     `run()` handler returning an object literal with a `rows` property —
  *     which the runner turns into `writeEnvelope` for it (ADR-0002).
@@ -360,6 +364,36 @@ function returnsRows(body: ts.Node): boolean {
   return rows;
 }
 
+/**
+ * A `run()` handler smuggling a list through the runner's SINGLE-value arm.
+ *
+ * `writeValue` is `console.log(JSON.stringify(value, …))` (`run.ts:359`), which
+ * is character-for-character the shape `emitsBareArray` hunts — but it lives in
+ * `src/lib/`, outside this file's scan, so `return { item: rows }` puts a bare
+ * array on stdout with nothing going red. Proven by mutation: switching
+ * `boards list` from the rows arm to `{ item: boards }` left all six assertions
+ * passing.
+ *
+ * No handler does this today — every `item:` in the tree is a single object or
+ * a typed report. This closes the hole before the next copy-paste finds it,
+ * which is the same reason the file exists at all.
+ */
+function returnsArrayishItem(body: ts.Node): boolean {
+  let smuggled = false;
+  walk(body, (n) => {
+    if (!ts.isObjectLiteralExpression(n)) return;
+    if (!ts.isReturnStatement(n.parent) && !ts.isParenthesizedExpression(n.parent)) return;
+    for (const p of n.properties) {
+      if (!p.name || !ts.isIdentifier(p.name) || p.name.text !== 'item') continue;
+      // `{ item: rows }` reads its initializer; the `{ item }` shorthand reads
+      // the name, which is the value in that spelling.
+      const value = ts.isPropertyAssignment(p) ? p.initializer : p.name;
+      if (isArrayish(checker.getTypeAtLocation(value))) smuggled = true;
+    }
+  });
+  return smuggled;
+}
+
 interface ActionInfo {
   key: string;
   /** Puts a list on stdout with no envelope around it. */
@@ -382,7 +416,7 @@ for (const sf of sourceFiles) {
     const chain = chainOf(n);
     actions.push({
       key: `${rel.split(path.sep).join('/')} ${chain.path}`,
-      bare: emitsBareArray(body),
+      bare: emitsBareArray(body) || returnsArrayishItem(body),
       enveloped: reaches(body, ENVELOPES) || returnsRows(body),
       capped: chain.flags.has('--limit'),
     });

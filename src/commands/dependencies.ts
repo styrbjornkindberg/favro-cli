@@ -32,7 +32,7 @@ export function registerDependenciesCommands(program: Command): void {
         const envelope = capRows(links, options.limit);
 
         if (options.json) {
-          writeEnvelope(envelope);
+          writeEnvelope(envelope, Boolean(program.opts()?.pretty));
         } else {
           console.log(`Found ${envelope.rows.length} dependencies for card ${cardId}:`);
           const rows = envelope.rows.map(lnk => ({

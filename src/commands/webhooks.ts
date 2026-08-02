@@ -35,7 +35,7 @@ export function registerWebhooksCommand(program: Command): void {
         const envelope = capRows(webhooks, options.limit);
 
         if (options.format === 'json') {
-          writeEnvelope(envelope);
+          writeEnvelope(envelope, Boolean(program.opts()?.pretty));
         } else {
           if (envelope.rows.length === 0) {
             console.log('No webhooks configured.');

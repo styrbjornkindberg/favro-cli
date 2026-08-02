@@ -50,7 +50,7 @@ export function registerTaskListsCommands(program: Command): void {
         const envelope = capRows(lists, options.limit);
 
         if (options.json) {
-          writeEnvelope(envelope);
+          writeEnvelope(envelope, Boolean(program.opts()?.pretty));
         } else {
           console.log(`Found ${envelope.rows.length} task list(s) on card ${cardCommonId}:`);
           const rows = envelope.rows.map(l => ({

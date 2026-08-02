@@ -32,7 +32,7 @@ export function registerColumnsCommands(program: Command): void {
         const envelope = capRows(columns, options.limit);
 
         if (options.json) {
-          writeEnvelope(envelope);
+          writeEnvelope(envelope, Boolean(program.opts()?.pretty));
         } else {
           console.log(`Found ${envelope.rows.length} column(s) on board ${boardId}:`);
           // cardCount / timeSum / estimationSum ride along on the same

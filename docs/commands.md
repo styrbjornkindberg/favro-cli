@@ -54,8 +54,10 @@ Every list read takes `--limit` now, not just `cards list` — `columns`, `tags`
 `boards list`, `collections list` and `cards dependencies` / `blocking` /
 `blocked-by`. Uncapped by default, so a read with no `--limit` prints
 everything; pass one and the cut is marked `truncated` in JSON and printed as
-`(truncated to N of M …)` in human output. An unparseable `--limit` is no cap,
-never an empty list.
+`(truncated to N of M …)` in human output. `--limit` takes whole digits and
+nothing else: `1e9`, `2.7`, `5,000` and `banana` are all unparseable, and an
+unparseable `--limit` is no cap — never an empty list, and never a cap read off
+the leading digits (`--limit 1e9` printing one row).
 
 ### Card bodies and custom fields are omitted from list output
 

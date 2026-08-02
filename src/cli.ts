@@ -403,7 +403,7 @@ cards
           ...capped,
           rows: omitBulk('card', capped.rows, keep),
           ...(unreachable.length > 0 ? { unreachable } : {}),
-        });
+        }, Boolean(program.opts()?.pretty));
       } else {
         console.log(`Found ${capped.rows.length} card(s):`);
         if (capped.rows.length > 0) {

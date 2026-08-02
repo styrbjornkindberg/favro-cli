@@ -118,7 +118,7 @@ export function registerCustomFieldsCommands(program: Command): void {
         const envelope = capRows(fields, options.limit);
 
         if (options.json) {
-          writeEnvelope(envelope);
+          writeEnvelope(envelope, Boolean(program.opts()?.pretty));
         } else {
           console.log(`Found ${envelope.rows.length} custom field(s) for board ${boardId}:`);
           formatFieldsTable(envelope.rows);
@@ -227,7 +227,7 @@ export function registerCustomFieldsCommands(program: Command): void {
         const envelope = capRows(opts, options.limit);
 
         if (options.json) {
-          writeEnvelope(envelope);
+          writeEnvelope(envelope, Boolean(program.opts()?.pretty));
         } else {
           if (envelope.rows.length === 0) {
             console.log('No options found. This field may not be a select type.');

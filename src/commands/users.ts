@@ -30,7 +30,7 @@ export function registerUsersCommands(program: Command): void {
         const envelope = capRows(users, options.limit);
 
         if (options.json) {
-          writeEnvelope(envelope);
+          writeEnvelope(envelope, Boolean(program.opts()?.pretty));
         } else {
           console.log(`Found ${envelope.rows.length} user(s):`);
           const rows = envelope.rows.map(u => ({
@@ -90,7 +90,7 @@ export function registerUsersCommands(program: Command): void {
         const envelope = capRows(groups, options.limit);
 
         if (options.json) {
-          writeEnvelope(envelope);
+          writeEnvelope(envelope, Boolean(program.opts()?.pretty));
         } else {
           console.log(`Found ${envelope.rows.length} group(s):`);
           const rows = envelope.rows.map(g => ({
