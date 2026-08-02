@@ -84,7 +84,7 @@ A flag would also be a second grammar, which #95 exists to delete one ticket ove
 ADR-0002 made JSON the default in 3.0.0, so "keep it for interactive commands where a human
 reads the result" assumes the reading that is no longer the default.
 
-The cost, named: `favro next --board "Dev"` stops guessing and starts refusing with a candidate
+The cost, named: `favro next --collection "Dev"` stops guessing and starts refusing with a candidate
 list. Routing through the resolver also fixes the 100-board cap for free, because the resolver
 paginates to completion.
 

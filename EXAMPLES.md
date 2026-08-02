@@ -509,8 +509,8 @@ favro cards create --csv new-tasks.csv --board abc123 --dry-run
 # Preview update
 favro cards update card-001 --status "Done" --assignees "alice" --dry-run
 
-# Preview export filter
-favro cards export abc123 --filter "status:Todo" --dry-run
+# Preview export filter — export writes a file, so send it to a scratch path
+favro cards export abc123 --filter "status:Todo" --out /tmp/preview.json
 ```
 
 ---
@@ -671,7 +671,7 @@ Semi-automatic sprint plan based on priority and capacity:
 
 ```bash
 # 1. Get sprint suggestions for 40-point capacity
-favro sprint-plan sprint-42 --budget 40 > sprint-plan.json
+favro sprint-plan --board sprint-42 --budget 40 > sprint-plan.json
 
 # 2. Review suggestions (see cards, priority scores)
 cat sprint-plan.json | jq '.suggestions[] | {title, priority_score, cumulative}'
@@ -681,7 +681,7 @@ jq -r '"card_id,status", (.suggestions[] | "\(.id),Approved")' sprint-plan.json 
 favro batch update --from-csv approve.csv --dry-run
 
 # 4. Standup: see what's in progress vs what's due soon
-favro standup sprint-42
+favro standup --board sprint-42
 ```
 
 ### Workflow: Family/Personal Task Management
@@ -707,7 +707,7 @@ favro query $board_id "due:<today"
 favro batch-smart $board_id --goal "close all Done cards"
 
 # 5. Standup: summary of what's blocked, due soon, in progress
-favro standup $board_id
+favro standup --board $board_id
 ```
 
 ### Workflow: Technical Debt & Risk Tracking
@@ -731,7 +731,7 @@ favro batch assign --board $debt_board \
   --to platform-team --dry-run
 
 # 5. Standup on tech debt progress
-favro standup $debt_board
+favro standup --board $debt_board
 
 # 6. Archive resolved items
 favro batch-smart $debt_board --goal "close all Done cards"
@@ -870,8 +870,8 @@ Error: Request timeout (408). Retrying...
 ```
 **Fix:**
 ```bash
-# Filter by collection first
-favro context <board-id> --collection <collection-id>
+# Cap how many cards the snapshot walks
+favro context <board-id> --limit 50
 # Or use a simpler board with fewer cards
 ```
 

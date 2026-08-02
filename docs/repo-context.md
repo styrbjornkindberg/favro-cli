@@ -86,9 +86,9 @@ Several commands auto-detect `.favro/context.json` from your working directory (
 
 ```bash
 # These resolve board names/slugs via context.json
-favro my-cards --board sprint-42
-favro overview --board sprint-42
-favro health --board sprint-42
+favro my-cards --collection sprint-42
+favro overview --collection sprint-42
+favro health --collection sprint-42
 ```
 
 The context file enables:

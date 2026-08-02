@@ -1533,7 +1533,7 @@ Allows direct inspection and management of board workflows without full context 
 
 - `favro columns list <boardId>`
 - `favro columns create <boardId> --name "New State"`
-- `favro columns update <boardId> --column <columnId> --name "Updated State"`
+- `favro columns update <columnId> --name "Updated State"`
 
 ---
 
@@ -2345,7 +2345,7 @@ jobs:
 
 | Error | Cause | Solution |
 |-------|-------|----------|
-| `Field '<name>' not found` | Field ID or name is invalid | List fields: `favro custom-fields list --board <id>` |
+| `Field '<name>' not found` | Field ID or name is invalid | List fields: `favro custom-fields list <board-id>` |
 | `Invalid value for select field` | Value not in field's options | List options: `favro custom-fields values <field-id>` |
 | `Cannot set field without permissions` | Insufficient permissions on field | Ask board admin for write access |
 
@@ -2372,7 +2372,7 @@ DEBUG=favro:* favro context <board-id> 2>&1 | grep -E "^favro|ms$"
 
 **Solutions:**
 - Reduce board size (archive old cards)
-- Use `--collection <id>` to limit scope
+- Use `--limit <n>` to cap how many cards the snapshot walks
 - Split into smaller queries
 
 ---
