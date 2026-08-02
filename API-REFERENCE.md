@@ -1360,7 +1360,7 @@ Show the activity log for a card.
 
 **Syntax:**
 ```
-favro activity <card> [--since <time>] [--until <time>] [--limit <n>] [--format table|json] [--json]
+favro activity <card> [--since <time>] [--until <time>] [--limit <n>]
 ```
 
 **Arguments:**
@@ -1375,9 +1375,8 @@ favro activity <card> [--since <time>] [--until <time>] [--limit <n>] [--format 
 |---|---|---|
 | `--since <time>` | — | Only show activity after this time ago (e.g. `2h`, `1d`, `7d`, `1w`) |
 | `--until <time>` | — | Only show activity before this time ago |
-| `--limit <n>` | `200` | Maximum entries to return |
-| `--format <format>` | `table` | Output format: `table` or `json` |
-| `--json` | — | Shorthand for `--format json` |
+| `--limit <n>` | `200` | Maximum entries to **print**; the fetch is uncapped |
+| `--human` | — | Human-readable output (root flag). JSON is the default |
 
 **Time unit syntax for `--since` and `--until`:**
 
@@ -1407,13 +1406,12 @@ Total: 2 entry/entries shown.
 ```bash
 favro activity card-abc123
 favro activity card-abc123 --since 1d
-favro activity card-abc123 --since 7d --format json
+favro activity card-abc123 --since 7d
 favro activity card-abc123 --until 1d --limit 50
 ```
 
 **Error cases:**
 - Invalid `--since` format → `Error: <parse error message>`
-- Invalid format → `Error: Invalid format "<format>". Use --format table or --format json`
 
 ---
 
