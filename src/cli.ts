@@ -5,10 +5,10 @@
  * Usage:
  *   favro auth login                  # set up API key interactively
  *   favro auth check                  # verify API key is valid
- *   favro cards list [--board <id>] [--status <s>] [--assignee <a>] [--limit <n>]
- *   favro cards create <title> [--board <id>] [--status <s>] [--tag <t>] [--assignee <a>]
+ *   favro cards list [--board <board>] [--status <s>] [--assignee <a>] [--limit <n>]
+ *   favro cards create <title> [--board <board>] [--status <s>] [--tag <t>] [--assignee <a>]
  *                              [--parent <card>] [--blocked-by <card>] [--blocks <card>]
- *   favro cards create --csv <file> --board <id> [--dry-run]
+ *   favro cards create --csv <file> --board <board> [--dry-run]
  *   favro cards update <card> [--name <n>] [--status <s>] [--assignees <a>] [--dry-run]
  *   favro cards export <board> --format json|csv [--out <file>] [--filter <expr>]
  *
@@ -20,6 +20,7 @@
 import { Command, CommanderError } from 'commander';
 import * as path from 'path';
 import CardsAPI, { UpdateCardRequest } from './lib/cards-api';
+import BoardsAPI from './lib/boards-api';
 // The shared dispatch table. Importing it here is what makes the CLI a caller of
 // the one table rather than a second, drifting write path — and it registers
 // every intent, so intents added by later tickets are reachable with no change.
@@ -106,9 +107,9 @@ program
     'Quick start:\n' +
     '  favro auth login                  Set up your API key\n' +
     '  favro boards list                 List your boards\n' +
-    '  favro cards list --board <id>     List cards on a board\n' +
+    '  favro cards list --board <board>  List cards on a board\n' +
     '  favro cards create "My card"      Create a card\n' +
-    '  favro cards export <id> --format csv --out cards.csv\n\n' +
+    '  favro cards export <board> --format csv --out cards.csv\n\n' +
     'Working a ticket — claim it, block it, resolve it — or writing an agent\n' +
     'against this CLI? Start with `favro help issue-tracker`.\n\n' +
     'Authentication:\n' +
@@ -253,12 +254,12 @@ const cards = program.command('cards').description(
   '  retag   Set the triage roles — one category, one state\n\n' +
   'Examples:\n' +
   '  favro cards get <card> --include board,collection\n' +
-  '  favro cards list <board-id> --filter "customField:value"\n' +
+  '  favro cards list <board> --filter "customField:value"\n' +
   '  favro cards link <card> --to <targetId> --type depends\n' +
   '  favro cards unlink <card> --from <linkedCardId>\n' +
-  '  favro cards move <card> --to-board <boardId> --position top\n' +
-  '  favro cards create "My card" --board <id>\n' +
-  '  favro cards export <id> --format csv --out cards.csv'
+  '  favro cards move <card> --to-board <board> --position top\n' +
+  '  favro cards create "My card" --board <board>\n' +
+  '  favro cards export <board> --format csv --out cards.csv'
 );
 
 // ─── cards get ───────────────────────────────────────────────────────────────
@@ -269,7 +270,7 @@ registerCardsFindCommand(cards);
 
 // ─── cards list ──────────────────────────────────────────────────────────────
 cards
-  .command('list [boardId]')
+  .command('list [board]')
   .description(
     'List cards from a board with optional filters.\n\n' +
     'Reads live cards only by default (--archived false). The board is always\n' +
@@ -289,15 +290,15 @@ cards
     'at 20 per list (not per card); ids past the cap stay blocked and are named\n' +
     'under "unreachable" as not attempted.\n\n' +
     'Examples:\n' +
-    '  favro cards list <board-id>\n' +
-    '  favro cards list <board-id> --filter "unblocked" --json\n' +
-    '  favro cards list <board-id> --status "In Progress" --limit 100\n' +
-    '  favro cards list <board-id> --archived all --json\n' +
-    '  favro cards list <board-id> --filter "status:done AND tag:bug" --json\n' +
-    '  favro cards list <board-id> --body --include custom-fields --json\n\n' +
-    'Tip: Use `favro boards list` to find board IDs.'
+    '  favro cards list <board>\n' +
+    '  favro cards list <board> --filter "unblocked" --json\n' +
+    '  favro cards list <board> --status "In Progress" --limit 100\n' +
+    '  favro cards list <board> --archived all --json\n' +
+    '  favro cards list <board> --filter "status:done AND tag:bug" --json\n' +
+    '  favro cards list <board> --body --include custom-fields --json\n\n' +
+    'Tip: The board takes a name or a boardId. Run `favro boards list` to see both.'
   )
-  .option('--board <id>', 'Board ID to list cards from (alternative to positional arg)')
+  .option('--board <board>', 'Board to list cards from, by name or boardId (alternative to positional arg)')
   .option('--status <column>', 'Narrow to one column, by name or columnId. Filtered on the wire.')
   .option('--archived <mode>', 'Which cards to read: true, false or all. Filtered on the wire.', 'false')
   .option('--assignee <user>', 'Narrow to one assignee — a name, an email, a userId or @me. Same as --filter "assignee:…".')
@@ -307,15 +308,17 @@ cards
   .option('--include <keys>', 'Comma-separated extras to keep in output: custom-fields')
   .option('--limit <number>', 'Cap how many cards are printed (default 25); sets "truncated"', '25')
   .option('--json', 'Output as JSON')
-  .action(async (boardId: string | undefined, options) => {
+  .action(async (boardArg: string | undefined, options) => {
     try {
       const client = await createFavroClient();
 
-      // Support positional boardId or --board option
-      const effectiveBoardId = boardId ?? options.board;
+      // Support the positional board or the --board option. Either spelling is
+      // a NAME or a boardId; `boardRef` is what was typed, `boardId` below is
+      // what it settled to.
+      const boardRef = boardArg ?? options.board;
 
-      if (!effectiveBoardId) {
-        console.error('Error: Board ID is required. Pass as positional argument or use --board <id>');
+      if (!boardRef) {
+        console.error('Error: A board is required. Pass it as the positional argument or use --board <board> — a name or a boardId.');
         process.exit(1);
       }
 
@@ -341,6 +344,13 @@ cards
 
       const api = new CardsAPI(client);
 
+      // The board is settled ONCE, here, because two consumers need it and the
+      // filter validator runs first: handed a NAME it looks a column up on a
+      // board that does not exist and refuses with "No column named done on
+      // board Backlog - Web Hub" — the wrong problem, named confidently (#82).
+      // `listCards` settles its own board too; an id costs a cache read.
+      const boardId = await new BoardsAPI(client).resolveBoardId(boardRef);
+
       // The WHOLE filtering flag row — `--filter`, `--tag`, `--assignee` — is
       // parsed AND its values settled against Favro's own vocabularies BEFORE
       // the fetch, so a typo'd tag, user or column refuses instead of costing a
@@ -350,12 +360,12 @@ cards
       const { resolveCardFilter } = await import('./lib/query-values');
       const query = await resolveCardFilter(
         { filter: options.filter, tag: options.tag, assignee: options.assignee },
-        { client, boardId: effectiveBoardId }
+        { client, boardId }
       );
 
       // `--status` and `--archived` are resolved and narrowed on the wire.
       let cardList = await api.listCards({
-        boardId: effectiveBoardId,
+        boardId,
         status: options.status,
         archived: archived as import('./lib/cards-api').ArchivedSelector,
       });
@@ -456,13 +466,13 @@ cards
   .description(
     'Create a new card, or bulk-import cards from CSV or JSON.\n\n' +
     'Examples:\n' +
-    '  favro cards create "Fix login bug" --board <id>\n' +
-    '  favro cards create "My card" --board <id> --status "Todo" --description "Details"\n' +
-    '  favro cards create "Ship it" --board <id> --tag bug --assignee alice --parent CLA-1804\n' +
-    '  favro cards create "Ship it" --board <id> --blocked-by CLA-1800 --blocks CLA-1900\n' +
-    '  favro cards create --csv tasks.csv --board <id>\n' +
-    '  favro cards create --bulk tasks.json --board <id>\n' +
-    '  favro cards create --csv tasks.csv --board <id> --dry-run\n\n' +
+    '  favro cards create "Fix login bug" --board <board>\n' +
+    '  favro cards create "My card" --board <board> --status "Todo" --description "Details"\n' +
+    '  favro cards create "Ship it" --board <board> --tag bug --assignee alice --parent CLA-1804\n' +
+    '  favro cards create "Ship it" --board <board> --blocked-by CLA-1800 --blocks CLA-1900\n' +
+    '  favro cards create --csv tasks.csv --board <board>\n' +
+    '  favro cards create --bulk tasks.json --board <board>\n' +
+    '  favro cards create --csv tasks.csv --board <board> --dry-run\n\n' +
     'CSV format (columns: name, description, status):\n' +
     '  name,description,status\n' +
     '  "Fix bug","Safari issue","In Progress"\n' +
@@ -473,7 +483,7 @@ cards
     'Composites (--tag/--assignee/--parent/--blocked-by/--blocks/--status) all ride the ONE\n' +
     'create call Favro validates, so a bad value fails the whole create and leaves no card behind.'
   )
-  .option('--board <id>', 'Target board ID')
+  .option('--board <board>', 'Target board, by name or boardId')
   .option('--description <text>', 'Card description')
   .option('--status <status>', 'Column to create the card in (name needs --board, or a columnId)')
   .option('--tag <name>', 'Tag by name (repeatable) — an unknown name is refused, never created', collect, [])
@@ -620,7 +630,7 @@ cards
     '  favro cards update <card> --status "Done"\n' +
     '  favro cards update <card> --name "New title" --status "In Progress"\n' +
     '  favro cards update <card> --assignees "alice,bob"\n' +
-    '  favro cards update <card> --column "Developing" --board <boardId>\n' +
+    '  favro cards update <card> --column "Developing" --board <board>\n' +
     '  favro cards update <card> --status "Done" --dry-run\n\n' +
     'Batch update from CSV:\n' +
     '  favro cards update --from-csv bulk.csv --board Q2-Dev\n' +
@@ -640,7 +650,7 @@ cards
   .option('--tags <list>', 'Tags (comma-separated, single card update)')
   .option('--column <column>', 'Move card to this column by name (use with --board)')
   .option('--label <label>', 'Label/tag filter for batch operations (use with --board)')
-  .option('--board <id>', 'Board ID — required for batch operations, optional for single')
+  .option('--board <board>', 'Board by name or boardId — required for batch operations, optional for single')
   .option('--from-csv <file>', 'CSV file with card updates (columns: cardId, status, assignee, dueDate)')
   .option('--dry-run', 'Preview changes without writing — with --from-csv this still reads each row\'s card, because the scope lock runs before the preview, by design, so a preview cannot be a way around it')
   .option('-y, --yes', 'Skip confirmation prompt')
@@ -834,10 +844,12 @@ cards
       }
       
       try {
-        const { readConfig } = await import('./lib/config');
-        const { checkScope } = await import('./lib/safety');
-        await checkScope(options.board, client, await readConfig(), options.force);
-        
+        const { checkResolvedScope } = await import('./lib/safety');
+        // `--board` is a name or a boardId, but the lock GETs `/widgets/<id>` —
+        // handed a name it 404s into "Board … not found", a refusal naming the
+        // wrong problem (#82). The thunk keeps an unlocked user off the network.
+        await checkResolvedScope(client, () => new BoardsAPI(client!).resolveBoardId(options.board), options.force);
+
         const { buildFilterFn } = await import('./commands/batch');
         const {
           BulkTransaction,
@@ -957,7 +969,7 @@ cards
 
     // ── Single card update ────────────────────────────────────────────────────
     if (!cardId) {
-      console.error('Error: provide a card ID, --from-csv <file>, or --board <id> for batch operations');
+      console.error('Error: provide a card ID, --from-csv <file>, or --board <board> for batch operations');
       process.exit(1);
       return;
     }
@@ -1051,11 +1063,11 @@ cards
   .description(
     'Export all cards from a board to JSON or CSV.\n\n' +
     'Examples:\n' +
-    '  favro cards export <boardId> --format csv --out sprint.csv\n' +
-    '  favro cards export <boardId> --format json --out sprint.json\n' +
-    '  favro cards export <boardId> --format json | jq \'.[].name\'\n' +
-    '  favro cards export <boardId> --format csv --filter "assignee:alice"\n' +
-    '  favro cards export <boardId> --format json --filter "status:Done" --filter "tag:sprint-42"\n\n' +
+    '  favro cards export <board> --format csv --out sprint.csv\n' +
+    '  favro cards export <board> --format json --out sprint.json\n' +
+    '  favro cards export <board> --format json | jq \'.[].name\'\n' +
+    '  favro cards export <board> --format csv --filter "assignee:alice"\n' +
+    '  favro cards export <board> --format json --filter "status:Done" --filter "tag:sprint-42"\n\n' +
     'Filter expressions (all conditions must match — AND logic):\n' +
     '  assignee:alice    cards where alice is an assignee\n' +
     '  status:Done       cards with status "Done"\n' +

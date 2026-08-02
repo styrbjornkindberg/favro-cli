@@ -32,6 +32,7 @@ interface Received {
 }
 
 const CARD = '713db3018af39956227d4279';
+const BOARD = 'w1';
 const BODY = '# Acceptance\n\n- [ ] one\n- [ ] two\n';
 
 function startServer(): Promise<{
@@ -46,6 +47,12 @@ function startServer(): Promise<{
     req.on('end', () => {
       received.push({ method: req.method ?? '', url: req.url ?? '', body });
       res.writeHead(200, { 'Content-Type': 'application/json' });
+      // A create's board is settled against the listing before it reaches the
+      // POST (#82), so the stand-in has to know the board it is asked about.
+      if ((req.url ?? '').startsWith('/api/v1/widgets')) {
+        res.end(JSON.stringify({ entities: [{ widgetCommonId: BOARD, name: 'Probe board', columns: [] }] }));
+        return;
+      }
       res.end(JSON.stringify({ cardId: CARD, name: 'probe', detailedDescription: BODY }));
     });
   });
@@ -85,13 +92,13 @@ describe('card description writes (no client mock)', () => {
   test('createCard puts descriptionFormat on the query string, not in the body', async () => {
     const { api, received, close } = await startServer();
     try {
-      await api.createCard({ name: 'probe', description: BODY, widgetCommonId: 'w1' });
+      await api.createCard({ name: 'probe', description: BODY, widgetCommonId: BOARD });
       const post = sent(received, 'POST');
       expect(post.url).toBe('/api/v1/cards?descriptionFormat=markdown');
       expect(JSON.parse(post.body)).toEqual({
         name: 'probe',
         detailedDescription: BODY,
-        widgetCommonId: 'w1',
+        widgetCommonId: BOARD,
       });
     } finally {
       await close();

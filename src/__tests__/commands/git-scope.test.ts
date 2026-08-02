@@ -11,15 +11,19 @@ import * as safety from '../../lib/safety';
 import * as gitIntegration from '../../lib/git-integration';
 import * as todoScanner from '../../lib/todo-scanner';
 import CardsAPI from '../../lib/cards-api';
+import BoardsAPI from '../../lib/boards-api';
+import { passThroughScopeResolution } from '../../test-support/scope-passthrough';
 
 jest.mock('../../lib/http-client');
 jest.mock('../../lib/config');
 jest.mock('../../lib/safety');
 jest.mock('../../lib/cards-api');
+jest.mock('../../lib/boards-api');
 jest.mock('../../lib/git-integration');
 jest.mock('../../lib/todo-scanner');
 
 const MockCardsAPI = CardsAPI as jest.MockedClass<typeof CardsAPI>;
+const MockBoardsAPI = BoardsAPI as jest.MockedClass<typeof BoardsAPI>;
 
 async function runCli(args: string[]): Promise<void> {
   const program = new Command();
@@ -37,9 +41,16 @@ beforeEach(() => {
   jest.spyOn(process, 'exit').mockImplementation((() => {}) as any);
 
   (config.resolveApiKey as jest.Mock).mockResolvedValue('test-token');
-  (config.readConfig as jest.Mock).mockResolvedValue({ scopeBoardId: 'board-a' });
+  (config.readConfig as jest.Mock).mockResolvedValue({ scopeCollectionId: 'coll-1' });
   (safety.checkScope as jest.Mock).mockResolvedValue(undefined);
   (safety.confirmAction as jest.Mock).mockResolvedValue(true);
+  // `git todos --board` takes a NAME or an id (#82), so the board settles before
+  // the lock sees it. `checkResolvedScope` IS that seam — auto-mocked it resolves
+  // nothing and every assertion below would pass against a stub.
+  passThroughScopeResolution(safety, config, MockCardsAPI as never);
+  MockBoardsAPI.prototype.resolveBoardId = jest.fn(async (board: string) =>
+    board === 'Backlog - Web Hub' ? 'board-z' : board,
+  );
 
   (gitIntegration.isGitRepo as jest.Mock).mockReturnValue(true);
   (gitIntegration.findProjectRoot as jest.Mock).mockReturnValue('/repo');
@@ -162,6 +173,14 @@ describe('favro git todos --create — scope lock', () => {
   it('checks scope against --board when given', async () => {
     await runCli(['git', 'todos', '--create', '--yes', '--board', 'board-z']);
 
+    expect(safety.checkScope).toHaveBeenCalledWith('board-z', expect.anything(), expect.anything(), undefined);
+  });
+
+  it('a --board NAME settles to an id before the lock sees it (#82)', async () => {
+    await runCli(['git', 'todos', '--create', '--yes', '--board', 'Backlog - Web Hub']);
+
+    // The lock GETs `/widgets/<id>`; handed the name it 404s and reports
+    // "Board Backlog - Web Hub not found" — the wrong problem, named confidently.
     expect(safety.checkScope).toHaveBeenCalledWith('board-z', expect.anything(), expect.anything(), undefined);
   });
 

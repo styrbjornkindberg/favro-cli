@@ -157,20 +157,41 @@ describe('stale — which cards survive', () => {
     expect(json().unassignedStale[0].id).toBe('live');
   });
 
-  test('a card with no creation date is reported stale with -1 days — BUG #130', async () => {
-    // NOT intended design — this documents the bug in #130, it does not bless it.
-    //
-    // Favro sends no last-modified field, so age is measured from creation, and
-    // a card without one has an unknown age. `daysSince` answers `Infinity`,
-    // and `Infinity >= staleDays` is true for every threshold, so an undated
-    // card is ALWAYS stale however recent it really is — `--days` cannot
-    // exclude it.
-    //
-    // The second-order symptom is the worse half: the day count is flattened to
-    // -1, and both groups sort most-stale-first (`stale.ts:142-143`), so -1
-    // sorts LAST. The cards whose freshness is least known are ranked least
-    // urgent — the exact inversion of what the command is for. Asserted below
-    // so this stays evidence rather than prose.
+  test('a card with no creation date is not stale — it is unassessable, and counted (#130)', async () => {
+    // Favro sends no last-modified field, so age is measured from creation. A
+    // card without one has an UNKNOWN age: not 0, not infinite. `stale` answers
+    // one question — "is this older than --days" — and the only honest answer
+    // for an undated card is that the question cannot be put to it. So it
+    // leaves the stale set entirely and lands in `undated`, where the caller
+    // can see it. Silently dropping it would be the same fail-open as the `-1`
+    // it replaces.
+    // `''` is the shape that actually reaches here off the wire —
+    // `normalizeCard` coerces an absent `createdAt` to an empty string
+    // (`cards-api.ts:89`), so a test that only passes `undefined` misses the
+    // live path.
+    MockAggregate.prototype.getMultiBoardSnapshot = jest.fn().mockResolvedValue({
+      allCards: [
+        card({ id: 'undated', title: 'No date', createdAt: undefined, boardName: 'Platform' }),
+        card({ id: 'emptied', title: 'Normalized away', createdAt: '', boardName: 'Platform' }),
+        card({ id: 'unparseable', title: 'Bad date', createdAt: 'whenever', boardName: 'Platform' }),
+        card({ id: 'dated', createdAt: daysAgo(20) }),
+      ],
+    });
+
+    await runCli(['stale']);
+
+    const out = json();
+    expect(out.total).toBe(1);
+    expect(out.unassignedStale.map((c: { id: string }) => c.id)).toEqual(['dated']);
+    expect(out.undated.map((c: { id: string }) => c.id)).toEqual(['undated', 'emptied', 'unparseable']);
+    expect(out.undated[0]).toEqual({ id: 'undated', title: 'No date', board: 'Platform' });
+  });
+
+  test('no reported card carries a fabricated day count (#130)', async () => {
+    // `-1` was never a duration. It existed so `daysSinceUpdate` could stay a
+    // `number` while carrying "unknown" — and then sorted the least-known cards
+    // to the BOTTOM of a most-stale-first list. Nothing in the stale set may
+    // carry a non-positive age now, because everything in it was measured.
     MockAggregate.prototype.getMultiBoardSnapshot = jest.fn().mockResolvedValue({
       allCards: [
         card({ id: 'undated', createdAt: undefined }),
@@ -180,10 +201,52 @@ describe('stale — which cards survive', () => {
 
     await runCli(['stale']);
 
-    expect(json().total).toBe(2);
-    const undated = json().unassignedStale.find((c: { id: string }) => c.id === 'undated');
-    expect(undated.daysSinceUpdate).toBe(-1);
-    expect(json().unassignedStale.map((c: { id: string }) => c.id)).toEqual(['dated', 'undated']);
+    const out = json();
+    const reported = [...out.assignedStale, ...out.unassignedStale];
+    for (const c of reported) expect(c.daysSinceUpdate).toBeGreaterThanOrEqual(0);
+    expect(JSON.stringify(out)).not.toContain('"daysSinceUpdate":-1');
+  });
+
+  test('--days cannot include an undated card, at either end of the range (#130)', async () => {
+    // The headline symptom: `Infinity >= n` held for every n, so `--days 3650`
+    // reported the undated card exactly as `--days 1` did. Both thresholds must
+    // now agree that it is simply not in the answer.
+    const allCards = [
+      card({ id: 'undated', createdAt: undefined }),
+      card({ id: 'dated', createdAt: daysAgo(20) }),
+    ];
+
+    MockAggregate.prototype.getMultiBoardSnapshot = jest.fn().mockResolvedValue({ allCards });
+
+    await runCli(['stale', '--days', '1']);
+    const tight = json();
+    expect(tight.unassignedStale.map((c: { id: string }) => c.id)).toEqual(['dated']);
+    expect(tight.undated.map((c: { id: string }) => c.id)).toEqual(['undated']);
+
+    logSpy.mockClear();
+
+    await runCli(['stale', '--days', '3650']);
+    const loose = json();
+    expect(loose.total).toBe(0);
+    expect(loose.undated.map((c: { id: string }) => c.id)).toEqual(['undated']);
+  });
+
+  test('a done card with no creation date is dropped, not reported as unassessed', async () => {
+    // Stage is checked first: `stale` never had an opinion about finished work,
+    // and "we could not date it" is only interesting for cards still in play.
+    //
+    // NOT evidence for #130: this passes with the fix reverted, because the
+    // stage check short-circuits before the date is ever read. It pins the
+    // ORDER of the two checks, nothing more. Do not count it as coverage of
+    // the undated contract — the three tests above carry that.
+    MockAggregate.prototype.getMultiBoardSnapshot = jest.fn().mockResolvedValue({
+      allCards: [card({ id: 'shipped', stage: 'done', createdAt: undefined })],
+    });
+
+    await runCli(['stale']);
+
+    expect(json().total).toBe(0);
+    expect(json().undated).toEqual([]);
   });
 
   test('a non-numeric --days falls back to 14 rather than letting NaN pass everything', async () => {
@@ -195,6 +258,36 @@ describe('stale — which cards survive', () => {
 
     expect(json().staleDays).toBe(14);
     expect(json().total).toBe(0);
+  });
+
+  test('a negative --days cannot put a fabricated age back in the output (#130)', async () => {
+    // `parseInt('-2', 10) || 14` let -2 straight through, and a card Favro
+    // dated in the future then satisfied `-1 >= -2` and reported
+    // `daysSinceUpdate: -1` — the exact string #130's acceptance criterion
+    // bans, arrived at from the other direction. A negative threshold is not
+    // a threshold, so it takes the same road as `soon`: the declared default.
+    MockAggregate.prototype.getMultiBoardSnapshot = jest.fn().mockResolvedValue({
+      allCards: [card({ id: 'tomorrow', createdAt: daysAgo(-1) })],
+    });
+
+    await runCli(['stale', '--days', '-2']);
+
+    expect(json().staleDays).toBe(14);
+    expect(json().total).toBe(0);
+    expect(written()).not.toContain('"daysSinceUpdate":-1');
+  });
+
+  test('--days 0 is a real threshold and is not swallowed by the default', async () => {
+    // `|| 14` treated 0 as absent and answered a 14-day question instead. Every
+    // dated live card is at least 0 days old, so 0 means "all of them".
+    MockAggregate.prototype.getMultiBoardSnapshot = jest.fn().mockResolvedValue({
+      allCards: [card({ id: 'today', createdAt: daysAgo(0) })],
+    });
+
+    await runCli(['stale', '--days', '0']);
+
+    expect(json().staleDays).toBe(0);
+    expect(json().unassignedStale.map((c: { id: string }) => c.id)).toEqual(['today']);
   });
 });
 
@@ -233,6 +326,21 @@ describe('stale — how the survivors are split and ordered', () => {
     await runCli(['stale', '--human']);
 
     expect(written()).toContain('No stale cards found.');
+  });
+
+  test('--human names the cards it could not assess (#130)', async () => {
+    MockAggregate.prototype.getMultiBoardSnapshot = jest.fn().mockResolvedValue({
+      allCards: [card({ id: 'undated', title: 'No date', createdAt: undefined, boardName: 'Platform' })],
+    });
+
+    await runCli(['stale', '--human']);
+
+    // ADR-0002: a successful command never prints nothing. Nothing is stale
+    // here, and yet a card WAS skipped — both facts have to reach the reader,
+    // or "no stale cards" is a lie by omission.
+    expect(written()).toContain('No stale cards found.');
+    expect(written()).toContain('No creation date — not assessed (1):');
+    expect(written()).toContain('• No date — Platform');
   });
 });
 
