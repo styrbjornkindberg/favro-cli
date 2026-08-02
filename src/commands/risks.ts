@@ -122,6 +122,20 @@ function formatHuman(report: RiskReport): void {
   console.log(`  ⚠️  Missing Fields:   ${report.summary.missingFields}`);
   console.log('');
 
+  // Ahead of the verdict, and OUTSIDE the `total === 0` branch — the same rule
+  // `diff` follows. Nested in the `else`, a healthy board printed "✓ All cards
+  // are healthy!" and never mentioned that staleness had not been checked,
+  // while the JSON for the identical run carried `unreachable`. The two modes
+  // disagreed about whether a check ran, and the mode a human reads was the one
+  // that fail-opened.
+  //
+  // Read off `unreachable` rather than restated, so the human line and the
+  // JSON key cannot drift (#86).
+  for (const hole of report.unreachable ?? []) {
+    console.log(`⏳ ${hole.id.toUpperCase()}: unreachable — ${hole.reason}`);
+    console.log('');
+  }
+
   if (report.summary.total === 0) {
     console.log('✓ All cards are healthy!');
   } else {
@@ -145,13 +159,6 @@ function formatHuman(report: RiskReport): void {
       if (report.risks.blocked.length > 5) {
         console.log(`  ... and ${report.risks.blocked.length - 5} more`);
       }
-      console.log('');
-    }
-
-    // Read off `unreachable` rather than restated, so the human line and the
-    // JSON key cannot drift (#86).
-    for (const hole of report.unreachable ?? []) {
-      console.log(`⏳ ${hole.id.toUpperCase()}: unreachable — ${hole.reason}`);
       console.log('');
     }
 

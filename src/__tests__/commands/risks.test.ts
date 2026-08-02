@@ -262,6 +262,24 @@ describe('risks command', () => {
     expect(text).toContain('Overall Risk Level: ✅ HEALTHY');
   });
 
+  it('still names the staleness hole under --human on a HEALTHY board, above the verdict', async () => {
+    // The hole loop used to live inside the `else` of `total === 0`, so this
+    // exact run printed "✓ All cards are healthy!" and never mentioned that
+    // staleness had not been checked — while the JSON for the same run carried
+    // `unreachable`. Two modes, one command, disagreeing about whether a check
+    // ran, and the mode a human reads was the one that fail-opened.
+    listCards.mockResolvedValue([sampleCards[5]]);
+
+    await runCli(['risks', 'board-1', '--human']);
+
+    const text = stdout();
+    expect(text).toContain('⏳ STALE: unreachable —');
+    // A footnote does not undo a headline: the hole is stated BEFORE the
+    // all-clear and before the verdict line.
+    expect(text.indexOf('⏳ STALE')).toBeLessThan(text.indexOf('✓ All cards are healthy!'));
+    expect(text.indexOf('⏳ STALE')).toBeLessThan(text.indexOf('Overall Risk Level'));
+  });
+
   it('lists every risk category a single card falls into', async () => {
     listCards.mockResolvedValue([{
       cardId: 'card-multi',
