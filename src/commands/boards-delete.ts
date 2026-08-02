@@ -40,11 +40,15 @@ export function registerBoardsDeleteCommand(boardsParent: Command): void {
         throw error;
       });
 
-      // ponytail: the streaming arm, so this line is printed in JSON mode too —
-      // exactly what it did before. There is no `--json` branch here to delete
-      // and #114 is a migration, not a redesign; giving the delete a machine
-      // shape is a change to the CONTRACT and belongs on its own issue.
-      console.log(`✓ Board deleted: ${id}`);
+      // The delete had no machine path at all before, so this invents one
+      // rather than replacing one. It has to: with JSON the default, the
+      // streaming arm would put `✓ Board deleted: …` on an agent's stdout and
+      // make the group's contract inconsistent on day one — `boards update`
+      // parses, `boards delete` throws. The human line is unchanged.
+      return {
+        item: { deleted: true, boardId: id },
+        human: () => console.log(`✓ Board deleted: ${id}`),
+      };
     }));
 }
 

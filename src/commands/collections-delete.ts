@@ -40,9 +40,12 @@ export function registerCollectionsDeleteCommand(collectionsParent: Command): vo
         throw error;
       });
 
-      // ponytail: the streaming arm, printed in JSON mode too — exactly what it
-      // did before. See the same note on `boards delete`.
-      console.log(`✓ Collection deleted: ${id}`);
+      // A machine shape for the delete, for the reason spelled out on
+      // `boards delete`. The human line is unchanged.
+      return {
+        item: { deleted: true, collectionId: id },
+        human: () => console.log(`✓ Collection deleted: ${id}`),
+      };
     }));
 }
 

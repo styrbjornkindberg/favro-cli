@@ -31,10 +31,13 @@ let exitSpy: jest.SpyInstance;
 
 async function runCli(args: string[]): Promise<void> {
   const program = new Command();
-  program.option('--verbose', 'Show stack traces');
+  // The three flags `cli.ts` declares on the root. `--human` has to be here or
+  // the migrated command dies at parse (#114); `.exitOverride()` has to run
+  // before `.command()`, because that is when subcommands inherit it.
+  program.option('--verbose', 'Show stack traces').option('--human').option('--pretty');
+  program.exitOverride();
   const cardsCmd = program.command('cards');
   registerCardsFindCommand(cardsCmd);
-  program.exitOverride();
   await program.parseAsync(['node', 'favro', 'cards', ...args]).catch((e) => {
     if (!(e instanceof ExitCalled)) throw e;
   });
@@ -42,6 +45,7 @@ async function runCli(args: string[]): Promise<void> {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  process.exitCode = undefined;
   logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
   errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
   tableSpy = jest.spyOn(console, 'table').mockImplementation(() => {});
@@ -64,11 +68,12 @@ beforeEach(() => {
 
 afterEach(() => {
   jest.restoreAllMocks();
+  process.exitCode = undefined;
 });
 
 describe('cards find', () => {
   test('hands the URL through untouched and renders one row', async () => {
-    await runCli(['find', URL_]);
+    await runCli(['find', URL_, '--human']);
 
     expect(MockCardsAPI.prototype.findCardByUrl).toHaveBeenCalledWith(URL_);
     expect(tableSpy).toHaveBeenCalledWith([
@@ -87,7 +92,7 @@ describe('cards find', () => {
   test('renders an em dash for every absent field rather than "undefined"', async () => {
     MockCardsAPI.prototype.findCardByUrl = jest.fn().mockResolvedValue({ cardId: 'card-1' });
 
-    await runCli(['find', URL_]);
+    await runCli(['find', URL_, '--human']);
 
     expect(tableSpy).toHaveBeenCalledWith([
       {
@@ -105,15 +110,26 @@ describe('cards find', () => {
   test('a miss is an error and a non-zero exit, not an empty table', async () => {
     MockCardsAPI.prototype.findCardByUrl = jest.fn().mockResolvedValue(null);
 
-    await runCli(['find', URL_]);
+    await runCli(['find', URL_, '--human']);
 
     expect(tableSpy).not.toHaveBeenCalled();
     expect(errorSpy.mock.calls.map((c) => String(c[0])).join('\n')).toContain('No card found for URL');
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
-  test('--json prints the card untouched and skips the table', async () => {
-    await runCli(['find', URL_, '--json']);
+  test('a miss in JSON mode is an envelope on stdout, still exit 1', async () => {
+    MockCardsAPI.prototype.findCardByUrl = jest.fn().mockResolvedValue(null);
+
+    await runCli(['find', URL_]);
+
+    expect(tableSpy).not.toHaveBeenCalled();
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(JSON.parse(logSpy.mock.calls[0][0]).error.message).toContain('No card found for URL');
+    expect(process.exitCode).toBe(1);
+  });
+
+  test('with no flags it prints the card untouched and skips the table', async () => {
+    await runCli(['find', URL_]);
 
     expect(tableSpy).not.toHaveBeenCalled();
     expect(JSON.parse(logSpy.mock.calls[0][0])).toMatchObject({ cardId: 'card-1', name: 'Fix login' });
@@ -122,9 +138,9 @@ describe('cards find', () => {
   test('an unparseable URL surfaces the resolver\'s own error and exits 1', async () => {
     MockCardsAPI.prototype.findCardByUrl = jest.fn().mockRejectedValue(new Error('No card= parameter in URL'));
 
-    await runCli(['find', 'https://favro.com/organization/org-1/board']);
+    await runCli(['find', 'https://favro.com/organization/org-1/board', '--human']);
 
     expect(errorSpy.mock.calls.map((c) => String(c[0])).join('\n')).toContain('No card= parameter in URL');
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 });

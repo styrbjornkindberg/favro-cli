@@ -134,17 +134,17 @@ List all collections in your organization.
 
 **Syntax:**
 ```
-favro collections list [--format table|json] [--json]
+favro collections list [--human]
 ```
 
 **Options:**
 
 | Option | Default | Description |
 |---|---|---|
-| `--format <format>` | `table` | Output format: `table` or `json` |
-| `--json` | — | Alias for `--format json` |
+| `--human` | — | Table instead of the default JSON envelope (root flag) |
+| `--pretty` | — | Indent the JSON (root flag) |
 
-**Output (table):**
+**Output (`--human`):**
 
 ```
 Found 3 collection(s):
@@ -157,9 +157,9 @@ Found 3 collection(s):
 
 **Examples:**
 ```bash
-favro collections list
-favro collections list --json
-favro collections list --format json | jq '.[].name'
+favro collections list                       # {"rows":[…]} — the default
+favro collections list --human               # the table above
+favro collections list | jq -r '.rows[].name'
 ```
 
 **Error cases:**
@@ -174,7 +174,7 @@ Retrieve a single collection by ID, with optional related data.
 
 **Syntax:**
 ```
-favro collections get <id> [--include boards,stats] [--json]
+favro collections get <id> [--include boards,stats] [--human]
 ```
 
 **Arguments:**
@@ -188,7 +188,7 @@ favro collections get <id> [--include boards,stats] [--json]
 | Option | Description |
 |---|---|
 | `--include <options>` | Comma-separated: `boards`, `stats` |
-| `--json` | Output as JSON |
+| `--human` | Table/detail view instead of the default JSON (root flag) |
 
 **Include values:**
 
@@ -197,7 +197,7 @@ favro collections get <id> [--include boards,stats] [--json]
 | `boards` | Embed list of boards in the collection |
 | `stats` | Include board and member counts |
 
-**Output (default):**
+**Output (`--human`):**
 ```
 Collection: Product Development (coll-abc123)
 Description: Main development workspace
@@ -218,7 +218,7 @@ Boards:
 ```bash
 favro collections get coll-abc123
 favro collections get coll-abc123 --include boards,stats
-favro collections get coll-abc123 --json
+favro collections get coll-abc123 --human    # the detail view above
 ```
 
 **Error cases:**
@@ -233,7 +233,7 @@ Create a new collection.
 
 **Syntax:**
 ```
-favro collections create --name "NAME" [--description "DESC"] [--json] [--dry-run]
+favro collections create --name "NAME" [--description "DESC"] [--human] [--dry-run]
 ```
 
 **Options:**
@@ -242,7 +242,7 @@ favro collections create --name "NAME" [--description "DESC"] [--json] [--dry-ru
 |---|---|---|
 | `--name <name>` | ✓ | Collection name (cannot be blank) |
 | `--description <text>` | — | Collection description |
-| `--json` | — | Output created collection as JSON |
+| `--human` | — | Print the `✓ Collection created` lines instead of JSON (root flag) |
 | `--dry-run` | — | Preview without making API calls |
 
 **Output:**
@@ -255,7 +255,7 @@ favro collections create --name "NAME" [--description "DESC"] [--json] [--dry-ru
 **Examples:**
 ```bash
 favro collections create --name "Sprint Q2 2026"
-favro collections create --name "Sprint Q2 2026" --description "All Q2 sprint boards" --json
+favro collections create --name "Sprint Q2 2026" --description "All Q2 sprint boards"
 favro collections create --name "Draft" --dry-run
 ```
 
@@ -271,7 +271,7 @@ Update an existing collection's name or description.
 
 **Syntax:**
 ```
-favro collections update <id> [--name "NEW_NAME"] [--description "DESC"] [--json] [--dry-run]
+favro collections update <id> [--name "NEW_NAME"] [--description "DESC"] [--human] [--dry-run]
 ```
 
 **Arguments:**
@@ -286,7 +286,7 @@ favro collections update <id> [--name "NEW_NAME"] [--description "DESC"] [--json
 |---|---|
 | `--name <name>` | New collection name |
 | `--description <text>` | New collection description |
-| `--json` | Output updated collection as JSON |
+| `--human` | Print the `✓ Collection updated` lines instead of JSON (root flag) |
 | `--dry-run` | Preview without making API calls |
 
 **Notes:** At least one of `--name` or `--description` must be provided.
@@ -312,7 +312,7 @@ List boards, optionally filtered by collection.
 
 **Syntax:**
 ```
-favro boards list [collection-id] [--collection <name>] [--include stats,velocity] [--json]
+favro boards list [collection-id] [--collection <name>] [--include stats,velocity] [--human]
 ```
 
 **Arguments:**
@@ -327,7 +327,7 @@ favro boards list [collection-id] [--collection <name>] [--include stats,velocit
 |---|---|
 | `--collection <name>` | Filter boards by collection name (case-insensitive substring match) |
 | `--include <options>` | Comma-separated: `stats`, `velocity` |
-| `--json` | Output as JSON |
+| `--human` | Table/detail view instead of the default JSON (root flag) |
 
 **Include values:**
 
@@ -336,7 +336,7 @@ favro boards list [collection-id] [--collection <name>] [--include stats,velocit
 | `stats` | Add open/done card counts per board |
 | `velocity` | Add weekly velocity data (cards completed/added per week) |
 
-**Output (default):**
+**Output (`--human`):**
 ```
 Found 2 board(s):
 ┌───┬───────────┬─────────────┬───────┬─────────┬────────────┐
@@ -344,7 +344,7 @@ Found 2 board(s):
 └───┴───────────┴─────────────┴───────┴─────────┴────────────┘
 ```
 
-**Output (with `--include stats,velocity`):**
+**Output (`--human --include stats,velocity`):**
 ```
 ┌───┬───────────┬─────────────┬───────┬────────────┬──────┬──────┬──────────┐
 │   │ ID        │ Name        │ Cards │ Updated    │ Open │ Done │ Velocity │
@@ -353,10 +353,10 @@ Found 2 board(s):
 
 **Examples:**
 ```bash
-favro boards list
+favro boards list                            # {"rows":[…]} — the default
+favro boards list --human                    # the table above
 favro boards list --collection "Sprint"
 favro boards list coll-abc123 --include stats,velocity
-favro boards list --json
 ```
 
 **Error cases:**
@@ -371,7 +371,7 @@ Get detailed information about a board.
 
 **Syntax:**
 ```
-favro boards get <id> [--include custom-fields,cards,members,stats,velocity] [--json]
+favro boards get <id> [--include custom-fields,cards,members,stats,velocity] [--human]
 ```
 
 **Arguments:**
@@ -423,7 +423,7 @@ Stats:
 ```bash
 favro boards get board-001
 favro boards get board-001 --include members,stats
-favro boards get board-001 --include custom-fields,cards,members,stats,velocity --json
+favro boards get board-001 --include custom-fields,cards,members,stats,velocity
 ```
 
 **Error cases:**
@@ -438,7 +438,7 @@ Create a new board in a collection.
 
 **Syntax:**
 ```
-favro boards create <collection-id> --name "NAME" [--type board|list|kanban] [--description "DESC"] [--json] [--dry-run]
+favro boards create <collection-id> --name "NAME" [--type board|list|kanban] [--description "DESC"] [--human] [--dry-run]
 ```
 
 **Arguments:**
@@ -454,7 +454,7 @@ favro boards create <collection-id> --name "NAME" [--type board|list|kanban] [--
 | `--name <name>` | — | Board name (required, cannot be blank) |
 | `--type <type>` | `board` | Board type: `board`, `list`, or `kanban` |
 | `--description <text>` | — | Board description |
-| `--json` | — | Output created board as JSON |
+| `--human` | — | Print the `✓ Board created` lines instead of JSON (root flag) |
 | `--dry-run` | — | Preview without making API calls |
 
 **Board types:**
@@ -492,7 +492,7 @@ Update an existing board's name or description.
 
 **Syntax:**
 ```
-favro boards update <id> [--name "NEW"] [--description "DESC"] [--json] [--dry-run]
+favro boards update <id> [--name "NEW"] [--description "DESC"] [--human] [--dry-run]
 ```
 
 **Arguments:**
@@ -507,7 +507,7 @@ favro boards update <id> [--name "NEW"] [--description "DESC"] [--json] [--dry-r
 |---|---|
 | `--name <name>` | New board name |
 | `--description <text>` | New board description |
-| `--json` | Output updated board as JSON |
+| `--human` | Print the `✓ Board updated` lines instead of JSON (root flag) |
 | `--dry-run` | Preview without making API calls |
 
 **Notes:** At least one of `--name` or `--description` must be provided.
@@ -586,7 +586,7 @@ Retrieve a single card by ID with optional metadata.
 
 **Syntax:**
 ```
-favro cards get <cardId> [--include board,collection,custom-fields,links,comments,relations] [--json]
+favro cards get <cardId> [--include board,collection,custom-fields,links,comments,relations] [--human]
 ```
 
 **Arguments:**
@@ -600,7 +600,7 @@ favro cards get <cardId> [--include board,collection,custom-fields,links,comment
 | Option | Description |
 |---|---|
 | `--include <items>` | Comma-separated metadata: `board`, `collection`, `custom-fields`, `links`, `comments`, `relations` |
-| `--json` | Output as JSON (auto-enabled when includes are present) |
+| `--human` | One-row summary instead of JSON; ignored when `--include` is present (root flag) |
 
 **Include values:**
 
@@ -613,21 +613,22 @@ favro cards get <cardId> [--include board,collection,custom-fields,links,comment
 | `comments` | Embed card comments |
 | `relations` | Include relation metadata |
 
-**Output (default):**
+**Output (`--human`):**
 ```
 ┌───┬──────────┬──────────────┬───────────┬──────────┬───────┬──────────┬────────────┐
 │   │ ID       │ Title        │ Status    │ Assignees│ Tags  │ Due Date │ Created    │
 └───┴──────────┴──────────────┴───────────┴──────────┴───────┴──────────┴────────────┘
 ```
 
-When `--include` is used, the output is always JSON.
+When `--include` is used the output is JSON even under `--human`: the one-row
+summary would hide most of what was fetched.
 
 **Examples:**
 ```bash
-favro cards get card-abc123
+favro cards get card-abc123                  # the card, bare JSON
+favro cards get card-abc123 --human          # the row above
 favro cards get card-abc123 --include board,collection
 favro cards get card-abc123 --include board,collection,custom-fields,links,comments
-favro cards get card-abc123 --json
 ```
 
 **Error cases:**
@@ -2136,10 +2137,10 @@ Set up a new sprint from a planning spreadsheet:
 
 ```bash
 # 1. Create a new board in the sprint collection
-COLLECTION_ID=$(favro collections list --json | jq -r '.[] | select(.name | contains("Sprints")) | .collectionId')
+COLLECTION_ID=$(favro collections list | jq -r '.rows[] | select(.name | contains("Sprints")) | .collectionId')
 favro boards create $COLLECTION_ID --name "Sprint 43" --type kanban
 
-BOARD_ID=$(favro boards list --json | jq -r '.[] | select(.name == "Sprint 43") | .boardId')
+BOARD_ID=$(favro boards list | jq -r '.rows[] | select(.name == "Sprint 43") | .boardId')
 
 # 2. Import tasks from planning CSV
 favro cards create --csv sprint-43-planning.csv --board $BOARD_ID --dry-run
@@ -2202,7 +2203,7 @@ CARD_IDS=$(favro cards list --board board-001 --json | jq -r '.[].cardId')
 for id in $CARD_IDS; do
   BLOCKERS=$(favro cards blockers $id --json | jq -r '.[].cardId')
   if [ -n "$BLOCKERS" ]; then
-    NAME=$(favro cards get $id --json | jq -r '.name')
+    NAME=$(favro cards get $id | jq -r '.name')
     echo "$id ($NAME) blocks: $BLOCKERS"
   fi
 done
@@ -2249,7 +2250,7 @@ favro custom-fields values $PRIORITY_FIELD
 favro cards list --board $BOARD_ID --json \
   | jq -r '.[].cardId' \
   | while read id; do
-    favro cards get $id --include custom-fields --json \
+    favro cards get $id --include custom-fields \
       | jq -r ". | {id: .cardId, name: .name, priority: (.customFields[]? | select(.fieldId == \"$PRIORITY_FIELD\") | .displayValue)}"
   done
 ```
@@ -2320,7 +2321,7 @@ jobs:
 |-------|-------|----------|
 | `Board '<id>' not found` | Board ID is invalid or inaccessible | Run `favro boards list` to find correct ID |
 | `Card '<id>' not found` | Card was deleted or ID is wrong | Use `favro query` to search by name |
-| `Status '<status>' not found` | Status name doesn't exist on board | List valid statuses: `favro boards get <id> --json \| jq '.columns'` |
+| `Status '<status>' not found` | Status name doesn't exist on board | List valid statuses: `favro boards get <id> \| jq '.columns'` |
 | `User '<email>' not found` | Email doesn't match any board member | List members: `favro members list --board <id>` |
 
 ### Batch Operations
