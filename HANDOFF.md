@@ -1,6 +1,29 @@
 # Handoff
 
-State as of main `bcd5d9a`. **147 suites / 2741 tests**, typecheck clean, no cycles.
+State as of main after the #141/#144/#145 batch merge. **151 suites / 2834 tests**,
+typecheck clean, no cycles.
+
+## 0. START HERE — one branch is finished and unreviewed
+
+`worktree-agent-acc40fa3f1ec6585b`, commit `e0ea5b4` — **issue #117**, step 5 of the
+runner migration (`release-check`, `risks`, `diff`). Self-verified at 150 suites /
+2819 tests against main `52f3bed`, but **no independent review has run**. Every
+branch this run has had a real defect found at review, so do not merge it on the
+implementer's report. Review it first, then merge, then close #117.
+
+What its review most needs to check:
+- `diff` had #116's fail-open shape and now spreads `snapshot.unreachable`; verify the
+  hole genuinely forbids exit 0 and that the human notice prints *above* the verdict,
+  not as a footnote under "No changes detected".
+- **The exit-code change is new behaviour, not a migration.** #117's premise is
+  factually wrong — it cites lines that were the error boundary's exit, and none of
+  these commands ever carried a finding code. The ticket's acceptance criterion still
+  demands it, so it was implemented, but a CI job running `favro risks <board>` that
+  passed yesterday now fails whenever anything is at risk, and `release-check` is
+  noisy because `missing-due-date` counts toward `totalIssues`. Worth a human call.
+- `health` was deliberately left without an exit code (its cut is a score, not a
+  finding list), so the answer-code family is inconsistent until that is decided.
+- `suggestBoard` was deleted as unreachable — verify that.
 
 Always re-query counts rather than trusting a number written here — a stale tally
 that reads as current has already caused one wrong report this run.
@@ -114,8 +137,21 @@ something measurable.
 
 ## 4. Closed this session
 
-#82, #83, #84, #99, #130, #131 — each merged with all three gates verified on the
-merge result, and closed with a detailed comment recording what review caught.
+#82, #83, #84, #99, #116, #127, #129, #130, #131, #139, #141, #144, #145, #146 —
+fourteen, each merged with all three gates verified on the merge result and closed
+with a comment recording what review caught.
+
+Two worth remembering:
+
+- **#127's ratchet went red within minutes of merging**, because main already carried
+  #116 which had deleted `--format`, and `API-REFERENCE.md` still taught it. Two
+  branches, both green in isolation, drift caught on contact. That is the whole case
+  for ratchets in one event.
+- **#146's ticket had the wrong threat model and I wrote it.** Card titles do *not*
+  reach `commitWithMessage` — `slugify` strips the dangerous characters first. The
+  real vectors were `branchPattern` and `cardPrefix`, read from `.favro.json`, a file
+  **checked into the repo**: clone, run `favro git branch`, RCE. Stronger than what
+  the ticket claimed. Corrected on the issue.
 
 ## 5. The backlog-growth correction
 
