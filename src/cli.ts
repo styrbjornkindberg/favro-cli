@@ -57,8 +57,6 @@ import { registerCommentsCommand } from './commands/comments';
 import { registerActivityCommand } from './commands/activity';
 import { registerWebhooksCommand } from './commands/webhooks';
 import { registerContextCommand } from './commands/context';
-import { registerProposeCommand } from './commands/propose';
-import { registerExecuteCommand } from './commands/execute';
 import { registerQueryCommand } from './commands/query';
 import { registerStandupCommand } from './commands/standup';
 import { registerSprintPlanCommand } from './commands/sprint-plan';
@@ -1146,12 +1144,6 @@ cards
 
   // ─── context command ─────────────────────────────────────────────────────────
   registerContextCommand(program);
-
-  // ─── propose command ─────────────────────────────────────────────────────────
-  registerProposeCommand(program);
-
-  // ─── execute command ─────────────────────────────────────────────────────────
-  registerExecuteCommand(program);
 
   // ─── query command ───────────────────────────────────────────────────────────
   registerQueryCommand(program);
