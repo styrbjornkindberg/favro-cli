@@ -100,6 +100,47 @@ describe('tag: against the org tag list', () => {
     await expect(validateQueryValues(parseQuery('tag in(urgent,ghost)'), { client }))
       .rejects.toThrow(/No tag matching "ghost"/);
   });
+
+  // Not one accented character is written out below; each is built from its
+  // code point, because a normalising editor rewriting one side of these
+  // assertions into the other would make them pass for the wrong reason (#141).
+  describe('the same name in two normalisation forms (#141)', () => {
+    const cp = (...codes: number[]) => String.fromCodePoint(...codes);
+    /** cafe-acute, precomposed — one code point for the accented e. */
+    const NFC = `caf${cp(0x00e9)}`;
+    /** cafe-acute, decomposed — plain e plus a combining acute. */
+    const NFD = `cafe${cp(0x0301)}`;
+
+    test('a decomposed input matches a precomposed tag', async () => {
+      const { client } = makeClient({ tags: [{ tagId: 't', name: NFC }] });
+      const q = await validateQueryValues(parseQuery(`tag:${NFD}`), { client });
+      // The TYPED value comes back, unnormalised: the fold is for comparison,
+      // and the canonical spelling belongs to Favro.
+      expect(pred(q.ast).value).toBe(NFD);
+    });
+
+    test('a precomposed input matches a decomposed tag', async () => {
+      const { client } = makeClient({ tags: [{ tagId: 't', name: NFD }] });
+      const q = await validateQueryValues(parseQuery(`tag:${NFC}`), { client });
+      expect(pred(q.ast).value).toBe(NFC);
+    });
+
+    test('the ~ operator folds too', async () => {
+      const { client } = makeClient({ tags: [{ tagId: 't', name: `${NFC} au lait` }] });
+      const q = await validateQueryValues(parseQuery(`tag~${NFD}`), { client });
+      expect(pred(q.ast).value).toBe(NFD);
+    });
+
+    test('a refusal still lists the org spelling byte-for-byte', async () => {
+      const { client } = makeClient({ tags: [{ tagId: 't', name: NFD }] });
+      try {
+        await validateQueryValues(parseQuery('tag:ghost'), { client });
+        throw new Error('expected a refusal');
+      } catch (err) {
+        expect((err as ParseError).detail.candidates).toEqual([NFD]);
+      }
+    });
+  });
 });
 
 describe('status: against the board’s columns', () => {

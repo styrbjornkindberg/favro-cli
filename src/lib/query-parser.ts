@@ -25,6 +25,9 @@
  * Public API:
  *   parseQuery(filter: string): Query
  */
+// The only import, and deliberately a zero-dependency leaf: this module stays
+// free of the client, and `fold-name` imports nothing at all.
+import { foldName } from './fold-name';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -673,9 +676,8 @@ export function evaluateNode(
 
     case 'customField': {
       const fields: Record<string, any>[] = card.customFields ?? card.custom_fields ?? [];
-      const cf = fields.find(
-        f => f.name?.toLowerCase() === node.fieldName.toLowerCase()
-      );
+      // A custom field's name is Favro's, the one in the query is the user's.
+      const cf = fields.find(f => foldName(f.name) === foldName(node.fieldName));
       if (!cf) return false;
       const cfVal = String(cf.value ?? '');
       return compareValues(cfVal, node.operator, node.value);
@@ -769,23 +771,28 @@ function resolveFieldValue(field: string, card: Record<string, any>): any {
 }
 
 function compareValues(cardValue: any, op: Operator, queryValue: string): boolean {
+  // `foldName` on both sides rather than `toLowerCase`: the card value comes
+  // off the wire and the query value was typed by a human, and the same
+  // visible name reaches those two places in different normalisation forms
+  // (#141). It folds case as well, so nothing is lost by the swap.
+  //
   // Handle array values (assignees, tags)
   if (Array.isArray(cardValue)) {
     if (op === 'in') {
-      const list = queryValue.split(',').map(s => s.trim().toLowerCase());
-      return cardValue.some(v => list.includes(String(v).toLowerCase()));
+      const list = queryValue.split(',').map(foldName);
+      return cardValue.some(v => list.includes(foldName(String(v))));
     }
     // For string ops on arrays, check if any element matches
     return cardValue.some(v => compareValues(String(v), op, queryValue));
   }
 
-  const strCard = String(cardValue ?? '').toLowerCase();
-  const strQuery = queryValue.toLowerCase();
+  const strCard = foldName(String(cardValue ?? ''));
+  const strQuery = foldName(queryValue);
 
   if (op === '~') return strCard.includes(strQuery);
   if (op === '=') return strCard === strQuery;
   if (op === 'in') {
-    const list = queryValue.split(',').map(s => s.trim().toLowerCase());
+    const list = queryValue.split(',').map(foldName);
     return list.includes(strCard);
   }
 

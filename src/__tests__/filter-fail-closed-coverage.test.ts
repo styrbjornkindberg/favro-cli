@@ -333,13 +333,23 @@ describe('the live cards export refuses a filter it cannot settle', () => {
  * span off exact membership written across lines — `cards-api.ts`'s
  * `currentIds.includes(id)` is correct and must stay unflagged.
  *
+ * WHY `foldName(…)` IS AN ALTERNATIVE TO `.toLowerCase()`
+ * #141 replaced the lowercase-both-sides idiom with a shared Unicode fold at
+ * every name seam, `api/query.ts` included. The debt did not move — that file
+ * still substring-matches a card tag against a typed one — but the detector
+ * stopped seeing it, because the case fold is now spelled as a call wrapping
+ * the value rather than a method after it. A ratchet that a rename can blind
+ * is not a ratchet, so it reads both spellings.
+ *
  * ponytail: statement-based. The ceiling is a `;` INSIDE the expression — a
  * nested block body between the array and the `.includes(` would cut the span
  * short. Nothing here is written that way; move to the TypeScript AST, as
  * `scope-lock-coverage.test.ts` does, if one ever is.
  */
-const SUBSTRING_OVER_VOCABULARY =
-  /\b(?:tags|assignees)\b[^;]*\.(?:some|find|filter|every)\([^;]*\.toLowerCase\(\)\.includes\(\s*(?!['"`])/;
+const CASE_FOLD = String.raw`(?:\.toLowerCase\(\)|foldName\([^();]*\))`;
+const SUBSTRING_OVER_VOCABULARY = new RegExp(
+  String.raw`\b(?:tags|assignees)\b[^;]*\.(?:some|find|filter|every)\([^;]*${CASE_FOLD}\.includes\(\s*(?!['"\`])`,
+);
 
 /**
  * DEBT: the filtering surfaces that still substring-match, keyed by file and

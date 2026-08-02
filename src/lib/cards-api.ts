@@ -4,6 +4,7 @@ import BoardsAPI from './boards-api';
 import { Tag, cachedTags } from './tags-api';
 import ColumnDirectory, { ColumnResolutionError } from './column-directory';
 import CardReferenceResolver, { CardResolutionError, isSequentialReference } from './card-reference';
+import { foldName } from './fold-name';
 import { invalidateCache } from './name-cache';
 import { isUserId } from './users-api';
 import { resolveAssignee } from './assignee';
@@ -866,12 +867,14 @@ export class CardsAPI {
    * name and let Favro resolve it, which is exactly why we must not send an id.
    */
   private async validateTagNames(names: string[]): Promise<string[]> {
-    const key = (name: string) => name.trim().toLowerCase();
-    const tags = await this.orgTags((known) => names.every((raw) => known.has(key(raw))));
-    const byName = new Map(tags.map((t) => [key(t.name ?? ''), t.name]));
+    // `foldName` rather than a local `trim().toLowerCase()`: a tag typed in one
+    // normalisation form used to miss the identical org tag in the other, and
+    // a missed tag here is a tag CREATION on the wire (#141).
+    const tags = await this.orgTags((known) => names.every((raw) => known.has(foldName(raw))));
+    const byName = new Map(tags.map((t) => [foldName(t.name), t.name]));
 
     return names.map((raw) => {
-      const known = byName.get(key(raw));
+      const known = byName.get(foldName(raw));
       if (known === undefined) throw new RefusalError(unknownTagMessage([raw]));
       return known;
     });
@@ -897,7 +900,9 @@ export class CardsAPI {
     const orgId = this.client.organizationId;
     const ask = (tags: Tag[]) =>
       answered(
-        new Set(tags.map((t) => (t.name ?? '').trim().toLowerCase())),
+        // Folded the same way every caller's lookup key is (#141) — a set keyed
+        // one way and probed the other answers "unknown" for a tag that exists.
+        new Set(tags.map((t) => foldName(t.name))),
         new Set(tags.map((t) => t.tagId)),
       );
 
@@ -1028,16 +1033,18 @@ export class CardsAPI {
     desired: string[],
   ): Promise<{ addTags?: string[]; addTagIds?: string[]; removeTagIds?: string[] }> {
     const orgTags = await this.orgTags((names, ids) =>
-      desired.every((entry) => ids.has(entry) || names.has(entry.trim().toLowerCase())),
+      desired.every((entry) => ids.has(entry) || names.has(foldName(entry))),
     );
 
-    const byName = new Map(orgTags.map((t) => [t.name.toLowerCase(), t.tagId]));
+    // Same fold as `orgTags` builds its name set with — an entry that resolves
+    // to an existing tag must not be re-sent as a new one (#141).
+    const byName = new Map(orgTags.map((t) => [foldName(t.name), t.tagId]));
     const knownIds = new Set(orgTags.map((t) => t.tagId));
 
     const desiredIds = new Set<string>();
     const newNames: string[] = [];
     for (const entry of desired) {
-      const asId = knownIds.has(entry) ? entry : byName.get(entry.toLowerCase());
+      const asId = knownIds.has(entry) ? entry : byName.get(foldName(entry));
       if (asId) desiredIds.add(asId);
       else newNames.push(entry);
     }
