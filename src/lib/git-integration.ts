@@ -7,7 +7,7 @@
  * - Smart commits with auto-card references
  * - Branch ↔ card sync (merged → Done, open → In Progress)
  */
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -55,9 +55,22 @@ export function writeProjectConfig(config: FavroProjectConfig, projectRoot?: str
 
 // ─── Git Helpers ──────────────────────────────────────────────────────────────
 
-function git(args: string, cwd?: string): string {
-  return execSync(`git ${args}`, {
-    cwd: cwd ?? findProjectRoot(),
+/**
+ * Run git with an argv array — never a composed shell string (#146).
+ *
+ * Branch names and commit messages carry card titles authored in Favro, and
+ * `favro_run` lets an MCP agent compose them, so both cross a trust boundary
+ * before they get here. execFileSync spawns git directly: no /bin/sh, so
+ * `$(…)`, backticks and `;` are ordinary characters. Every argument is passed
+ * verbatim; no call site here wants a pipe, a glob or `&&`, so there is no
+ * shell exception to make.
+ *
+ * Like execSync, this returns stdout and throws on a non-zero exit — the
+ * boolean probes below depend on that.
+ */
+function git(...args: string[]): string {
+  return execFileSync('git', args, {
+    cwd: findProjectRoot(),
     encoding: 'utf-8',
     stdio: ['pipe', 'pipe', 'pipe'],
   }).trim();
@@ -67,14 +80,14 @@ function git(args: string, cwd?: string): string {
  * Get the current branch name.
  */
 export function getCurrentBranch(): string {
-  return git('rev-parse --abbrev-ref HEAD');
+  return git('rev-parse', '--abbrev-ref', 'HEAD');
 }
 
 /**
  * List all local branches.
  */
 export function listBranches(): string[] {
-  return git('branch --list --format=%(refname:short)')
+  return git('branch', '--list', '--format=%(refname:short)')
     .split('\n')
     .filter(Boolean);
 }
@@ -85,7 +98,7 @@ export function listBranches(): string[] {
 export function isBranchMerged(branch: string): boolean {
   const defaultBranch = getDefaultBranch();
   try {
-    const merged = git(`branch --merged ${defaultBranch} --format=%(refname:short)`)
+    const merged = git('branch', '--merged', defaultBranch, '--format=%(refname:short)')
       .split('\n')
       .filter(Boolean);
     return merged.includes(branch);
@@ -99,7 +112,7 @@ export function isBranchMerged(branch: string): boolean {
  */
 export function getDefaultBranch(): string {
   try {
-    const ref = git('symbolic-ref refs/remotes/origin/HEAD');
+    const ref = git('symbolic-ref', 'refs/remotes/origin/HEAD');
     return ref.replace('refs/remotes/origin/', '');
   } catch {
     // Fallback: check if main or master exists
@@ -114,28 +127,28 @@ export function getDefaultBranch(): string {
  * Create and checkout a new branch.
  */
 export function createBranch(name: string): void {
-  git(`checkout -b ${name}`);
+  git('checkout', '-b', name);
 }
 
 /**
  * Get the last commit hash (short).
  */
 export function getLastCommitHash(): string {
-  return git('rev-parse --short HEAD');
+  return git('rev-parse', '--short', 'HEAD');
 }
 
 /**
  * Get the last commit message.
  */
 export function getLastCommitMessage(): string {
-  return git('log -1 --format=%s');
+  return git('log', '-1', '--format=%s');
 }
 
 /**
  * Commit with a message (assumes files are already staged).
  */
 export function commitWithMessage(message: string): string {
-  git(`commit -m "${message.replace(/"/g, '\\"')}"`);
+  git('commit', '-m', message);
   return getLastCommitHash();
 }
 
@@ -144,7 +157,7 @@ export function commitWithMessage(message: string): string {
  */
 export function hasStagedChanges(): boolean {
   try {
-    git('diff --cached --quiet');
+    git('diff', '--cached', '--quiet');
     return false;
   } catch {
     return true;
@@ -156,7 +169,7 @@ export function hasStagedChanges(): boolean {
  */
 export function isGitRepo(): boolean {
   try {
-    git('rev-parse --git-dir');
+    git('rev-parse', '--git-dir');
     return true;
   } catch {
     return false;

@@ -1,18 +1,35 @@
 /**
  * Tests for git-integration.ts
- * Slug generation, branch name generation, card ID extraction, project config
+ * Slug generation, branch name generation, card ID extraction, project config,
+ * and — #146 — that nothing in this module reaches /bin/sh.
  */
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import * as childProcess from 'child_process';
 import {
   slugify,
   generateBranchName,
   extractCardIdFromBranch,
   readProjectConfig,
   writeProjectConfig,
+  commitWithMessage,
+  createBranch,
+  listBranches,
+  getCurrentBranch,
+  getLastCommitMessage,
+  hasStagedChanges,
+  isGitRepo,
   FavroProjectConfig,
 } from '../../lib/git-integration';
+
+// Node 22 makes child_process exports non-configurable, so jest.spyOn cannot
+// wrap them. Delegate to the real implementation and record the argv.
+jest.mock('child_process', () => {
+  const actual = jest.requireActual('child_process');
+  return { ...actual, execFileSync: jest.fn(actual.execFileSync) };
+});
+const execFileSyncMock = childProcess.execFileSync as unknown as jest.Mock;
 
 // ─── slugify Tests ────────────────────────────────────────────────────────────
 
@@ -140,5 +157,111 @@ describe('project config', () => {
     const result = readProjectConfig(emptyDir);
     expect(result).toBeNull();
     fs.rmSync(emptyDir, { recursive: true, force: true });
+  });
+});
+
+// ─── #146: no shell, ever ─────────────────────────────────────────────────────
+
+describe('git commands never reach /bin/sh', () => {
+  let repo: string;
+  let sentinel: string;
+  let originalCwd: string;
+
+  // Bypasses the module under test so a broken helper cannot fake a green.
+  const rawGit = (args: string[]): string =>
+    childProcess.execFileSync('git', args, { cwd: repo, encoding: 'utf-8' }).trim();
+
+  beforeEach(() => {
+    originalCwd = process.cwd();
+    // realpath: macOS tmpdir is a symlink, and findProjectRoot() walks up from
+    // the resolved cwd — without this the repo root never matches.
+    repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'favro-146-')));
+    sentinel = path.join(repo, 'PWNED');
+    rawGit(['init', '-q', '-b', 'main', '.']);
+    rawGit(['config', 'user.email', 'test@example.invalid']);
+    rawGit(['config', 'user.name', 'Test']);
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'hi\n');
+    rawGit(['add', 'a.txt']);
+    process.chdir(repo);
+    execFileSyncMock.mockClear();
+  });
+
+  afterEach(() => {
+    process.chdir(originalCwd);
+    fs.rmSync(repo, { recursive: true, force: true });
+  });
+
+  // Card titles come from Favro — anyone with board write access authors them —
+  // and favro_run lets an MCP agent compose these arguments. Both cross a trust
+  // boundary before this module runs them.
+  const hostileMessage = (target: string) =>
+    `fix $(touch ${target}) the "thing" \`touch ${target}-tick\` 100% \\ done\nsecond line`;
+
+  test('commit message reaches git as one verbatim argv entry', () => {
+    const message = hostileMessage(sentinel);
+
+    commitWithMessage(message);
+
+    const commitCall = execFileSyncMock.mock.calls.find(
+      ([, args]) => Array.isArray(args) && args[0] === 'commit'
+    );
+    expect(commitCall).toBeDefined();
+    expect(commitCall![0]).toBe('git');
+    expect(commitCall![1]).toEqual(['commit', '-m', message]);
+  });
+
+  test('a commit message containing $(), backticks and quotes is stored byte-identically and executes nothing', () => {
+    const message = hostileMessage(sentinel);
+
+    commitWithMessage(message);
+
+    // %B is the raw body; git appends exactly one trailing newline.
+    expect(rawGit(['log', '-1', '--format=%B'])).toBe(message);
+    expect(fs.existsSync(sentinel)).toBe(false);
+    expect(fs.existsSync(`${sentinel}-tick`)).toBe(false);
+  });
+
+  test('a branch name containing ";" is a name, not a separator', () => {
+    rawGit(['commit', '-m', 'first']);
+
+    createBranch('evil;pwned');
+
+    expect(getCurrentBranch()).toBe('evil;pwned');
+    expect(listBranches()).toContain('evil;pwned');
+  });
+
+  test('a branch name carrying a shell command is rejected, not executed', () => {
+    // Needs a real commit: on an unborn HEAD there are no refs to list, which
+    // would make the "no `safe` branch" assertion pass for the wrong reason.
+    rawGit(['commit', '-m', 'first']);
+
+    // git refuses the space; the point is that nothing ran on the way there.
+    expect(() => createBranch(`safe; touch ${sentinel}`)).toThrow();
+    expect(fs.existsSync(sentinel)).toBe(false);
+    // rawGit, not listBranches(): the module under test must not be the witness.
+    expect(rawGit(['branch', '--list', '--format=%(refname:short)'])).toBe('main');
+  });
+
+  // `--format=%(refname:short)` is a syntax error to /bin/sh, so every branch
+  // listing threw before the argv rewrite.
+  test('listBranches survives the %(refname:short) format', () => {
+    rawGit(['commit', '-m', 'first']);
+    rawGit(['branch', 'other']);
+
+    expect(listBranches().sort()).toEqual(['main', 'other']);
+  });
+
+  // execSync threw on non-zero exit; execFileSync must too, or the bare
+  // catch blocks in this module silently invert.
+  test('non-zero exit still throws, so the boolean probes keep their meaning', () => {
+    expect(isGitRepo()).toBe(true);
+    expect(hasStagedChanges()).toBe(true);
+
+    commitWithMessage('plain message');
+    expect(hasStagedChanges()).toBe(false);
+    expect(getLastCommitMessage()).toBe('plain message');
+
+    process.chdir(os.tmpdir());
+    expect(isGitRepo()).toBe(false);
   });
 });
