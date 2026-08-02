@@ -10,11 +10,62 @@
  *
  * Returns matching cards with a human-readable summary.
  * If no cards match, explains why.
+ *
+ * The grammar is a FAIL-OPEN parser and #95's business, not this file's — #116
+ * migrated the plumbing around it and left `parseQueryFilter` untouched.
  */
 import { Command } from 'commander';
-import { createFavroClient } from '../lib/client-factory';
-import { logError } from '../lib/error-handler';
-import QueryAPI from '../api/query';
+import type { QueryResult } from '../types/query';
+import { Ctx, run } from '../lib/run';
+
+/** The result, as it reads to a person. Byte-identical to the pre-#116 render. */
+function formatHuman(result: QueryResult): string {
+  const lines: string[] = [result.summary];
+
+  if (result.matches.length > 0) {
+    lines.push('');
+    for (const { card, matchReason } of result.matches) {
+      const status = card.status ? ` [${card.status}]` : '';
+      const assignees = card.assignees && card.assignees.length > 0
+        ? ` — ${card.assignees.join(', ')}`
+        : '';
+      const tags = card.tags && card.tags.length > 0
+        ? ` #${card.tags.join(' #')}`
+        : '';
+      lines.push(`  • ${card.title}${status}${assignees}${tags}`);
+      lines.push(`    (${matchReason})`);
+    }
+  }
+
+  // A hole in the snapshot makes "no cards match" a claim about what we could
+  // see, not about the board (#116). Never let the summary above stand alone.
+  if (result.unreachable?.length) {
+    lines.push('');
+    lines.push(`  Searched an incomplete board — ${result.unreachable.length} part(s) could not be read:`);
+    for (const u of result.unreachable) lines.push(`    • ${u.id} — ${u.reason}`);
+  }
+
+  return lines.join('\n');
+}
+
+interface QueryOptions {
+  limit?: string;
+}
+
+/** Exported for a test that reads the `Result` back off a fake `Ctx`. */
+export async function queryHandler(
+  ctx: Ctx,
+  board: string,
+  queryParts: string[],
+  options: QueryOptions,
+) {
+  const cardLimit = parseInt(options.limit ?? '1000', 10) || 1000;
+  const result = await ctx.api.query.execute(board, queryParts.join(' '), cardLimit);
+
+  // A single read: the query result IS the entity, matches and all. Returning
+  // `{ rows: matches }` would drop `summary`, `total` and `unreachable`.
+  return { item: result, human: formatHuman };
+}
 
 export function registerQueryCommand(program: Command): void {
   program
@@ -36,47 +87,8 @@ export function registerQueryCommand(program: Command): void {
       '  favro query "Sprint 42" "assigned:@alice"\n' +
       '  favro query boards-1234 "high priority status:In Progress"\n\n' +
       'If no results are found, an explanation is provided.\n' +
-      'Use --json to get full card data as JSON.'
+      'Use --human for the summary view; JSON is the default.'
     )
     .option('--limit <number>', 'Maximum number of cards to search (default 1000)', '1000')
-    .option('--json', 'Output matched cards as JSON')
-    .action(async (board: string, queryParts: string[], options) => {
-
-      try {
-        const query = queryParts.join(' ');
-        const cardLimit = parseInt(options.limit, 10) || 1000;
-
-        const client = await createFavroClient();
-        const api = new QueryAPI(client);
-
-        const result = await api.execute(board, query, cardLimit);
-
-        if (options.json) {
-          console.log(JSON.stringify(result, null, 2));
-          return;
-        }
-
-        // Human-readable output
-        console.log(result.summary);
-
-        if (result.matches.length > 0) {
-          console.log('');
-          for (const match of result.matches) {
-            const { card, matchReason } = match;
-            const status = card.status ? ` [${card.status}]` : '';
-            const assignees = card.assignees && card.assignees.length > 0
-              ? ` — ${card.assignees.join(', ')}`
-              : '';
-            const tags = card.tags && card.tags.length > 0
-              ? ` #${card.tags.join(' #')}`
-              : '';
-            console.log(`  • ${card.title}${status}${assignees}${tags}`);
-            console.log(`    (${matchReason})`);
-          }
-        }
-      } catch (err) {
-        logError(err);
-        process.exit(1);
-      }
-    });
+    .action(run(queryHandler));
 }

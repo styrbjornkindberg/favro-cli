@@ -3,7 +3,7 @@
  * CLA-1796 / FAVRO-034: Board Context Snapshot Command
  */
 import { Command } from 'commander';
-import { registerContextCommand } from '../../commands/context';
+import { registerContextCommand, contextHandler } from '../../commands/context';
 import * as config from '../../lib/config';
 import * as contextApi from '../../api/context';
 
@@ -60,7 +60,9 @@ const SAMPLE_SNAPSHOT: contextApi.BoardContextSnapshot = {
 
 function buildProgram(): Command {
   const program = new Command();
-  program.option('--verbose', 'Show stack traces');
+  // The three flags the runner owns, declared where `cli.ts` declares them —
+  // `--pretty` left the leaf in #116 and lives on the root now.
+  program.option('--verbose', 'Show stack traces').option('--human').option('--pretty');
   registerContextCommand(program);
   return program;
 }
@@ -86,12 +88,14 @@ describe('favro context <board>', () => {
     consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
     consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    process.exitCode = undefined;
   });
 
   afterEach(() => {
     consoleSpy.mockRestore();
     consoleErrorSpy.mockRestore();
     exitSpy.mockRestore();
+    process.exitCode = undefined;
   });
 
   it('calls getSnapshot with board name and outputs JSON', async () => {
@@ -131,20 +135,62 @@ describe('favro context <board>', () => {
     expect(MockContextAPI.prototype.getSnapshot).toHaveBeenCalledWith('boards-1234', 1000);
   });
 
-  it('exits with error when API key is missing', async () => {
+  it('fails with an error envelope on stdout when the API key is missing', async () => {
     (config.resolveApiKey as jest.Mock).mockResolvedValue(null);
 
     await runCli(['context', 'boards-1234']).catch(() => {});
 
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    // The runner sets `process.exitCode`; a hard `process.exit` is what #113
+    // took away, so asserting the spy would assert the old behaviour back in.
+    expect(exitSpy).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringMatching(/^\{"error":/));
   });
 
-  it('exits with error when getSnapshot throws', async () => {
+  it('fails with an error envelope on stdout when getSnapshot throws', async () => {
     MockContextAPI.prototype.getSnapshot.mockRejectedValue(new Error('Board not found'));
 
     await runCli(['context', 'unknown-board']).catch(() => {});
 
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
+    const envelope = JSON.parse(
+      consoleSpy.mock.calls.map((c) => c[0]).find((line: string) => line.startsWith('{"error"')),
+    );
+    expect(envelope.error.message).toBe('Board not found');
+  });
+
+  // ─── the composite read's hole (#116) ──────────────────────────────────────
+
+  it('carries the snapshot\u2019s unreachable facets through to stdout', async () => {
+    MockContextAPI.prototype.getSnapshot.mockResolvedValue({
+      ...SAMPLE_SNAPSHOT,
+      cards: [],
+      unreachable: [{ id: 'cards', reason: 'Request timed out' }],
+    });
+
+    let output = '';
+    consoleSpy.mockImplementation((msg: string) => { output = msg; });
+
+    await runCli(['context', 'boards-1234']);
+
+    const parsed = JSON.parse(output);
+    // Rows AND the hole: the acceptance shape. An agent reading `cards: []`
+    // alone would call the board empty.
+    expect(parsed.cards).toEqual([]);
+    expect(parsed.unreachable).toEqual([{ id: 'cards', reason: 'Request timed out' }]);
+  });
+
+  it('the handler returns the snapshot as a bare item', async () => {
+    // The seam ADR-0002 exists for: no commander, no stdout.
+    const getSnapshot = jest.fn().mockResolvedValue(SAMPLE_SNAPSHOT);
+    const result = await contextHandler(
+      { api: { context: { getSnapshot } } } as never,
+      'Sprint 42',
+      { limit: '250' },
+    );
+
+    expect(getSnapshot).toHaveBeenCalledWith('Sprint 42', 250);
+    expect(result.item).toBe(SAMPLE_SNAPSHOT);
   });
 
   it('output JSON is valid and parseable', async () => {

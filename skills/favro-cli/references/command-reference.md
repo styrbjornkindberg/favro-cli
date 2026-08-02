@@ -887,7 +887,7 @@ Create a new skill from a starter template.
 | `--description <desc>` | Skill description |
 
 ### `skill edit <name>` 🔧 CONFIG
-Open a skill YAML file in `$EDITOR`.
+Open a skill YAML file in `$EDITOR` (or `$VISUAL`), attached to the terminal, and wait for it to close. Fails if neither is set — there is no fallback editor. `$EDITOR` may carry arguments (`code --wait`); it is split on whitespace and run without a shell.
 
 ### `skill export <name>` 📖 READ
 Output a skill as YAML to stdout.

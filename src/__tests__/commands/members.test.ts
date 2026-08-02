@@ -25,7 +25,8 @@ const SAMPLE_MEMBERS = [
 
 function buildProgram(): Command {
   const program = new Command();
-  program.option('--verbose', 'Show stack traces');
+  // The runner's three flags live on the root (ADR-0002).
+  program.option('--verbose', 'Show stack traces').option('--human').option('--pretty');
   registerMembersCommand(program);
   return program;
 }
@@ -36,9 +37,15 @@ async function runCli(args: string[]): Promise<void> {
   await program.parseAsync(['node', 'favro', ...args]);
 }
 
+/** The runner's error envelope, off whatever went to stdout. */
+const errorEnvelope = (spy: jest.SpyInstance) =>
+  JSON.parse(spy.mock.calls.map((c) => String(c[0])).find((l) => l.startsWith('{"error"'))!);
+
 beforeEach(() => {
   jest.clearAllMocks();
+  process.exitCode = undefined;
   (config.resolveApiKey as jest.Mock).mockResolvedValue('test-token');
+  (config.readConfig as jest.Mock).mockResolvedValue({});
   (apiMembers.isValidEmail as jest.Mock).mockImplementation((email: string) => {
     if (!email || !email.trim()) return false;
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
@@ -67,7 +74,7 @@ describe('favro members list', () => {
   it('lists all members without filters', async () => {
     MockFavroApiClient.prototype.getMembers = jest.fn().mockResolvedValue(SAMPLE_MEMBERS);
 
-    await runCli(['members', 'list']);
+    await runCli(['members', 'list', '--human']);
 
     expect(MockFavroApiClient.prototype.getMembers).toHaveBeenCalledWith({
       boardId: undefined,
@@ -99,42 +106,60 @@ describe('favro members list', () => {
     });
   });
 
-  it('outputs JSON when --json flag is set', async () => {
+  it('answers the rows envelope by default \u2014 --json is gone from the leaf', async () => {
     MockFavroApiClient.prototype.getMembers = jest.fn().mockResolvedValue(SAMPLE_MEMBERS);
 
-    await runCli(['members', 'list', '--json']);
+    await runCli(['members', 'list']);
 
     // An envelope, not a bare array — the shape every list read emits (#99).
     expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify({ rows: SAMPLE_MEMBERS }));
     expect(consoleTableSpy).not.toHaveBeenCalled();
   });
 
-  it('shows "No members found" when empty', async () => {
+  it('shows "No members found" under --human when empty', async () => {
     MockFavroApiClient.prototype.getMembers = jest.fn().mockResolvedValue([]);
 
-    await runCli(['members', 'list']);
+    await runCli(['members', 'list', '--human']);
 
     expect(consoleSpy).toHaveBeenCalledWith('No members found.');
   });
 
-  it('exits 1 when no API key', async () => {
-    (config.resolveApiKey as jest.Mock).mockResolvedValue(null);
-    const exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {}) as any);
+  it('an empty list still prints an envelope rather than nothing', async () => {
+    // ADR-0002: a successful command never prints nothing.
+    MockFavroApiClient.prototype.getMembers = jest.fn().mockResolvedValue([]);
 
     await runCli(['members', 'list']);
 
-    expect(exitSpy).toHaveBeenCalledWith(1);
-    exitSpy.mockRestore();
+    expect(consoleSpy).toHaveBeenCalledWith('{"rows":[]}');
+  });
+
+  it('refuses --board and --collection together, before any request', async () => {
+    MockFavroApiClient.prototype.getMembers = jest.fn();
+
+    await runCli(['members', 'list', '--board', 'b-1', '--collection', 'c-1']);
+
+    expect(errorEnvelope(consoleSpy).error.message).toContain('cannot specify both');
+    expect(errorEnvelope(consoleSpy).error.retryable).toBe(false);
+    expect(MockFavroApiClient.prototype.getMembers).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
+  });
+
+  it('exits 1 when no API key', async () => {
+    (config.resolveApiKey as jest.Mock).mockResolvedValue(null);
+
+    await runCli(['members', 'list']);
+
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringMatching(/^\{"error":/));
+    expect(process.exitCode).toBe(1);
   });
 
   it('exits 1 on API error', async () => {
     MockFavroApiClient.prototype.getMembers = jest.fn().mockRejectedValue(new Error('Network error'));
-    const exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {}) as any);
 
     await runCli(['members', 'list']);
 
-    expect(exitSpy).toHaveBeenCalledWith(1);
-    exitSpy.mockRestore();
+    expect(errorEnvelope(consoleSpy).error.message).toBe('Network error');
+    expect(process.exitCode).toBe(1);
   });
 });
 
@@ -157,7 +182,7 @@ describe('favro members add', () => {
   it('adds a member to a board (default board-target)', async () => {
     MockFavroApiClient.prototype.addMember = jest.fn().mockResolvedValue(SAMPLE_MEMBERS[0]);
 
-    await runCli(['members', 'add', 'alice@example.com', '--to', 'board-1']);
+    await runCli(['members', 'add', 'alice@example.com', '--to', 'board-1', '--human']);
 
     expect(MockFavroApiClient.prototype.addMember).toHaveBeenCalledWith(
       'alice@example.com', 'board-1', true
@@ -175,42 +200,63 @@ describe('favro members add', () => {
     );
   });
 
-  it('outputs JSON when --json flag is set', async () => {
+  it('a successful add prints the member in JSON mode too', async () => {
     MockFavroApiClient.prototype.addMember = jest.fn().mockResolvedValue(SAMPLE_MEMBERS[0]);
 
-    await runCli(['members', 'add', 'alice@example.com', '--to', 'board-1', '--json']);
+    await runCli(['members', 'add', 'alice@example.com', '--to', 'board-1']);
 
-    expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify(SAMPLE_MEMBERS[0], null, 2));
+    expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify(SAMPLE_MEMBERS[0]));
   });
 
-  it('exits 1 on invalid email', async () => {
-    const exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {}) as any);
+  it('--dry-run answers a parseable preview and writes nothing', async () => {
+    MockFavroApiClient.prototype.addMember = jest.fn();
 
-    await runCli(['members', 'add', 'not-an-email', '--to', 'board-1']);
+    await runCli(['members', 'add', 'alice@example.com', '--to', 'board-1', '--dry-run']);
 
-    expect(exitSpy).toHaveBeenCalledWith(1);
-    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid email'));
-    exitSpy.mockRestore();
+    expect(MockFavroApiClient.prototype.addMember).not.toHaveBeenCalled();
+    expect(JSON.parse(String(consoleSpy.mock.calls[0][0]))).toEqual({
+      dryRun: true, email: 'alice@example.com', targetId: 'board-1', targetType: 'board',
+    });
   });
 
-  it('exits 1 on empty email', async () => {
-    const exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {}) as any);
+  it('takes the scope lock BEFORE the preview, so a dry-run cannot route around it', async () => {
+    // #103's order, stated in `batch.ts` for its siblings: a preview that says
+    // "would add alice to board-outside-the-lock" describes a write that will
+    // refuse. The preview has to be refused too, or it is misinformation.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const safety = require('../../lib/safety');
+    (safety.checkScope as jest.Mock).mockRejectedValueOnce(
+      new Error('Board board-9 is outside the locked collection.'),
+    );
+    MockFavroApiClient.prototype.addMember = jest.fn();
 
-    // Empty email would be rejected by email validation
-    await runCli(['members', 'add', '', '--to', 'board-1']);
+    await runCli(['members', 'add', 'alice@example.com', '--to', 'board-9', '--dry-run']);
 
-    expect(exitSpy).toHaveBeenCalledWith(1);
-    exitSpy.mockRestore();
+    expect(MockFavroApiClient.prototype.addMember).not.toHaveBeenCalled();
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(output).toContain('outside the locked collection');
+    expect(output).not.toContain('dryRun');
+    expect(process.exitCode).toBe(1);
+  });
+
+  it.each([['not-an-email'], ['']])('refuses the invalid email %p before any write', async (email) => {
+    MockFavroApiClient.prototype.addMember = jest.fn();
+
+    await runCli(['members', 'add', email, '--to', 'board-1']);
+
+    expect(errorEnvelope(consoleSpy).error.message).toContain('Invalid email');
+    expect(errorEnvelope(consoleSpy).error.retryable).toBe(false);
+    expect(MockFavroApiClient.prototype.addMember).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
   });
 
   it('exits 1 on API error (non-existent target)', async () => {
     MockFavroApiClient.prototype.addMember = jest.fn().mockRejectedValue(new Error('404 Not Found'));
-    const exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {}) as any);
 
     await runCli(['members', 'add', 'alice@example.com', '--to', 'nonexistent']);
 
-    expect(exitSpy).toHaveBeenCalledWith(1);
-    exitSpy.mockRestore();
+    expect(errorEnvelope(consoleSpy).error.message).toBe('404 Not Found');
+    expect(process.exitCode).toBe(1);
   });
 });
 
@@ -233,7 +279,7 @@ describe('favro members remove', () => {
   it('removes a member from a board', async () => {
     MockFavroApiClient.prototype.removeMember = jest.fn().mockResolvedValue(undefined);
 
-    await runCli(['members', 'remove', 'm-1', '--from', 'board-1']);
+    await runCli(['members', 'remove', 'm-1', '--from', 'board-1', '--human']);
 
     expect(MockFavroApiClient.prototype.removeMember).toHaveBeenCalledWith('m-1', 'board-1', true);
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('m-1'));
@@ -247,14 +293,51 @@ describe('favro members remove', () => {
     expect(MockFavroApiClient.prototype.removeMember).toHaveBeenCalledWith('m-1', 'coll-1', false);
   });
 
+  it('a successful remove prints a parseable result in JSON mode', async () => {
+    MockFavroApiClient.prototype.removeMember = jest.fn().mockResolvedValue(undefined);
+
+    await runCli(['members', 'remove', 'm-1', '--from', 'board-1']);
+
+    expect(consoleSpy).toHaveBeenCalledWith(
+      JSON.stringify({ removed: true, memberId: 'm-1', targetId: 'board-1' }),
+    );
+  });
+
+  it('a declined confirmation is exit 0 and a readable result, not a failure', async () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    (require('../../lib/safety').confirmAction as jest.Mock).mockResolvedValueOnce(false);
+    MockFavroApiClient.prototype.removeMember = jest.fn();
+
+    await runCli(['members', 'remove', 'm-1', '--from', 'board-1']);
+
+    expect(MockFavroApiClient.prototype.removeMember).not.toHaveBeenCalled();
+    expect(consoleSpy).toHaveBeenCalledWith(
+      JSON.stringify({ removed: false, aborted: true, memberId: 'm-1', targetId: 'board-1' }),
+    );
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it('checks the scope lock before it asks for confirmation', async () => {
+    // The #78 shape: a user must not answer "remove?" and then be refused.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const safety = require('../../lib/safety');
+    const order: string[] = [];
+    (safety.checkScope as jest.Mock).mockImplementation(async () => { order.push('scope'); });
+    (safety.confirmAction as jest.Mock).mockImplementation(async () => { order.push('confirm'); return true; });
+    MockFavroApiClient.prototype.removeMember = jest.fn().mockResolvedValue(undefined);
+
+    await runCli(['members', 'remove', 'm-1', '--from', 'board-1']);
+
+    expect(order).toEqual(['scope', 'confirm']);
+  });
+
   it('exits 1 on API error (non-existent member)', async () => {
     MockFavroApiClient.prototype.removeMember = jest.fn().mockRejectedValue(new Error('404 Not Found'));
-    const exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {}) as any);
 
     await runCli(['members', 'remove', 'nonexistent', '--from', 'board-1']);
 
-    expect(exitSpy).toHaveBeenCalledWith(1);
-    exitSpy.mockRestore();
+    expect(errorEnvelope(consoleSpy).error.message).toBe('404 Not Found');
+    expect(process.exitCode).toBe(1);
   });
 });
 
@@ -277,7 +360,7 @@ describe('favro members permissions', () => {
   it('shows viewer permission level', async () => {
     MockFavroApiClient.prototype.getMemberPermissions = jest.fn().mockResolvedValue('viewer');
 
-    await runCli(['members', 'permissions', 'm-1', '--board', 'board-1']);
+    await runCli(['members', 'permissions', 'm-1', '--board', 'board-1', '--human']);
 
     expect(MockFavroApiClient.prototype.getMemberPermissions).toHaveBeenCalledWith('m-1', 'board-1');
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('viewer'));
@@ -286,7 +369,7 @@ describe('favro members permissions', () => {
   it('shows editor permission level', async () => {
     MockFavroApiClient.prototype.getMemberPermissions = jest.fn().mockResolvedValue('editor');
 
-    await runCli(['members', 'permissions', 'm-1', '--board', 'board-1']);
+    await runCli(['members', 'permissions', 'm-1', '--board', 'board-1', '--human']);
 
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('editor'));
   });
@@ -294,38 +377,30 @@ describe('favro members permissions', () => {
   it('shows admin permission level', async () => {
     MockFavroApiClient.prototype.getMemberPermissions = jest.fn().mockResolvedValue('admin');
 
-    await runCli(['members', 'permissions', 'm-1', '--board', 'board-1']);
+    await runCli(['members', 'permissions', 'm-1', '--board', 'board-1', '--human']);
 
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('admin'));
   });
 
-  it('outputs JSON when --json flag is set', async () => {
+  it('answers the same object as JSON by default', async () => {
     MockFavroApiClient.prototype.getMemberPermissions = jest.fn().mockResolvedValue('editor');
 
-    await runCli(['members', 'permissions', 'm-1', '--board', 'board-1', '--json']);
+    await runCli(['members', 'permissions', 'm-1', '--board', 'board-1']);
 
     expect(consoleSpy).toHaveBeenCalledWith(
       JSON.stringify({ memberId: 'm-1', boardId: 'board-1', permissionLevel: 'editor' })
     );
   });
 
-  it('exits 1 on non-existent member', async () => {
+  it.each([
+    ['non-existent member', ['members', 'permissions', 'nonexistent', '--board', 'board-1']],
+    ['non-existent board', ['members', 'permissions', 'm-1', '--board', 'nonexistent']],
+  ])('answers an error envelope for a %s', async (_name, args) => {
     MockFavroApiClient.prototype.getMemberPermissions = jest.fn().mockRejectedValue(new Error('404 Not Found'));
-    const exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {}) as any);
 
-    await runCli(['members', 'permissions', 'nonexistent', '--board', 'board-1']);
+    await runCli(args);
 
-    expect(exitSpy).toHaveBeenCalledWith(1);
-    exitSpy.mockRestore();
-  });
-
-  it('exits 1 on non-existent board', async () => {
-    MockFavroApiClient.prototype.getMemberPermissions = jest.fn().mockRejectedValue(new Error('404 Not Found'));
-    const exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {}) as any);
-
-    await runCli(['members', 'permissions', 'm-1', '--board', 'nonexistent']);
-
-    expect(exitSpy).toHaveBeenCalledWith(1);
-    exitSpy.mockRestore();
+    expect(errorEnvelope(consoleSpy).error.message).toBe('404 Not Found');
+    expect(process.exitCode).toBe(1);
   });
 });

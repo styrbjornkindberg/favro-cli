@@ -70,7 +70,7 @@ favro members permissions <member-id> --board <board-id>
 ```
 favro comments list <card-id>
 favro comments add <card-id> --text "COMMENT"
-favro activity log <board-id> [--since 2h|1d] [--format json]
+favro activity <card-id> [--since 2h|1d] [--format json]
 ```
 
 ### Webhooks

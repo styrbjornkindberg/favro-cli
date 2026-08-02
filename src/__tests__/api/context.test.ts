@@ -297,6 +297,47 @@ describe('ContextAPI.getSnapshot()', () => {
     expect(snapshot.stats.total).toBe(0);
   });
 
+  // ─── the hole the composite read used to swallow (#116) ────────────────────
+  //
+  // Five sub-fetches run in parallel behind one `.catch(() => [])` each, so a
+  // failed cards read used to come back as `cards: []` / `stats.total: 0` and
+  // nothing else — "we could not look" printed as "there is nothing there",
+  // which is the exact failure `read-shape.ts` rule 3 exists to prevent. Every
+  // consumer inherits it: `standup`, `sprint-plan` and `query` all sit on this
+  // snapshot.
+  it('reports a failed sub-fetch as unreachable rather than as emptiness', async () => {
+    MockCardsAPI.prototype.listCards.mockRejectedValue(new Error('API timeout'));
+
+    const api = buildAPI();
+    const snapshot = await api.getSnapshot('boards-1234');
+
+    // Rows AND the hole — the acceptance shape for a composite read.
+    expect(snapshot.members.length).toBeGreaterThan(0);
+    expect(snapshot.cards).toHaveLength(0);
+    expect(snapshot.unreachable).toEqual([
+      { id: 'cards', reason: expect.stringContaining('API timeout') },
+    ]);
+  });
+
+  it('names every facet that failed, and only those', async () => {
+    MockCardsAPI.prototype.listCards.mockRejectedValue(new Error('cards down'));
+    MockFavroApiClient.prototype.getMembers.mockRejectedValue(new Error('members down'));
+
+    const api = buildAPI();
+    const snapshot = await api.getSnapshot('boards-1234');
+
+    expect((snapshot.unreachable ?? []).map((u) => u.id).sort()).toEqual(['cards', 'members']);
+  });
+
+  it('omits unreachable entirely when every facet answered', async () => {
+    // Absent, not empty: an empty array would read as a hole to a `?.length`
+    // check and make "complete" indistinguishable from "we recorded nothing".
+    const api = buildAPI();
+    const snapshot = await api.getSnapshot('boards-1234');
+
+    expect(snapshot).not.toHaveProperty('unreachable');
+  });
+
   it('includes generatedAt timestamp in ISO format', async () => {
     const api = buildAPI();
     const snapshot = await api.getSnapshot('boards-1234');

@@ -508,10 +508,9 @@ favro cards create --csv new-tasks.csv --board abc123 --dry-run
 
 # Preview update
 favro cards update card-001 --status "Done" --assignees "alice" --dry-run
-
-# Preview export filter
-favro cards export abc123 --filter "status:Todo" --dry-run
 ```
+
+`cards export` is read-only and has no `--dry-run` — run it straight, or send it to a scratch path with `--out` first.
 
 ---
 
@@ -585,15 +584,14 @@ favro cards list --board board-001 --status Backlog --json \
   | while read id; do favro cards update "$id" --assignees alice; done
 ```
 
-### Paginate Large Activity Logs
+### Narrow Large Activity Logs
 
-For boards with many cards, paginate the activity log to avoid large responses:
+Activity is card-scoped and has no offset — narrow the window instead of paging:
 
 ```bash
-# Fetch in pages of 50
-favro activity log board-001 --limit 50 --offset 0    # page 1
-favro activity log board-001 --limit 50 --offset 50   # page 2
-favro activity log board-001 --limit 50 --offset 100  # page 3
+favro activity card-abc123 --since 1d              # last 24 hours
+favro activity card-abc123 --since 7d --until 1d   # the six days before that
+favro activity card-abc123 --limit 50              # cap the entries returned
 ```
 
 ### Always Dry-Run Batch Operations
@@ -624,7 +622,6 @@ IDs rarely change. Store them in environment variables to avoid repeated list ca
 ```bash
 export SPRINT_BOARD=$(favro boards list | jq -r '.rows[] | select(.name == "Sprint 43") | .boardId')
 favro cards list --board $SPRINT_BOARD
-favro activity log $SPRINT_BOARD --since 1d
 ```
 
 ### Split Large CSV Batches
@@ -673,7 +670,7 @@ Semi-automatic sprint plan based on priority and capacity:
 
 ```bash
 # 1. Get sprint suggestions for 40-point capacity
-favro sprint-plan sprint-42 --budget 40 > sprint-plan.json
+favro sprint-plan --board sprint-42 --budget 40 > sprint-plan.json
 
 # 2. Review suggestions (see cards, priority scores)
 cat sprint-plan.json | jq '.suggestions[] | {title, priority_score, cumulative}'
@@ -683,7 +680,7 @@ jq -r '"card_id,status", (.suggestions[] | "\(.id),Approved")' sprint-plan.json 
 favro batch update --from-csv approve.csv --dry-run
 
 # 4. Standup: see what's in progress vs what's due soon
-favro standup sprint-42
+favro standup --board sprint-42
 ```
 
 ### Workflow: Family/Personal Task Management
@@ -709,7 +706,7 @@ favro query $board_id "due:<today"
 favro batch-smart $board_id --goal "close all Done cards"
 
 # 5. Standup: summary of what's blocked, due soon, in progress
-favro standup $board_id
+favro standup --board $board_id
 ```
 
 ### Workflow: Technical Debt & Risk Tracking
@@ -733,7 +730,7 @@ favro batch assign --board $debt_board \
   --to platform-team --dry-run
 
 # 5. Standup on tech debt progress
-favro standup $debt_board
+favro standup --board $debt_board
 
 # 6. Archive resolved items
 favro batch-smart $debt_board --goal "close all Done cards"
@@ -872,8 +869,8 @@ Error: Request timeout (408). Retrying...
 ```
 **Fix:**
 ```bash
-# Filter by collection first
-favro context <board-id> --collection <collection-id>
+# Cap how many cards the snapshot walks
+favro context <board-id> --limit 50
 # Or use a simpler board with fewer cards
 ```
 

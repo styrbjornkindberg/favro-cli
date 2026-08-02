@@ -29,7 +29,8 @@ let exitSpy: jest.SpyInstance;
 
 async function runCli(args: string[]): Promise<void> {
   const program = new Command();
-  program.option('--verbose', 'Show stack traces');
+  // The runner's three flags live on the root (ADR-0002).
+  program.option('--verbose', 'Show stack traces').option('--human').option('--pretty');
   registerQueryCommand(program);
   program.exitOverride();
   await program.parseAsync(['node', 'favro', ...args]).catch((e) => {
@@ -83,7 +84,7 @@ describe('query', () => {
   });
 
   test('renders the summary, then one line per match with its reason', async () => {
-    await runCli(['query', 'Sprint 42', 'status:done']);
+    await runCli(['query', 'Sprint 42', 'status:done', '--human']);
 
     expect(output()).toContain('1 of 12 cards match');
     expect(output()).toContain('• Fix login [In Progress] — alice, bob #bug #urgent');
@@ -95,7 +96,7 @@ describe('query', () => {
       result({ matches: [{ card: { title: 'Bare card' }, matchReason: 'title match' }] }),
     );
 
-    await runCli(['query', 'Sprint 42', 'bare']);
+    await runCli(['query', 'Sprint 42', 'bare', '--human']);
 
     expect(output()).toContain('• Bare card\n');
     expect(output()).not.toContain('undefined');
@@ -106,7 +107,7 @@ describe('query', () => {
       result({ matches: [], summary: 'No cards match "status:done". The board has no Done column.' }),
     );
 
-    await runCli(['query', 'Sprint 42', 'status:done']);
+    await runCli(['query', 'Sprint 42', 'status:done', '--human']);
 
     expect(output()).toContain('No cards match "status:done". The board has no Done column.');
     expect(exitSpy).not.toHaveBeenCalled();
@@ -120,8 +121,10 @@ describe('query', () => {
     expect(MockQueryAPI.prototype.execute).toHaveBeenLastCalledWith('Sprint 42', 'x', 1000);
   });
 
-  test('--json emits the whole result and skips the human rendering', async () => {
-    await runCli(['query', 'Sprint 42', 'status:done', '--json']);
+  test('JSON is the default: the whole result, no human rendering', async () => {
+    // `--json` is gone from the leaf (#116) — the machine shape is what you get
+    // unless you ask for `--human`.
+    await runCli(['query', 'Sprint 42', 'status:done']);
 
     const printed = JSON.parse(output());
     expect(printed.total).toBe(12);
@@ -129,13 +132,32 @@ describe('query', () => {
     expect(output()).not.toContain('•');
   });
 
-  test('an unresolvable board exits 1', async () => {
+  test('an unresolvable board answers an error envelope on stdout and exits 1', async () => {
     MockQueryAPI.prototype.execute = jest.fn().mockRejectedValue(new Error("Board 'Ghost' not found"));
 
     await runCli(['query', 'Ghost', 'anything']);
 
-    expect(errors()).toContain("Board 'Ghost' not found");
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(JSON.parse(output()).error.message).toBe("Board 'Ghost' not found");
+    expect(exitSpy).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
+    process.exitCode = undefined;
+  });
+
+  test('an incomplete snapshot is named in --human, never hidden behind the summary', async () => {
+    // The composite read's hole (#116): "no cards match" over a board whose
+    // card fetch died is a claim about what we could see, not about the board.
+    MockQueryAPI.prototype.execute = jest.fn().mockResolvedValue(
+      result({
+        matches: [],
+        summary: 'No cards match "status:done".',
+        unreachable: [{ id: 'cards', reason: 'Request timed out' }],
+      }),
+    );
+
+    await runCli(['query', 'Sprint 42', 'status:done', '--human']);
+
+    expect(output()).toContain('1 part(s) could not be read');
+    expect(output()).toContain('cards — Request timed out');
   });
 
   test('points at the fail-closed filter grammar for blocking, which it does not answer', async () => {

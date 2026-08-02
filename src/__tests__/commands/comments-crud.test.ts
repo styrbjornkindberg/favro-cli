@@ -18,7 +18,8 @@ const MockCommentsApiClient = apiComments.default as jest.MockedClass<typeof api
 
 function buildProgram(): Command {
   const program = new Command();
-  program.option('--verbose', 'Show stack traces');
+  // The runner's three flags live on the root (ADR-0002).
+  program.option('--verbose', 'Show stack traces').option('--human').option('--pretty');
   registerCommentsCommand(program);
   return program;
 }
@@ -31,6 +32,7 @@ async function runCli(args: string[]): Promise<void> {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  process.exitCode = undefined;
   (config.resolveApiKey as jest.Mock).mockResolvedValue('test-token');
   (config.readConfig as jest.Mock).mockResolvedValue({});
   (safety.checkScope as jest.Mock).mockResolvedValue(undefined);
@@ -62,7 +64,7 @@ describe('favro comments get', () => {
       createdAt: '2026-03-25T10:00:00.000Z',
     });
 
-    await runCli(['comments', 'get', 'cmt-1']);
+    await runCli(['comments', 'get', 'cmt-1', '--human']);
 
     expect(MockCommentsApiClient.prototype.getComment).toHaveBeenCalledWith('cmt-1');
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('cmt-1'));
@@ -76,7 +78,7 @@ describe('favro comments get', () => {
       createdAt: '2026-03-25T10:00:00.000Z',
     });
 
-    await runCli(['comments', 'get', 'cmt-1', '--json']);
+    await runCli(['comments', 'get', 'cmt-1']);
 
     const jsonCall = consoleSpy.mock.calls.find(
       (call: any[]) => typeof call[0] === 'string' && call[0].includes('commentId')
@@ -86,12 +88,18 @@ describe('favro comments get', () => {
     expect(parsed.commentId).toBe('cmt-1');
   });
 
-  it('exits with error when API call fails', async () => {
+  it('answers an error envelope when the API call fails', async () => {
     MockCommentsApiClient.prototype.getComment = jest.fn().mockRejectedValue(new Error('Not found'));
 
     await runCli(['comments', 'get', 'cmt-bad']);
 
-    expect(processExitSpy).toHaveBeenCalledWith(1);
+    // `process.exitCode`, never a hard exit — that is what #113 took away.
+    expect(processExitSpy).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
+    const envelope = JSON.parse(
+      consoleSpy.mock.calls.map((c: unknown[]) => String(c[0])).find((l: string) => l.startsWith('{"error"'))!,
+    );
+    expect(envelope.error.message).toBe('Not found');
   });
 });
 
@@ -118,14 +126,14 @@ describe('favro comments update', () => {
       createdAt: '2026-01-01T00:00:00Z',
     });
 
-    await runCli(['comments', 'update', 'cmt-1', '--text', 'Updated', '--yes']);
+    await runCli(['comments', 'update', 'cmt-1', '--text', 'Updated', '--yes', '--human']);
 
     expect(MockCommentsApiClient.prototype.updateComment).toHaveBeenCalledWith('cmt-1', 'Updated');
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Comment updated'));
   });
 
   it('dry-run previews without API call', async () => {
-    await runCli(['comments', 'update', 'cmt-1', '--text', 'New text', '--dry-run']);
+    await runCli(['comments', 'update', 'cmt-1', '--text', 'New text', '--dry-run', '--human']);
 
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('[dry-run]'));
     expect(MockCommentsApiClient.prototype.updateComment).not.toHaveBeenCalled();
@@ -138,7 +146,7 @@ describe('favro comments update', () => {
       createdAt: '2026-01-01T00:00:00Z',
     });
 
-    await runCli(['comments', 'update', 'cmt-1', '--text', 'Updated', '--yes', '--json']);
+    await runCli(['comments', 'update', 'cmt-1', '--text', 'Updated', '--yes']);
 
     const jsonCall = consoleSpy.mock.calls.find(
       (call: any[]) => typeof call[0] === 'string' && call[0].includes('commentId')

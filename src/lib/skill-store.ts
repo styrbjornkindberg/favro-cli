@@ -262,6 +262,14 @@ export function getUserSkillsDir(): string {
  * Get the path to a specific skill file (user or builtin).
  */
 export function getSkillPath(name: string): string {
+  // A skill name is a filename, never a path. `path.join` collapses `..`, so
+  // `skill edit ../../outside/target` used to resolve outside the skills dir —
+  // dormant while the editor never opened, live the moment #129 made it open,
+  // and reachable from `favro_run` where the name comes from model output.
+  // Refuse the whole shape rather than doing path math on it.
+  if (name.includes('/') || name.includes('\\') || name === '..') {
+    throw new Error(`Invalid skill name: "${name}". A skill name is a filename, not a path.`);
+  }
   const userPath = path.join(userSkillsDir(), `${name}.yaml`);
   if (fs.existsSync(userPath)) return userPath;
 

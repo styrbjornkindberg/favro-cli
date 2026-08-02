@@ -140,7 +140,7 @@ Cards that block each other but nobody set up the actual links:
 +      other cards in the comments, but the dependency links aren't actually set
 +      up. Can you find them and fix it?
 
-  llm  $ favro context "Sprint Board" --json
+  llm  $ favro context "Sprint Board"
        $ favro comments list <id>   # repeated for each card
 
        Found four unlinked dependencies:
@@ -210,7 +210,7 @@ You have meeting notes, a spec doc, or a list of action items. Instead of manual
        ...
        $ favro cards create "Add SSO support" --board <id> --tag Product --yes
        $ favro dependencies add <sso-id> <pricing-id> --type blocks --yes
-       $ favro members add sarah@company.com --to <onboarding-id> --yes
+       $ favro members add sarah@company.com --to <onboarding-id>
 
        Done. 8 cards created on "Q2 Backlog". Sarah is assigned to onboarding,
        mobile beta is due May 31, and SSO → pricing page dependency is set up.

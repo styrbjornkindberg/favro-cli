@@ -37,8 +37,11 @@ const API_MODULES: ReadonlyArray<readonly [string, string]> = [
   ['../lib/widgets-api', 'WidgetsAPI'],
   ['../lib/attachments-api', 'AttachmentsAPI'],
   ['../lib/custom-fields-api', 'CustomFieldsAPI'],
+  ['../api/activity', 'ActivityApiClient'],
   ['../api/aggregate', 'AggregateAPI'],
   ['../api/context', 'ContextAPI'],
+  // `members` is `FavroApiClient`, the pre-convention name (#116).
+  ['../api/members', 'FavroApiClient'],
   ['../api/query', 'QueryAPI'],
   ['../api/sprint-plan', 'SprintPlanAPI'],
   ['../api/standup', 'StandupAPI'],
@@ -465,7 +468,7 @@ describe('the context the handler receives', () => {
 // ─── the api namespace ───────────────────────────────────────────────────────
 
 describe('ctx.api is lazy and memoised', () => {
-  it('constructs the one class that was touched and none of the other 17', () => {
+  it('constructs the one class that was touched and none of the other 19', () => {
     // Counting real constructions, on the real modules: `apiNamespace` reads
     // each class off its module at ACCESS time, so a spy installed here sees
     // every `new` it performs. `mockImplementation` because a jest spy calls
