@@ -3,12 +3,9 @@
  * v2.0 LLM-first command: outputs JSON by default.
  */
 import { Command } from 'commander';
-import { createFavroClient } from '../lib/client-factory';
-import { readConfig } from '../lib/config';
-import AggregateAPI, { AggregateCard } from '../api/aggregate';
-import { outputResult, resolveFormat } from '../lib/output';
+import { AggregateCard } from '../api/aggregate';
 import { Unreachable } from '../lib/read-shape';
-import { logError } from '../lib/error-handler';
+import { Ctx, run } from '../lib/run';
 
 interface BoardSummary {
   name: string;
@@ -186,80 +183,75 @@ export function formatHuman(data: OverviewResult): string {
   return lines.join('\n');
 }
 
+interface OverviewOptions {
+  collection?: string;
+  limit: string;
+}
+
+export async function overviewHandler(ctx: Ctx, options: OverviewOptions) {
+  const cardLimit = parseInt(options.limit, 10) || 1000;
+
+  let snapshot;
+  let scope: string;
+  if (options.collection) {
+    snapshot = await ctx.api.aggregate.getCollectionSnapshot(options.collection, cardLimit);
+    scope = options.collection;
+  } else if (ctx.config.scopeCollectionId) {
+    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({ collectionIds: [ctx.config.scopeCollectionId] }, cardLimit);
+    scope = ctx.config.scopeCollectionName ?? ctx.config.scopeCollectionId;
+  } else {
+    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({}, cardLimit);
+    scope = 'all collections';
+  }
+
+  // Board summaries
+  const boardMap = new Map<string, AggregateCard[]>();
+  for (const card of snapshot.allCards) {
+    const bName = card.boardName ?? 'Unknown';
+    if (!boardMap.has(bName)) boardMap.set(bName, []);
+    boardMap.get(bName)!.push(card);
+  }
+
+  const boards: BoardSummary[] = Array.from(boardMap.entries()).map(([name, cards]) => {
+    const dist: Record<string, number> = {};
+    for (const c of cards) {
+      const stage = c.stage ?? 'unknown';
+      dist[stage] = (dist[stage] ?? 0) + 1;
+    }
+    return { name, totalCards: cards.length, stageDistribution: dist };
+  });
+
+  // Overall stage distribution
+  const stageDistribution: Record<string, number> = {};
+  for (const card of snapshot.allCards) {
+    const stage = card.stage ?? 'unknown';
+    stageDistribution[stage] = (stageDistribution[stage] ?? 0) + 1;
+  }
+
+  const blockers = findTopBlockers(snapshot.allCards);
+
+  const result: OverviewResult = {
+    scope,
+    boardCount: boards.length,
+    totalCards: snapshot.allCards.length,
+    boards,
+    stageDistribution,
+    topBlockers: blockers.topBlockers,
+    ...(blockers.unreachable.length > 0 ? { unreachable: blockers.unreachable } : {}),
+    dueSummary: computeDueSummary(snapshot.allCards),
+    generatedAt: new Date().toISOString(),
+  };
+
+  return { item: result, human: formatHuman };
+}
+
 export function registerOverviewCommand(program: Command): void {
   program
     .command('overview')
     .description('Collection-level dashboard with stage distribution (LLM-first JSON)')
     .option('--collection <name>', 'Filter to a specific collection')
     .option('--limit <n>', 'Max cards', '1000')
-    .option('--human', 'Human-readable formatted output')
-    .option('--json', 'JSON output (default)')
-    .action(async (options) => {
-      const verbose = program.opts()?.verbose ?? false;
-      try {
-        const client = await createFavroClient();
-        const api = new AggregateAPI(client);
-        const config = await readConfig();
-        const cardLimit = parseInt(options.limit, 10) || 1000;
-
-        let snapshot;
-        let scope: string;
-        if (options.collection) {
-          snapshot = await api.getCollectionSnapshot(options.collection, cardLimit);
-          scope = options.collection;
-        } else if (config.scopeCollectionId) {
-          snapshot = await api.getMultiBoardSnapshot({ collectionIds: [config.scopeCollectionId] }, cardLimit);
-          scope = config.scopeCollectionName ?? config.scopeCollectionId;
-        } else {
-          snapshot = await api.getMultiBoardSnapshot({}, cardLimit);
-          scope = 'all collections';
-        }
-
-        // Board summaries
-        const boardMap = new Map<string, AggregateCard[]>();
-        for (const card of snapshot.allCards) {
-          const bName = (card as any).boardName ?? 'Unknown';
-          if (!boardMap.has(bName)) boardMap.set(bName, []);
-          boardMap.get(bName)!.push(card);
-        }
-
-        const boards: BoardSummary[] = Array.from(boardMap.entries()).map(([name, cards]) => {
-          const dist: Record<string, number> = {};
-          for (const c of cards) {
-            const stage = c.stage ?? 'unknown';
-            dist[stage] = (dist[stage] ?? 0) + 1;
-          }
-          return { name, totalCards: cards.length, stageDistribution: dist };
-        });
-
-        // Overall stage distribution
-        const stageDistribution: Record<string, number> = {};
-        for (const card of snapshot.allCards) {
-          const stage = card.stage ?? 'unknown';
-          stageDistribution[stage] = (stageDistribution[stage] ?? 0) + 1;
-        }
-
-        const blockers = findTopBlockers(snapshot.allCards);
-
-        const result: OverviewResult = {
-          scope,
-          boardCount: boards.length,
-          totalCards: snapshot.allCards.length,
-          boards,
-          stageDistribution,
-          topBlockers: blockers.topBlockers,
-          ...(blockers.unreachable.length > 0 ? { unreachable: blockers.unreachable } : {}),
-          dueSummary: computeDueSummary(snapshot.allCards),
-          generatedAt: new Date().toISOString(),
-        };
-
-        const format = resolveFormat(options);
-        outputResult(result, { format }, formatHuman);
-      } catch (err: any) {
-        logError(err, verbose);
-        process.exit(1);
-      }
-    });
+    .action(run(overviewHandler));
 }
 
 export default registerOverviewCommand;

@@ -6,9 +6,10 @@
  * ambiguity for a stand-in to expose. What the caller observes IS this return
  * value — it is emitted verbatim as `topBlockers` / `unreachable`.
  */
-import { findTopBlockers, formatHuman, OverviewResult } from '../../commands/overview';
+import { findTopBlockers, formatHuman, overviewHandler, OverviewResult } from '../../commands/overview';
 import { AggregateCard } from '../../api/aggregate';
 import { SWEEP_CAP } from '../../lib/read-shape';
+import type { Ctx } from '../../lib/run';
 
 const card = (over: Partial<AggregateCard> & { id: string }): AggregateCard =>
   ({ title: `card ${over.id}`, ...over }) as AggregateCard;
@@ -153,5 +154,55 @@ describe('formatHuman — the unreachable list', () => {
     // First named, last only counted.
     expect(out).toContain('g-0');
     expect(out).not.toContain('g-146');
+  });
+});
+
+/**
+ * The seam ADR-0002 exists for: the handler, a fake `Ctx`, and the `Result`
+ * read straight back — no commander, no stdout, no `http-client` mock (#115).
+ *
+ * What it pins is the arm. `overview` is a SINGLE read, so it must come back as
+ * `item` and stay bare; returning `rows` would wrap it in an envelope the shape
+ * table does not want here. And `unreachable` must be absent rather than empty
+ * when there are no holes — that is the distinction `read-shape.ts` exists to
+ * keep, and a spread of `[]` would quietly destroy it.
+ */
+describe('overviewHandler returns a Result', () => {
+  const ctxWith = (allCards: AggregateCard[]): Ctx =>
+    ({
+      config: {},
+      api: { aggregate: { getMultiBoardSnapshot: jest.fn().mockResolvedValue({ allCards }) } },
+    }) as unknown as Ctx;
+
+  it('comes back as a bare item with a human formatter attached', async () => {
+    const result = await overviewHandler(ctxWith([card({ id: 'id-1', boardName: 'Board A' })]), {
+      limit: '1000',
+    });
+
+    expect(result.item.scope).toBe('all collections');
+    expect(result.item.totalCards).toBe(1);
+    expect(result.item.boards).toEqual([
+      { name: 'Board A', totalCards: 1, stageDistribution: { unknown: 1 } },
+    ]);
+    expect(typeof result.human).toBe('function');
+  });
+
+  it('omits `unreachable` entirely when nothing was out of reach', async () => {
+    const result = await overviewHandler(ctxWith([card({ id: 'id-1', commonId: '1' })]), {
+      limit: '1000',
+    });
+
+    expect(result.item.topBlockers).toEqual([]);
+    expect('unreachable' in result.item).toBe(false);
+  });
+
+  it('carries every hole through when there were some', async () => {
+    const result = await overviewHandler(
+      ctxWith([card({ id: 'id-1', commonId: '1', blockedBy: ['off-board'] })]),
+      { limit: '1000' },
+    );
+
+    expect(result.item.unreachable).toHaveLength(1);
+    expect(result.item.unreachable![0].id).toBe('off-board');
   });
 });

@@ -20,30 +20,32 @@ jest.mock('../../api/context');
 const MockAggregate = AggregateAPI as jest.MockedClass<typeof AggregateAPI>;
 const MockContext = ContextAPI as jest.MockedClass<typeof ContextAPI>;
 
-class ExitCalled extends Error {
-  constructor(readonly code: number) {
-    super(`process.exit(${code})`);
-  }
-}
-
 const DAY = 24 * 60 * 60 * 1000;
 const daysAgo = (n: number) => new Date(Date.now() - n * DAY).toISOString();
 
-let stdoutSpy: jest.SpyInstance;
+// `console.log`, not `process.stdout.write`: the runner writes through the
+// former, and under jest that is a BufferedConsole which never reaches the
+// latter (#115).
+let logSpy: jest.SpyInstance;
 let errorSpy: jest.SpyInstance;
-let exitSpy: jest.SpyInstance;
 
 async function runCli(args: string[]): Promise<void> {
   const program = new Command();
-  program.option('--verbose', 'Show stack traces');
-  registerStaleCommand(program);
+  // Before the first `.command()`: `copyInheritedSettings` copies
+  // `_exitCallback` when the subcommand is created, not when it runs.
   program.exitOverride();
-  await program.parseAsync(['node', 'favro', ...args]).catch((e) => {
-    if (!(e instanceof ExitCalled)) throw e;
-  });
+  program
+    .option('--verbose', 'Show stack traces')
+    // The runner owns both, and `cli.ts` declares them here. A leaf that also
+    // declared `--human` would never see it: commander binds the flag to the
+    // ancestor, which is why only `optsWithGlobals()` resolves it.
+    .option('--human', 'Human-readable output instead of the default JSON')
+    .option('--pretty', 'Indent JSON output (default: compact)');
+  registerStaleCommand(program);
+  await program.parseAsync(['node', 'favro', ...args]);
 }
 
-const written = () => stdoutSpy.mock.calls.map((c) => String(c[0])).join('');
+const written = () => logSpy.mock.calls.map((c) => String(c[0])).join('\n');
 const json = () => JSON.parse(written());
 
 const card = (over: Record<string, unknown>) => ({
@@ -56,11 +58,9 @@ const card = (over: Record<string, unknown>) => ({
 
 beforeEach(() => {
   jest.clearAllMocks();
-  stdoutSpy = jest.spyOn(process.stdout, 'write').mockImplementation(() => true);
+  process.exitCode = undefined;
+  logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
   errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-  exitSpy = jest.spyOn(process, 'exit').mockImplementation(((code?: number) => {
-    throw new ExitCalled(code ?? 0);
-  }) as never);
 
   (config.resolveApiKey as jest.Mock).mockResolvedValue('test-token');
   (config.readConfig as jest.Mock).mockResolvedValue({});
@@ -71,6 +71,8 @@ beforeEach(() => {
 
 afterEach(() => {
   jest.restoreAllMocks();
+  // `process.exitCode` is global and leaks between tests.
+  process.exitCode = undefined;
 });
 
 describe('stale — which snapshot it asks for', () => {
@@ -240,8 +242,20 @@ describe('stale — failures', () => {
 
     await runCli(['stale']);
 
+    // Never an empty report: JSON is the default, so the failure is the error
+    // envelope on stdout rather than a `total: 0` a caller would believe.
+    expect(json()).toEqual({ error: { message: '502 upstream', retryable: true } });
+    expect(errorSpy).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
+  });
+
+  test('in --human mode the failure stays on stderr, and stdout says nothing', async () => {
+    MockAggregate.prototype.getMultiBoardSnapshot = jest.fn().mockRejectedValue(new Error('502 upstream'));
+
+    await runCli(['stale', '--human']);
+
     expect(written()).toBe('');
     expect(errorSpy.mock.calls.map((c) => String(c[0])).join('\n')).toContain('502 upstream');
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 });
