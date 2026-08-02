@@ -92,7 +92,11 @@ interface StaleOptions {
 }
 
 export async function staleHandler(ctx: Ctx, options: StaleOptions) {
-  const staleDays = parseInt(options.days, 10) || 14;
+  // `|| 14` let `--days -2` through — a card Favro dated tomorrow then cleared
+  // it and reported `daysSinceUpdate: -1`, the value #130 exists to remove —
+  // and read `--days 0` as absent. Clamp-to-declared-default, as `context.ts:50`.
+  const parsedDays = parseInt(options.days, 10);
+  const staleDays = !isNaN(parsedDays) && parsedDays >= 0 ? parsedDays : 14;
   const cardLimit = parseInt(options.limit, 10) || 1000;
 
   let snapshot: { allCards: AggregateCard[] };

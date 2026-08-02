@@ -234,6 +234,11 @@ describe('stale — which cards survive', () => {
   test('a done card with no creation date is dropped, not reported as unassessed', async () => {
     // Stage is checked first: `stale` never had an opinion about finished work,
     // and "we could not date it" is only interesting for cards still in play.
+    //
+    // NOT evidence for #130: this passes with the fix reverted, because the
+    // stage check short-circuits before the date is ever read. It pins the
+    // ORDER of the two checks, nothing more. Do not count it as coverage of
+    // the undated contract — the three tests above carry that.
     MockAggregate.prototype.getMultiBoardSnapshot = jest.fn().mockResolvedValue({
       allCards: [card({ id: 'shipped', stage: 'done', createdAt: undefined })],
     });
@@ -253,6 +258,36 @@ describe('stale — which cards survive', () => {
 
     expect(json().staleDays).toBe(14);
     expect(json().total).toBe(0);
+  });
+
+  test('a negative --days cannot put a fabricated age back in the output (#130)', async () => {
+    // `parseInt('-2', 10) || 14` let -2 straight through, and a card Favro
+    // dated in the future then satisfied `-1 >= -2` and reported
+    // `daysSinceUpdate: -1` — the exact string #130's acceptance criterion
+    // bans, arrived at from the other direction. A negative threshold is not
+    // a threshold, so it takes the same road as `soon`: the declared default.
+    MockAggregate.prototype.getMultiBoardSnapshot = jest.fn().mockResolvedValue({
+      allCards: [card({ id: 'tomorrow', createdAt: daysAgo(-1) })],
+    });
+
+    await runCli(['stale', '--days', '-2']);
+
+    expect(json().staleDays).toBe(14);
+    expect(json().total).toBe(0);
+    expect(written()).not.toContain('"daysSinceUpdate":-1');
+  });
+
+  test('--days 0 is a real threshold and is not swallowed by the default', async () => {
+    // `|| 14` treated 0 as absent and answered a 14-day question instead. Every
+    // dated live card is at least 0 days old, so 0 means "all of them".
+    MockAggregate.prototype.getMultiBoardSnapshot = jest.fn().mockResolvedValue({
+      allCards: [card({ id: 'today', createdAt: daysAgo(0) })],
+    });
+
+    await runCli(['stale', '--days', '0']);
+
+    expect(json().staleDays).toBe(0);
+    expect(json().unassignedStale.map((c: { id: string }) => c.id)).toEqual(['today']);
   });
 });
 
