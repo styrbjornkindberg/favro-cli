@@ -44,6 +44,17 @@ describe('slugify', () => {
     expect(slugify('Add dark mode (v2)')).toBe('add-dark-mode-v2');
   });
 
+  test('gives the same slug whichever normalisation form the title arrives in', () => {
+    // The strip removes a combining mark but keeps the base letter under it, so
+    // a decomposed title slugged to `cafe` while the precomposed one slugged to
+    // `caf` — same title, two branch names, decided by where it was typed
+    // (#141). Built from code points so no editor can rewrite one into the
+    // other.
+    const title = `Fix caf${String.fromCodePoint(0x00e9)} login`;
+
+    expect(slugify(title.normalize('NFD'))).toBe(slugify(title));
+  });
+
   test('collapses multiple hyphens', () => {
     expect(slugify('Fix -- the -- bug')).toBe('fix-the-bug');
   });

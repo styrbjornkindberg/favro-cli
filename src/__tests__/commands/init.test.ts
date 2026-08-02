@@ -161,6 +161,21 @@ describe('init — the file it writes', () => {
     expect(slug.startsWith('atgarder-forbattringar')).toBe(true);
   });
 
+  test('the slug is the same whichever normalisation form the board name arrives in', async () => {
+    // The slug is a KEY in context.json. A decomposed `Å` is a plain `A` plus a
+    // combining ring: `[åä]` never saw it and `[^a-z0-9]+` turned it into a
+    // separator, so the same visible board name produced two different keys
+    // depending on where it was typed (#141).
+    const name = 'Åtgärder & Förbättringar';
+    MockBoards.prototype.listBoardsByCollection = jest
+      .fn()
+      .mockResolvedValue([{ boardId: 'b', name: name.normalize('NFD') }]);
+
+    await runCli(['init']);
+
+    expect(Object.keys(writtenContext().boards)).toEqual(['atgarder-forbattringar']);
+  });
+
   test('a board whose columns cannot be read is still recorded, just without a workflow', async () => {
     MockColumns.prototype.listColumns = jest.fn().mockRejectedValue(new Error('400 no widgetCommonId'));
 

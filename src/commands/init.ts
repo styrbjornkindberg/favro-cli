@@ -74,6 +74,17 @@ interface RepoContext {
 
 function slugify(name: string): string {
   return name
+    // NFC first, or the rules below are form-dependent: a decomposed `Å` is a
+    // plain `A` plus a combining ring, which `[åä]` never sees and
+    // `[^a-z0-9]+` then turns into a separator — so the same visible board
+    // name yielded `atgarder-forbattringar` or `a-tga-rder-fo-rba-ttringar`
+    // depending on where it was typed, and those are two different KEYS in
+    // context.json (#141).
+    //
+    // ponytail: the explicit å/ä/ö/é map is unchanged, so an accent outside it
+    // still degrades to a separator. Swap in strip-combining-marks if a board
+    // name ever needs one.
+    .normalize('NFC')
     .toLowerCase()
     .replace(/[åä]/g, 'a').replace(/ö/g, 'o').replace(/é/g, 'e')
     .replace(/[^a-z0-9]+/g, '-')
