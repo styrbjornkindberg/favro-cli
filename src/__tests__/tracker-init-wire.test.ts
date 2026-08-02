@@ -467,6 +467,27 @@ describe('detectStage', () => {
     expect(hits).toEqual([path.join(__dirname, '..', 'lib', 'workflow-stage.ts')]);
   });
 
+  it('survives a column Favro sent with no name', async () => {
+    // `name.toLowerCase()` was unguarded, and all FOUR callers pass a name
+    // straight off the wire — `init`, `tracker-init`, `proposeColumnMapping`
+    // and `api/context`. In `init` the TypeError was swallowed by a `catch {}`
+    // and cost the whole board its workflow, silently, on exit 0. The guard
+    // belongs at the shared seam, not at each caller.
+    const { detectStage, proposeColumnMapping } = await import('../lib/workflow-stage');
+
+    expect(detectStage(undefined as unknown as string)).toBe('queued');
+    expect(detectStage(null as unknown as string)).toBe('queued');
+    expect(detectStage('')).toBe('queued');
+
+    const proposal = proposeColumnMapping([
+      { columnId: DOING, name: 'Doing' },
+      { columnId: TODO, name: undefined as unknown as string },
+      { columnId: DONE, name: 'Done' },
+    ]);
+    expect(proposal.active?.columnId).toBe(DOING);
+    expect(proposal.done?.columnId).toBe(DONE);
+  });
+
   it('proposes Doing as open and Done as closed', async () => {
     const { proposeColumnMapping } = await import('../lib/workflow-stage');
     const proposal = proposeColumnMapping([

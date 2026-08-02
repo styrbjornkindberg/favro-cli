@@ -151,21 +151,28 @@ export function registerInitCommand(program: Command): void {
           console.log(`  Board: ${board.name}`);
           const slug = slugify(board.name);
 
-          // Fetch columns for workflow
-          let workflow: ContextWorkflowStep[] | undefined;
-          try {
-            const cols = await columnsApi.listColumns(board.boardId);
-            if (cols.length > 0) {
-              workflow = cols.map((col, i) => ({
-                columnId: col.columnId,
-                name: col.name,
-                stage: detectStage(col.name),
-                next: i < cols.length - 1 ? cols[i + 1].name : null,
-              }));
-            }
-          } catch {
-            // Some boards may not have columns
-          }
+          // Fetch columns for workflow.
+          //
+          // The `await` is a value and the transform is OUTSIDE any catch. The
+          // two used to share a `try` written for "some boards have no
+          // columns", so anything the MAP threw was read as that too — and
+          // `detectStage` threw a TypeError on a column Favro sent with no
+          // name, silently costing the whole board its workflow on exit 0.
+          // The guard for that now lives in `detectStage` itself, where all
+          // four of its callers get it.
+          const cols = await columnsApi.listColumns(board.boardId).catch(() => []);
+          const workflow: ContextWorkflowStep[] | undefined =
+            cols.length > 0
+              ? cols.map((col, i) => ({
+                  columnId: col.columnId,
+                  name: col.name,
+                  stage: detectStage(col.name),
+                  // `?? null`, because `next` is declared `string | null`: an
+                  // unnamed neighbour was leaving `undefined` there, which JSON
+                  // drops and the type does not permit.
+                  next: i < cols.length - 1 ? cols[i + 1].name ?? null : null,
+                }))
+              : undefined;
 
           boards[slug] = {
             boardId: board.boardId,

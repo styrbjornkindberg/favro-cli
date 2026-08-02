@@ -184,6 +184,26 @@ describe('init — the file it writes', () => {
     expect(fields.Priority).toEqual({ fieldId: 'f-1', type: 'Single select', options: { High: 'o-1' } });
   });
 
+  test('a column with no name keeps the rest of the board’s workflow', async () => {
+    // `detectStage(name)` called `name.toLowerCase()` unguarded, so a nameless
+    // column threw a TypeError that the surrounding `catch {}` swallowed —
+    // taking the WHOLE board's workflow with it, with no warning and exit 0.
+    MockColumns.prototype.listColumns = jest.fn().mockResolvedValue([
+      { columnId: 'col-1', name: 'Backlog' },
+      { columnId: 'col-2' },
+      { columnId: 'col-3', name: 'Done' },
+    ]);
+
+    await runCli(['init']);
+
+    const workflow = writtenContext().boards['sprint-42'].workflow;
+    expect(workflow).toHaveLength(3);
+    expect(workflow[1].stage).toBe('queued');
+    // `next` is declared `string | null`, so a nameless neighbour is null —
+    // not `undefined`, which JSON drops and which the type does not allow.
+    expect(workflow[0].next).toBeNull();
+  });
+
   test('keeps only users the collection is shared with', async () => {
     MockMembers.prototype.getMembers = jest.fn().mockResolvedValue([
       { id: 'u-1', name: 'Alice', email: 'alice@example.com', role: 'admin' },

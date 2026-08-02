@@ -22,8 +22,15 @@ export type WorkflowStage =
  * Auto-detect workflow stage from a column name using keyword matching.
  * Covers common patterns across Swedish, English, and mixed-language boards.
  */
-export function detectStage(name: string): WorkflowStage {
-  const n = name.toLowerCase();
+export function detectStage(name: string | null | undefined): WorkflowStage {
+  // Guarded HERE, at the shared seam, not at the four call sites: every one of
+  // them (`init`, `tracker-init`, `proposeColumnMapping`, `api/context`) hands
+  // over a column name straight off the wire, and Favro can send one without.
+  // `name.toLowerCase()` threw a TypeError on it, which in `init` was swallowed
+  // by a `catch {}` and cost that board its ENTIRE workflow — no warning,
+  // exit 0. A nameless column is not evidence of any stage, so it takes the
+  // same fall-through default a name matching no keyword takes.
+  const n = (name ?? '').toLowerCase();
 
   // Done / completed / archived
   if (/done|klar|färdig|complete|closed|released|shipped|deploy|live|finished|avslut/i.test(n)) return 'done';
