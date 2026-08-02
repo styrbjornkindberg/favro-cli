@@ -1,7 +1,14 @@
 import FavroHttpClient from './http-client';
-import { cachedTags } from './name-cache';
+import { cachedList } from './name-cache';
 import { MISSING_WORDING } from './favro-error';
 import { RefusalError } from './refusal';
+import { isTagId } from './id-shapes';
+
+/**
+ * Re-exported from the shape table (#122). `isTagId` and its two measured
+ * shapes live in `id-shapes.ts` now; this keeps every existing import working.
+ */
+export { isTagId };
 
 export interface Tag {
   tagId: string;
@@ -14,19 +21,6 @@ export interface PaginatedResponse<T> {
   entities: T[];
   requestId?: string;
   pages?: number;
-}
-
-/**
- * `tagId` has TWO measured shapes inside one organization — 27 hex-24 and 222
- * base62-17. A hex-24-only classifier misses 11% of the tags, so both count.
- */
-const HEX_24 = /^[0-9a-f]{24}$/i;
-const BASE62_17 = /^[0-9A-Za-z]{17}$/;
-
-/** True when the string has the shape of a `tagId` rather than a tag name. */
-export function isTagId(value: string): boolean {
-  const v = value.trim();
-  return HEX_24.test(v) || BASE62_17.test(v);
 }
 
 export type TagLookupFailure = 'unknown' | 'ambiguous';
@@ -162,6 +156,18 @@ export class TagsAPI {
   async deleteTag(tagId: string): Promise<void> {
     await this.client.delete(`/tags/${tagId}`);
   }
+}
+
+/**
+ * Org tags, cached.
+ *
+ * Lives here rather than in `name-cache` because the leaf cache must not import
+ * its own consumers — that was one of the two import cycles #122 kills. The
+ * cache takes a `fetch` callback; the caller owns the API class.
+ */
+export function cachedTags(client: FavroHttpClient, organizationId?: string): Promise<Tag[]> {
+  const api = new TagsAPI(client);
+  return cachedList<Tag>(organizationId, 'tags', () => api.listTags());
 }
 
 export default TagsAPI;

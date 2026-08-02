@@ -1,5 +1,6 @@
 /**
- * Persistent name↔id cache (#39): TTL, org keying, FAVRO_CONFIG_DIR honouring.
+ * Persistent name↔id cache (#39): TTL, org keying, FAVRO_CONFIG_DIR honouring,
+ * and the parsed-file memo (#122).
  */
 import * as fs from 'fs/promises';
 import * as os from 'os';
@@ -45,6 +46,60 @@ describe('cacheFilePath', () => {
     expect(await readCache('org-a', 'tags')).toBeUndefined();
     process.env.FAVRO_CONFIG_DIR = tmpDir;
     expect(await readCache('org-a', 'tags')).toEqual([{ tagId: 't1' }]);
+    await fs.rm(other, { recursive: true, force: true });
+  });
+});
+
+// Every readCache / readCacheRecord / writeCache / invalidateCache funnelled
+// through an unmemoized `fs.readFile` + `JSON.parse` of the whole file, so
+// resolving N columns in a sweep cost N full parses (#122).
+describe('the parsed file is memoized', () => {
+  // `fs/promises` exports are non-configurable, so the parse count is not
+  // spyable. Deleting the file mid-sweep proves the same thing harder: a lookup
+  // that still answers cannot have gone to disk for it.
+  test('a resolution sweep parses the file once, not once per lookup', async () => {
+    await writeCache('org-a', 'columns', [{ columnId: 'c1' }]);
+    await writeCache('org-a', 'tags', [{ tagId: 't1' }]);
+    await writeCache('org-a', 'users', [{ userId: 'u1' }]);
+
+    expect(await readCache('org-a', 'columns')).toEqual([{ columnId: 'c1' }]);
+    await fs.rm(cacheFilePath());
+    expect(await readCache('org-a', 'tags')).toEqual([{ tagId: 't1' }]);
+    expect(await readCache('org-a', 'users')).toEqual([{ userId: 'u1' }]);
+  });
+
+  test('a write clears it, so the next read sees what was written', async () => {
+    await writeCache('org-a', 'tags', [{ tagId: 'first' }]);
+    expect(await readCache('org-a', 'tags')).toEqual([{ tagId: 'first' }]);
+    await writeCache('org-a', 'tags', [{ tagId: 'second' }]);
+    expect(await readCache('org-a', 'tags')).toEqual([{ tagId: 'second' }]);
+  });
+
+  test('an invalidation clears it too', async () => {
+    await writeCache('org-a', 'tags', [{ tagId: 'a' }]);
+    expect(await readCache('org-a', 'tags')).toEqual([{ tagId: 'a' }]);
+    await invalidateCache('org-a', 'tags');
+    expect(await readCache('org-a', 'tags')).toBeUndefined();
+  });
+
+  // FAVRO_CONFIG_DIR is re-read per call so favro-mcp-http can give each tenant
+  // its own file. A memo keyed on anything but the resolved path would serve one
+  // tenant's cache to another.
+  test('it is keyed by path — a tenant switch never crosses over', async () => {
+    await writeCache('org-a', 'tags', [{ tagId: 'tenant-a' }]);
+    const other = await fs.mkdtemp(path.join(os.tmpdir(), 'favro-cache-test-'));
+    process.env.FAVRO_CONFIG_DIR = other;
+    await writeCache('org-a', 'tags', [{ tagId: 'tenant-b' }]);
+
+    // Same org key, same kind, different file — and reads alternate, so a memo
+    // that ignored the path would answer at least one of these with the other
+    // tenant's data.
+    expect(await readCache('org-a', 'tags')).toEqual([{ tagId: 'tenant-b' }]);
+    process.env.FAVRO_CONFIG_DIR = tmpDir;
+    expect(await readCache('org-a', 'tags')).toEqual([{ tagId: 'tenant-a' }]);
+    process.env.FAVRO_CONFIG_DIR = other;
+    expect(await readCache('org-a', 'tags')).toEqual([{ tagId: 'tenant-b' }]);
+
     await fs.rm(other, { recursive: true, force: true });
   });
 });

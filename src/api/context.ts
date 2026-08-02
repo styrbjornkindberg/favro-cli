@@ -173,32 +173,21 @@ export class ContextAPI {
   }
 
   /**
-   * Find a board by name or ID.
-   * If boardRef looks like an ID (no spaces, possibly prefixed with 'boards-'),
-   * tries direct lookup first; falls back to listing all boards and fuzzy matching.
+   * Find a board by id or by exact name.
+   *
+   * One call into `BoardsAPI.getBoard`, which is the resolver: an id reads
+   * directly and escalates to `resolveBoardId` only on a classified not-found,
+   * and a name matches trimmed, case-insensitive and EXACT.
+   *
+   * The substring fallback this used to carry is deleted (#122, ADR-0003). It
+   * took the first partial hit with no ambiguity refusal, so `--board "Dev"`
+   * returned some other board's cards with no signal at all. Refusing with the
+   * candidate list is the cost, and it is the point. The old path also capped
+   * at `listBoards(100)` against an org measured at 322 boards; the resolver
+   * paginates to completion.
    */
   async resolveBoard(boardRef: string): Promise<Board> {
-    // Try direct ID lookup first (fast path)
-    try {
-      const board = await this.boardsApi.getBoard(boardRef);
-      if (board && board.boardId) return board;
-    } catch {
-      // Fall through to name search
-    }
-
-    // List all boards and find by name (case-insensitive)
-    const boards = await this.boardsApi.listBoards(100);
-    const lower = boardRef.toLowerCase();
-
-    // Exact name match first
-    const exact = boards.find(b => b.name.toLowerCase() === lower);
-    if (exact) return exact;
-
-    // Partial name match
-    const partial = boards.find(b => b.name.toLowerCase().includes(lower));
-    if (partial) return partial;
-
-    throw new Error(`Board not found: "${boardRef}". Use 'favro boards list' to find board IDs.`);
+    return this.boardsApi.getBoard(boardRef);
   }
 
   /**
