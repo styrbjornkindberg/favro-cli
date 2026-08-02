@@ -10,6 +10,11 @@ import { Board } from './boards-api';
 import { classifyThrownError } from './favro-error';
 import { looksLikeName, resolveNameToId } from './name-resolve';
 
+/**
+ * The wider of the two `Collection` interfaces, and the one to keep — see the
+ * twin at `boards-api.ts` for why both still exist and who collapses them
+ * (#123).
+ */
 export interface Collection {
   collectionId: string;
   name: string;

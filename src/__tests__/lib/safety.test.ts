@@ -5,6 +5,7 @@
  * has to refuse rather than fall through. See issue #77.
  */
 import { assertScope, ScopeError } from '../../lib/safety';
+import { isRetryable } from '../../lib/dispatch';
 
 function makeClient(collectionIds: string[] = [], name = 'Some board') {
   return {
@@ -76,6 +77,30 @@ describe('assertScope', () => {
     const client = makeClient(['col-other']);
 
     await expect(assertScope('board-1', client, LOCKED, true)).resolves.toBeUndefined();
+  });
+
+  /**
+   * A scope refusal must never come back `retryable: true` (#120 item 1).
+   *
+   * This is not hypothetical. `dispatch` calls `assertScope` OUTSIDE its own
+   * try, so a `ScopeError` throws clean out of the table — and the skill engine
+   * catches it as `abortCause`, unwinds the steps that already wrote, then asks
+   * `isRetryable(unwound.outcome, abortCause)` (`skill-engine.ts`). While
+   * `ScopeError` extended bare `Error` that call answered TRUE: no
+   * `RefusalError`, no `.response` for `classifyThrownError` to read, so it fell
+   * through to the transient arm. Retrying a scope violation cannot change the
+   * answer, so that was advice to loop forever.
+   *
+   * The runner's error boundary (`run.ts`'s `retryableFrom`) asks the identical
+   * question and would get the identical answer, but is NOT reachable today —
+   * no `run()` handler dispatches or calls `assertScope`, and the two that
+   * touch scope go through `checkScope`, which exits. Latent, not live; it
+   * arrives with #115–#119 and #133.
+   */
+  it('is not retryable — a scope refusal is a deterministic decline', () => {
+    const refusal = new ScopeError('Scope violation: nope', 'board-1', 'col-1');
+
+    expect(isRetryable('rolled-back', refusal)).toBe(false);
   });
 });
 
