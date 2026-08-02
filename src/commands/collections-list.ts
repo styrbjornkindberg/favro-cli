@@ -35,7 +35,8 @@ export function registerCollectionsListCommand(collectionsParent: Command): void
     .description('List all collections')
     // `--format table|json` is gone (ADR-0002): it was a third spelling of
     // `--human`/`--json`, and the runner owns the axis now.
-    .action(run(async (ctx) => {
+    .option('--limit <n>', 'Cap how many rows are printed; sets "truncated"')
+    .action(run(async (ctx, options: { limit?: string }) => {
       const collections = await ctx.api.collections.listCollections(100);
 
       // The two bulk fields are dropped before the rows leave the handler —
@@ -43,6 +44,7 @@ export function registerCollectionsListCommand(collectionsParent: Command): void
       // only, and neither field reaches the table, so both modes agree.
       return {
         rows: omitBulk('collection', collections),
+        limit: options.limit,
         human: (rows: Collection[]) => {
           console.log(`Found ${rows.length} collection(s):`);
           formatCollectionsTable(rows);

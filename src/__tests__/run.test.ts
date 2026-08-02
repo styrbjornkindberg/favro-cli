@@ -143,7 +143,21 @@ describe('the runner owns the output', () => {
 
     await parse(root, ['thing', '--human']);
 
+    // The formatter is handed rows, so it cannot see the cut; the runner says
+    // it, once, for every migrated list read (#99). Without this line `--limit`
+    // silently drops rows in human mode on every command the runner owns.
     expect(seen).toEqual([['a', 'b']]);
+    expect(stdout()).toEqual(['a/b', '(truncated to 2 of 3 — raise --limit to see the rest)']);
+  });
+
+  it('says nothing about truncation when nothing was cut', async () => {
+    // What keeps every existing table byte-identical for a caller who passed
+    // no `--limit`.
+    const { root, leaf } = program();
+    leaf.action(run(async () => ({ rows: ['a', 'b'], human: (rows: string[]) => rows.join('/') })));
+
+    await parse(root, ['thing', '--human']);
+
     expect(stdout()).toEqual(['a/b']);
   });
 
