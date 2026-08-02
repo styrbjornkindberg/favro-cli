@@ -289,22 +289,22 @@ export class AggregateAPI {
   }
 
   /**
-   * Convenience: get snapshot for a single collection by name or ID.
+   * Snapshot for a single collection, by id or by exact name.
+   *
+   * `resolveCollectionId` is the resolver: exact, trimmed, case-insensitive,
+   * refusing an unknown or a duplicated name with every colliding id listed.
+   * The substring fallback this used to carry is deleted (#122, ADR-0003) —
+   * first partial hit won, so a near-miss silently answered about the wrong
+   * collection.
    */
   async getCollectionSnapshot(collectionRef: string, cardLimit?: number): Promise<AggregateSnapshot> {
-    // Try direct ID first
-    try {
-      const coll = await this.collectionsApi.getCollection(collectionRef);
-      if (coll) return this.getMultiBoardSnapshot({ collectionIds: [coll.collectionId] }, cardLimit);
-    } catch { /* fall through */ }
-
-    // Name search
-    const all = await this.collectionsApi.listCollections();
-    const lower = collectionRef.toLowerCase();
-    const match = all.find(c => c.name.toLowerCase() === lower)
-      ?? all.find(c => c.name.toLowerCase().includes(lower));
-    if (!match) throw new Error(`Collection not found: "${collectionRef}"`);
-    return this.getMultiBoardSnapshot({ collectionIds: [match.collectionId] }, cardLimit);
+    // Nine commands reach this, so the refusal names the flag rather than any
+    // one of their names — a refusal must point at something that exists.
+    const collectionId = await this.collectionsApi.resolveCollectionId(
+      collectionRef,
+      '--collection <collectionId>',
+    );
+    return this.getMultiBoardSnapshot({ collectionIds: [collectionId] }, cardLimit);
   }
 
   private buildStats(cards: AggregateCard[]): AggregateStats {

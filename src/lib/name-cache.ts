@@ -7,13 +7,13 @@
  * setting the env before the process starts.
  *
  * Best-effort: any read/write failure degrades to "no cache", never throws.
+ *
+ * A leaf: it imports no API class. Callers pass their own `fetch` (#122), which
+ * is what keeps `tags-api`/`users-api` out of a cycle with this module.
  */
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
-import FavroHttpClient from './http-client';
-import TagsAPI, { Tag } from './tags-api';
-import UsersAPI, { User } from './users-api';
 
 /** The one knob. */
 export const CACHE_TTL_MS = 15 * 60 * 1000;
@@ -33,19 +33,43 @@ export function cacheFilePath(): string {
   return path.join(dir, 'name-cache.json');
 }
 
+/**
+ * The parsed file, keyed by the path it was parsed from.
+ *
+ * Keying by resolved path is load-bearing, not decoration: `favro-mcp-http`
+ * gives each tenant its own file via FAVRO_CONFIG_DIR and `cacheFilePath()`
+ * re-reads the env per call to honour that, so a bare module global would serve
+ * one tenant's cache to another.
+ *
+ * ponytail: one entry, not a Map. Two tenants alternating just thrash back to
+ * the old read-every-call behaviour, which is correct if slower; a Map would
+ * grow unbounded in a long-lived server for a win nobody has measured.
+ */
+let memo: { path: string; data: CacheFile } | undefined;
+
+/**
+ * Parse the cache file once per path. Every read funnels through here, so a
+ * resolution sweep over N columns costs one parse instead of N.
+ */
 async function readFile(): Promise<CacheFile> {
+  const file = cacheFilePath();
+  if (memo && memo.path === file) return memo.data;
+
+  let data: CacheFile = {};
   try {
-    const raw = await fs.readFile(cacheFilePath(), 'utf-8');
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === 'object' ? (parsed as CacheFile) : {};
+    const parsed = JSON.parse(await fs.readFile(file, 'utf-8'));
+    if (parsed && typeof parsed === 'object') data = parsed as CacheFile;
   } catch {
-    return {};
+    // Absent or corrupt reads as "no cache" — never throws.
   }
+  memo = { path: file, data };
+  return data;
 }
 
 // ponytail: last-writer-wins whole-file rewrite. Fine for a per-user cache;
 // switch to per-org files if concurrent CLI processes start clobbering.
 async function writeFile(data: CacheFile): Promise<void> {
+  memo = undefined;
   try {
     const file = cacheFilePath();
     await fs.mkdir(path.dirname(file), { recursive: true });
@@ -132,16 +156,4 @@ export async function cachedList<T>(
   const fresh = await fetch();
   await writeCache(organizationId, kind, fresh);
   return fresh;
-}
-
-/** Org tags, cached. */
-export function cachedTags(client: FavroHttpClient, organizationId?: string): Promise<Tag[]> {
-  const api = new TagsAPI(client);
-  return cachedList<Tag>(organizationId, 'tags', () => api.listTags());
-}
-
-/** Org users, cached. */
-export function cachedUsers(client: FavroHttpClient, organizationId?: string): Promise<User[]> {
-  const api = new UsersAPI(client);
-  return cachedList<User>(organizationId, 'users', () => api.listUsers());
 }
