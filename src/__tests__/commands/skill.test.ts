@@ -366,6 +366,47 @@ describe('skill create / export / import / delete / edit', () => {
     });
   });
 
+  test('$VISUAL wins when both are set', async () => {
+    // The Unix convention (git, crontab, vipw, sensible-editor): VISUAL is the
+    // full-screen editor, EDITOR the line-editor fallback. Nothing pinned the
+    // order before, so swapping it passed the whole suite in either direction.
+    spawnSyncMock().mockReturnValue({ status: 0, signal: null });
+    process.env.VISUAL = 'nano';
+    process.env.EDITOR = 'ed';
+
+    await runCli(['skill', 'edit', 'mine']);
+
+    expect(spawnSyncMock()).toHaveBeenCalledWith('nano', ['/home/me/.favro/skills/mine.yaml'], {
+      stdio: 'inherit',
+    });
+  });
+
+  test('an editor path containing a space stays one argument', async () => {
+    // The macOS common case, not an exotic one. A plain whitespace split makes
+    // `bin` `/Applications/My` and the spawn ENOENTs.
+    spawnSyncMock().mockReturnValue({ status: 0, signal: null });
+    process.env.EDITOR = '"/Applications/My Editor.app/bin/edit" --wait';
+
+    await runCli(['skill', 'edit', 'mine']);
+
+    expect(spawnSyncMock()).toHaveBeenCalledWith(
+      '/Applications/My Editor.app/bin/edit',
+      ['--wait', '/home/me/.favro/skills/mine.yaml'],
+      { stdio: 'inherit' },
+    );
+  });
+
+  test('a whitespace-only $EDITOR refuses rather than spawning nothing-shaped', async () => {
+    spawnSyncMock().mockReturnValue({ status: 0, signal: null });
+    process.env.EDITOR = '   ';
+    delete process.env.VISUAL;
+
+    await runCli(['skill', 'edit', 'mine']);
+
+    expect(spawnSyncMock()).not.toHaveBeenCalled();
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
   test('with no editor configured it refuses by name rather than guessing one', async () => {
     delete process.env.EDITOR;
     delete process.env.VISUAL;

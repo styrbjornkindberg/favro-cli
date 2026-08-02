@@ -15,6 +15,7 @@ import { Command } from 'commander';
 import fs from 'fs';
 import { spawnSync } from 'child_process';
 import { logError } from '../lib/error-handler';
+import { splitCommand } from '../lib/split-command';
 import { capRows, noteTruncation, writeEnvelope } from '../lib/read-shape';
 import {
   listSkills,
@@ -209,12 +210,16 @@ export function registerSkillCommands(program: Command): void {
     .action((name: string) => {
       try {
         const filePath = getSkillPath(name);
-        const editor = (process.env.EDITOR || process.env.VISUAL || '').trim();
+        // $VISUAL first, then $EDITOR: the Unix convention every other tool
+        // follows (git, crontab, vipw, sensible-editor). VISUAL is the
+        // full-screen editor, EDITOR the line-editor fallback for a dumb
+        // terminal, so a user who sets both wants VISUAL here.
+        const editor = (process.env.VISUAL || process.env.EDITOR || '').trim();
         if (!editor) {
           // No fallback. Guessing `vi` drops a user who has never used it into a
           // full-screen modal editor with no visible way out; naming the two
           // variables is the shorter path to a working command.
-          console.error('No editor configured. Set $EDITOR (or $VISUAL) first, e.g. EDITOR=nano.');
+          console.error('No editor configured. Set $VISUAL (or $EDITOR) first, e.g. EDITOR=nano.');
           process.exit(1);
           return;
         }
@@ -224,9 +229,10 @@ export function registerSkillCommands(program: Command): void {
         // WITHOUT a shell: the old `exec` form built one command string for
         // `/bin/sh -c`, which ran whatever an `$EDITOR` of `vi; rm -rf ~`
         // contained, and interpolated `filePath` into the same string.
-        // ponytail: whitespace split, so an editor whose PATH contains a space
-        // needs quote-aware parsing. Add that when someone actually has one.
-        const [bin, ...editorArgs] = editor.split(/\s+/);
+        // Quote-aware, because on macOS the spaced path is the common case, not
+        // the exotic one: `/Applications/My Editor.app/…`. A plain whitespace
+        // split turns that into a `bin` of `/Applications/My` and an ENOENT.
+        const [bin, ...editorArgs] = splitCommand(editor);
 
         console.log(`Opening ${filePath} in ${editor}...`);
         // `stdio: 'inherit'` gives the child the real terminal and `spawnSync`
