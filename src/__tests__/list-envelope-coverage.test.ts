@@ -62,17 +62,16 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..');
  * DEBT: list reads still emitting a bare array, keyed `<file> <command path>`,
  * valued with the issue that will delete the line.
  *
+ * Empty, and an empty debt list is the point rather than an accident. It held
+ * one entry while this ticket was written — `comments list`, capped inside its
+ * API client and fixed on #136's own branch — and #136 landing is what deleted
+ * it. That is the whole lifecycle this list is for.
+ *
  * Do NOT add to this list to make a red build green. A new entry is a new
  * shape an agent has to branch on; the correct response to one is
  * `writeEnvelope(capRows(rows, limit))`, which is two lines.
  */
-const ALLOWLIST: Record<string, string> = {
-  // #136 drops the `limit` parameter from `listComments` so the fetch cap
-  // cannot be reintroduced a layer down, then applies `capRows` in the
-  // command. Fixed on its own branch, not yet merged; re-fixing it here would
-  // be two people writing the same diff. Delete this line when #136 lands.
-  'src/commands/comments.ts comments list': '#136 — capped in the client, fixed on its own branch',
-};
+const ALLOWLIST: Record<string, string> = {};
 
 /**
  * DECIDED: arrays on stdout that are not list reads.
@@ -412,6 +411,13 @@ describe('every list read wears the envelope', () => {
     // is `writeEnvelope(capRows(rows, limit))` in the command; do not add it to
     // either list.
     expect(bare.filter((key) => !(key in EXEMPT))).toEqual([]);
+  });
+
+  it('the debt list is empty and stays that way', () => {
+    // Stated as its own assertion rather than left implicit in the one above,
+    // so the next entry has to be argued for rather than slipped in beside
+    // existing lines. Shrinking this list is what "done" means here.
+    expect(Object.keys(ALLOWLIST)).toEqual([]);
   });
 
   it('no entry in either list is stale — a fixed command must be removed', () => {
