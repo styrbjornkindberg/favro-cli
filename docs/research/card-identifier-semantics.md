@@ -113,15 +113,15 @@ Base URL is `https://favro.com/api/v1` (documented, Routing). All requests addit
 
 | Method + path | Card identifier | Where | Source |
 |---|---|---|---|
-| `GET /comments` | **`cardCommonId` (required)** | query param | Docs, Comments → Get all comments. Code: `src/lib/comments-api.ts:64,71`; `src/api/comments.ts:63,72`; `src/lib/cards-api.ts:423` |
-| `POST /comments` | **`cardCommonId`** | body field | Docs, Comments → Create a comment. Code: `src/lib/comments-api.ts:98,101`; `src/api/comments.ts:99` |
+| `GET /comments` | **`cardCommonId` (required)** | query param | Docs, Comments → Get all comments. Code: `src/api/comments.ts:56,64`; `src/lib/cards-api.ts:423` |
+| `POST /comments` | **`cardCommonId`** | body field | Docs, Comments → Create a comment. Code: `src/api/comments.ts:97,100` |
 | `GET /comments/:commentId` | `commentId` | path | Docs, Comments. Code: `src/api/comments.ts:141` |
 | `PUT /comments/:commentId` | `commentId` | path | Docs, Comments. Code: `src/api/comments.ts:153` |
 | `DELETE /comments/:commentId` | `commentId` | path | Docs, Comments. Code: `src/api/comments.ts:162` |
 | `POST /comments/:commentId/attachments` | `commentId` | path | Docs, Attachments. Code: `src/lib/attachments-api.ts:59` |
 
 The Comment object itself carries `cardCommonId` and no `cardId` (documented, Comments section) —
-which is why `src/lib/comments-api.ts:41` maps `raw.cardCommonId` into its own `cardId` field.
+which is why `src/api/comments.ts:37` maps `raw.cardCommonId` into its own `cardId` field.
 
 ### 2.3 Tasks and tasklists — `cardCommonId` only
 
@@ -180,7 +180,7 @@ object). There is no `"card"` widget type. This matters for §3.3.
 
 ## 3. The scar tissue, explained
 
-### 3.1 `src/lib/comments-api.ts:53` — comments require `cardCommonId`
+### 3.1 `src/api/comments.ts:52` — comments require `cardCommonId`
 
 The code comment is **correct and matches the docs**. `GET /comments` documents `cardCommonId` as a
 *required* query parameter (docs, Comments → Get all comments), and the Comment object has no
@@ -191,7 +191,7 @@ comments were keyed on `cardId`, the same discussion thread would fragment acros
 card sits on. Keying on `cardCommonId` means one thread, visible from every instance.
 
 Same reasoning applies to tasks and tasklists — and indeed those are keyed identically (§2.3). The
-comment at `src/lib/comments-api.ts:6-7` is the most accurate piece of documentation in the repo on
+comment at `src/api/comments.ts:5-7` is the most accurate piece of documentation in the repo on
 this topic.
 
 ### 3.2 `src/cli.ts:815` and `src/cli.ts:844` — `card.cardCommonId ?? cardId`

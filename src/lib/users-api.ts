@@ -1,7 +1,15 @@
 import FavroHttpClient from './http-client';
-import { cachedUsers } from './name-cache';
+import { getAllPages } from './paginate';
+import { cachedList } from './name-cache';
 import { MISSING_WORDING } from './favro-error';
 import { RefusalError } from './refusal';
+import { isUserId } from './id-shapes';
+
+/**
+ * Re-exported from the shape table (#122). `isUserId` and its measured shape
+ * live in `id-shapes.ts` now; this keeps every existing import working.
+ */
+export { isUserId };
 
 export interface User {
   userId: string;
@@ -14,20 +22,6 @@ export interface UserGroup {
   userGroupId: string;
   name: string;
   userIds?: string[];
-}
-
-export interface PaginatedResponse<T> {
-  entities: T[];
-  requestId?: string;
-  pages?: number;
-}
-
-/** `userId` is NEVER hex-24 — 135/135 measured are base62-17. */
-const BASE62_17 = /^[0-9A-Za-z]{17}$/;
-
-/** True when the string has the shape of a `userId`. */
-export function isUserId(value: string): boolean {
-  return BASE62_17.test(value.trim());
 }
 
 export type UserKey = 'email' | 'userId' | 'name';
@@ -120,62 +114,14 @@ export class UsersAPI {
    * List all users in the organization.
    */
   async listUsers(): Promise<User[]> {
-    const allUsers: User[] = [];
-    let requestId: string | undefined;
-    let page = 0;
-
-    while (true) {
-      const params: Record<string, any> = {};
-      if (requestId) {
-        params.requestId = requestId;
-        params.page = page;
-      }
-
-      const response = await this.client.get<PaginatedResponse<User>>('/users', { params });
-      
-      if (response && response.entities) {
-        allUsers.push(...response.entities);
-      }
-
-      requestId = response.requestId;
-      if (!requestId || !response.pages || page >= response.pages - 1 || !response.entities || response.entities.length === 0) {
-        break;
-      }
-      page++;
-    }
-
-    return allUsers;
+    return getAllPages<User>(this.client, '/users');
   }
 
   /**
    * List all user groups.
    */
   async listGroups(): Promise<UserGroup[]> {
-    const allGroups: UserGroup[] = [];
-    let requestId: string | undefined;
-    let page = 0;
-
-    while (true) {
-      const params: Record<string, any> = {};
-      if (requestId) {
-        params.requestId = requestId;
-        params.page = page;
-      }
-
-      const response = await this.client.get<PaginatedResponse<UserGroup>>('/usergroups', { params });
-      
-      if (response && response.entities) {
-        allGroups.push(...response.entities);
-      }
-
-      requestId = response.requestId;
-      if (!requestId || !response.pages || page >= response.pages - 1 || !response.entities || response.entities.length === 0) {
-        break;
-      }
-      page++;
-    }
-
-    return allGroups;
+    return getAllPages<UserGroup>(this.client, '/usergroups');
   }
 
   async getGroup(groupId: string): Promise<UserGroup> {
@@ -195,6 +141,18 @@ export class UsersAPI {
   async deleteGroup(groupId: string): Promise<void> {
     await this.client.delete(`/usergroups/${groupId}`);
   }
+}
+
+/**
+ * Org users, cached.
+ *
+ * Lives here rather than in `name-cache` because the leaf cache must not import
+ * its own consumers — that was one of the two import cycles #122 kills. The
+ * cache takes a `fetch` callback; the caller owns the API class.
+ */
+export function cachedUsers(client: FavroHttpClient, organizationId?: string): Promise<User[]> {
+  const api = new UsersAPI(client);
+  return cachedList<User>(organizationId, 'users', () => api.listUsers());
 }
 
 export default UsersAPI;

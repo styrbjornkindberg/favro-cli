@@ -1,7 +1,8 @@
 /**
  * Tests for lib/board-renderer.ts — Kanban board rendering
  */
-import { renderBoard, renderCardList, renderStatusBar, RenderColumn, RenderCard } from '../../lib/board-renderer';
+import { renderBoard, renderCardList, renderStatusBar, snapshotToColumns, RenderColumn, RenderCard } from '../../lib/board-renderer';
+import { ContextCard } from '../../api/context';
 import { stripAnsi } from '../../lib/theme';
 
 const sampleCards: RenderCard[] = [
@@ -134,6 +135,80 @@ describe('board-renderer', () => {
       const output = renderBoard(cols, { columnWidth: 40 });
       const plain = stripAnsi(output);
       expect(plain).toContain('Blocked feature');
+    });
+  });
+
+  // ─── snapshotToColumns ────────────────────────────────
+  // The one home (#89) — `board` and the interactive menu each held this
+  // placement algorithm.
+
+  describe('snapshotToColumns', () => {
+    const ctxCard = (over: Partial<ContextCard> & { id: string }): ContextCard =>
+      ({ title: `card ${over.id}`, ...over }) as ContextCard;
+
+    test('places cards by columnId and keeps the board column order', () => {
+      const columns = snapshotToColumns({
+        columns: [{ id: 'k1', name: 'Todo' }, { id: 'k2', name: 'Done' }],
+        cards: [ctxCard({ id: 'a', columnId: 'k2' }), ctxCard({ id: 'b', columnId: 'k1' })],
+      });
+
+      expect(columns.map(col => col.name)).toEqual(['Todo', 'Done']);
+      expect(columns[0].cards.map(c => c.id)).toEqual(['b']);
+      expect(columns[1].cards.map(c => c.id)).toEqual(['a']);
+    });
+
+    test('keeps an empty column rather than dropping it', () => {
+      const columns = snapshotToColumns({
+        columns: [{ id: 'k1', name: 'Todo' }, { id: 'k2', name: 'Done' }],
+        cards: [ctxCard({ id: 'a', columnId: 'k1' })],
+      });
+
+      expect(columns[1]).toEqual({ name: 'Done', cards: [] });
+    });
+
+    test('falls back to status for a card whose columnId is not on the board', () => {
+      const columns = snapshotToColumns({
+        columns: [{ id: 'k1', name: 'Todo' }],
+        cards: [ctxCard({ id: 'a', columnId: 'gone', status: 'Review' })],
+      });
+
+      expect(columns.find(col => col.name === 'Review')!.cards.map(c => c.id)).toEqual(['a']);
+    });
+
+    test('groups by status when the board declares no columns', () => {
+      const columns = snapshotToColumns({
+        columns: [],
+        cards: [ctxCard({ id: 'a', status: 'Todo' }), ctxCard({ id: 'b', status: 'Todo' })],
+      });
+
+      expect(columns).toHaveLength(1);
+      expect(columns[0].name).toBe('Todo');
+      expect(columns[0].cards.map(c => c.id)).toEqual(['a', 'b']);
+    });
+
+    test('files a card with neither column nor status under "Unknown"', () => {
+      const columns = snapshotToColumns({ columns: [], cards: [ctxCard({ id: 'a' })] });
+      expect(columns).toEqual([{ name: 'Unknown', cards: [expect.objectContaining({ id: 'a' })] }]);
+    });
+
+    test('never asserts `blocked` off an unjudged edge (#61)', () => {
+      const columns = snapshotToColumns({
+        columns: [{ id: 'k1', name: 'Todo' }],
+        cards: [ctxCard({ id: 'a', columnId: 'k1', blockedBy: ['x'] })],
+      });
+
+      expect(columns[0].cards[0].blocked).toBeUndefined();
+    });
+
+    test('carries owner across as the render card assignee', () => {
+      const columns = snapshotToColumns({
+        columns: [{ id: 'k1', name: 'Todo' }],
+        cards: [ctxCard({ id: 'a', columnId: 'k1', owner: 'ada', tags: ['bug'], due: '2026-08-02' })],
+      });
+
+      expect(columns[0].cards[0]).toEqual({
+        id: 'a', title: 'card a', assignee: 'ada', tags: ['bug'], status: undefined, due: '2026-08-02',
+      });
     });
   });
 });

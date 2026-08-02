@@ -9,11 +9,9 @@
  *   Overdue ratio: % cards past due date (15%)
  */
 import { Command } from 'commander';
-import { createFavroClient } from '../lib/client-factory';
-import { readConfig } from '../lib/config';
-import AggregateAPI, { AggregateBoard, AggregateCard } from '../api/aggregate';
-import { outputResult, resolveFormat } from '../lib/output';
-import { logError } from '../lib/error-handler';
+import { AggregateCard } from '../api/aggregate';
+import { Ctx, run } from '../lib/run';
+import { daysSince } from '../lib/time';
 
 // 'approved' and 'done' are unreachable here — `nonDone` strips DONE_STAGES
 // before the flow numerator is computed. Kept so the list reads as the full set
@@ -45,13 +43,6 @@ interface HealthResult {
   overallScore: number;
   overallSignal: 'green' | 'yellow' | 'red';
   generatedAt: string;
-}
-
-function daysSince(dateStr?: string): number {
-  if (!dateStr) return Infinity;
-  const d = new Date(dateStr);
-  if (isNaN(d.getTime())) return Infinity;
-  return Math.floor((Date.now() - d.getTime()) / (1000 * 60 * 60 * 24));
 }
 
 export function scoreBoard(cards: AggregateCard[]): BoardHealth['breakdown'] {
@@ -139,62 +130,66 @@ function formatHuman(data: HealthResult): string {
   return lines.join('\n');
 }
 
+interface HealthOptions {
+  collection?: string;
+  limit: string;
+}
+
+/**
+ * No `exitCode` on the `Result`.
+ *
+ * ADR-0002 and #115 both describe `health` as exiting 1 on an unhealthy report
+ * — it never has. The only hard exit this command carried was the error
+ * boundary's, and the same is true of `release-check` and `diff`. Turning a red
+ * signal into a non-zero exit would be a new behaviour, not a migration, so it
+ * is raised on the issue rather than smuggled in here.
+ */
+export async function healthHandler(ctx: Ctx, options: HealthOptions) {
+  const cardLimit = parseInt(options.limit, 10) || 1000;
+
+  let snapshot;
+  let scope: string;
+  if (options.collection) {
+    snapshot = await ctx.api.aggregate.getCollectionSnapshot(options.collection, cardLimit);
+    scope = options.collection;
+  } else if (ctx.config.scopeCollectionId) {
+    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({ collectionIds: [ctx.config.scopeCollectionId] }, cardLimit);
+    scope = ctx.config.scopeCollectionName ?? ctx.config.scopeCollectionId;
+  } else {
+    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({}, cardLimit);
+    scope = 'all collections';
+  }
+
+  // Group cards by board
+  const boardCardMap = new Map<string, AggregateCard[]>();
+  for (const card of snapshot.allCards) {
+    const bName = card.boardName ?? 'Unknown';
+    if (!boardCardMap.has(bName)) boardCardMap.set(bName, []);
+    boardCardMap.get(bName)!.push(card);
+  }
+
+  const { boards, overallScore, overallSignal } = rollUp(
+    Array.from(boardCardMap.entries()).map(([name, cards]) => computeHealth(name, cards)),
+  );
+
+  const result: HealthResult = {
+    scope,
+    boards,
+    overallScore,
+    overallSignal,
+    generatedAt: new Date().toISOString(),
+  };
+
+  return { item: result, human: formatHuman };
+}
+
 export function registerHealthCommand(program: Command): void {
   program
     .command('health')
     .description('Per-board health scores with traffic-light indicators (LLM-first JSON)')
     .option('--collection <name>', 'Filter to a specific collection')
     .option('--limit <n>', 'Max cards', '1000')
-    .option('--human', 'Human-readable formatted output')
-    .option('--json', 'JSON output (default)')
-    .action(async (options) => {
-      const verbose = program.opts()?.verbose ?? false;
-      try {
-        const client = await createFavroClient();
-        const api = new AggregateAPI(client);
-        const config = await readConfig();
-        const cardLimit = parseInt(options.limit, 10) || 1000;
-
-        let snapshot;
-        let scope: string;
-        if (options.collection) {
-          snapshot = await api.getCollectionSnapshot(options.collection, cardLimit);
-          scope = options.collection;
-        } else if (config.scopeCollectionId) {
-          snapshot = await api.getMultiBoardSnapshot({ collectionIds: [config.scopeCollectionId] }, cardLimit);
-          scope = config.scopeCollectionName ?? config.scopeCollectionId;
-        } else {
-          snapshot = await api.getMultiBoardSnapshot({}, cardLimit);
-          scope = 'all collections';
-        }
-
-        // Group cards by board
-        const boardCardMap = new Map<string, AggregateCard[]>();
-        for (const card of snapshot.allCards) {
-          const bName = (card as any).boardName ?? 'Unknown';
-          if (!boardCardMap.has(bName)) boardCardMap.set(bName, []);
-          boardCardMap.get(bName)!.push(card);
-        }
-
-        const { boards, overallScore, overallSignal } = rollUp(
-          Array.from(boardCardMap.entries()).map(([name, cards]) => computeHealth(name, cards)),
-        );
-
-        const result: HealthResult = {
-          scope,
-          boards,
-          overallScore,
-          overallSignal,
-          generatedAt: new Date().toISOString(),
-        };
-
-        const format = resolveFormat(options);
-        outputResult(result, { format }, formatHuman);
-      } catch (err: any) {
-        logError(err, verbose);
-        process.exit(1);
-      }
-    });
+    .action(run(healthHandler));
 }
 
 export default registerHealthCommand;

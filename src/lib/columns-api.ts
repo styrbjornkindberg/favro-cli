@@ -1,4 +1,5 @@
 import FavroHttpClient from './http-client';
+import { getAllPages } from './paginate';
 
 export interface Column {
   columnId: string;
@@ -15,12 +16,6 @@ export interface Column {
   estimationSum?: number;
 }
 
-export interface PaginatedResponse<T> {
-  entities: T[];
-  requestId?: string;
-  pages?: number;
-}
-
 export class ColumnsAPI {
   constructor(private client: FavroHttpClient) {}
 
@@ -28,29 +23,7 @@ export class ColumnsAPI {
    * List all columns for a specific board.
    */
   async listColumns(boardId: string): Promise<Column[]> {
-    const allColumns: Column[] = [];
-    let requestId: string | undefined;
-    let page = 0;
-
-    while (true) {
-      const params: Record<string, any> = { widgetCommonId: boardId };
-      if (requestId) {
-        params.requestId = requestId;
-        params.page = page;
-      }
-
-      const response = await this.client.get<PaginatedResponse<Column>>('/columns', { params });
-      
-      if (response && response.entities) {
-        allColumns.push(...response.entities);
-      }
-
-      requestId = response.requestId;
-      if (!requestId || !response.pages || page >= response.pages - 1 || !response.entities || response.entities.length === 0) {
-        break;
-      }
-      page++;
-    }
+    const allColumns = await getAllPages<Column>(this.client, '/columns', { widgetCommonId: boardId });
 
     return allColumns.sort((a, b) => a.position - b.position);
   }

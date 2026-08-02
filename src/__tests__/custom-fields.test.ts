@@ -198,11 +198,13 @@ describe('CustomFieldsAPI', () => {
       const result = await api.listFields('board-1');
       expect(result).toHaveLength(2);
       expect(mockClient.get).toHaveBeenCalledTimes(2);
-      // Second call should include requestId and page
+      // Second call should include requestId and the NEXT page. Favro's cursor is
+      // 0-based and the opening call carries none, so the second call asks for
+      // page 1 — this used to assert `page: 2`, which skipped a page (#91).
       expect(mockClient.get).toHaveBeenNthCalledWith(
         2,
         '/customfields',
-        expect.objectContaining({ params: expect.objectContaining({ requestId: 'req-1', page: 2, widgetCommonId: 'board-1' }) })
+        expect.objectContaining({ params: expect.objectContaining({ requestId: 'req-1', page: 1, widgetCommonId: 'board-1' }) })
       );
     });
 

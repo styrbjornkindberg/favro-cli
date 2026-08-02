@@ -30,7 +30,8 @@ function buildProgram(mockGetBoardWithIncludes: jest.Mock) {
   } as any));
 
   const parent = new Command();
-  parent.option('--verbose', 'verbose');
+  parent.option('--verbose', 'verbose').option('--human').option('--pretty');
+  parent.exitOverride();
   const boardsCmd = parent.command('boards');
   registerBoardsGetCommand(boardsCmd);
   return parent;
@@ -39,21 +40,23 @@ function buildProgram(mockGetBoardWithIncludes: jest.Mock) {
 describe('boards get command', () => {
   let consoleSpy: jest.SpyInstance;
   let consoleErrorSpy: jest.SpyInstance;
-  let exitSpy: jest.SpyInstance;
 
   beforeEach(() => {
+    process.exitCode = undefined;
     consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
     consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => { throw new Error('process.exit'); });
     jest.spyOn(config, 'resolveApiKey').mockResolvedValue('test-token');
   });
 
-  afterEach(() => jest.restoreAllMocks());
+  afterEach(() => {
+    jest.restoreAllMocks();
+    process.exitCode = undefined;
+  });
 
   test('gets board by id and prints details', async () => {
     const mockGet = jest.fn().mockResolvedValue(sampleBoard);
     const program = buildProgram(mockGet);
-    await program.parseAsync(['node', 'test', 'boards', 'get', 'board-1']);
+    await program.parseAsync(['node', 'test', 'boards', 'get', 'board-1', '--human']);
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Sprint Board'));
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('board-1'));
     expect(mockGet).toHaveBeenCalledWith('board-1', undefined);
@@ -62,7 +65,7 @@ describe('boards get command', () => {
   test('gets board with --include option', async () => {
     const mockGet = jest.fn().mockResolvedValue(sampleBoard);
     const program = buildProgram(mockGet);
-    await program.parseAsync(['node', 'test', 'boards', 'get', 'board-1', '--include', 'members,stats']);
+    await program.parseAsync(['node', 'test', 'boards', 'get', 'board-1', '--include', 'members,stats', '--human']);
     expect(mockGet).toHaveBeenCalledWith('board-1', ['members', 'stats']);
   });
 
@@ -71,15 +74,22 @@ describe('boards get command', () => {
     const program = buildProgram(mockGet);
     await program.parseAsync([
       'node', 'test', 'boards', 'get', 'board-1',
-      '--include', 'custom-fields,cards,members,stats,velocity',
+      '--include', 'custom-fields,cards,members,stats,velocity', '--human',
     ]);
     expect(mockGet).toHaveBeenCalledWith('board-1', ['custom-fields', 'cards', 'members', 'stats', 'velocity']);
   });
 
-  test('outputs json when --json flag provided', async () => {
+  test('with no flags it emits the bare item — a single read stays unwrapped', async () => {
     const mockGet = jest.fn().mockResolvedValue(sampleBoard);
     const program = buildProgram(mockGet);
-    await program.parseAsync(['node', 'test', 'boards', 'get', 'board-1', '--json']);
+    await program.parseAsync(['node', 'test', 'boards', 'get', 'board-1']);
+    expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify(sampleBoard));
+  });
+
+  test('--pretty indents it', async () => {
+    const mockGet = jest.fn().mockResolvedValue(sampleBoard);
+    const program = buildProgram(mockGet);
+    await program.parseAsync(['node', 'test', 'boards', 'get', 'board-1', '--pretty']);
     expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify(sampleBoard, null, 2));
   });
 
@@ -91,9 +101,8 @@ describe('boards get command', () => {
       new Error('No board named "bad-id" — it is missing or not visible to your key.')
     );
     const program = buildProgram(mockGet);
-    await expect(
-      program.parseAsync(['node', 'test', 'boards', 'get', 'bad-id'])
-    ).rejects.toThrow('process.exit');
+    await program.parseAsync(['node', 'test', 'boards', 'get', 'bad-id', '--human']);
+    expect(process.exitCode).toBe(1);
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('missing or not visible to your key'));
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('bad-id'));
   });
@@ -101,16 +110,15 @@ describe('boards get command', () => {
   test('passes a name through to the API untouched, so resolution stays server-side', async () => {
     const mockGet = jest.fn().mockResolvedValue(sampleBoard);
     const program = buildProgram(mockGet);
-    await program.parseAsync(['node', 'test', 'boards', 'get', 'Backlog - Web Hub']);
+    await program.parseAsync(['node', 'test', 'boards', 'get', 'Backlog - Web Hub', '--human']);
     expect(mockGet).toHaveBeenCalledWith('Backlog - Web Hub', undefined);
   });
 
   test('exits with error for invalid include option', async () => {
     const mockGet = jest.fn().mockResolvedValue(sampleBoard);
     const program = buildProgram(mockGet);
-    await expect(
-      program.parseAsync(['node', 'test', 'boards', 'get', 'board-1', '--include', 'invalid-option'])
-    ).rejects.toThrow('process.exit');
+    await program.parseAsync(['node', 'test', 'boards', 'get', 'board-1', '--include', 'invalid-option', '--human']);
+    expect(process.exitCode).toBe(1);
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid include option'));
   });
 
@@ -118,9 +126,8 @@ describe('boards get command', () => {
     jest.spyOn(config, 'resolveApiKey').mockResolvedValue(null as any);
     const mockGet = jest.fn();
     const program = buildProgram(mockGet);
-    await expect(
-      program.parseAsync(['node', 'test', 'boards', 'get', 'board-1'])
-    ).rejects.toThrow('process.exit');
+    await program.parseAsync(['node', 'test', 'boards', 'get', 'board-1', '--human']);
+    expect(process.exitCode).toBe(1);
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Error:'));
     expect(mockGet).not.toHaveBeenCalled();
   });
@@ -132,7 +139,7 @@ describe('boards get command', () => {
     };
     const mockGet = jest.fn().mockResolvedValue(boardWithMembers);
     const program = buildProgram(mockGet);
-    await program.parseAsync(['node', 'test', 'boards', 'get', 'board-1', '--include', 'members']);
+    await program.parseAsync(['node', 'test', 'boards', 'get', 'board-1', '--include', 'members', '--human']);
     // Should print members table - just check it called console.log multiple times
     expect(consoleSpy.mock.calls.length).toBeGreaterThan(2);
   });
@@ -144,7 +151,7 @@ describe('boards get command', () => {
     };
     const mockGet = jest.fn().mockResolvedValue(boardWithStats);
     const program = buildProgram(mockGet);
-    await program.parseAsync(['node', 'test', 'boards', 'get', 'board-1', '--include', 'stats']);
+    await program.parseAsync(['node', 'test', 'boards', 'get', 'board-1', '--include', 'stats', '--human']);
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Stats'));
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('10'));
   });
@@ -156,7 +163,7 @@ describe('boards get command', () => {
     };
     const mockGet = jest.fn().mockResolvedValue(boardWithVelocity);
     const program = buildProgram(mockGet);
-    await program.parseAsync(['node', 'test', 'boards', 'get', 'board-1', '--include', 'velocity']);
+    await program.parseAsync(['node', 'test', 'boards', 'get', 'board-1', '--include', 'velocity', '--human']);
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Velocity'));
   });
 
@@ -167,7 +174,7 @@ describe('boards get command', () => {
     };
     const mockGet = jest.fn().mockResolvedValue(boardWithFields);
     const program = buildProgram(mockGet);
-    await program.parseAsync(['node', 'test', 'boards', 'get', 'board-1', '--include', 'custom-fields']);
+    await program.parseAsync(['node', 'test', 'boards', 'get', 'board-1', '--include', 'custom-fields', '--human']);
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Custom Fields'));
   });
 
@@ -175,8 +182,8 @@ describe('boards get command', () => {
     const err = new Error('Network error');
     const mockGet = jest.fn().mockRejectedValue(err);
     const program = buildProgram(mockGet);
-    await expect(
-      program.parseAsync(['node', 'test', 'boards', 'get', 'board-1'])
-    ).rejects.toThrow('process.exit');
+    await program.parseAsync(['node', 'test', 'boards', 'get', 'board-1', '--human']);
+    expect(process.exitCode).toBe(1);
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Network error'));
   });
 });

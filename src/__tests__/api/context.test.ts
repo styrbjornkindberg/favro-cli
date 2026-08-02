@@ -2,7 +2,7 @@
  * Unit tests — ContextAPI
  * CLA-1796 / FAVRO-034: Board Context Snapshot Command
  */
-import ContextAPI from '../../api/context';
+import ContextAPI, { buildWorkflow, extractEffort, ContextCard } from '../../api/context';
 import FavroHttpClient from '../../lib/http-client';
 import BoardsAPI from '../../lib/boards-api';
 import CardsAPI from '../../lib/cards-api';
@@ -110,34 +110,31 @@ beforeEach(() => {
 
 // ─── resolveBoard ─────────────────────────────────────────────────────────────
 
+// `resolveBoard` is one call into the resolver now (#122) — no local listing,
+// no substring fallback. What it *resolves to* is BoardsAPI's contract and is
+// pinned against a real wire in `boards-collections-resolve-wire.test.ts` and
+// `context-aggregate-resolve-wire.test.ts`; all this mocked suite can honestly
+// assert is that nothing is done to the argument on the way in or the answer
+// on the way out.
 describe('ContextAPI.resolveBoard()', () => {
-  it('resolves board by direct ID lookup', async () => {
-    const api = buildAPI();
-    const board = await api.resolveBoard('boards-1234');
-    expect(board.boardId).toBe('boards-1234');
-    expect(MockBoardsAPI.prototype.getBoard).toHaveBeenCalledWith('boards-1234');
-  });
-
-  it('falls back to name search when ID lookup fails', async () => {
-    MockBoardsAPI.prototype.getBoard.mockRejectedValue(new Error('Not found'));
+  it('hands the reference to the resolver untouched', async () => {
     const api = buildAPI();
     const board = await api.resolveBoard('Sprint 42');
     expect(board.boardId).toBe('boards-1234');
-    expect(MockBoardsAPI.prototype.listBoards).toHaveBeenCalled();
+    expect(MockBoardsAPI.prototype.getBoard).toHaveBeenCalledWith('Sprint 42');
   });
 
-  it('matches board by partial name (case-insensitive)', async () => {
-    MockBoardsAPI.prototype.getBoard.mockRejectedValue(new Error('Not found'));
+  it('never lists boards itself — the 100-board cap is gone with the fallback', async () => {
     const api = buildAPI();
-    const board = await api.resolveBoard('sprint');
-    expect(board.boardId).toBe('boards-1234');
+    await api.resolveBoard('Sprint 42');
+    expect(MockBoardsAPI.prototype.listBoards).not.toHaveBeenCalled();
   });
 
-  it('throws if board not found by name or ID', async () => {
-    MockBoardsAPI.prototype.getBoard.mockRejectedValue(new Error('Not found'));
-    MockBoardsAPI.prototype.listBoards.mockResolvedValue([]);
+  it('propagates the resolver’s refusal instead of guessing a partial match', async () => {
+    MockBoardsAPI.prototype.getBoard.mockRejectedValue(new Error('2 boards are named "Sprint"'));
     const api = buildAPI();
-    await expect(api.resolveBoard('unknown-board')).rejects.toThrow('Board not found');
+    await expect(api.resolveBoard('Sprint')).rejects.toThrow('2 boards are named "Sprint"');
+    expect(MockBoardsAPI.prototype.listBoards).not.toHaveBeenCalled();
   });
 });
 
@@ -331,5 +328,60 @@ describe('ContextAPI performance', () => {
 
     expect(snapshot.cards).toHaveLength(500);
     expect(elapsed).toBeLessThan(1000);
+  });
+});
+
+// ─── Shared helpers (#89) ────────────────────────────────────────────────────
+// `buildWorkflow` and `extractEffort` each had copies elsewhere. These pin the
+// one that survives, before the other call sites are pointed at it.
+
+describe('buildWorkflow', () => {
+  it('numbers steps from 1 and points each at the next column by NAME', () => {
+    const steps = buildWorkflow([
+      { id: 'c1', name: 'Backlog' },
+      { id: 'c2', name: 'In Progress' },
+      { id: 'c3', name: 'Done' },
+    ]);
+
+    expect(steps).toEqual([
+      { columnId: 'c1', columnName: 'Backlog', position: 1, stage: 'backlog', nextColumn: 'In Progress' },
+      { columnId: 'c2', columnName: 'In Progress', position: 2, stage: 'active', nextColumn: 'Done' },
+      { columnId: 'c3', columnName: 'Done', position: 3, stage: 'done', nextColumn: undefined },
+    ]);
+  });
+
+  it('returns an empty workflow for a board with no columns', () => {
+    expect(buildWorkflow([])).toEqual([]);
+  });
+});
+
+describe('extractEffort', () => {
+  const withFields = (customFields?: Record<string, unknown>): ContextCard =>
+    ({ id: 'c1', title: 'Card', customFields }) as ContextCard;
+
+  it('reads an effort-shaped field name, whatever its casing', () => {
+    expect(extractEffort(withFields({ effort: 3 }))).toBe(3);
+    expect(extractEffort(withFields({ Effort: 5 }))).toBe(5);
+  });
+
+  it('reads the story-point spellings', () => {
+    expect(extractEffort(withFields({ 'story points': '8' }))).toBe(8);
+    expect(extractEffort(withFields({ 'Story Points': '3' }))).toBe(3);
+    expect(extractEffort(withFields({ Points: 2 }))).toBe(2);
+    expect(extractEffort(withFields({ Estimate: 8 }))).toBe(8);
+  });
+
+  it('is undefined — never 0 — when there is nothing to read', () => {
+    expect(extractEffort(withFields(undefined))).toBeUndefined();
+    expect(extractEffort(withFields({}))).toBeUndefined();
+    expect(extractEffort(withFields({ Team: 'Platform' }))).toBeUndefined();
+  });
+
+  it('is undefined for an effort field that is not a number', () => {
+    expect(extractEffort(withFields({ effort: 'large' }))).toBeUndefined();
+  });
+
+  it('keeps looking past an effort field with no value in it', () => {
+    expect(extractEffort(withFields({ effort: null, Points: 4 }))).toBe(4);
   });
 });

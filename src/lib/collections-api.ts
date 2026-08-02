@@ -5,10 +5,16 @@
  * Provides list, get, create, and update operations for Favro collections.
  */
 import FavroHttpClient from './http-client';
+import { getAllPages } from './paginate';
 import { Board } from './boards-api';
 import { classifyThrownError } from './favro-error';
 import { looksLikeName, resolveNameToId } from './name-resolve';
 
+/**
+ * The wider of the two `Collection` interfaces, and the one to keep — see the
+ * twin at `boards-api.ts` for why both still exist and who collapses them
+ * (#123).
+ */
 export interface Collection {
   collectionId: string;
   name: string;
@@ -20,12 +26,6 @@ export interface Collection {
   updatedAt: string;
 }
 
-interface PaginatedResponse<T> {
-  entities: T[];
-  requestId?: string;
-  pages?: number;
-}
-
 export class CollectionsAPI {
   constructor(private client: FavroHttpClient) {}
 
@@ -33,27 +33,7 @@ export class CollectionsAPI {
    * List all collections with full pagination.
    */
   async listCollections(pageSize = 50): Promise<Collection[]> {
-    const all: Collection[] = [];
-    let requestId: string | undefined;
-    let page = 1;
-
-    while (true) {
-      const params: Record<string, any> = { limit: pageSize };
-      if (requestId) {
-        params.requestId = requestId;
-        params.page = page;
-      }
-
-      const response = await this.client.get<PaginatedResponse<Collection>>('/collections', { params });
-      const collections = (response?.entities) ?? [];
-      all.push(...collections);
-
-      requestId = response?.requestId;
-      if (!requestId || !response?.pages || page >= response.pages || collections.length === 0) break;
-      page++;
-    }
-
-    return all;
+    return getAllPages<Collection>(this.client, '/collections', { limit: pageSize });
   }
 
   /**

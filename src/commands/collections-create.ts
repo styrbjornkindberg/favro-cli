@@ -5,9 +5,8 @@
  * favro collections create --name "NAME" [--description "DESC"]
  */
 import { Command } from 'commander';
-import CollectionsAPI from '../lib/collections-api';
-import { createFavroClient } from '../lib/client-factory';
-import { logError } from '../lib/error-handler';
+import { Collection } from '../lib/collections-api';
+import { run } from '../lib/run';
 
 // No scope-lock check here, and that is the decision (#104), not an oversight.
 // The lock is a COLLECTION lock — it resolves the board (or collection) a write
@@ -28,48 +27,35 @@ export function registerCollectionsCreateCommand(collectionsParent: Command): vo
     .description('Create a new collection')
     .requiredOption('--name <name>', 'Collection name')
     .option('--description <text>', 'Collection description')
-    .option('--json', 'Output created collection as JSON')
     .option('--dry-run', 'Print what would be created without making API calls')
-    .action(async (options) => {
-      const verbose = collectionsParent.parent?.opts()?.verbose ?? false;
-      try {
+    .action(run(async (ctx, options: { name?: string; description?: string; dryRun?: boolean }) => {
+      const name = options.name?.trim();
+      if (!name) {
+        throw new Error('Collection name cannot be empty or whitespace-only');
+      }
 
-        const name = options.name?.trim();
-        if (!name) {
-          console.error('Error: Collection name cannot be empty or whitespace-only');
-          process.exit(1);
+      if (options.dryRun) {
+        console.log(`[dry-run] Would create collection: "${name}"`);
+        if (options.description) {
+          console.log(`[dry-run] Description: "${options.description}"`);
         }
+        return;
+      }
 
-        if (options.dryRun) {
-          console.log(`[dry-run] Would create collection: "${name}"`);
-          if (options.description) {
-            console.log(`[dry-run] Description: "${options.description}"`);
-          }
-          return;
-        }
-
-        const client = await createFavroClient();
-        const api = new CollectionsAPI(client);
-
-        const collection = await api.createCollection({
+      return {
+        item: await ctx.api.collections.createCollection({
           name,
           description: options.description,
-        });
-
-        console.log(`✓ Collection created: ${collection.collectionId}`);
-        console.log(`  Name: ${collection.name}`);
-        if (collection.description) {
-          console.log(`  Description: ${collection.description}`);
-        }
-
-        if (options.json) {
-          console.log(JSON.stringify(collection, null, 2));
-        }
-      } catch (error) {
-        logError(error, verbose);
-        process.exit(1);
-      }
-    });
+        }),
+        human: (created: Collection) => {
+          console.log(`✓ Collection created: ${created.collectionId}`);
+          console.log(`  Name: ${created.name}`);
+          if (created.description) {
+            console.log(`  Description: ${created.description}`);
+          }
+        },
+      };
+    }));
 }
 
 export default registerCollectionsCreateCommand;

@@ -3,6 +3,7 @@
  * CLA-1790 FAVRO-028: Implement Webhooks API
  */
 import FavroHttpClient from '../lib/http-client';
+import { getAllPages } from '../lib/paginate';
 import { Webhook, WebhookEvent, VALID_WEBHOOK_EVENTS } from '../types/webhooks';
 
 export { Webhook, WebhookEvent, VALID_WEBHOOK_EVENTS };
@@ -16,12 +17,6 @@ interface RawWebhook {
   organizationId?: string;
   createdAt?: string;
   updatedAt?: string;
-}
-
-interface PaginatedResponse<T> {
-  entities: T[];
-  requestId?: string;
-  pages?: number;
 }
 
 function normalizeWebhook(raw: RawWebhook): Webhook {
@@ -62,31 +57,8 @@ export class FavroWebhooksAPI {
    * List all webhooks for the organization.
    */
   async list(): Promise<Webhook[]> {
-    const allWebhooks: Webhook[] = [];
-    let requestId: string | undefined;
-    let page = 1;
-
-    while (true) {
-      const params: Record<string, any> = { limit: 100 };
-      if (requestId) {
-        params.requestId = requestId;
-        params.page = page;
-      }
-
-      const response = await this.client.get<PaginatedResponse<RawWebhook>>(
-        '/webhooks',
-        { params }
-      );
-
-      const batch = (response.entities ?? []).map(normalizeWebhook);
-      allWebhooks.push(...batch);
-
-      requestId = response.requestId;
-      if (!requestId || !response.pages || page >= response.pages || batch.length === 0) break;
-      page++;
-    }
-
-    return allWebhooks;
+    const raw = await getAllPages<RawWebhook>(this.client, '/webhooks', { limit: 100 });
+    return raw.map(normalizeWebhook);
   }
 
   /**

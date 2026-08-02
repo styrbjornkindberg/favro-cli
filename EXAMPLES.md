@@ -622,7 +622,7 @@ favro boards get board-001 --include custom-fields,cards,members,stats,velocity
 IDs rarely change. Store them in environment variables to avoid repeated list calls:
 
 ```bash
-export SPRINT_BOARD=$(favro boards list --json | jq -r '.[] | select(.name == "Sprint 43") | .boardId')
+export SPRINT_BOARD=$(favro boards list | jq -r '.rows[] | select(.name == "Sprint 43") | .boardId')
 favro cards list --board $SPRINT_BOARD
 favro activity log $SPRINT_BOARD --since 1d
 ```
@@ -641,7 +641,7 @@ done
 
 ---
 
-## AI-Powered Workflows (SPEC-003)
+## AI-Powered Workflows
 
 These workflows leverage LLM-driven commands to automate complex tasks.
 
@@ -656,13 +656,15 @@ favro context sprint-42 > board-snapshot.json
 # 2. Query for "In Progress" code review cards
 favro query sprint-42 "status:In Progress label:code-review"
 
-# 3. Propose auto-assignment of unassigned code reviews to alice
-favro propose sprint-42 'assign all code-review cards with no owner to alice' \
-  > proposal-$(date +%s).json
+# 3. Preview assigning the unassigned code reviews to alice
+favro batch assign --board sprint-42 \
+  --filter "status:In Progress" --filter "tag:code-review" \
+  --to alice --dry-run
 
-# 4. Review and execute the proposal
-change_id=$(jq -r '.changeId' proposal-*.json)
-favro execute $change_id
+# 4. Apply once the preview reads right
+favro batch assign --board sprint-42 \
+  --filter "status:In Progress" --filter "tag:code-review" \
+  --to alice
 ```
 
 ### Workflow: Sprint Planning & Prioritization
@@ -676,12 +678,9 @@ favro sprint-plan sprint-42 --budget 40 > sprint-plan.json
 # 2. Review suggestions (see cards, priority scores)
 cat sprint-plan.json | jq '.suggestions[] | {title, priority_score, cumulative}'
 
-# 3. Move suggested cards to "Approved" status
-for card_id in $(jq -r '.suggestions[].id' sprint-plan.json); do
-  favro propose sprint-42 "move card $card_id to Approved" | \
-    jq -r '.changeId' | \
-    xargs -I {} favro execute {}
-done
+# 3. Turn the suggestions into a CSV and preview the status change
+jq -r '"card_id,status", (.suggestions[] | "\(.id),Approved")' sprint-plan.json > approve.csv
+favro batch update --from-csv approve.csv --dry-run
 
 # 4. Standup: see what's in progress vs what's due soon
 favro standup sprint-42
@@ -693,7 +692,8 @@ Use `favro-cli` to manage shared household projects:
 
 ```bash
 # 1. Initialize a household project board (one-time setup)
-board_id=$(favro boards create "2026 Home Projects" --json | jq -r '.boardId')
+collection_id=$(favro collections list | jq -r '.rows[0].collectionId')
+board_id=$(favro boards create "$collection_id" --name "2026 Home Projects" | jq -r '.boardId')
 
 # 2. Bulk create tasks from a list
 echo "Renovate kitchen,Garden fence repair,Paint basement" | \
@@ -702,16 +702,13 @@ echo "Renovate kitchen,Garden fence repair,Paint basement" | \
     favro cards create "$task" --board $board_id --status Backlog
   done
 
-# 3. Parse natural language actions: "assign kitchen to alice"
-favro parse 'assign "Renovate kitchen" to alice'
-
-# 4. Semantic search: find overdue tasks
+# 3. Semantic search: find overdue tasks
 favro query $board_id "due:<today"
 
-# 5. Batch close done items
+# 4. Batch close done items
 favro batch-smart $board_id --goal "close all Done cards"
 
-# 6. Standup: summary of what's blocked, due soon, in progress
+# 5. Standup: summary of what's blocked, due soon, in progress
 favro standup $board_id
 ```
 
@@ -721,7 +718,8 @@ Monitor and resolve technical debt semi-automatically:
 
 ```bash
 # 1. Create a "Technical Debt" board
-debt_board=$(favro boards create "Tech Debt Q1 2026" --json | jq -r '.boardId')
+collection_id=$(favro collections list | jq -r '.rows[0].collectionId')
+debt_board=$(favro boards create "$collection_id" --name "Tech Debt Q1 2026" | jq -r '.boardId')
 
 # 2. Get board context for analysis
 favro context $debt_board > debt-snapshot.json
@@ -729,8 +727,10 @@ favro context $debt_board > debt-snapshot.json
 # 3. Query for high-priority items without owners
 favro query $debt_board "priority:high status:Backlog owner:none"
 
-# 4. Propose assignment of unassigned tech debt to the platform team
-favro propose $debt_board 'assign all high-priority tech debt with no owner to platform-team'
+# 4. Preview assigning that debt to the platform owner (drop --dry-run to apply)
+favro batch assign --board $debt_board \
+  --filter "status:Backlog" --filter "tag:tech-debt" \
+  --to platform-team --dry-run
 
 # 5. Standup on tech debt progress
 favro standup $debt_board
@@ -792,40 +792,6 @@ Error: Card '<card-id>' not found. May have been deleted or is on a different bo
 ```bash
 # Search for the card by name
 favro query <board-id> "title:partial card name"
-```
-
----
-
-### Parsing & Action Errors
-
-**Error: `Cannot parse action`**
-```
-Cannot parse move action. Expected: move card "<title>" from <status> to <status>
-```
-**Fix:** Check syntax. Examples:
-```bash
-# Correct
-favro propose board-id 'move "Fix bug" from Backlog to In Progress'
-favro propose board-id 'assign "Review PR" to alice'
-favro propose board-id 'close "Complete task"'
-
-# Incorrect (missing required parts)
-favro propose board-id 'move "Fix bug"'  # missing target status
-favro propose board-id 'assign "task"'    # missing assignee
-```
-
----
-
-**Error: `Ambiguous card name`**
-```
-Ambiguous: Found multiple cards matching "fix". Did you mean:
-  1. Fix login bug (card-001)
-  2. Fix API timeout (card-002)
-  3. Fix CI pipeline (card-003)
-```
-**Fix:** Be more specific with the card name:
-```bash
-favro propose board-id 'move "Fix login bug" to Done'
 ```
 
 ---

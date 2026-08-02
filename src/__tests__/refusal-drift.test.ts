@@ -38,10 +38,19 @@ const LIB_DIR = path.resolve(__dirname, '..', 'lib');
 const DECLARATION = /export class (\w+(?:Resolution|Lookup)Error)\b/g;
 
 /**
- * The refusals that predate the naming convention and would otherwise escape the
- * regex above. `refusal.ts` names these four as already compliant, so a
- * regression in one is exactly what this file exists to catch — and discovery
- * alone would not have looked at any of them.
+ * The refusals that would otherwise escape the regex above, because they are
+ * named irregularly. `refusal.ts` names them, so a regression in one is exactly
+ * what this file exists to catch — and discovery alone would not have looked at
+ * any of them.
+ *
+ * `ScopeError` is the odd one out and belongs here anyway (#120). It is not a
+ * RESOLUTION refusal — nothing was being looked up — so #81's sweep correctly
+ * passed over it and this file had no reason to find it. But it IS a refusal by
+ * the definition that matters: `isRetryable` tests `instanceof RefusalError`
+ * and nothing else, and while `ScopeError` extended bare `Error` a scope
+ * violation came back `retryable: true`. The contract this file guards is about
+ * that one `instanceof`, not about the word "resolution", so the scope lock is
+ * in scope.
  *
  * Listed because they are named irregularly, not because listing is preferred:
  * anything matching the convention is still found without an edit here.
@@ -51,6 +60,7 @@ const NAMED_IRREGULARLY: Array<[string, string]> = [
   ['card-reference.ts', 'CardResolutionError'],
   ['tracker-config.ts', 'TrackerConfigError'],
   ['dispatch.ts', 'ReverseEdgeError'],
+  ['safety.ts', 'ScopeError'],
 ];
 
 function declaredErrors(): Array<[string, string]> {
@@ -65,7 +75,7 @@ function declaredErrors(): Array<[string, string]> {
   return found;
 }
 
-describe('every resolution error in src/lib is a RefusalError', () => {
+describe('every resolution error in src/lib — and the scope lock — is a RefusalError', () => {
   const declared = declaredErrors();
 
   it('there are resolution errors to check at all', () => {

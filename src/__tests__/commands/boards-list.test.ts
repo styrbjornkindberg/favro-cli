@@ -5,11 +5,13 @@
 import { Command } from 'commander';
 import {
   registerBoardsListCommand,
+  listBoardsHandler,
   formatBoardsTable,
 } from '../../commands/boards-list';
 import BoardsAPI, { Board, Collection } from '../../lib/boards-api';
 import FavroHttpClient from '../../lib/http-client';
 import * as config from '../../lib/config';
+import type { Ctx } from '../../lib/run';
 
 jest.mock('../../lib/boards-api');
 jest.mock('../../lib/http-client');
@@ -79,40 +81,69 @@ function buildProgram(mockListBoards: jest.Mock, mockListCollections?: jest.Mock
   } as any));
 
   const program = new Command();
+  // The two flags the runner owns, declared where `cli.ts` declares them.
+  program.option('--human').option('--pretty').option('--verbose');
   program.exitOverride();
   const boardsParent = program.command('boards');
   registerBoardsListCommand(boardsParent);
   return program;
 }
 
+/**
+ * The seam ADR-0002 exists for: the handler, a fake `Ctx`, and the `Result`
+ * read straight back. No commander, no stdout, no `http-client` mock.
+ */
+describe('the handler returns a Result', () => {
+  const ctxWith = (boards: jest.Mock, byCollection = jest.fn()): Ctx =>
+    ({ api: { boards: { listBoards: boards, listBoardsByCollection: byCollection } } } as any);
+
+  test('a plain list comes back as rows, with a human formatter attached', async () => {
+    const result = await listBoardsHandler(ctxWith(jest.fn().mockResolvedValue(sampleBoards)), undefined, {});
+
+    expect(result.rows).toHaveLength(3);
+    expect(result.rows[0].boardId).toBe('board-1');
+    expect(typeof result.human).toBe('function');
+  });
+
+  test('the positional collection narrows on the wire and never sweeps', async () => {
+    const listAll = jest.fn();
+    const byCollection = jest.fn().mockResolvedValue([sampleBoards[1]]);
+
+    const result = await listBoardsHandler(ctxWith(listAll, byCollection), 'coll-2', {});
+
+    expect(listAll).not.toHaveBeenCalled();
+    expect(byCollection).toHaveBeenCalledWith('coll-2', undefined);
+    expect(result.rows).toEqual([sampleBoards[1]]);
+  });
+
+  test('an unknown --include is refused before any request goes out', async () => {
+    const listAll = jest.fn();
+
+    await expect(listBoardsHandler(ctxWith(listAll), undefined, { include: 'bogus' })).rejects.toThrow(
+      'Invalid --include values: bogus. Valid options: stats, velocity',
+    );
+    expect(listAll).not.toHaveBeenCalled();
+  });
+});
+
 describe('boards list command', () => {
   let consoleLogSpy: jest.SpyInstance;
   let consoleErrorSpy: jest.SpyInstance;
-  let exitSpy: jest.SpyInstance;
   let resolveApiKeySpy: jest.SpyInstance;
 
   beforeEach(() => {
-    resolveApiKeySpy = jest.spyOn(config, 'resolveApiKey').mockResolvedValue('test-token');
-    consoleLogSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
-    consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {
-      throw new Error('process.exit');
-    }) as any);
     jest.clearAllMocks();
-    // Re-mock after clearAllMocks
+    process.exitCode = undefined;
     resolveApiKeySpy = jest.spyOn(config, 'resolveApiKey').mockResolvedValue('test-token');
     consoleLogSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
     consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {
-      throw new Error('process.exit');
-    }) as any);
   });
 
   afterEach(() => {
     consoleLogSpy.mockRestore();
     consoleErrorSpy.mockRestore();
-    exitSpy.mockRestore();
     resolveApiKeySpy.mockRestore();
+    process.exitCode = undefined;
   });
 
   // --- list all boards ---
@@ -121,7 +152,7 @@ describe('boards list command', () => {
     const mockListBoards = jest.fn().mockResolvedValue(sampleBoards);
     const program = buildProgram(mockListBoards);
 
-    await program.parseAsync(['node', 'cli', 'boards', 'list']);
+    await program.parseAsync(['node', 'cli', 'boards', 'list', '--human']);
 
     expect(mockListBoards).toHaveBeenCalledWith(100);
     expect(consoleLogSpy).toHaveBeenCalledWith('Found 3 board(s):');
@@ -132,7 +163,7 @@ describe('boards list command', () => {
     const mockListBoards = jest.fn().mockResolvedValue(sampleBoards);
     const program = buildProgram(mockListBoards);
 
-    await program.parseAsync(['node', 'cli', 'boards', 'list']);
+    await program.parseAsync(['node', 'cli', 'boards', 'list', '--human']);
 
     expect(consoleLogSpy).toHaveBeenCalledWith('Found 3 board(s):');
   });
@@ -141,7 +172,7 @@ describe('boards list command', () => {
     const mockListBoards = jest.fn().mockResolvedValue([]);
     const program = buildProgram(mockListBoards);
 
-    await program.parseAsync(['node', 'cli', 'boards', 'list']);
+    await program.parseAsync(['node', 'cli', 'boards', 'list', '--human']);
 
     expect(consoleLogSpy).toHaveBeenCalledWith('Found 0 board(s):');
     expect(consoleLogSpy).toHaveBeenCalledWith('No boards found. Check your API key or collection permissions.');
@@ -152,13 +183,13 @@ function envelopeCall(spy: jest.SpyInstance): string {
   return String(spy.mock.calls.find(c => String(c[0]).startsWith('{"rows":'))![0]);
 }
 
-  // --- json output ---
+  // --- json output, which is now the default ---
 
-  test('--json outputs valid JSON', async () => {
+  test('with no flags it emits the envelope, not a table', async () => {
     const mockListBoards = jest.fn().mockResolvedValue(sampleBoards);
     const program = buildProgram(mockListBoards);
 
-    await program.parseAsync(['node', 'cli', 'boards', 'list', '--json']);
+    await program.parseAsync(['node', 'cli', 'boards', 'list']);
 
     // #44: a list read emits the `{rows}` envelope, not a bare array.
     expect(consoleLogSpy).toHaveBeenCalledWith(
@@ -169,16 +200,25 @@ function envelopeCall(spy: jest.SpyInstance): string {
     expect(parsed.rows[0].boardId).toBe('board-1');
   });
 
-  test('--json output contains board IDs and names', async () => {
+  test('the envelope carries board IDs and names', async () => {
     const mockListBoards = jest.fn().mockResolvedValue(sampleBoards);
     const program = buildProgram(mockListBoards);
 
-    await program.parseAsync(['node', 'cli', 'boards', 'list', '--json']);
+    await program.parseAsync(['node', 'cli', 'boards', 'list']);
 
     const parsed = JSON.parse(envelopeCall(consoleLogSpy));
     const names = parsed.rows.map((b: Board) => b.name);
     expect(names).toContain('Marketing Board');
     expect(names).toContain('Engineering Board');
+  });
+
+  test('--pretty indents the same envelope', async () => {
+    const mockListBoards = jest.fn().mockResolvedValue(sampleBoards);
+    const program = buildProgram(mockListBoards);
+
+    await program.parseAsync(['node', 'cli', 'boards', 'list', '--pretty']);
+
+    expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('\n  "rows": ['));
   });
 
   // --- collection filter (resolved and narrowed inside BoardsAPI) ---
@@ -188,7 +228,7 @@ function envelopeCall(spy: jest.SpyInstance): string {
     const mockByCollection = jest.fn().mockResolvedValue([sampleBoards[0], sampleBoards[2]]);
     const program = buildProgram(mockListBoards, undefined, mockByCollection);
 
-    await program.parseAsync(['node', 'cli', 'boards', 'list', '--collection', 'Marketing']);
+    await program.parseAsync(['node', 'cli', 'boards', 'list', '--collection', 'Marketing', '--human']);
 
     // No org-wide sweep and no client-side filter: one narrowed call.
     expect(mockListBoards).not.toHaveBeenCalled();
@@ -201,7 +241,7 @@ function envelopeCall(spy: jest.SpyInstance): string {
     const mockByCollection = jest.fn().mockResolvedValue([sampleBoards[1]]);
     const program = buildProgram(mockListBoards, undefined, mockByCollection);
 
-    await program.parseAsync(['node', 'cli', 'boards', 'list', 'coll-2']);
+    await program.parseAsync(['node', 'cli', 'boards', 'list', 'coll-2', '--human']);
 
     expect(mockByCollection).toHaveBeenCalledWith('coll-2', undefined);
     expect(consoleLogSpy).toHaveBeenCalledWith('Found 1 board(s):');
@@ -214,23 +254,21 @@ function envelopeCall(spy: jest.SpyInstance): string {
     );
     const program = buildProgram(mockListBoards, undefined, mockByCollection);
 
-    await expect(
-      program.parseAsync(['node', 'cli', 'boards', 'list', '--collection', 'NonExistent'])
-    ).rejects.toThrow('process.exit');
+    await program.parseAsync(['node', 'cli', 'boards', 'list', '--collection', 'NonExistent', '--human']);
 
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('NonExistent'));
     expect(consoleErrorSpy).toHaveBeenCalledWith(
       expect.stringContaining('missing or not visible to your key')
     );
   });
 
-  test('--collection --json outputs the narrowed boards as JSON', async () => {
+  test('--collection outputs the narrowed boards as an envelope', async () => {
     const mockListBoards = jest.fn().mockResolvedValue(sampleBoards);
     const mockByCollection = jest.fn().mockResolvedValue([sampleBoards[1]]);
     const program = buildProgram(mockListBoards, undefined, mockByCollection);
 
-    await program.parseAsync(['node', 'cli', 'boards', 'list', '--collection', 'Engineering', '--json']);
+    await program.parseAsync(['node', 'cli', 'boards', 'list', '--collection', 'Engineering']);
 
     const parsed = JSON.parse(envelopeCall(consoleLogSpy));
     expect(parsed.rows).toHaveLength(1);
@@ -244,36 +282,44 @@ function envelopeCall(spy: jest.SpyInstance): string {
     const mockListBoards = jest.fn();
     const program = buildProgram(mockListBoards);
 
-    await expect(
-      program.parseAsync(['node', 'cli', 'boards', 'list'])
-    ).rejects.toThrow('process.exit');
+    await program.parseAsync(['node', 'cli', 'boards', 'list', '--human']);
 
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('API key'));
     expect(mockListBoards).not.toHaveBeenCalled();
+  });
+
+  test('a failure in JSON mode is an envelope on stdout, not a bare stderr line', async () => {
+    const mockListBoards = jest.fn().mockRejectedValue(new Error('Network error'));
+    const program = buildProgram(mockListBoards);
+
+    await program.parseAsync(['node', 'cli', 'boards', 'list']);
+
+    expect(process.exitCode).toBe(1);
+    const written = consoleLogSpy.mock.calls.map(c => String(c[0])).find(s => s.startsWith('{"error"'));
+    expect(JSON.parse(written!).error.message).toBe('Network error');
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
   });
 
   test('exits 1 on API error', async () => {
     const mockListBoards = jest.fn().mockRejectedValue(new Error('Network error'));
     const program = buildProgram(mockListBoards);
 
-    await expect(
-      program.parseAsync(['node', 'cli', 'boards', 'list'])
-    ).rejects.toThrow('process.exit');
+    await program.parseAsync(['node', 'cli', 'boards', 'list', '--human']);
 
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Network error'));
   });
 
+  // The flag check now runs INSIDE the handler, so it happens after credential
+  // resolution — intended (#114): credentials are a precondition.
   test('--include bogus exits with error', async () => {
     const mockListBoards = jest.fn().mockResolvedValue(sampleBoards);
     const program = buildProgram(mockListBoards);
 
-    await expect(
-      program.parseAsync(['node', 'cli', 'boards', 'list', '--include', 'bogus'])
-    ).rejects.toThrow('process.exit');
+    await program.parseAsync(['node', 'cli', 'boards', 'list', '--include', 'bogus', '--human']);
 
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid --include values: bogus. Valid options: stats, velocity'));
     expect(mockListBoards).not.toHaveBeenCalled();
   });
@@ -282,11 +328,9 @@ function envelopeCall(spy: jest.SpyInstance): string {
     const mockListBoards = jest.fn().mockResolvedValue(sampleBoards);
     const program = buildProgram(mockListBoards);
 
-    await expect(
-      program.parseAsync(['node', 'cli', 'boards', 'list', '--include', 'stats,bogus'])
-    ).rejects.toThrow('process.exit');
+    await program.parseAsync(['node', 'cli', 'boards', 'list', '--include', 'stats,bogus', '--human']);
 
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid --include values: bogus. Valid options: stats, velocity'));
   });
 });

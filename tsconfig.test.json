@@ -1,0 +1,9 @@
+{
+  // Check-only config. The root tsconfig excludes **/*.test.ts so the build
+  // keeps them out of dist/; this one puts them back for `tsc --noEmit`.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "exclude": ["node_modules"]
+}

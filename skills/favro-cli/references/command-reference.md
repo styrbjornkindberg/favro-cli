@@ -269,8 +269,8 @@ List all comments on a card.
 
 | Flag | Description |
 |------|-------------|
-| `--limit <n>` | Max comments (default: 100) |
-| `--json` | Output raw JSON |
+| `--limit <n>` | Max comments **printed** (default: 100). The fetch always runs to completion, so a filter never sees a partial set |
+| `--json` | Output the list envelope — `{"rows":[...]}`, plus `"truncated":true` when `--limit` cut rows. Check `truncated` before treating `rows.length` as the total |
 
 ### `comments get <commentId>` 📖 READ
 Get a single comment by ID.
@@ -846,24 +846,6 @@ Supported goal patterns:
 - `assign all <filter> cards [with no owner] to <user>`
 - `close all <filter> cards`
 - `unassign all <filter> cards`
-
-### `propose <board>` 📖 READ (generates preview)
-Propose a change — generates a dry-run preview with a change ID.
-
-| Flag | Description |
-|------|-------------|
-| `--action <action>` | **Required.** Plain English action |
-| `--pretty` | Pretty-print output |
-
-### `execute <board>` ⚠️ WRITE
-Execute a proposed change.
-
-| Flag | Description |
-|------|-------------|
-| `--change-id <id>` | **Required.** From `propose` output |
-| `--pretty` | Pretty-print output |
-| `-y, --yes` | Skip confirmation |
-| `--force` | Bypass scope check |
 
 ### `risks <board>` 📖 READ
 Board risk analysis — surfaces blocked, stale, unassigned, and incomplete cards.

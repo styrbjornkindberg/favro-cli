@@ -279,6 +279,23 @@ function commandPath(actionCall: ts.CallExpression): string {
 }
 
 /**
+ * The function an expression names, however it was written: the function
+ * itself, an identifier bound to one, or an identifier whose TYPE is one.
+ *
+ * The last case is the whole reason this is not two lines: `const h = async
+ * (ctx: Ctx) => {…}` binds a `VariableDeclaration`, which `isFunctionish`
+ * rejects, so the symbol route misses it and only the type route finds the
+ * arrow. `calleeDeclaration` above needs the same fallback for the same reason.
+ */
+function resolvedFunction(arg: ts.Expression): ts.Node | undefined {
+  if (isFunctionish(arg)) return arg;
+  const direct = unalias(checker.getSymbolAtLocation(arg))?.declarations?.[0];
+  if (isFunctionish(direct)) return direct;
+  const viaType = unalias(checker.getTypeAtLocation(arg).getSymbol())?.declarations?.[0];
+  return isFunctionish(viaType) ? viaType : undefined;
+}
+
+/**
  * The body of an action, however it was passed: an inline arrow, a named
  * function, or a factory call (`.action(archiveAction(cardsCmd, true))`, which
  * is how `cards archive` registers).
@@ -286,9 +303,48 @@ function commandPath(actionCall: ts.CallExpression): string {
 function actionBody(arg: ts.Expression | undefined): ts.Node | undefined {
   if (!arg) return undefined;
   if (isFunctionish(arg)) return arg;
-  if (ts.isCallExpression(arg)) return calleeDeclaration(arg);
-  const decl = unalias(checker.getSymbolAtLocation(arg))?.declarations?.[0];
-  return isFunctionish(decl) ? decl : undefined;
+  if (ts.isCallExpression(arg)) {
+    // `.action(run(handler))` (#113/#114): the runner is the wrapper, the
+    // handler is the command. Resolving the call to `run` itself would read
+    // every migrated write as a non-write — the writes would silently leave
+    // this ratchet's sight one migration step at a time, and nothing would go
+    // red, because a command that writes nothing needs no lock. It has to find
+    // the handler whether it was written inline, hoisted to a `function`, or
+    // hoisted to a `const` — the last is what this ticket's own "test the
+    // handler with a fake Ctx" criterion pushes authors towards. A factory with
+    // no function argument (`archiveAction(cardsCmd, true)`) still resolves as
+    // before.
+    const handler = arg.arguments.map(resolvedFunction).find(isFunctionish);
+    if (handler) return handler;
+    return calleeDeclaration(arg);
+  }
+  return resolvedFunction(arg);
+}
+
+/**
+ * Every call to the command runner in a command module, with the handler it
+ * wraps.
+ *
+ * Resolved by DECLARATION, not by the name `run` — `cards-tracker.ts` has a
+ * local `run<T>()` helper of its own, and matching on the spelling would report
+ * its three call sites as untyped handlers.
+ */
+function runCalls(): Array<{ where: string; handler: ts.Node | undefined }> {
+  const found: Array<{ where: string; handler: ts.Node | undefined }> = [];
+  const isTheRunner = (callee: ts.Expression): boolean =>
+    (unalias(checker.getSymbolAtLocation(callee))?.declarations ?? []).some((d) =>
+      d.getSourceFile().fileName.endsWith(path.join('src', 'lib', 'run.ts')),
+    );
+  for (const sf of sourceFiles) {
+    const rel = path.relative(REPO_ROOT, sf.fileName).split(path.sep).join('/');
+    if (rel !== 'src/cli.ts' && !rel.startsWith('src/commands/')) continue;
+    walk(sf, (n) => {
+      if (!ts.isCallExpression(n) || !isTheRunner(n.expression)) return;
+      const line = sf.getLineAndCharacterOfPosition(n.getStart()).line + 1;
+      found.push({ where: `${rel}:${line}`, handler: n.arguments.map(resolvedFunction).find(isFunctionish) });
+    });
+  }
+  return found;
 }
 
 /** Is any function in this subtree — including the root — in `set`? */
@@ -380,5 +436,44 @@ describe('the exemption for dispatch-routed commands is founded', () => {
     // also be true if `dispatch` stopped resolving, and then the exemption would
     // start hiding real writes.
     expect(actions.filter((a) => a.routed).length).toBeGreaterThan(4);
+  });
+});
+
+/**
+ * The two ways a `run()`-migrated command drops out of this detector WITHOUT
+ * anything going red — which is the dangerous kind, because a command that
+ * appears to write nothing needs no lock and so raises no violation.
+ *
+ * Both are one ordinary refactor away from a migrated file, and #114 → #119
+ * migrate 128 of them, so they are asserted rather than trusted.
+ */
+describe('every run() handler stays visible to this detector', () => {
+  const calls = runCalls();
+
+  it('finds the run() calls it is meant to be reading', () => {
+    // A floor, not a count: a resolver that found nothing would pass the two
+    // assertions below forever. Twelve commands migrated in #114.
+    expect(calls.length).toBeGreaterThanOrEqual(12);
+  });
+
+  it('resolves the handler every one of them wraps', () => {
+    // Fails if a handler is passed in a shape `resolvedFunction` cannot follow.
+    // The fix is to teach it that shape, never to write the handler differently.
+    expect(calls.filter((c) => !c.handler).map((c) => c.where)).toEqual([]);
+  });
+
+  it('types the ctx parameter, so the calls inside the handler resolve', () => {
+    // `ctx: any` makes `ctx.api.boards.updateBoard(…)` unresolvable, the command
+    // leaves MUTATES, and the lock stops being checked for it — silently. The
+    // type IS the detector's input here, so it is part of the contract.
+    const untyped = calls
+      .map(({ where, handler }) => {
+        const [first] = (handler as ts.FunctionLikeDeclaration | undefined)?.parameters ?? [];
+        if (!first) return `${where} — handler takes no ctx`;
+        const type = checker.typeToString(checker.getTypeAtLocation(first));
+        return type === 'Ctx' || type === 'AnonymousCtx' ? undefined : `${where} — ctx is \`${type}\``;
+      })
+      .filter(Boolean);
+    expect(untyped).toEqual([]);
   });
 });

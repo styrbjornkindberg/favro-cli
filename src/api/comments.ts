@@ -7,16 +7,11 @@
  * This client accepts cardId and resolves cardCommonId automatically.
  */
 import FavroHttpClient from '../lib/http-client';
+import { getAllPages } from '../lib/paginate';
 import CardReferenceResolver from '../lib/card-reference';
 import { Comment } from '../types/comments';
 
 export { Comment };
-
-interface PaginatedResponse<T> {
-  entities: T[];
-  requestId?: string;
-  pages?: number;
-}
 
 interface RawComment {
   commentId?: string;
@@ -50,40 +45,22 @@ export class CommentsApiClient {
   /**
    * List all comments for a card.
    * Accepts either cardId or cardCommonId — will resolve cardCommonId automatically if needed.
+   *
+   * Reads to completion, and takes no `limit` at all (#136). It used to pass one
+   * to the pager as `max`, which caps the FETCH — the shape #44 inverted for
+   * `cards list`: a partial fetch makes every count downstream a plausible wrong
+   * number, and `comments list` printed that count as the total. The parameter is
+   * gone rather than defaulted so a caller cannot put the cap back. `--limit` now
+   * caps what is PRINTED, via `capRows` at the command layer, which is the one
+   * place the cut is visible as `truncated`.
    */
-  async listComments(cardIdOrCommonId: string, limit: number = 100): Promise<Comment[]> {
+  async listComments(cardIdOrCommonId: string): Promise<Comment[]> {
     // Resolve cardCommonId: if the passed ID is a 24-char hex cardId, look it up
     const cardCommonId = await this.resolveCardCommonId(cardIdOrCommonId);
 
-    const allComments: Comment[] = [];
-    let requestId: string | undefined;
-    let page = 1;
-
-    while (allComments.length < limit) {
-      const params: Record<string, unknown> = {
-        cardCommonId,
-        limit: Math.min(limit - allComments.length, 100),
-      };
-      if (requestId) {
-        params.requestId = requestId;
-        params.page = page;
-      }
-
-      // Favro: GET /comments?cardCommonId=<cardCommonId>
-      const response = await this.client.get<PaginatedResponse<RawComment>>(
-        '/comments',
-        { params }
-      );
-
-      const batch = (response.entities ?? []).map(raw => normalizeComment(raw, cardIdOrCommonId));
-      allComments.push(...batch);
-
-      requestId = response.requestId;
-      if (!requestId || !response.pages || page >= response.pages || batch.length === 0) break;
-      page++;
-    }
-
-    return allComments.slice(0, limit);
+    // Favro: GET /comments?cardCommonId=<cardCommonId>
+    const raw = await getAllPages<RawComment>(this.client, '/comments', { cardCommonId });
+    return raw.map(r => normalizeComment(r, cardIdOrCommonId));
   }
 
   /**

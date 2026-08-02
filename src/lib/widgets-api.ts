@@ -1,4 +1,5 @@
 import FavroHttpClient from './http-client';
+import { getAllPages } from './paginate';
 
 export interface Widget {
   widgetCommonId: string;
@@ -12,12 +13,6 @@ export interface Widget {
   columns?: Array<{ columnId: string; name: string; position?: number; color?: string }>;
 }
 
-export interface PaginatedResponse<T> {
-  entities: T[];
-  requestId?: string;
-  pages?: number;
-}
-
 export class WidgetsAPI {
   constructor(private client: FavroHttpClient) {}
 
@@ -26,29 +21,7 @@ export class WidgetsAPI {
    * This reveals all the individual board instances (widgets) that span from a single cardCommonId.
    */
   async listWidgetsForCard(cardCommonId: string): Promise<Widget[]> {
-    const allWidgets: Widget[] = [];
-    let requestId: string | undefined;
-    let page = 0;
-
-    while (true) {
-      const params: Record<string, any> = { cardCommonId };
-      if (requestId) {
-        params.requestId = requestId;
-        params.page = page;
-      }
-
-      const response = await this.client.get<PaginatedResponse<Widget>>('/widgets', { params });
-      
-      if (response && response.entities) {
-        allWidgets.push(...response.entities);
-      }
-
-      requestId = response.requestId;
-      if (!requestId || !response.pages || page >= response.pages - 1 || !response.entities || response.entities.length === 0) {
-        break;
-      }
-      page++;
-    }
+    const allWidgets = await getAllPages<Widget>(this.client, '/widgets', { cardCommonId });
 
     // Filter to ensure we only return card widgets (not boards/lists)
     return allWidgets.filter(w => w.type === 'card');
@@ -59,31 +32,7 @@ export class WidgetsAPI {
    * `columns`, so this is one call for the whole org's columns.
    */
   async listWidgets(): Promise<Widget[]> {
-    const all: Widget[] = [];
-    let requestId: string | undefined;
-    let page = 0;
-
-    while (true) {
-      const params: Record<string, any> = {};
-      if (requestId) {
-        params.requestId = requestId;
-        params.page = page;
-      }
-
-      const response = await this.client.get<PaginatedResponse<Widget>>('/widgets', { params });
-
-      if (response && response.entities) {
-        all.push(...response.entities);
-      }
-
-      requestId = response.requestId;
-      if (!requestId || !response.pages || page >= response.pages - 1 || !response.entities || response.entities.length === 0) {
-        break;
-      }
-      page++;
-    }
-
-    return all;
+    return getAllPages<Widget>(this.client, '/widgets');
   }
 
   /**

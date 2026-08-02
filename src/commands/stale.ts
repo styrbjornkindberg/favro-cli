@@ -3,11 +3,9 @@
  * v2.0 LLM-first command: outputs JSON by default.
  */
 import { Command } from 'commander';
-import { createFavroClient } from '../lib/client-factory';
-import { readConfig } from '../lib/config';
-import AggregateAPI, { AggregateCard } from '../api/aggregate';
-import { outputResult, resolveFormat } from '../lib/output';
-import { logError } from '../lib/error-handler';
+import { AggregateCard } from '../api/aggregate';
+import { Ctx, run } from '../lib/run';
+import { daysSince } from '../lib/time';
 
 const DONE_STAGES = ['done', 'approved', 'archived'];
 
@@ -31,13 +29,6 @@ interface StaleResult {
   unassignedStale: StaleCard[];
   total: number;
   generatedAt: string;
-}
-
-function daysSince(dateStr?: string): number {
-  if (!dateStr) return Infinity;
-  const d = new Date(dateStr);
-  if (isNaN(d.getTime())) return Infinity;
-  return Math.floor((Date.now() - d.getTime()) / (1000 * 60 * 60 * 24));
 }
 
 function formatHuman(data: StaleResult): string {
@@ -64,6 +55,89 @@ function formatHuman(data: StaleResult): string {
   return lines.join('\n');
 }
 
+interface StaleOptions {
+  board?: string;
+  collection?: string;
+  days: string;
+  limit: string;
+}
+
+export async function staleHandler(ctx: Ctx, options: StaleOptions) {
+  const staleDays = parseInt(options.days, 10) || 14;
+  const cardLimit = parseInt(options.limit, 10) || 1000;
+
+  let snapshot: { allCards: AggregateCard[] };
+  let scope: string;
+  if (options.board) {
+    // `ctx.api.context` replaces the dynamic `await import` + `new ContextAPI`
+    // this arm used to do; the namespace getter is lazy, so the board arm is
+    // still the only path that constructs it.
+    const boardSnapshot = await ctx.api.context.getSnapshot(options.board, cardLimit);
+    snapshot = {
+      allCards: boardSnapshot.cards.map(c => ({
+        ...c,
+        boardName: boardSnapshot.board.name,
+      })) as AggregateCard[],
+    };
+    scope = boardSnapshot.board.name;
+  } else if (options.collection) {
+    snapshot = await ctx.api.aggregate.getCollectionSnapshot(options.collection, cardLimit);
+    scope = options.collection;
+  } else if (ctx.config.scopeCollectionId) {
+    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({ collectionIds: [ctx.config.scopeCollectionId] }, cardLimit);
+    scope = ctx.config.scopeCollectionName ?? ctx.config.scopeCollectionId;
+  } else {
+    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({}, cardLimit);
+    scope = 'all collections';
+  }
+
+  const assignedStale: StaleCard[] = [];
+  const unassignedStale: StaleCard[] = [];
+
+  for (const card of snapshot.allCards) {
+    // Skip done/archived cards
+    if (DONE_STAGES.includes(card.stage ?? '')) continue;
+
+    // Favro sends no last-modified field; age is measured from creation.
+    const days = daysSince(card.createdAt);
+
+    if (days >= staleDays) {
+      const staleCard: StaleCard = {
+        id: card.id,
+        title: card.title,
+        board: card.boardName,
+        collection: card.collectionName,
+        stage: card.stage,
+        column: card.column,
+        assignees: card.assignees,
+        due: card.due,
+        daysSinceUpdate: days === Infinity ? -1 : days,
+        group: (card.assignees?.length ?? 0) > 0 ? 'assigned-stale' : 'unassigned-stale',
+      };
+      if (staleCard.group === 'assigned-stale') {
+        assignedStale.push(staleCard);
+      } else {
+        unassignedStale.push(staleCard);
+      }
+    }
+  }
+
+  // Sort by staleness (most stale first)
+  assignedStale.sort((a, b) => b.daysSinceUpdate - a.daysSinceUpdate);
+  unassignedStale.sort((a, b) => b.daysSinceUpdate - a.daysSinceUpdate);
+
+  const result: StaleResult = {
+    scope,
+    staleDays,
+    assignedStale,
+    unassignedStale,
+    total: assignedStale.length + unassignedStale.length,
+    generatedAt: new Date().toISOString(),
+  };
+
+  return { item: result, human: formatHuman };
+}
+
 export function registerStaleCommand(program: Command): void {
   program
     .command('stale')
@@ -72,92 +146,7 @@ export function registerStaleCommand(program: Command): void {
     .option('--collection <name>', 'Filter to a specific collection')
     .option('--days <n>', 'Inactivity threshold in days', '14')
     .option('--limit <n>', 'Max cards', '1000')
-    .option('--human', 'Human-readable formatted output')
-    .option('--json', 'JSON output (default)')
-    .action(async (options) => {
-      const verbose = program.opts()?.verbose ?? false;
-      try {
-        const client = await createFavroClient();
-        const api = new AggregateAPI(client);
-        const config = await readConfig();
-        const staleDays = parseInt(options.days, 10) || 14;
-        const cardLimit = parseInt(options.limit, 10) || 1000;
-
-        let snapshot;
-        let scope: string;
-        if (options.board) {
-          const ContextAPI = (await import('../api/context')).default;
-          const ctx = new ContextAPI(client);
-          const boardSnapshot = await ctx.getSnapshot(options.board, cardLimit);
-          snapshot = {
-            allCards: boardSnapshot.cards.map(c => ({
-              ...c,
-              boardName: boardSnapshot.board.name,
-            })) as AggregateCard[],
-          };
-          scope = boardSnapshot.board.name;
-        } else if (options.collection) {
-          snapshot = await api.getCollectionSnapshot(options.collection, cardLimit);
-          scope = options.collection;
-        } else if (config.scopeCollectionId) {
-          snapshot = await api.getMultiBoardSnapshot({ collectionIds: [config.scopeCollectionId] }, cardLimit);
-          scope = config.scopeCollectionName ?? config.scopeCollectionId;
-        } else {
-          snapshot = await api.getMultiBoardSnapshot({}, cardLimit);
-          scope = 'all collections';
-        }
-
-        const assignedStale: StaleCard[] = [];
-        const unassignedStale: StaleCard[] = [];
-
-        for (const card of snapshot.allCards) {
-          // Skip done/archived cards
-          if (DONE_STAGES.includes(card.stage ?? '')) continue;
-
-          // Favro sends no last-modified field; age is measured from creation.
-          const days = daysSince(card.createdAt);
-
-          if (days >= staleDays) {
-            const staleCard: StaleCard = {
-              id: card.id,
-              title: card.title,
-              board: (card as any).boardName,
-              collection: (card as any).collectionName,
-              stage: card.stage,
-              column: card.column,
-              assignees: card.assignees,
-              due: card.due,
-              daysSinceUpdate: days === Infinity ? -1 : days,
-              group: (card.assignees?.length ?? 0) > 0 ? 'assigned-stale' : 'unassigned-stale',
-            };
-            if (staleCard.group === 'assigned-stale') {
-              assignedStale.push(staleCard);
-            } else {
-              unassignedStale.push(staleCard);
-            }
-          }
-        }
-
-        // Sort by staleness (most stale first)
-        assignedStale.sort((a, b) => b.daysSinceUpdate - a.daysSinceUpdate);
-        unassignedStale.sort((a, b) => b.daysSinceUpdate - a.daysSinceUpdate);
-
-        const result: StaleResult = {
-          scope,
-          staleDays,
-          assignedStale,
-          unassignedStale,
-          total: assignedStale.length + unassignedStale.length,
-          generatedAt: new Date().toISOString(),
-        };
-
-        const format = resolveFormat(options);
-        outputResult(result, { format }, formatHuman);
-      } catch (err: any) {
-        logError(err, verbose);
-        process.exit(1);
-      }
-    });
+    .action(run(staleHandler));
 }
 
 export default registerStaleCommand;

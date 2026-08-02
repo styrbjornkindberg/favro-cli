@@ -1,4 +1,5 @@
 import FavroHttpClient from './http-client';
+import { getAllPages } from './paginate';
 import { classifyThrownError } from './favro-error';
 import { looksLikeName, resolveNameToId } from './name-resolve';
 
@@ -88,6 +89,22 @@ export interface ExtendedBoard extends Board {
   velocity?: VelocityData[];
 }
 
+/**
+ * The narrower of the TWO `Collection` interfaces, and the one on its way out.
+ *
+ * `collections-api.ts` declares the same name with `boardCount`/`memberCount`
+ * on top. Not deliberate, and NOT fixed here: the interface is a symptom of the
+ * whole duplicated collections surface below (`resolveCollectionId`,
+ * `listCollections`, `getCollection`, … all exist twice), and #123 owns
+ * collapsing it — *"one `resolveCollectionId` and one `Collection` interface;
+ * the card path resolves names"*. Deleting the type without the methods that
+ * return it would be a rename that collides with that work.
+ *
+ * Harmless meanwhile: this shape is a strict subset, so a value from the wider
+ * one satisfies it and no read can be short a field it was promised. The real
+ * defect in the pair is behavioural, not structural — one `resolveCollectionId`
+ * accepts names and the other does not — and that is #123's to settle.
+ */
 export interface Collection {
   collectionId: string;
   name: string;
@@ -95,12 +112,6 @@ export interface Collection {
   boards?: Board[];
   createdAt: string;
   updatedAt: string;
-}
-
-interface PaginatedResponse<T> {
-  entities: T[];
-  requestId?: string;
-  pages?: number;
 }
 
 /**
@@ -175,27 +186,8 @@ export class BoardsAPI {
   constructor(private client: FavroHttpClient) {}
 
   async listBoards(pageSize: number = 50): Promise<Board[]> {
-    const allBoards: Board[] = [];
-    let requestId: string | undefined;
-    let page = 1;
-
-    while (true) {
-      const params: Record<string, any> = { limit: pageSize };
-      if (requestId) {
-        params.requestId = requestId;
-        params.page = page;
-      }
-
-      const response = await this.client.get<PaginatedResponse<RawWidget>>('/widgets', { params });
-      const boards = (response.entities || []).map(normalizeWidget);
-      allBoards.push(...boards);
-
-      requestId = response.requestId;
-      if (!requestId || !response.pages || page >= response.pages || boards.length === 0) break;
-      page++;
-    }
-
-    return allBoards;
+    const raw = await getAllPages<RawWidget>(this.client, '/widgets', { limit: pageSize });
+    return raw.map(normalizeWidget);
   }
 
   /**
@@ -305,34 +297,17 @@ export class BoardsAPI {
       params.include = include.join(',');
     }
 
-    const allBoards: ExtendedBoard[] = [];
-    let requestId: string | undefined;
-    let page = 1;
+    const raw = await getAllPages<RawWidget>(this.client, '/widgets', { ...params, limit: 50 });
+    const allBoards = raw.map(w => ({ ...w, ...normalizeWidget(w) })) as ExtendedBoard[];
 
-    while (true) {
-      const p: Record<string, any> = { ...params, limit: 50 };
-      if (requestId) {
-        p.requestId = requestId;
-        p.page = page;
+    // Augment each board with stats/velocity if requested
+    for (const board of allBoards) {
+      if (include?.includes('stats')) {
+        board.stats = aggregateBoardStats(board);
       }
-
-      const response = await this.client.get<PaginatedResponse<RawWidget>>('/widgets', { params: p });
-      const boards = (response.entities || []).map(w => ({ ...w, ...normalizeWidget(w) })) as ExtendedBoard[];
-
-      // Augment each board with stats/velocity if requested
-      for (const board of boards) {
-        if (include?.includes('stats')) {
-          board.stats = aggregateBoardStats(board);
-        }
-        if (include?.includes('velocity')) {
-          board.velocity = calculateVelocity();
-        }
-        allBoards.push(board);
+      if (include?.includes('velocity')) {
+        board.velocity = calculateVelocity();
       }
-
-      requestId = response.requestId;
-      if (!requestId || !response.pages || page >= response.pages || boards.length === 0) break;
-      page++;
     }
 
     return allBoards;
@@ -365,27 +340,7 @@ export class BoardsAPI {
   }
 
   async listCollections(pageSize: number = 50): Promise<Collection[]> {
-    const allCollections: Collection[] = [];
-    let requestId: string | undefined;
-    let page = 1;
-
-    while (true) {
-      const params: Record<string, any> = { limit: pageSize };
-      if (requestId) {
-        params.requestId = requestId;
-        params.page = page;
-      }
-
-      const response = await this.client.get<PaginatedResponse<Collection>>('/collections', { params });
-      const collections = response.entities || [];
-      allCollections.push(...collections);
-
-      requestId = response.requestId;
-      if (!requestId || !response.pages || page >= response.pages || collections.length === 0) break;
-      page++;
-    }
-
-    return allCollections;
+    return getAllPages<Collection>(this.client, '/collections', { limit: pageSize });
   }
 
   async getCollection(collectionId: string): Promise<Collection> {

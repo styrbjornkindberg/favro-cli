@@ -10,6 +10,7 @@ import { logError, suggestBoard } from '../lib/error-handler';
 import BoardsAPI from '../lib/boards-api';
 import { createFavroClient } from '../lib/client-factory';
 import { Unreachable } from '../lib/read-shape';
+import { isOverdue, isBlocked } from '../lib/card-predicates';
 
 export interface RiskReport {
   board: string;
@@ -45,17 +46,6 @@ export interface RiskCard {
 }
 
 /**
- * Check if a card is overdue (dueDate is in the past).
- */
-function isOverdue(card: Card): boolean {
-  if (!card.dueDate) return false;
-  const dueDate = new Date(card.dueDate);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  return dueDate < today;
-}
-
-/**
  * Staleness is unavailable, not empty. Favro sends no last-modified field on a
  * card — no `updatedAt`, no `ETag`, no `Last-Modified` — so there is nothing to
  * measure days-since-update against. Rather than flag every card (which is what
@@ -82,15 +72,6 @@ function hasMissingFields(card: Card): boolean {
   if (!card.status || card.status.trim().length === 0) return true;
   if (!card.assignees || card.assignees.length === 0) return true;
   if (!card.dueDate) return true;
-  return false;
-}
-
-/**
- * Check if a card is blocked (has blocked tag or status indicates blocking).
- */
-function isBlocked(card: Card): boolean {
-  if (card.tags && card.tags.some(t => t.toLowerCase().includes('blocked'))) return true;
-  if (card.status && card.status.toLowerCase().includes('blocked')) return true;
   return false;
 }
 

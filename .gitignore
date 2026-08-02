@@ -1,4 +1,7 @@
-node_modules/
+# No trailing slash: worktree tooling symlinks node_modules to the main
+# checkout, and a symlink is a blob to git, so `node_modules/` would not
+# match it. One got committed that way once.
+node_modules
 dist/
 *.js.map
 .env

@@ -13,7 +13,7 @@
  */
 
 import FavroHttpClient from '../lib/http-client';
-import ContextAPI, { type ContextCard, type BoardContextSnapshot } from './context';
+import ContextAPI, { extractEffort, type ContextCard, type BoardContextSnapshot } from './context';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -65,24 +65,6 @@ export function priorityScore(priority: string | undefined): number {
     if (p.includes(key)) return score;
   }
   return 0;
-}
-
-/**
- * Extract effort value from a card's custom fields.
- * Looks for fields named "effort", "story points", "points", "estimate".
- * Returns undefined if not found.
- */
-export function extractEffort(card: ContextCard): number | undefined {
-  const fields = card.customFields ?? {};
-  const effortKeys = ['effort', 'Effort', 'story points', 'Story Points', 'points', 'Points', 'estimate', 'Estimate'];
-  for (const key of effortKeys) {
-    const val = fields[key];
-    if (val !== undefined && val !== null) {
-      const num = Number(val);
-      if (!isNaN(num)) return num;
-    }
-  }
-  return undefined;
 }
 
 /**

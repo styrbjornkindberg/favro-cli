@@ -33,7 +33,8 @@ describe('favro collections delete', () => {
 
   function buildProgram(): Command {
     const program = new Command();
-    program.option('--verbose', 'Show stack traces');
+    program.option('--verbose', 'Show stack traces').option('--human').option('--pretty');
+    program.exitOverride();
     const collectionsCmd = program.command('collections').description('Collection operations');
     registerCollectionsDeleteCommand(collectionsCmd);
     return program;
@@ -56,10 +57,18 @@ describe('favro collections delete', () => {
   it('deletes a collection', async () => {
     MockCollectionsAPI.prototype.deleteCollection = jest.fn().mockResolvedValue(undefined);
 
-    await runCli(['collections', 'delete', 'col-1', '--yes']);
+    await runCli(['collections', 'delete', 'col-1', '--yes', '--human']);
 
     expect(MockCollectionsAPI.prototype.deleteCollection).toHaveBeenCalledWith('col-1');
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Collection deleted'));
+  });
+
+  it('the delete has a machine shape, not a sentence, in JSON mode', async () => {
+    MockCollectionsAPI.prototype.deleteCollection = jest.fn().mockResolvedValue(undefined);
+
+    await runCli(['collections', 'delete', 'col-1', '--yes']);
+
+    expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify({ deleted: true, collectionId: 'col-1' }));
   });
 
   it('dry-run previews', async () => {
@@ -84,7 +93,8 @@ describe('favro boards delete', () => {
 
   function buildProgram(): Command {
     const program = new Command();
-    program.option('--verbose', 'Show stack traces');
+    program.option('--verbose', 'Show stack traces').option('--human').option('--pretty');
+    program.exitOverride();
     const boardsCmd = program.command('boards').description('Board operations');
     registerBoardsDeleteCommand(boardsCmd);
     return program;
@@ -107,10 +117,18 @@ describe('favro boards delete', () => {
   it('deletes a board', async () => {
     MockBoardsAPI.prototype.deleteBoard = jest.fn().mockResolvedValue(undefined);
 
-    await runCli(['boards', 'delete', 'board-1', '--yes']);
+    await runCli(['boards', 'delete', 'board-1', '--yes', '--human']);
 
     expect(MockBoardsAPI.prototype.deleteBoard).toHaveBeenCalledWith('board-1');
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Board deleted'));
+  });
+
+  it('the delete has a machine shape, not a sentence, in JSON mode', async () => {
+    MockBoardsAPI.prototype.deleteBoard = jest.fn().mockResolvedValue(undefined);
+
+    await runCli(['boards', 'delete', 'board-1', '--yes']);
+
+    expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify({ deleted: true, boardId: 'board-1' }));
   });
 
   it('dry-run previews', async () => {

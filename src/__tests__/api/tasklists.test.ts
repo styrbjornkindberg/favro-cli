@@ -3,20 +3,33 @@
  */
 import TaskListsAPI from '../../lib/tasklists-api';
 
+const CARD_READ = { cardId: 'card-1', cardCommonId: 'card-1' };
+
 function makeMockClient() {
   return {
     // Resolving a card reference to a cardCommonId reads the card first (#40).
-    get: jest.fn().mockResolvedValue({ cardId: 'card-1', cardCommonId: 'card-1' }),
+    get: jest.fn().mockResolvedValue(CARD_READ),
     post: jest.fn(),
     put: jest.fn(),
     delete: jest.fn(),
   };
 }
 
+/**
+ * Queue the card read ahead of the endpoint payload.
+ *
+ * A bare `mockResolvedValue(payload)` replaces the default for EVERY call,
+ * including the resolver's card read — which then sees no `cardCommonId`. That
+ * used to fall through to the reference and pass by luck; it refuses now (#89).
+ */
+function respondsWith(client: ReturnType<typeof makeMockClient>, payload: unknown): void {
+  client.get.mockResolvedValueOnce(CARD_READ).mockResolvedValue(payload);
+}
+
 describe('TaskListsAPI.listTaskLists', () => {
   it('lists task lists for a card', async () => {
     const client = makeMockClient();
-    client.get.mockResolvedValue({
+    respondsWith(client, {
       entities: [
         { taskListId: 'tl-1', name: 'Checklist', cardCommonId: 'card-1', position: 0 },
         { taskListId: 'tl-2', name: 'QA Steps', cardCommonId: 'card-1', position: 1 },
@@ -33,7 +46,7 @@ describe('TaskListsAPI.listTaskLists', () => {
 
   it('returns empty array when no task lists', async () => {
     const client = makeMockClient();
-    client.get.mockResolvedValue({ entities: [] });
+    respondsWith(client, { entities: [] });
 
     const api = new TaskListsAPI(client as any);
     const lists = await api.listTaskLists('card-1');

@@ -17,7 +17,7 @@
  *   FAVRO_API_TOKEN  API key (legacy env var, still supported)
  */
 
-import { Command } from 'commander';
+import { Command, CommanderError } from 'commander';
 import * as path from 'path';
 import CardsAPI, { UpdateCardRequest } from './lib/cards-api';
 // The shared dispatch table. Importing it here is what makes the CLI a caller of
@@ -57,8 +57,6 @@ import { registerCommentsCommand } from './commands/comments';
 import { registerActivityCommand } from './commands/activity';
 import { registerWebhooksCommand } from './commands/webhooks';
 import { registerContextCommand } from './commands/context';
-import { registerProposeCommand } from './commands/propose';
-import { registerExecuteCommand } from './commands/execute';
 import { registerQueryCommand } from './commands/query';
 import { registerStandupCommand } from './commands/standup';
 import { registerSprintPlanCommand } from './commands/sprint-plan';
@@ -87,7 +85,7 @@ import { registerTeamCommand } from './commands/team';
 import { registerInitCommand } from './commands/init';
 import { registerTrackerInitCommand } from './commands/tracker-init';
 import { runMainMenu } from './commands/main-menu';
-import { logError } from './lib/error-handler';
+import { logError, latchVerbose } from './lib/error-handler';
 import { ProgressBar } from './lib/progress';
 import { createFavroClient } from './lib/client-factory';
 import { capRows, omitBulk, writeEnvelope } from './lib/read-shape';
@@ -120,7 +118,24 @@ program
   // Read from package.json, never a literal: the hardcoded '2.1.0' here drifted
   // three releases behind the published 2.4.1 before anyone noticed.
   .version(require('../package.json').version as string)
-  .option('--verbose', 'Show stack traces for errors');
+  .option('--verbose', 'Show stack traces for errors')
+  // The two flags the command runner owns (ADR-0002, #113/#114). Declared once,
+  // on the root, because commander accepts an ancestor's option at any depth —
+  // so `favro boards list --human` resolves here rather than needing 128
+  // re-declarations. `resolveFormat` reads them with `optsWithGlobals()`.
+  .option('--human', 'Human-readable output instead of the default JSON')
+  .option('--pretty', 'Indent JSON output (default: compact)');
+
+// Commander's own exits — `--help`, `--version`, a parse error — become throws,
+// which is what finally makes the catch at the bottom of this file reachable
+// (ADR-0002). It must run BEFORE any `.command()` below: `copyInheritedSettings`
+// hands the callback to each subcommand at creation time.
+program.exitOverride();
+
+// The flag is declared here and nowhere else, so it is resolved here and
+// nowhere else (#85). Without this, `.opts()` being own-options-only left
+// `--verbose` dead on every command below the root. See `latchVerbose`.
+latchVerbose(program);
 
 // ─── auth commands ────────────────────────────────────────────────────────────
 registerAuthCommand(program);
@@ -1014,13 +1029,16 @@ cards
         process.exit(0);
       }
 
-      // --comment: add a comment via the comments API (non-destructive)
+      // --comment: add a comment via the comments API (non-destructive).
+      // The client owns the `cardId` → `cardCommonId` translation the endpoint
+      // needs (#89) — resolving it here would be the second implementation.
+      // It costs one redundant `GET /cards/<id>`: `card.cardCommonId` is already
+      // in hand from the read above, but passing it would be that second
+      // implementation again. One call is the price of one resolver.
       if (options.comment) {
         const commentText = options.comment.replace(/\\n/g, '\n');
-        const { CommentsAPI } = await import('./lib/comments-api');
-        const commentsApi = new CommentsAPI(client!);
-        const cardCommonId = card.cardCommonId ?? cardId;
-        await commentsApi.add(cardCommonId, commentText);
+        const { CommentsApiClient } = await import('./api/comments');
+        await new CommentsApiClient(client!).addComment(cardId, commentText);
         console.log(`✓ Comment added to card "${card.name}"`);
       }
 
@@ -1151,12 +1169,6 @@ cards
   // ─── context command ─────────────────────────────────────────────────────────
   registerContextCommand(program);
 
-  // ─── propose command ─────────────────────────────────────────────────────────
-  registerProposeCommand(program);
-
-  // ─── execute command ─────────────────────────────────────────────────────────
-  registerExecuteCommand(program);
-
   // ─── query command ───────────────────────────────────────────────────────────
   registerQueryCommand(program);
 
@@ -1184,6 +1196,14 @@ if (require.main === module) {
     });
   } else {
     prog.parseAsync(process.argv).catch((err) => {
+      // `.exitOverride()` routes `--help`, `--version` and parse errors here as
+      // `CommanderError`. Commander has already written its own output, so the
+      // only thing left is the code it asked for — logging it again would put
+      // "✗ Error: (outputHelp)" under every `--help`.
+      if (err instanceof CommanderError) {
+        process.exitCode = err.exitCode;
+        return;
+      }
       logError(err, prog.opts().verbose);
       process.exit(1);
     });

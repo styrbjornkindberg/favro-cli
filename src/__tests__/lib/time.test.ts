@@ -1,7 +1,32 @@
 /**
- * Unit tests — time helpers (parseSince, formatTimestamp, formatRelative)
+ * Unit tests — time helpers (parseSince, formatTimestamp, formatRelative, daysSince)
  */
-import { parseSince, formatTimestamp, formatRelative } from '../../lib/time';
+import { parseSince, formatTimestamp, formatRelative, daysSince } from '../../lib/time';
+
+
+// ─── daysSince ───────────────────────────────────────────────────────────────
+// Pins the one surviving copy (#89). `health` and `stale` each held these five
+// lines verbatim; the contract both relied on is "unmeasurable reads as
+// infinitely stale", never 0.
+describe('daysSince', () => {
+  it('returns whole days elapsed, floored', () => {
+    const threeAndAHalfDays = new Date(Date.now() - 3.5 * 86_400_000).toISOString();
+    expect(daysSince(threeAndAHalfDays)).toBe(3);
+  });
+
+  it('returns 0 for a timestamp from moments ago', () => {
+    expect(daysSince(new Date().toISOString())).toBe(0);
+  });
+
+  it('returns Infinity when there is no date at all', () => {
+    expect(daysSince(undefined)).toBe(Infinity);
+    expect(daysSince('')).toBe(Infinity);
+  });
+
+  it('returns Infinity for an unparseable date rather than NaN', () => {
+    expect(daysSince('not-a-date')).toBe(Infinity);
+  });
+});
 
 
 // ─── parseSince ──────────────────────────────────────────────────────────────
