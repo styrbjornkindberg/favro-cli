@@ -32,7 +32,8 @@ const SAMPLE_WEBHOOKS = [
 
 function buildProgram(): Command {
   const program = new Command();
-  program.option('--verbose', 'Show stack traces');
+  // The runner's three flags live on the root (ADR-0002).
+  program.option('--verbose', 'Show stack traces').option('--human').option('--pretty');
   registerWebhooksCommand(program);
   return program;
 }
@@ -70,48 +71,47 @@ describe('favro webhooks list', () => {
   it('shows "no webhooks" message when list is empty', async () => {
     MockFavroWebhooksAPI.prototype.list = jest.fn().mockResolvedValue([]);
 
-    await runCli(['webhooks', 'list']);
+    await runCli(['webhooks', 'list', '--human']);
 
     expect(MockFavroWebhooksAPI.prototype.list).toHaveBeenCalled();
     expect(consoleSpy).toHaveBeenCalledWith('No webhooks configured.');
   });
 
-  it('shows table when webhooks exist', async () => {
+  it('shows table under --human when webhooks exist', async () => {
     MockFavroWebhooksAPI.prototype.list = jest.fn().mockResolvedValue(SAMPLE_WEBHOOKS);
 
-    await runCli(['webhooks', 'list']);
+    await runCli(['webhooks', 'list', '--human']);
 
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('2 webhook'));
     expect(consoleTableSpy).toHaveBeenCalled();
   });
 
-  it('outputs JSON when --format json is set', async () => {
-    MockFavroWebhooksAPI.prototype.list = jest.fn().mockResolvedValue(SAMPLE_WEBHOOKS);
-
-    await runCli(['webhooks', 'list', '--format', 'json']);
-
-    // An envelope, not a bare array — the shape every list read emits (#99).
-    expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify({ rows: SAMPLE_WEBHOOKS }));
-    expect(consoleTableSpy).not.toHaveBeenCalled();
-  });
-
-  it('defaults to table format', async () => {
+  it('answers the rows envelope by default \u2014 --format is gone (#116)', async () => {
     MockFavroWebhooksAPI.prototype.list = jest.fn().mockResolvedValue(SAMPLE_WEBHOOKS);
 
     await runCli(['webhooks', 'list']);
 
-    expect(consoleTableSpy).toHaveBeenCalled();
+    expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify({ rows: SAMPLE_WEBHOOKS }));
+    expect(consoleTableSpy).not.toHaveBeenCalled();
   });
 
-  it('exits with error when API key is missing', async () => {
-    (config.resolveApiKey as jest.Mock).mockResolvedValue(null);
-    const processExit = jest.spyOn(process, 'exit').mockImplementation((code) => {
-      throw new Error(`process.exit: ${code}`);
-    });
+  it('an empty list still prints an envelope rather than nothing', async () => {
+    // ADR-0002: a successful command never prints nothing.
+    MockFavroWebhooksAPI.prototype.list = jest.fn().mockResolvedValue([]);
 
-    await expect(runCli(['webhooks', 'list'])).rejects.toThrow();
-    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Error:'));
-    processExit.mockRestore();
+    await runCli(['webhooks', 'list']);
+
+    expect(consoleSpy).toHaveBeenCalledWith('{"rows":[]}');
+  });
+
+  it('answers an error envelope when the API key is missing', async () => {
+    (config.resolveApiKey as jest.Mock).mockResolvedValue(null);
+
+    await runCli(['webhooks', 'list']);
+
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringMatching(/^\{"error":/));
+    expect(process.exitCode).toBe(1);
+    process.exitCode = undefined;
   });
 });
 
@@ -141,15 +141,38 @@ describe('favro webhooks create', () => {
     };
     MockFavroWebhooksAPI.prototype.create = jest.fn().mockResolvedValue(created);
 
-    await runCli(['webhooks', 'create', '--event', 'card.created', '--target', 'https://example.com/webhook']);
+    await runCli(['webhooks', 'create', '--event', 'card.created', '--target', 'https://example.com/webhook', '--human']);
 
     expect(MockFavroWebhooksAPI.prototype.create).toHaveBeenCalledWith(
       'card.created',
       'https://example.com/webhook'
     );
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('✓ Webhook created: wh-new'));
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('card.created'));
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('https://example.com/webhook'));
+    const printed = consoleSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(printed).toContain('✓ Webhook created: wh-new');
+    expect(printed).toContain('card.created');
+    expect(printed).toContain('https://example.com/webhook');
+  });
+
+  it('a successful create prints the webhook in JSON mode too', async () => {
+    // The regression #113's own review caught: a success path that prints
+    // nothing is the silent-no-output failure ADR-0002 exists to kill.
+    const created = { id: 'wh-new', event: 'card.created', targetUrl: 'https://example.com/webhook' };
+    MockFavroWebhooksAPI.prototype.create = jest.fn().mockResolvedValue(created);
+
+    await runCli(['webhooks', 'create', '--event', 'card.created', '--target', 'https://example.com/webhook']);
+
+    expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify(created));
+  });
+
+  it('--dry-run answers a parseable preview instead of a prose line', async () => {
+    MockFavroWebhooksAPI.prototype.create = jest.fn();
+
+    await runCli(['webhooks', 'create', '--event', 'card.created', '--target', 'https://example.com/x', '--dry-run']);
+
+    expect(MockFavroWebhooksAPI.prototype.create).not.toHaveBeenCalled();
+    expect(JSON.parse(String(consoleSpy.mock.calls[0][0]))).toEqual({
+      dryRun: true, event: 'card.created', targetUrl: 'https://example.com/x',
+    });
   });
 
   it('creates webhook with card.updated event', async () => {
@@ -170,54 +193,31 @@ describe('favro webhooks create', () => {
     );
   });
 
-  it('shows error message for invalid event type', async () => {
-    const processExit = jest.spyOn(process, 'exit').mockImplementation((code) => {
-      throw new Error(`process.exit: ${code}`);
-    });
-    MockFavroWebhooksAPI.prototype.create = jest.fn().mockRejectedValue(
-      new Error('Invalid event type: "card.deleted". Must be one of: card.created, card.updated')
-    );
+  const errorEnvelope = (spy: jest.SpyInstance) =>
+    JSON.parse(spy.mock.calls.map((c) => String(c[0])).find((l) => l.startsWith('{"error"'))!);
 
-    await expect(runCli(['webhooks', 'create', '--event', 'card.deleted', '--target', 'https://example.com/hook'])).rejects.toThrow();
-    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid event type'));
-    processExit.mockRestore();
+  it.each([
+    ['an invalid event type', 'Invalid event type: "card.deleted". Must be one of: card.created, card.updated', ['--event', 'card.deleted', '--target', 'https://example.com/hook']],
+    ['an invalid URL', 'Invalid webhook URL: "not-a-url". Must be a valid HTTP or HTTPS URL.', ['--event', 'card.created', '--target', 'not-a-url']],
+    ['a duplicate webhook', 'Duplicate webhook: a webhook for event "card.created" already exists (ID: wh-1).', ['--event', 'card.created', '--target', 'https://example.com/webhook']],
+  ])('answers an error envelope on stdout for %s', async (_name, message, args) => {
+    MockFavroWebhooksAPI.prototype.create = jest.fn().mockRejectedValue(new Error(message));
+
+    await runCli(['webhooks', 'create', ...args]);
+
+    expect(errorEnvelope(consoleSpy).error.message).toBe(message);
+    expect(process.exitCode).toBe(1);
+    process.exitCode = undefined;
   });
 
-  it('shows error message for invalid URL', async () => {
-    const processExit = jest.spyOn(process, 'exit').mockImplementation((code) => {
-      throw new Error(`process.exit: ${code}`);
-    });
-    MockFavroWebhooksAPI.prototype.create = jest.fn().mockRejectedValue(
-      new Error('Invalid webhook URL: "not-a-url". Must be a valid HTTP or HTTPS URL.')
-    );
-
-    await expect(runCli(['webhooks', 'create', '--event', 'card.created', '--target', 'not-a-url'])).rejects.toThrow();
-    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid webhook URL'));
-    processExit.mockRestore();
-  });
-
-  it('shows error for duplicate webhook', async () => {
-    const processExit = jest.spyOn(process, 'exit').mockImplementation((code) => {
-      throw new Error(`process.exit: ${code}`);
-    });
-    MockFavroWebhooksAPI.prototype.create = jest.fn().mockRejectedValue(
-      new Error('Duplicate webhook: a webhook for event "card.created" targeting "https://example.com/webhook" already exists (ID: wh-1).')
-    );
-
-    await expect(runCli(['webhooks', 'create', '--event', 'card.created', '--target', 'https://example.com/webhook'])).rejects.toThrow();
-    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Duplicate webhook'));
-    processExit.mockRestore();
-  });
-
-  it('exits with error when API key is missing', async () => {
+  it('answers an error envelope when the API key is missing', async () => {
     (config.resolveApiKey as jest.Mock).mockResolvedValue(null);
-    const processExit = jest.spyOn(process, 'exit').mockImplementation((code) => {
-      throw new Error(`process.exit: ${code}`);
-    });
 
-    await expect(runCli(['webhooks', 'create', '--event', 'card.created', '--target', 'https://example.com'])).rejects.toThrow();
-    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Error:'));
-    processExit.mockRestore();
+    await runCli(['webhooks', 'create', '--event', 'card.created', '--target', 'https://example.com']);
+
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringMatching(/^\{"error":/));
+    expect(process.exitCode).toBe(1);
+    process.exitCode = undefined;
   });
 });
 
@@ -240,34 +240,40 @@ describe('favro webhooks delete', () => {
   it('deletes a webhook by ID and shows confirmation', async () => {
     MockFavroWebhooksAPI.prototype.delete = jest.fn().mockResolvedValue(undefined);
 
-    await runCli(['webhooks', 'delete', 'wh-1']);
+    await runCli(['webhooks', 'delete', 'wh-1', '--human']);
 
     expect(MockFavroWebhooksAPI.prototype.delete).toHaveBeenCalledWith('wh-1');
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('✓ Webhook deleted: wh-1'));
   });
 
-  it('shows error when webhook not found', async () => {
-    const processExit = jest.spyOn(process, 'exit').mockImplementation((code) => {
-      throw new Error(`process.exit: ${code}`);
-    });
-    MockFavroWebhooksAPI.prototype.delete = jest.fn().mockRejectedValue(
-      new Error('Webhook not found: "nonexistent-id". It may have already been deleted.')
-    );
+  it('a successful delete prints a parseable result in JSON mode', async () => {
+    MockFavroWebhooksAPI.prototype.delete = jest.fn().mockResolvedValue(undefined);
 
-    await expect(runCli(['webhooks', 'delete', 'nonexistent-id'])).rejects.toThrow();
-    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Webhook not found'));
-    processExit.mockRestore();
+    await runCli(['webhooks', 'delete', 'wh-1']);
+
+    expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify({ deleted: true, webhookId: 'wh-1' }));
   });
 
-  it('exits with error when API key is missing', async () => {
-    (config.resolveApiKey as jest.Mock).mockResolvedValue(null);
-    const processExit = jest.spyOn(process, 'exit').mockImplementation((code) => {
-      throw new Error(`process.exit: ${code}`);
-    });
+  it('answers an error envelope when the webhook is not found', async () => {
+    const message = 'Webhook not found: "nonexistent-id". It may have already been deleted.';
+    MockFavroWebhooksAPI.prototype.delete = jest.fn().mockRejectedValue(new Error(message));
 
-    await expect(runCli(['webhooks', 'delete', 'wh-1'])).rejects.toThrow();
-    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Error:'));
-    processExit.mockRestore();
+    await runCli(['webhooks', 'delete', 'nonexistent-id']);
+
+    const envelope = JSON.parse(consoleSpy.mock.calls.map((c) => String(c[0])).find((l) => l.startsWith('{"error"'))!);
+    expect(envelope.error.message).toBe(message);
+    expect(process.exitCode).toBe(1);
+    process.exitCode = undefined;
+  });
+
+  it('answers an error envelope when the API key is missing', async () => {
+    (config.resolveApiKey as jest.Mock).mockResolvedValue(null);
+
+    await runCli(['webhooks', 'delete', 'wh-1']);
+
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringMatching(/^\{"error":/));
+    expect(process.exitCode).toBe(1);
+    process.exitCode = undefined;
   });
 });
 

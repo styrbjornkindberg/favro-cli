@@ -45,8 +45,12 @@ import { UsersAPI } from './users-api';
 import { WidgetsAPI } from './widgets-api';
 import { AttachmentsAPI } from './attachments-api';
 import { CustomFieldsAPI } from './custom-fields-api';
+import { ActivityApiClient } from '../api/activity';
 import { AggregateAPI } from '../api/aggregate';
 import { ContextAPI } from '../api/context';
+// `members` is `FavroApiClient` — the class predates the naming the rest of the
+// directory settled on. Renaming it is not this ticket's business (#116).
+import { FavroApiClient as MembersApiClient } from '../api/members';
 import { QueryAPI } from '../api/query';
 import { SprintPlanAPI } from '../api/sprint-plan';
 import { StandupAPI } from '../api/standup';
@@ -62,12 +66,18 @@ import { FavroWebhooksAPI } from '../api/webhooks';
  * `ctx.api.cards` instead of mocking `http-client`.
  *
  * Lazy is load-bearing, not tidiness: a command wanting `CardsAPI` must not pay
- * for the other seventeen. Written as eighteen explicit getters rather than a
+ * for the other nineteen. Written as twenty explicit getters rather than a
  * table so that each `new` is greppable and the type falls out of the code.
+ * `activity` and `members` joined in #116, which is when the first command
+ * needing them migrated; twenty is now every API class in the codebase, which
+ * `run.test.ts` pins.
  *
- * ponytail: lazy about `new`, NOT about `require`. The eighteen imports above
- * are eager, so requiring this module pulls 98 modules that `cards-api` alone
- * does not (44 → 142, measured). Nothing today pays for it — `cli.ts` already
+ * ponytail: lazy about `new`, NOT about `require`. The twenty imports above
+ * are eager, so requiring this module pulls ~99 modules that `cards-api` alone
+ * does not — 98 when #113 measured it (44 → 142), 97 before #116 and 99 after,
+ * re-measured through `require.cache`. The two getters #116 added cost two
+ * modules rather than a whole subtree, because `api/members` was already
+ * reached through `api/context`. Nothing today pays for it — `cli.ts` already
  * imports most of the graph — but #119 must not claim a startup win without
  * measuring `dist/` first. Making it lazy means `await import()` in the
  * getters, which makes every `ctx.api.x` a promise; that is the price.
@@ -91,8 +101,10 @@ export function apiNamespace(client: FavroHttpClient) {
     get widgets() { return once('widgets', () => new WidgetsAPI(client)); },
     get attachments() { return once('attachments', () => new AttachmentsAPI(client)); },
     get customFields() { return once('customFields', () => new CustomFieldsAPI(client)); },
+    get activity() { return once('activity', () => new ActivityApiClient(client)); },
     get aggregate() { return once('aggregate', () => new AggregateAPI(client)); },
     get context() { return once('context', () => new ContextAPI(client)); },
+    get members() { return once('members', () => new MembersApiClient(client)); },
     get query() { return once('query', () => new QueryAPI(client)); },
     get sprintPlan() { return once('sprintPlan', () => new SprintPlanAPI(client)); },
     get standup() { return once('standup', () => new StandupAPI(client)); },

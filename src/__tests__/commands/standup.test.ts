@@ -3,7 +3,7 @@
  * CLA-1799 / FAVRO-037: Standup & Sprint Commands
  */
 import { Command } from 'commander';
-import { registerStandupCommand } from '../../commands/standup';
+import { registerStandupCommand, standupHandler } from '../../commands/standup';
 import * as config from '../../lib/config';
 import * as standupApi from '../../api/standup';
 
@@ -31,7 +31,8 @@ const SAMPLE_RESULT: standupApi.StandupResult = {
 
 function buildProgram(): Command {
   const program = new Command();
-  program.option('--verbose', 'Show stack traces');
+  // The runner's three flags live on the root (ADR-0002).
+  program.option('--verbose', 'Show stack traces').option('--human').option('--pretty');
   registerStandupCommand(program);
   return program;
 }
@@ -57,12 +58,14 @@ describe('favro standup', () => {
     consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
     consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {}) as any);
+    process.exitCode = undefined;
   });
 
   afterEach(() => {
     consoleSpy.mockRestore();
     consoleErrorSpy.mockRestore();
     exitSpy.mockRestore();
+    process.exitCode = undefined;
   });
 
   it('calls getStandup with correct board name', async () => {
@@ -71,14 +74,19 @@ describe('favro standup', () => {
     expect(MockStandupAPI.prototype.getStandup).toHaveBeenCalledWith('Sprint 42', 500);
   });
 
-  it('outputs JSON with --json flag', async () => {
-    await runCli(['standup', '--board', 'Sprint 42', '--json']);
+  it('outputs compact JSON by default; --pretty is the only way to widen it', async () => {
+    // `--json` is gone from the leaf (#116): JSON is the default and `--human`
+    // is the way out (ADR-0002).
+    await runCli(['standup', '--board', 'Sprint 42']);
+    expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify(SAMPLE_RESULT));
 
+    consoleSpy.mockClear();
+    await runCli(['standup', '--board', 'Sprint 42', '--pretty']);
     expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify(SAMPLE_RESULT, null, 2));
   });
 
-  it('outputs human-readable standup by default', async () => {
-    await runCli(['standup', '--board', 'Sprint 42']);
+  it('outputs human-readable standup under --human', async () => {
+    await runCli(['standup', '--board', 'Sprint 42', '--human']);
 
     // Should print board name and groups
     const allCalls = consoleSpy.mock.calls.map(c => c[0] as string).join('\n');
@@ -89,7 +97,7 @@ describe('favro standup', () => {
   });
 
   it('shows the dependency edge count on cards that carry one', async () => {
-    await runCli(['standup', '--board', 'Sprint 42']);
+    await runCli(['standup', '--board', 'Sprint 42', '--human']);
 
     const lines = consoleSpy.mock.calls.map(c => c[0] as string);
     // c3 carries one edge; c2 carries none and must stay clean.
@@ -97,26 +105,62 @@ describe('favro standup', () => {
     expect(lines.find(l => l?.includes?.('Add dashboard'))).not.toContain('deps');
   });
 
-  it('exits with error when --board is missing', async () => {
+  it('refuses a missing --board, and says it is not worth retrying', async () => {
     await runCli(['standup']).catch(() => {});
 
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    const envelope = JSON.parse(consoleSpy.mock.calls.map((c) => c[0] as string).find((l) => l?.startsWith?.('{"error"'))!);
+    expect(envelope.error.message).toContain('--board <name> is required');
+    // A deterministic decline: the same call refuses identically (`refusal.ts`).
+    expect(envelope.error.retryable).toBe(false);
+    expect(process.exitCode).toBe(1);
+    expect(exitSpy).not.toHaveBeenCalled();
   });
 
-  it('exits with error when API key is missing', async () => {
+  it('answers an error envelope when the API key is missing', async () => {
     (config.resolveApiKey as jest.Mock).mockResolvedValue(null);
 
     await runCli(['standup', '--board', 'Sprint 42']).catch(() => {});
 
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringMatching(/^\{"error":/));
+    expect(process.exitCode).toBe(1);
   });
 
-  it('exits with error when getStandup throws', async () => {
+  it('answers an error envelope when getStandup throws', async () => {
     MockStandupAPI.prototype.getStandup.mockRejectedValue(new Error('Board not found'));
 
     await runCli(['standup', '--board', 'unknown-board']).catch(() => {});
 
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    const envelope = JSON.parse(consoleSpy.mock.calls.map((c) => c[0] as string).find((l) => l?.startsWith?.('{"error"'))!);
+    expect(envelope.error.message).toBe('Board not found');
+    expect(process.exitCode).toBe(1);
+  });
+
+  it('names an unreadable part of the board instead of reporting it as zero cards', async () => {
+    // #116: `total: 0` from a dead cards fetch used to be indistinguishable
+    // from an empty board.
+    MockStandupAPI.prototype.getStandup.mockResolvedValue({
+      ...SAMPLE_RESULT,
+      completed: [], inProgress: [], blocked: [], total: 0,
+      unreachable: [{ id: 'cards', reason: 'Request timed out' }],
+    });
+
+    await runCli(['standup', '--board', 'Sprint 42', '--human']);
+
+    const all = consoleSpy.mock.calls.map((c) => c[0] as string).join('\n');
+    expect(all).toContain('1 part(s) of this board could not be read');
+    expect(all).toContain('cards — Request timed out');
+  });
+
+  it('the handler returns the result as an item with a human formatter', async () => {
+    const getStandup = jest.fn().mockResolvedValue(SAMPLE_RESULT);
+    const result = await standupHandler(
+      { api: { standup: { getStandup } } } as never,
+      { board: 'Sprint 42', limit: '250' },
+    );
+
+    expect(getStandup).toHaveBeenCalledWith('Sprint 42', 250);
+    expect(result.item).toBe(SAMPLE_RESULT);
+    expect(typeof result.human).toBe('function');
   });
 
   it('passes custom limit to getStandup', async () => {
@@ -131,7 +175,7 @@ describe('favro standup', () => {
       dueSoon: [],
     });
 
-    await runCli(['standup', '--board', 'Sprint 42']);
+    await runCli(['standup', '--board', 'Sprint 42', '--human']);
 
     const allCalls = consoleSpy.mock.calls.map(c => c[0] as string).join('\n');
     expect(allCalls).toContain('(none)');

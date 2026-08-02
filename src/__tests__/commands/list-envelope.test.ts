@@ -16,7 +16,9 @@
  *   - a card-scoped read (`tasks list`)
  *   - a read that was already enveloped but had no cap, so `truncated` was
  *     unreachable (`tags list`)
- *   - the `--format json` spelling rather than `--json` (`webhooks list`)
+ *   - a read migrated onto the command runner, where JSON is the DEFAULT and
+ *     there is no output flag to pass at all (`webhooks list`, `members list`,
+ *     `activity` — #116)
  *   - a read whose cap used to live inside the API client (`activity`)
  *   - a read that FILTERS before it caps, where the order matters
  *     (`cards blocked-by`)
@@ -121,21 +123,25 @@ const READS: ListRead[] = [
     stub: proto(FavroWebhooksAPI, 'list'),
     register: registerWebhooksCommand,
     argv: ['webhooks', 'list'],
-    json: ['--format', 'json'],
+    // No flag: `--format json` left with #116's migration and JSON is the
+    // default now (ADR-0002).
+    json: [],
   },
   {
     name: 'activity',
     stub: proto(ActivityApiClient, 'getCardActivity'),
     register: registerActivityCommand,
     argv: ['activity', 'card-1'],
-    json: ['--json'],
+    // `--format`/`--json` left with #116's migration; JSON is the default.
+    json: [],
   },
   {
     name: 'members list',
     stub: proto(FavroApiClient, 'getMembers'),
     register: registerMembersCommand,
     argv: ['members', 'list'],
-    json: ['--json'],
+    // `--json` left the leaf with #116's migration; JSON is the default.
+    json: [],
   },
   {
     name: 'cards blocked-by',

@@ -16,9 +16,9 @@
  */
 
 import { Command } from 'commander';
-import { createFavroClient } from '../lib/client-factory';
-import { logError } from '../lib/error-handler';
-import StandupAPI, { type StandupCard } from '../api/standup';
+import { RefusalError } from '../lib/refusal';
+import { Ctx, run } from '../lib/run';
+import type { StandupCard, StandupResult } from '../api/standup';
 
 function formatCardLine(card: StandupCard): string {
   const id = card.id.slice(0, 12).padEnd(12);
@@ -44,6 +44,50 @@ function printGroup(label: string, emoji: string, cards: StandupCard[]): void {
   }
 }
 
+/**
+ * The human render. Prints for itself and returns `void` — the runner appends
+ * nothing under a formatter that already wrote (`writeHuman`).
+ */
+function formatHuman(result: StandupResult): void {
+  console.log(`\n📋 Standup: ${result.board.name}`);
+  console.log(`   ${result.total} total cards · ${new Date(result.generatedAt).toLocaleString()}`);
+
+  printGroup('Completed', '✅', result.completed);
+  printGroup('In Progress', '🚧', result.inProgress);
+  printGroup('Blocked', '🚫', result.blocked);
+  printGroup('Due Soon', '⏰', result.dueSoon);
+
+  // `0 total cards` from a failed fetch and `0 total cards` from an empty board
+  // read identically without this (#116).
+  if (result.unreachable?.length) {
+    console.log(`\n⚠️  Incomplete — ${result.unreachable.length} part(s) of this board could not be read:`);
+    for (const u of result.unreachable) console.log(`  ${u.id} — ${u.reason}`);
+  }
+
+  console.log('');
+}
+
+interface StandupOptions {
+  board?: string;
+  limit?: string;
+}
+
+/** Exported for a test that reads the `Result` back off a fake `Ctx`. */
+export async function standupHandler(ctx: Ctx, options: StandupOptions) {
+  if (!options.board) {
+    // A RefusalError, not a bare one: the same invocation declines identically,
+    // so `retryable: true` would be advice to loop (`refusal.ts`).
+    throw new RefusalError(
+      '--board <name> is required. Use `favro boards list` to find board names.',
+    );
+  }
+
+  const cardLimit = parseInt(options.limit ?? '500', 10) || 500;
+  const result = await ctx.api.standup.getStandup(options.board, cardLimit);
+
+  return { item: result, human: formatHuman };
+}
+
 export function registerStandupCommand(program: Command): void {
   program
     .command('standup')
@@ -58,46 +102,10 @@ export function registerStandupCommand(program: Command): void {
       'count, not a blocked state — a Favro edge is never cleared when the\n' +
       'blocker finishes. Use `favro unblocked` to see which edges are live.\n\n' +
       'Examples:\n' +
-      '  favro standup\n' +
       '  favro standup --board "Sprint 42"\n' +
-      '  favro standup --board boards-1234 --json'
+      '  favro standup --board boards-1234 --human'
     )
     .option('--board <name>', 'Board name or ID (uses default if omitted)')
-    .option('--json', 'Output as JSON')
     .option('--limit <number>', 'Maximum cards to fetch (default 500)', '500')
-    .action(async (options) => {
-
-      const board = options.board;
-      if (!board) {
-        console.error('Error: --board <name> is required. Use `favro boards list` to find board names.');
-        process.exit(1);
-      }
-
-      try {
-        const cardLimit = parseInt(options.limit, 10) || 500;
-        const client = await createFavroClient();
-        const api = new StandupAPI(client);
-
-        const result = await api.getStandup(board, cardLimit);
-
-        if (options.json) {
-          console.log(JSON.stringify(result, null, 2));
-          return;
-        }
-
-        // Human-readable standup output
-        console.log(`\n📋 Standup: ${result.board.name}`);
-        console.log(`   ${result.total} total cards · ${new Date(result.generatedAt).toLocaleString()}`);
-
-        printGroup('Completed', '✅', result.completed);
-        printGroup('In Progress', '🚧', result.inProgress);
-        printGroup('Blocked', '🚫', result.blocked);
-        printGroup('Due Soon', '⏰', result.dueSoon);
-
-        console.log('');
-      } catch (err) {
-        logError(err);
-        process.exit(1);
-      }
-    });
+    .action(run(standupHandler));
 }

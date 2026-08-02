@@ -68,7 +68,7 @@ export async function boundedSweep<T>(
     try {
       rows.push(await perItemCall(id));
     } catch (error) {
-      unreachable.push({ id, reason: reasonFor(error) });
+      unreachable.push({ id, reason: unreachableReason(error) });
     }
   }
   for (const id of ids.slice(SWEEP_CAP)) {
@@ -78,7 +78,17 @@ export async function boundedSweep<T>(
   return { rows, unreachable };
 }
 
-function reasonFor(error: unknown): string {
+/**
+ * The wording of an `Unreachable.reason`, in one place.
+ *
+ * Exported because not every hole comes from a sweep: `getSnapshot` fans out
+ * over five DIFFERENT calls in parallel, so there is no `ids` list to hand
+ * `boundedSweep` and no shared row type for it to return (#116). It still has
+ * to phrase its holes the way every other producer does, and that is this
+ * function — the same reason `overview` builds its holes directly rather than
+ * through a sweep with no wire.
+ */
+export function unreachableReason(error: unknown): string {
   const classified = classifyThrownError(error);
   if (classified?.message) return classified.message;
   return error instanceof Error ? error.message : String(error);
