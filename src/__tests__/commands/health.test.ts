@@ -105,9 +105,24 @@ describe('scoreBoard — the four sub-scores', () => {
     ).toEqual({ flow: 0, stale: 0, dependencies: 100, overdue: 100 });
   });
 
-  it('treats a missing or unparseable createdAt as infinitely stale', () => {
-    expect(scoreBoard([card({ id: '1', stage: 'active' })]).stale).toBe(0);
-    expect(scoreBoard([card({ id: '1', stage: 'active', createdAt: 'not a date' })]).stale).toBe(0);
+  it('leaves a missing or unparseable createdAt out of both halves of the stale ratio (#130)', () => {
+    // An undated card drops out of the ratio the same way an undue card drops
+    // out of `overdue` — it is not measured, so it neither helps nor hurts. It
+    // used to score 0 via `daysSince`'s `Infinity`, which said "maximally
+    // stale" about a card nobody can date.
+    expect(scoreBoard([card({ id: '1', stage: 'active' })]).stale).toBe(100);
+    expect(scoreBoard([card({ id: '1', stage: 'active', createdAt: 'not a date' })]).stale).toBe(100);
+  });
+
+  it('does not flip the board colour on zero information about card ages (#130)', () => {
+    // The cost of the old reading, measured: the same twenty live cards score
+    // green when Favro sends `createdAt` and yellow when it does not. #132
+    // records that the wire shape is unmeasured, so this is not hypothetical.
+    const twenty = (createdAt?: string) =>
+      Array.from({ length: 20 }, (_, i) => card({ id: `c${i}`, stage: 'active', createdAt }));
+
+    expect(computeHealth('dated', twenty(RECENT))).toMatchObject({ score: 100, signal: 'green' });
+    expect(computeHealth('undated', twenty())).toMatchObject({ score: 100, signal: 'green' });
   });
 
   it('draws the stale line above 14 days, not at it', () => {

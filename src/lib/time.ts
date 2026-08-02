@@ -42,17 +42,25 @@ export function parseSince(since: string | undefined): Date | undefined {
 }
 
 /**
- * Whole days between `dateStr` and now, floored.
+ * Whole days between `dateStr` and now, floored — or `undefined` when there is
+ * no date, or it will not parse.
  *
- * `Infinity` — not 0 — is the answer when there is no date or it will not
- * parse: a card nobody can date is infinitely stale, and a 0 would read as
- * "touched today" to every staleness threshold. One home for what `health` and
- * `stale` each held verbatim (#89).
+ * One home for what `health` and `stale` each held verbatim (#89). It used to
+ * answer `Infinity` here, on the reading that a card nobody can date is
+ * infinitely stale. That reading was wrong, and #130 is what it cost:
+ * `Infinity` is a *number*, so it satisfies every `>= threshold` a caller can
+ * write, and `favro stale` reported every undated card as over the limit
+ * whatever `--days` said. 0 would have been the mirror-image lie ("touched
+ * today").
+ *
+ * `undefined` is neither. An unknown age is not an age, so it does not compare,
+ * and TypeScript makes each caller state what it does with one instead of
+ * inheriting a default that happens to read as a plausible answer.
  */
-export function daysSince(dateStr?: string): number {
-  if (!dateStr) return Infinity;
+export function daysSince(dateStr?: string): number | undefined {
+  if (!dateStr) return undefined;
   const d = new Date(dateStr);
-  if (isNaN(d.getTime())) return Infinity;
+  if (isNaN(d.getTime())) return undefined;
   return Math.floor((Date.now() - d.getTime()) / (1000 * 60 * 60 * 24));
 }
 
