@@ -140,7 +140,7 @@ Cards that block each other but nobody set up the actual links:
 +      other cards in the comments, but the dependency links aren't actually set
 +      up. Can you find them and fix it?
 
-  llm  $ favro context "Sprint Board" --json
+  llm  $ favro context "Sprint Board"
        $ favro comments list <id>   # repeated for each card
 
        Found four unlinked dependencies:

@@ -1093,7 +1093,7 @@ List all members, optionally filtered by board or collection.
 
 **Syntax:**
 ```
-favro members list [--board <board-id>] [--collection <coll-id>] [--json]
+favro members list [--board <board-id>] [--collection <coll-id>] [--limit <n>] [--human]
 ```
 
 **Options:**
@@ -1102,7 +1102,8 @@ favro members list [--board <board-id>] [--collection <coll-id>] [--json]
 |---|---|
 | `--board <board-id>` | Filter members by board ID |
 | `--collection <coll-id>` | Filter members by collection ID |
-| `--json` | Output as JSON |
+| `--limit <n>` | Cap how many rows are printed; sets `truncated` |
+| `--human` | Table instead of the default JSON envelope (root flag) |
 
 **Notes:** `--board` and `--collection` are mutually exclusive.
 
@@ -1122,7 +1123,7 @@ Found 4 member(s):
 favro members list
 favro members list --board board-001
 favro members list --collection coll-abc123
-favro members list --json
+favro members list --human
 ```
 
 **Error cases:**
@@ -1136,7 +1137,7 @@ Add a member by email to a board or collection.
 
 **Syntax:**
 ```
-favro members add <email> --to <target-id> [--board-target] [--collection-target] [--json]
+favro members add <email> --to <target-id> [--board-target] [--collection-target] [--human]
 ```
 
 **Arguments:**
@@ -1165,7 +1166,7 @@ favro members add <email> --to <target-id> [--board-target] [--collection-target
 ```bash
 favro members add alice@example.com --to board-001
 favro members add bob@example.com --to coll-abc123 --collection-target
-favro members add alice@example.com --to board-001 --json
+favro members add alice@example.com --to board-001 --human
 ```
 
 **Error cases:**
@@ -1215,7 +1216,7 @@ Get the permission level for a member on a board.
 
 **Syntax:**
 ```
-favro members permissions <member-id> --board <board-id> [--json]
+favro members permissions <member-id> --board <board-id> [--human]
 ```
 
 **Arguments:**
@@ -1250,7 +1251,7 @@ Member user-001 on board board-001: admin
 **Examples:**
 ```bash
 favro members permissions user-001 --board board-001
-favro members permissions user-001 --board board-001 --json
+favro members permissions user-001 --board board-001 --human
 ```
 
 ---
@@ -1263,7 +1264,7 @@ List all comments on a card.
 
 **Syntax:**
 ```
-favro comments list <cardId> [--limit <n>] [--json]
+favro comments list <cardId> [--limit <n>] [--human]
 ```
 
 **Arguments:**
@@ -1306,7 +1307,7 @@ count as the total:
 ```bash
 favro comments list card-abc123
 favro comments list card-abc123 --limit 50
-favro comments list card-abc123 --json
+favro comments list card-abc123 --human
 ```
 
 **Tip:** Use `favro cards list --board <id>` to find card IDs.
@@ -1319,7 +1320,7 @@ Add a comment to a card.
 
 **Syntax:**
 ```
-favro comments add <cardId> --text "COMMENT" [--json]
+favro comments add <cardId> --text "COMMENT" [--human]
 ```
 
 **Arguments:**
@@ -1343,7 +1344,7 @@ favro comments add <cardId> --text "COMMENT" [--json]
 **Examples:**
 ```bash
 favro comments add card-abc123 --text "Looks good to me"
-favro comments add card-abc123 --text "Blocked by API issue" --json
+favro comments add card-abc123 --text "Blocked by API issue" --human
 ```
 
 **Error cases:**
@@ -1432,16 +1433,17 @@ List all configured webhooks for the organization.
 
 **Syntax:**
 ```
-favro webhooks list [--format table|json]
+favro webhooks list [--limit <n>] [--human]
 ```
 
 **Options:**
 
 | Option | Default | Description |
 |---|---|---|
-| `--format <format>` | `table` | Output format: `table` or `json` |
+| `--limit <n>` | — | Cap how many rows are printed; sets `truncated` |
+| `--human` | — | Table instead of the default JSON envelope (root flag) |
 
-**Output:**
+**Output (`--human`):**
 ```
 Found 2 webhook(s):
 ┌───┬──────────────┬───────────────┬──────────────────────────────────┬────────────┐
@@ -1455,7 +1457,7 @@ Found 2 webhook(s):
 **Examples:**
 ```bash
 favro webhooks list
-favro webhooks list --format json
+favro webhooks list --human
 ```
 
 ---

@@ -8,7 +8,7 @@
  *   favro webhooks delete <webhook-id>
  */
 import { Command } from 'commander';
-import { VALID_WEBHOOK_EVENTS, Webhook } from '../api/webhooks';
+import { VALID_WEBHOOK_EVENTS, Webhook, WebhookEvent } from '../api/webhooks';
 import { confirmAction } from '../lib/safety';
 import { Ctx, run } from '../lib/run';
 
@@ -78,7 +78,11 @@ export function registerWebhooksCommand(program: Command): void {
       }
 
       return {
-        item: await ctx.api.webhooks.create(options.event as never, options.target),
+        // The cast is the boundary: commander hands over a bare string and
+        // `create` validates it against `VALID_WEBHOOK_EVENTS`, throwing on
+        // anything else. Narrowing here instead would put the vocabulary in two
+        // places.
+        item: await ctx.api.webhooks.create(options.event as WebhookEvent, options.target),
         human: (webhook: Webhook) =>
           `✓ Webhook created: ${webhook.id}\n` +
           `  Event:  ${webhook.event}\n` +

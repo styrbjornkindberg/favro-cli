@@ -73,10 +73,11 @@ import { FavroWebhooksAPI } from '../api/webhooks';
  * `run.test.ts` pins.
  *
  * ponytail: lazy about `new`, NOT about `require`. The twenty imports above
- * are eager, so requiring this module pulls 99 modules that `cards-api` alone
- * does not (44 → 142 when #113 measured it; the two getters #116 added moved it
- * by one, because `api/members` was already reached through `api/context`).
- * Nothing today pays for it — `cli.ts` already
+ * are eager, so requiring this module pulls ~99 modules that `cards-api` alone
+ * does not — 98 when #113 measured it (44 → 142), 97 before #116 and 99 after,
+ * re-measured through `require.cache`. The two getters #116 added cost two
+ * modules rather than a whole subtree, because `api/members` was already
+ * reached through `api/context`. Nothing today pays for it — `cli.ts` already
  * imports most of the graph — but #119 must not claim a startup win without
  * measuring `dist/` first. Making it lazy means `await import()` in the
  * getters, which makes every `ctx.api.x` a promise; that is the price.
