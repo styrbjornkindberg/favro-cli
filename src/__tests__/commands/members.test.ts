@@ -111,6 +111,7 @@ describe('favro members list', () => {
 
     await runCli(['members', 'list']);
 
+    // An envelope, not a bare array — the shape every list read emits (#99).
     expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify({ rows: SAMPLE_MEMBERS }));
     expect(consoleTableSpy).not.toHaveBeenCalled();
   });

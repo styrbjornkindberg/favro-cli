@@ -9,6 +9,7 @@
 import { Command } from 'commander';
 import { boardOfCard, boardOfComment, checkResolvedScope, confirmAction } from '../lib/safety';
 import { Comment } from '../api/comments';
+import { parseLimit } from '../lib/read-shape';
 import { RefusalError } from '../lib/refusal';
 import { Ctx, run } from '../lib/run';
 import { formatTimestamp } from '../lib/time';
@@ -58,37 +59,29 @@ export function registerCommentsCommand(program: Command): void {
       'Tip: Use `favro cards list --board <id>` to find card IDs.'
     )
     .option('--limit <number>', 'Maximum number of comments to print (default: 100)', '100')
-    .action(run(async (ctx: Ctx, cardId: string, options: { limit?: string }) => {
-      const limitRaw = parseInt(options.limit ?? '100', 10);
-      const limit = !isNaN(limitRaw) && limitRaw >= 1 ? limitRaw : 100;
-
-      // The fetch runs to completion; `--limit` cuts the PRINT, and the cut
-      // says so (#136). The old shape capped the fetch and then printed that
-      // count as the total, so a card with 150 comments answered "100". The
-      // runner's `capRows` is the one place that cut happens now, so both modes
-      // read the same envelope and cannot disagree.
-      const all = await ctx.api.comments.listComments(cardId);
-
-      return {
-        rows: all,
-        limit,
-        human: (comments: Comment[]) => {
-          if (comments.length === 0) {
-            console.log(`No comments found on card "${cardId}".`);
-            return;
-          }
-
-          const count = comments.length < all.length
-            ? `showing ${comments.length} of ${all.length} comment(s)`
-            : `${comments.length} comment(s)`;
-          console.log(`\n💬 Comments on card "${cardId}" — ${count}:\n`);
-          for (const comment of comments) {
-            for (const line of commentLines(comment, '  ')) console.log(line);
-            console.log();
-          }
-        },
-      };
-    }));
+    .action(run(async (ctx: Ctx, cardId: string, options: { limit?: string }) => ({
+      // The fetch runs to completion; `--limit` cuts the PRINT (#136). The old
+      // shape capped the fetch and then printed that count as the total, so a
+      // card with 150 comments answered "100". `capRows` inside the runner is
+      // the one place the cut happens now, so both modes read the same envelope
+      // and cannot disagree — and it owns the parse too, so `--limit 1e9` is
+      // not read as 1 by a local `parseInt` (#99).
+      rows: await ctx.api.comments.listComments(cardId),
+      limit: parseLimit(options.limit) ?? 100,
+      // The cut itself is the runner's line (`noteTruncation`): a `human` is
+      // handed rows, never the envelope, so it cannot see one.
+      human: (comments: Comment[]) => {
+        if (comments.length === 0) {
+          console.log(`No comments found on card "${cardId}".`);
+          return;
+        }
+        console.log(`\n💬 Comments on card "${cardId}" — ${comments.length} comment(s):\n`);
+        for (const comment of comments) {
+          for (const line of commentLines(comment, '  ')) console.log(line);
+          console.log();
+        }
+      },
+    })));
 
   // ─── comments add ──────────────────────────────────────────────────────────
   commentsCmd

@@ -148,7 +148,22 @@ describe('favro comments list', () => {
 
     await runCli(['comments', 'list', 'card-abc', '--limit', '1', '--human']);
 
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('showing 1 of 2 comment(s)'));
+    // #136's guarantee, now written by the runner's `noteTruncation` rather
+    // than by this command (#99): a `human` formatter is handed rows and cannot
+    // see the cut, so one place says it for every migrated list read.
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(output).toContain('truncated to 1 of 2');
+    expect(output).not.toContain('2 comment(s)');
+  });
+
+  it('a non-numeric --limit falls back to the default rather than capping at 1 (#99)', async () => {
+    MockCommentsApiClient.prototype.listComments = jest.fn().mockResolvedValue(SAMPLE_COMMENTS);
+
+    await runCli(['comments', 'list', 'card-abc', '--limit', '1e9']);
+
+    const parsed = JSON.parse(String(consoleSpy.mock.calls[0][0]));
+    expect(parsed.rows).toHaveLength(2);
+    expect(parsed.truncated).toBeUndefined();
   });
 
   it('answers an error envelope when the API key is missing', async () => {

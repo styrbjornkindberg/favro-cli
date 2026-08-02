@@ -9,6 +9,7 @@
  */
 import { Command } from 'commander';
 import { ActivityEntry, parseSince, formatTimestamp } from '../api/activity';
+import { parseLimit } from '../lib/read-shape';
 import { RefusalError } from '../lib/refusal';
 import { Ctx, run } from '../lib/run';
 
@@ -45,8 +46,10 @@ export async function activityHandler(ctx: Ctx, cardId: string, options: Activit
   const since = parseWindow(options.since, '--since');
   const until = parseWindow(options.until, '--until');
 
-  const limitRaw = parseInt(options.limit ?? '200', 10);
-  const limit = !isNaN(limitRaw) && limitRaw >= 1 ? limitRaw : 200;
+  // `parseLimit`, not a local `parseInt`: the prefix parse read `--limit 1e9`
+  // as 1 and printed one entry marked `truncated` (#99). The `?? 200` keeps the
+  // declared default when the value is unparseable.
+  const limit = parseLimit(options.limit) ?? 200;
 
   // No `limit` on the fetch. It is one call that returns everything Favro has
   // for the card — Favro ignores `limit` on this endpoint — so capping there
@@ -81,12 +84,10 @@ export async function activityHandler(ctx: Ctx, cardId: string, options: Activit
         console.log();
       }
 
-      // `all` rather than `entries`: the human reader is told what was cut, the
-      // same way the envelope's `truncated` tells a machine one.
-      const shown = entries.length < all.length
-        ? `Total: ${entries.length} of ${all.length} entry/entries shown.`
-        : `Total: ${entries.length} entry/entries shown.`;
-      console.log(shown);
+      // Just the count. The CUT is the runner's line to write — a `human` is
+      // handed rows, never the envelope, so `noteTruncation` says it once for
+      // every migrated list read rather than each of them re-deriving it (#99).
+      console.log(`Total: ${entries.length} entry/entries shown.`);
     },
   };
 }

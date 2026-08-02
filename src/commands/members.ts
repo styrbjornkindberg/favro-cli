@@ -42,7 +42,8 @@ export function registerMembersCommand(program: Command): void {
     .description('List all members, optionally filtered by board or collection')
     .option('--board <board-id>', 'Filter members by board ID')
     .option('--collection <coll-id>', 'Filter members by collection ID')
-    .action(run(async (ctx: Ctx, options: { board?: string; collection?: string }) => {
+    .option('--limit <n>', 'Cap how many rows are printed; sets "truncated"')
+    .action(run(async (ctx: Ctx, options: { board?: string; collection?: string; limit?: string }) => {
       if (options.board && options.collection) {
         // Deterministic: the same pair of flags refuses identically, so this is
         // a RefusalError and `retryable` comes back false (`refusal.ts`).
@@ -54,6 +55,11 @@ export function registerMembersCommand(program: Command): void {
           boardId: options.board,
           collectionId: options.collection,
         }),
+        // Handed over unparsed: `capRows` owns the parse now (#99), so a
+        // `--limit 1e9` cannot be read as 1 by a local `parseInt`.
+        limit: options.limit,
+        // The truncation note is the RUNNER's, not this formatter's — a `human`
+        // is handed rows, never the envelope, so it cannot see the cut (#99).
         human: (rows: Member[]) => {
           if (rows.length === 0) {
             console.log('No members found.');

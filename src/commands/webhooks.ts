@@ -21,10 +21,14 @@ export function registerWebhooksCommand(program: Command): void {
   webhooksCmd
     .command('list')
     .description('List all configured webhooks')
+    .option('--limit <n>', 'Cap how many rows are printed; sets "truncated"')
     // `--format table|json` is gone (ADR-0002, #116) — a third spelling of the
     // axis `--human` already owns.
-    .action(run(async (ctx: Ctx) => ({
+    .action(run(async (ctx: Ctx, options: { limit?: string }) => ({
       rows: await ctx.api.webhooks.list(),
+      // Unparsed: `capRows` owns the parse (#99). The truncation note is the
+      // runner's — a `human` never sees the envelope.
+      limit: options.limit,
       human: (rows: Webhook[]) => {
         if (rows.length === 0) {
           console.log('No webhooks configured.');

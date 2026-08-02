@@ -25,7 +25,7 @@ import type { Command } from 'commander';
 import FavroHttpClient from './http-client';
 import { createFavroClient } from './client-factory';
 import { readConfig, FavroConfig } from './config';
-import { capRows, writeEnvelope } from './read-shape';
+import { capRows, noteTruncation, writeEnvelope } from './read-shape';
 import { reportDispatch } from './report-dispatch';
 import { DispatchResult, isRetryable } from './dispatch';
 import { isVerbose, logError } from './error-handler';
@@ -163,8 +163,12 @@ interface NotDispatch {
 /** A list read. Always an envelope, whether or not its author considered it. */
 export interface RowsResult<T> extends WithExitCode, NotItem, NotDispatch {
   rows: T[];
-  /** `--limit`. Caps what is PRINTED; the fetch already ran to completion. */
-  limit?: number;
+  /**
+   * `--limit`. Caps what is PRINTED; the fetch already ran to completion.
+   * A string because that is how commander hands a flag over — `capRows` owns
+   * the parse, so a handler passes `options.limit` through untouched.
+   */
+  limit?: number | string;
   /** Returning `void` is legal, and is what accommodates `console.table`. */
   human?: (rows: T[]) => string | void;
 }
@@ -348,8 +352,15 @@ function emit(result: AnyResult, format: Format): void {
     }
   } else if (result.rows) {
     const envelope = capRows(result.rows, result.limit);
-    if (format.json) writeEnvelope(envelope, format.pretty);
-    else writeHuman(envelope.rows, result.human);
+    if (format.json) {
+      writeEnvelope(envelope, format.pretty);
+    } else {
+      writeHuman(envelope.rows, result.human);
+      // A `human` formatter is handed ROWS, not the envelope, so it cannot say
+      // a cut happened and every one of them would have to be told to. The
+      // runner says it instead — once, for every migrated list read (#99).
+      noteTruncation(envelope, result.rows.length);
+    }
   } else {
     writeValue(result.item, result.human, format);
   }
