@@ -14,6 +14,7 @@
 
 import FavroHttpClient from '../lib/http-client';
 import ContextAPI, { extractEffort, type ContextCard, type BoardContextSnapshot } from './context';
+import type { Unreachable } from '../lib/read-shape';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -38,6 +39,11 @@ export interface SprintPlanResult {
   totalSuggested: number;
   suggestions: SprintCard[];
   overflow: SprintCard[];  // cards that didn't fit in budget
+  /**
+   * Carried straight off the snapshot (#116). An empty plan from a failed cards
+   * read would otherwise read as "no backlog cards found", which is advice.
+   */
+  unreachable?: Unreachable[];
   generatedAt: string;
 }
 
@@ -191,6 +197,7 @@ export class SprintPlanAPI {
       totalSuggested: suggestions.reduce((sum, c) => sum + (c.effort ?? 0), 0),
       suggestions,
       overflow,
+      ...(snapshot.unreachable ? { unreachable: snapshot.unreachable } : {}),
       generatedAt: snapshot.generatedAt,
     };
   }

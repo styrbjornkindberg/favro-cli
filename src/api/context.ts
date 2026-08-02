@@ -13,6 +13,7 @@ import { CustomFieldsAPI, CustomFieldDefinition } from '../lib/custom-fields-api
 import { ColumnsAPI } from '../lib/columns-api';
 import { detectStage, WorkflowStage } from '../lib/workflow-stage';
 import { blockingEdges } from '../lib/blocking';
+import { Unreachable, unreachableReason } from '../lib/read-shape';
 
 export { WorkflowStage };
 
@@ -71,6 +72,18 @@ export interface BoardContextSnapshot {
   }>;
   cards: ContextCard[];
   stats: ContextStats;
+  /**
+   * Facets this snapshot could not read. Present only when there are any, so an
+   * absent marker with `cards: []` means the board is genuinely empty rather
+   * than unreadable (`read-shape.ts` rule 3, #116).
+   *
+   * The KEY is `unreachable` and the entries are `{id, reason}` objects — the
+   * one shape `favro help issue-tracker` documents and #86 converged the three
+   * producers onto. `id` is the facet name (`cards`, `members`, `columns`,
+   * `customFields`, `board`), not a card id: what could not be looked at here
+   * is a whole fetch.
+   */
+  unreachable?: Unreachable[];
   generatedAt: string;
 }
 
@@ -243,13 +256,37 @@ export class ContextAPI {
     const board = await this.resolveBoard(boardRef);
     const boardId = board.boardId;
 
-    // Step 2: Fetch all board data in parallel
+    // Step 2: Fetch all board data in parallel.
+    //
+    // A facet that fails still falls back, because one dead sub-fetch must not
+    // cost the caller the other four — but it is RECORDED now (#116). It used
+    // to be swallowed by a bare `.catch(() => [])`, so a failed cards read came
+    // back as `cards: []` and `stats.total: 0`, and every consumer of this
+    // snapshot — `context`, `standup`, `sprint-plan`, `query` — reported "we
+    // could not look" as "there is nothing there".
+    //
+    // Built directly rather than through `boundedSweep`: these are five
+    // different calls with five different return types, so there is no `ids`
+    // list to sweep and no shared row to collect. Routing them through it would
+    // also serialise them, and the parallelism is this snapshot's whole
+    // performance budget (< 1s for 500 cards). The wording still comes from
+    // `read-shape.ts`, which is the part that has to stay shared.
+    const unreachable: Unreachable[] = [];
+    const orElse = async <T>(id: string, call: Promise<T>, fallback: T): Promise<T> => {
+      try {
+        return await call;
+      } catch (error) {
+        unreachable.push({ id, reason: unreachableReason(error) });
+        return fallback;
+      }
+    };
+
     const [extendedBoard, cards, members, customFieldDefs, rawColumns] = await Promise.all([
-      this.boardsApi.getBoardWithIncludes(boardId, ['custom-fields', 'members']).catch(() => board as any),
-      this.cardsApi.listCards(boardId).catch(() => [] as Card[]),
-      this.membersApi.getMembers({ boardId }).catch(() => []),
-      this.customFieldsApi.listFields(boardId).catch(() => [] as CustomFieldDefinition[]),
-      this.columnsApi.listColumns(boardId).catch(() => []),
+      orElse('board', this.boardsApi.getBoardWithIncludes(boardId, ['custom-fields', 'members']), board as any),
+      orElse('cards', this.cardsApi.listCards(boardId), [] as Card[]),
+      orElse('members', this.membersApi.getMembers({ boardId }), []),
+      orElse('customFields', this.customFieldsApi.listFields(boardId), [] as CustomFieldDefinition[]),
+      orElse('columns', this.columnsApi.listColumns(boardId), []),
     ]);
 
     // Extract columns — prefer dedicated columns API, fall back to extended board
@@ -346,6 +383,7 @@ export class ContextAPI {
       members: normalizedMembers,
       cards: normalizedCards,
       stats,
+      ...(unreachable.length > 0 ? { unreachable } : {}),
       generatedAt: new Date().toISOString(),
     };
   }

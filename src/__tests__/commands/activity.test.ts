@@ -8,7 +8,7 @@
  * `src/__tests__/api/activity-wire.test.ts` for the real shape.
  */
 import { Command } from 'commander';
-import { registerActivityCommand } from '../../commands/activity';
+import { registerActivityCommand, activityHandler } from '../../commands/activity';
 import * as config from '../../lib/config';
 import * as apiActivity from '../../api/activity';
 
@@ -64,7 +64,8 @@ const SAMPLE_ACTIVITY = [
 
 function buildProgram(): Command {
   const program = new Command();
-  program.option('--verbose', 'Show stack traces');
+  // The runner's three flags live on the root (ADR-0002).
+  program.option('--verbose', 'Show stack traces').option('--human').option('--pretty');
   registerActivityCommand(program);
   return program;
 }
@@ -89,22 +90,29 @@ describe('favro activity <cardId>', () => {
     consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
     consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     processExitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {}) as any);
+    process.exitCode = undefined;
   });
 
   afterEach(() => {
     consoleSpy.mockRestore();
     consoleErrorSpy.mockRestore();
     processExitSpy.mockRestore();
+    process.exitCode = undefined;
   });
+
+  const errorEnvelope = () =>
+    JSON.parse(consoleSpy.mock.calls.map((c) => String(c[0])).find((l) => l.startsWith('{"error"'))!);
 
   it('shows activity for a card', async () => {
     MockActivityApiClient.prototype.getCardActivity = jest.fn().mockResolvedValue(SAMPLE_ACTIVITY);
 
-    await runCli(['activity', CARD]);
+    await runCli(['activity', CARD, '--human']);
 
+    // No `limit` on the fetch any more (#116): Favro ignores it on this
+    // endpoint, and `--limit` caps the PRINT so the cut can say `truncated`.
     expect(MockActivityApiClient.prototype.getCardActivity).toHaveBeenCalledWith(
       CARD,
-      expect.objectContaining({ limit: 200 })
+      { since: undefined, until: undefined }
     );
     const output = consoleSpy.mock.calls.flat().join('\n');
     expect(output).toContain('CARD DESCRIPTION CHANGED');
@@ -115,30 +123,34 @@ describe('favro activity <cardId>', () => {
   it('reports the viewer-scoping caveat when the feed is empty', async () => {
     MockActivityApiClient.prototype.getCardActivity = jest.fn().mockResolvedValue([]);
 
-    await runCli(['activity', CARD]);
+    await runCli(['activity', CARD, '--human']);
 
     const output = consoleSpy.mock.calls.flat().join('\n');
     expect(output).toContain('No activity found');
     expect(output).toContain('follows or has news for');
   });
 
-  it('outputs JSON with --format json', async () => {
+  it('answers the rows envelope by default — --format is gone', async () => {
     MockActivityApiClient.prototype.getCardActivity = jest.fn().mockResolvedValue(SAMPLE_ACTIVITY);
 
-    await runCli(['activity', CARD, '--format', 'json']);
+    await runCli(['activity', CARD]);
 
     const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
-    expect(parsed).toHaveLength(2);
-    expect(parsed[0].time).toBe('2026-03-26T12:00:00.000Z');
-    expect(parsed[0].byUserId).toBe('pk3qK36WHjnJt5jwr');
+    // #44: a list read is an envelope, not a bare array.
+    expect(parsed.rows).toHaveLength(2);
+    expect(parsed.truncated).toBeUndefined();
+    expect(parsed.rows[0].time).toBe('2026-03-26T12:00:00.000Z');
+    expect(parsed.rows[0].byUserId).toBe('pk3qK36WHjnJt5jwr');
   });
 
-  it('accepts --json as shorthand', async () => {
+  it('--limit caps the print and says so, rather than capping the fetch', async () => {
     MockActivityApiClient.prototype.getCardActivity = jest.fn().mockResolvedValue(SAMPLE_ACTIVITY);
 
-    await runCli(['activity', CARD, '--json']);
+    await runCli(['activity', CARD, '--limit', '1']);
 
-    expect(() => JSON.parse(consoleSpy.mock.calls[0][0])).not.toThrow();
+    const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
+    expect(parsed.rows).toHaveLength(1);
+    expect(parsed.truncated).toBe(true);
   });
 
   it('passes --since through as a Date', async () => {
@@ -160,59 +172,58 @@ describe('favro activity <cardId>', () => {
     expect(options.until).toBeInstanceOf(Date);
   });
 
-  it('passes --limit through', async () => {
-    MockActivityApiClient.prototype.getCardActivity = jest.fn().mockResolvedValue(SAMPLE_ACTIVITY);
-
-    await runCli(['activity', CARD, '--limit', '5']);
-
-    const options = MockActivityApiClient.prototype.getCardActivity.mock.calls[0][1]!;
-    expect(options.limit).toBe(5);
-  });
-
-  it('rejects an unparseable --since before calling the API', async () => {
+  it('refuses an unparseable --since before calling the API', async () => {
     MockActivityApiClient.prototype.getCardActivity = jest.fn();
 
     await runCli(['activity', CARD, '--since', 'bad-format']);
 
-    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid --since'));
-    expect(processExitSpy).toHaveBeenCalledWith(1);
+    expect(errorEnvelope().error.message).toContain('Invalid --since');
+    expect(errorEnvelope().error.retryable).toBe(false);
+    expect(process.exitCode).toBe(1);
+    expect(processExitSpy).not.toHaveBeenCalled();
+    expect(MockActivityApiClient.prototype.getCardActivity).not.toHaveBeenCalled();
   });
 
-  it('names --until in the error when --until is unparseable', async () => {
+  it('names --until in the refusal when --until is unparseable', async () => {
     MockActivityApiClient.prototype.getCardActivity = jest.fn();
 
     await runCli(['activity', CARD, '--until', 'bad-format']);
 
-    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid --until'));
-    expect(processExitSpy).toHaveBeenCalledWith(1);
+    expect(errorEnvelope().error.message).toContain('Invalid --until');
+    expect(process.exitCode).toBe(1);
   });
 
-  it('rejects an unknown --format', async () => {
-    MockActivityApiClient.prototype.getCardActivity = jest.fn();
-
-    await runCli(['activity', CARD, '--format', 'xml']);
-
-    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid format'));
-    expect(processExitSpy).toHaveBeenCalledWith(1);
-  });
-
-  it('exits non-zero when the API errors', async () => {
+  it('answers an error envelope when the API errors', async () => {
     MockActivityApiClient.prototype.getCardActivity = jest
       .fn()
       .mockRejectedValue(new Error('403 Forbidden'));
 
     await runCli(['activity', CARD]);
 
-    expect(processExitSpy).toHaveBeenCalledWith(1);
+    expect(errorEnvelope().error.message).toBe('403 Forbidden');
+    expect(process.exitCode).toBe(1);
   });
 
-  it('rejects the old `activity log <boardId>` form with a migration hint', async () => {
+  it('refuses the old `activity log <boardId>` form with a migration hint', async () => {
     MockActivityApiClient.prototype.getCardActivity = jest.fn();
 
     await runCli(['activity', 'log', 'board-123']);
 
-    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('is gone'));
-    expect(processExitSpy).toHaveBeenCalledWith(1);
+    expect(errorEnvelope().error.message).toContain('is gone');
+    expect(process.exitCode).toBe(1);
     expect(MockActivityApiClient.prototype.getCardActivity).not.toHaveBeenCalled();
+  });
+
+  it('the handler returns rows with the print cap attached', async () => {
+    const getCardActivity = jest.fn().mockResolvedValue(SAMPLE_ACTIVITY);
+    const result = await activityHandler(
+      { api: { activity: { getCardActivity } } } as never,
+      CARD,
+      { limit: '5' },
+    );
+
+    expect(result.rows).toHaveLength(2);
+    expect(result.limit).toBe(5);
+    expect(typeof result.human).toBe('function');
   });
 });

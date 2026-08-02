@@ -15,9 +15,9 @@
  */
 
 import { Command } from 'commander';
-import { createFavroClient } from '../lib/client-factory';
-import { logError } from '../lib/error-handler';
-import SprintPlanAPI, { type SprintCard } from '../api/sprint-plan';
+import { RefusalError } from '../lib/refusal';
+import { Ctx, run } from '../lib/run';
+import type { SprintCard, SprintPlanResult } from '../api/sprint-plan';
 
 function formatSprintCard(card: SprintCard, index: number): string {
   const num = String(index + 1).padStart(2);
@@ -28,6 +28,84 @@ function formatSprintCard(card: SprintCard, index: number): string {
   const effort = card.effort !== undefined ? String(card.effort).padStart(3) + 'pt' : '  —  ';
   const priority = card.priority ? card.priority.slice(0, 8).padEnd(8) : '  —     ';
   return `  ${num}. ${id}  ${title}  ${priority}  ${effort}`;
+}
+
+/**
+ * The human render. Prints for itself and returns `void`, so the runner appends
+ * nothing under it.
+ */
+function formatHuman(result: SprintPlanResult): void {
+  const backlogTotal = result.suggestions.length + result.overflow.length;
+  console.log(`\n🗓️  Sprint Plan: ${result.board.name}`);
+  console.log(`   Budget: ${result.budget} pts · ${backlogTotal} backlog cards · ` +
+    `${result.suggestions.length} fit in budget (${result.totalSuggested} pts)`);
+
+  // Named before the early return below: "no backlog cards found" over a board
+  // whose card fetch died is advice, not an answer (#116).
+  const holes = (): void => {
+    if (!result.unreachable?.length) return;
+    console.log(`\n  ⚠️  Incomplete — ${result.unreachable.length} part(s) of this board could not be read:`);
+    for (const u of result.unreachable) console.log(`    ${u.id} — ${u.reason}`);
+  };
+
+  if (result.suggestions.length === 0 && result.overflow.length === 0) {
+    console.log('\n  (no backlog cards found)');
+    holes();
+    console.log('');
+    return;
+  }
+
+  const header = `  #.  ${'Card ID'.padEnd(12)}  ${'Title'.padEnd(45)}  ${'Priority'.padEnd(8)}  Effort`;
+  console.log(`\n  ✅ Within budget (${result.suggestions.length} cards, ${result.totalSuggested} pts):`);
+  console.log(header);
+  console.log('  ' + '─'.repeat(header.length - 2));
+
+  if (result.suggestions.length === 0) {
+    console.log('  (none fit within budget)');
+  } else {
+    result.suggestions.forEach((card, i) => {
+      console.log(formatSprintCard(card, i));
+    });
+  }
+
+  if (result.overflow.length > 0) {
+    console.log(`\n  ⚠️  Over budget (${result.overflow.length} cards excluded):`);
+    console.log(header);
+    console.log('  ' + '─'.repeat(header.length - 2));
+    result.overflow.forEach((card, i) => {
+      console.log(formatSprintCard(card, i));
+    });
+  }
+
+  holes();
+  console.log('');
+}
+
+interface SprintPlanOptions {
+  board?: string;
+  budget?: string;
+  limit?: string;
+}
+
+/** Exported for a test that reads the `Result` back off a fake `Ctx`. */
+export async function sprintPlanHandler(ctx: Ctx, options: SprintPlanOptions) {
+  // Both declines are deterministic — the same invocation refuses identically —
+  // so they are `RefusalError`, which is what makes `retryable` false.
+  if (!options.board) {
+    throw new RefusalError(
+      '--board <name> is required. Use `favro boards list` to find board names.',
+    );
+  }
+
+  const budget = parseInt(options.budget ?? '40', 10);
+  if (isNaN(budget) || budget < 1) {
+    throw new RefusalError(`--budget must be a positive number, not "${options.budget}".`);
+  }
+
+  const cardLimit = parseInt(options.limit ?? '500', 10) || 500;
+  const result = await ctx.api.sprintPlan.getSuggestions(options.board, budget, cardLimit);
+
+  return { item: result, human: formatHuman };
 }
 
 export function registerSprintPlanCommand(program: Command): void {
@@ -42,77 +120,10 @@ export function registerSprintPlanCommand(program: Command): void {
       'Examples:\n' +
       '  favro sprint-plan --board "Sprint 42"\n' +
       '  favro sprint-plan --board boards-1234 --budget 20\n' +
-      '  favro sprint-plan --board "My Board" --json'
+      '  favro sprint-plan --board "My Board" --human'
     )
     .option('--board <name>', 'Board name or ID (required)')
     .option('--budget <points>', 'Sprint point budget (default 40)', '40')
-    .option('--json', 'Output as JSON')
     .option('--limit <number>', 'Maximum cards to fetch (default 500)', '500')
-    .action(async (options) => {
-
-      const board = options.board;
-      if (!board) {
-        console.error('Error: --board <name> is required. Use `favro boards list` to find board names.');
-        process.exit(1);
-      }
-
-      const budget = parseInt(options.budget, 10);
-      if (isNaN(budget) || budget < 1) {
-        console.error('Error: --budget must be a positive number.');
-        process.exit(1);
-      }
-
-      try {
-        const cardLimit = parseInt(options.limit, 10) || 500;
-        const client = await createFavroClient();
-        const api = new SprintPlanAPI(client);
-
-        const result = await api.getSuggestions(board, budget, cardLimit);
-
-        if (options.json) {
-          console.log(JSON.stringify(result, null, 2));
-          return;
-        }
-
-        // Human-readable sprint plan output
-        const backlogTotal = result.suggestions.length + result.overflow.length;
-        console.log(`\n🗓️  Sprint Plan: ${result.board.name}`);
-        console.log(`   Budget: ${budget} pts · ${backlogTotal} backlog cards · ` +
-          `${result.suggestions.length} fit in budget (${result.totalSuggested} pts)`);
-
-        if (result.suggestions.length === 0 && result.overflow.length === 0) {
-          console.log('\n  (no backlog cards found)');
-          console.log('');
-          return;
-        }
-
-        // Print column header
-        const header = `  #.  ${'Card ID'.padEnd(12)}  ${'Title'.padEnd(45)}  ${'Priority'.padEnd(8)}  Effort`;
-        console.log(`\n  ✅ Within budget (${result.suggestions.length} cards, ${result.totalSuggested} pts):`);
-        console.log(header);
-        console.log('  ' + '─'.repeat(header.length - 2));
-
-        if (result.suggestions.length === 0) {
-          console.log('  (none fit within budget)');
-        } else {
-          result.suggestions.forEach((card, i) => {
-            console.log(formatSprintCard(card, i));
-          });
-        }
-
-        if (result.overflow.length > 0) {
-          console.log(`\n  ⚠️  Over budget (${result.overflow.length} cards excluded):`);
-          console.log(header);
-          console.log('  ' + '─'.repeat(header.length - 2));
-          result.overflow.forEach((card, i) => {
-            console.log(formatSprintCard(card, i));
-          });
-        }
-
-        console.log('');
-      } catch (err) {
-        logError(err);
-        process.exit(1);
-      }
-    });
+    .action(run(sprintPlanHandler));
 }

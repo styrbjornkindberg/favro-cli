@@ -435,6 +435,7 @@ export class QueryAPI {
       filter,
       summary,
       noResultsExplanation,
+      ...(context.unreachable ? { unreachable: context.unreachable } : {}),
     };
   }
 }

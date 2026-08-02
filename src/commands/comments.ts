@@ -7,12 +7,24 @@
  *   favro comments add <card> --text "COMMENT"
  */
 import { Command } from 'commander';
-import { createFavroClient } from '../lib/client-factory';
-import { logError } from '../lib/error-handler';
 import { boardOfCard, boardOfComment, checkResolvedScope, confirmAction } from '../lib/safety';
-import CommentsApiClient from '../api/comments';
-import { capRows, writeEnvelope } from '../lib/read-shape';
+import { Comment } from '../api/comments';
+import { RefusalError } from '../lib/refusal';
+import { Ctx, run } from '../lib/run';
 import { formatTimestamp } from '../lib/time';
+
+/** One comment, as it reads to a person. */
+function commentLines(comment: Comment, indent: string): string[] {
+  const ts = formatTimestamp(comment.createdAt);
+  const author = comment.author ? ` by ${comment.author}` : '';
+  return [`${indent}[${comment.commentId}]${author} — ${ts}`, `${indent}  ${comment.text}`];
+}
+
+/** Refuse empty comment text — the same call declines identically. */
+function requireText(text: string | undefined): string {
+  if (!text || !text.trim()) throw new RefusalError('Comment text cannot be empty.');
+  return text;
+}
 
 export function registerCommentsCommand(program: Command): void {
   const commentsCmd = program
@@ -26,31 +38,13 @@ export function registerCommentsCommand(program: Command): void {
       'Get a single comment by ID.\n\n' +
       'Examples:\n' +
       '  favro comments get <commentId>\n' +
-      '  favro comments get <commentId> --json\n\n' +
+      '  favro comments get <commentId> --human\n\n' +
       'Tip: Use `favro comments list <card>` to find comment IDs.'
     )
-    .option('--json', 'Output as JSON')
-    .action(async (commentId: string, options) => {
-      const verbose = program.opts()?.verbose ?? false;
-      try {
-        const client = await createFavroClient();
-        const api = new CommentsApiClient(client);
-        const comment = await api.getComment(commentId);
-
-        if (options.json) {
-          console.log(JSON.stringify(comment, null, 2));
-          return;
-        }
-
-        const ts = formatTimestamp(comment.createdAt);
-        const author = comment.author ? ` by ${comment.author}` : '';
-        console.log(`[${comment.commentId}]${author} — ${ts}`);
-        console.log(`  ${comment.text}`);
-      } catch (error) {
-        logError(error, verbose);
-        process.exit(1);
-      }
-    });
+    .action(run(async (ctx: Ctx, commentId: string) => ({
+      item: await ctx.api.comments.getComment(commentId),
+      human: (comment: Comment) => commentLines(comment, '').join('\n'),
+    })));
 
   // ─── comments list ─────────────────────────────────────────────────────────
   commentsCmd
@@ -59,56 +53,42 @@ export function registerCommentsCommand(program: Command): void {
       'List all comments on a card.\n\n' +
       'Examples:\n' +
       '  favro comments list <card>\n' +
-      '  favro comments list <card> --json\n' +
+      '  favro comments list <card> --human\n' +
       '  favro comments list <card> --limit 50\n\n' +
       'Tip: Use `favro cards list --board <id>` to find card IDs.'
     )
     .option('--limit <number>', 'Maximum number of comments to print (default: 100)', '100')
-    .option('--json', 'Output as JSON')
-    .action(async (cardId: string, options) => {
-      const verbose = program.opts()?.verbose ?? false;
-      try {
+    .action(run(async (ctx: Ctx, cardId: string, options: { limit?: string }) => {
+      const limitRaw = parseInt(options.limit ?? '100', 10);
+      const limit = !isNaN(limitRaw) && limitRaw >= 1 ? limitRaw : 100;
 
-        const limitRaw = parseInt(options.limit, 10);
-        const limit = !isNaN(limitRaw) && limitRaw >= 1 ? limitRaw : 100;
+      // The fetch runs to completion; `--limit` cuts the PRINT, and the cut
+      // says so (#136). The old shape capped the fetch and then printed that
+      // count as the total, so a card with 150 comments answered "100". The
+      // runner's `capRows` is the one place that cut happens now, so both modes
+      // read the same envelope and cannot disagree.
+      const all = await ctx.api.comments.listComments(cardId);
 
-        const client = await createFavroClient();
-        const api = new CommentsApiClient(client);
+      return {
+        rows: all,
+        limit,
+        human: (comments: Comment[]) => {
+          if (comments.length === 0) {
+            console.log(`No comments found on card "${cardId}".`);
+            return;
+          }
 
-        // The fetch runs to completion; `--limit` cuts the PRINT, and the cut
-        // says so (#136). The old shape capped the fetch and then printed that
-        // count as the total, so a card with 150 comments answered "100".
-        // Both modes read the same `envelope.truncated`, so they cannot disagree.
-        const all = await api.listComments(cardId);
-        const envelope = capRows(all, limit);
-        const comments = envelope.rows;
-
-        if (options.json) {
-          writeEnvelope(envelope, Boolean(program.opts()?.pretty));
-          return;
-        }
-
-        if (comments.length === 0) {
-          console.log(`No comments found on card "${cardId}".`);
-          return;
-        }
-
-        const count = envelope.truncated
-          ? `showing ${comments.length} of ${all.length} comment(s)`
-          : `${comments.length} comment(s)`;
-        console.log(`\n💬 Comments on card "${cardId}" — ${count}:\n`);
-        for (const comment of comments) {
-          const ts = formatTimestamp(comment.createdAt);
-          const author = comment.author ? ` by ${comment.author}` : '';
-          console.log(`  [${comment.commentId}]${author} — ${ts}`);
-          console.log(`    ${comment.text}`);
-          console.log();
-        }
-      } catch (error) {
-        logError(error, verbose);
-        process.exit(1);
-      }
-    });
+          const count = comments.length < all.length
+            ? `showing ${comments.length} of ${all.length} comment(s)`
+            : `${comments.length} comment(s)`;
+          console.log(`\n💬 Comments on card "${cardId}" — ${count}:\n`);
+          for (const comment of comments) {
+            for (const line of commentLines(comment, '  ')) console.log(line);
+            console.log();
+          }
+        },
+      };
+    }));
 
   // ─── comments add ──────────────────────────────────────────────────────────
   commentsCmd
@@ -117,56 +97,43 @@ export function registerCommentsCommand(program: Command): void {
       'Add a comment to a card.\n\n' +
       'Examples:\n' +
       '  favro comments add <card> --text "Looks good to me"\n' +
-      '  favro comments add <card> --text "Blocked by API issue" --json\n\n' +
+      '  favro comments add <card> --text "Blocked by API issue"\n\n' +
       'Tip: Use `favro cards list --board <id>` to find card IDs.'
     )
     .requiredOption('--text <comment>', 'Comment text to add')
-    .option('--json', 'Output as JSON')
     .option('--dry-run', 'Print what would be added without making API calls')
     .option('-y, --yes', 'Skip confirmation prompt')
     .option('--force', 'Bypass scope check')
-    .action(async (cardId: string, options) => {
-      const verbose = program.opts()?.verbose ?? false;
-      try {
-        if (!options.text || !options.text.trim()) {
-          console.error('Error: Comment text cannot be empty.');
-          process.exit(1);
-        }
+    .action(run(async (
+      ctx: Ctx,
+      cardId: string,
+      options: { text?: string; dryRun?: boolean; yes?: boolean; force?: boolean },
+    ) => {
+      const text = requireText(options.text);
 
-        const client = await createFavroClient();
+      // Check BEFORE the confirm, and with the resolving GET wrapped — this
+      // command was already "guarded" but had neither, which is the #78 shape
+      // its own siblings were just fixed for (#104): a stale cardId threw out
+      // of the command instead of refusing, and a user could answer "add this
+      // comment?" only to be refused afterwards.
+      await checkResolvedScope(ctx.client, () => boardOfCard(ctx.client, cardId), options.force);
 
-        // Check BEFORE the confirm, and with the resolving GET wrapped — this
-        // command was already "guarded" but had neither, which is the #78 shape
-        // its own siblings were just fixed for (#104): a stale cardId threw out
-        // of the command instead of refusing, and a user could answer "add this
-        // comment?" only to be refused afterwards.
-        await checkResolvedScope(client, () => boardOfCard(client, cardId), options.force);
-
-        if (options.dryRun) {
-          console.log(`[dry-run] Would add comment to ${cardId}: "${options.text}"`);
-          return;
-        }
-
-        if (!(await confirmAction(`Add comment to card ${cardId}?`, { yes: options.yes }))) {
-          console.log('Aborted.');
-          return;
-        }
-
-        const api = new CommentsApiClient(client);
-
-        const comment = await api.addComment(cardId, options.text);
-
-        if (options.json) {
-          console.log(JSON.stringify(comment, null, 2));
-          return;
-        }
-
-        console.log(`✓ Comment added: ${comment.commentId}`);
-      } catch (error) {
-        logError(error, verbose);
-        process.exit(1);
+      if (options.dryRun) {
+        return {
+          item: { dryRun: true, cardId, text },
+          human: () => `[dry-run] Would add comment to ${cardId}: "${text}"`,
+        };
       }
-    });
+
+      if (!(await confirmAction(`Add comment to card ${cardId}?`, { yes: options.yes }))) {
+        return { item: { added: false, aborted: true, cardId }, human: () => 'Aborted.' };
+      }
+
+      return {
+        item: await ctx.api.comments.addComment(cardId, text),
+        human: (comment: Comment) => `✓ Comment added: ${comment.commentId}`,
+      };
+    }));
 
   // ─── comments update ────────────────────────────────────────────────────────
   commentsCmd
@@ -175,49 +142,38 @@ export function registerCommentsCommand(program: Command): void {
       'Update a comment\'s text.\n\n' +
       'Examples:\n' +
       '  favro comments update <commentId> --text "Updated text"\n' +
-      '  favro comments update <commentId> --text "Fixed typo" --json\n\n' +
+      '  favro comments update <commentId> --text "Fixed typo"\n\n' +
       'Tip: Use `favro comments list <card>` to find comment IDs.'
     )
     .requiredOption('--text <comment>', 'New comment text')
-    .option('--json', 'Output as JSON')
     .option('--dry-run', 'Print what would be updated without making API calls')
     .option('-y, --yes', 'Skip confirmation prompt')
     .option('--force', 'Bypass scope check')
-    .action(async (commentId: string, options) => {
-      const verbose = program.opts()?.verbose ?? false;
-      try {
-        if (!options.text || !options.text.trim()) {
-          console.error('Error: Comment text cannot be empty.');
-          process.exit(1);
-        }
+    .action(run(async (
+      ctx: Ctx,
+      commentId: string,
+      options: { text?: string; dryRun?: boolean; yes?: boolean; force?: boolean },
+    ) => {
+      const text = requireText(options.text);
 
-        const client = await createFavroClient();
-        const api = new CommentsApiClient(client);
-        await checkResolvedScope(client, () => boardOfComment(client, commentId), options.force);
+      await checkResolvedScope(ctx.client, () => boardOfComment(ctx.client, commentId), options.force);
 
-        if (options.dryRun) {
-          console.log(`[dry-run] Would update comment ${commentId}: "${options.text}"`);
-          return;
-        }
-
-        const { confirmAction } = await import('../lib/safety');
-        if (!(await confirmAction(`Update comment ${commentId}?`, { yes: options.yes }))) {
-          process.exit(0);
-        }
-
-        const comment = await api.updateComment(commentId, options.text);
-
-        if (options.json) {
-          console.log(JSON.stringify(comment, null, 2));
-          return;
-        }
-
-        console.log(`✓ Comment updated: ${comment.commentId}`);
-      } catch (error) {
-        logError(error, verbose);
-        process.exit(1);
+      if (options.dryRun) {
+        return {
+          item: { dryRun: true, commentId, text },
+          human: () => `[dry-run] Would update comment ${commentId}: "${text}"`,
+        };
       }
-    });
+
+      if (!(await confirmAction(`Update comment ${commentId}?`, { yes: options.yes }))) {
+        return { item: { updated: false, aborted: true, commentId }, human: () => 'Aborted.' };
+      }
+
+      return {
+        item: await ctx.api.comments.updateComment(commentId, text),
+        human: (comment: Comment) => `✓ Comment updated: ${comment.commentId}`,
+      };
+    }));
 
   // ─── comments delete ───────────────────────────────────────────────────────
   commentsCmd
@@ -232,31 +188,30 @@ export function registerCommentsCommand(program: Command): void {
     .option('--dry-run', 'Preview without making API calls')
     .option('-y, --yes', 'Skip confirmation prompt')
     .option('--force', 'Bypass scope check')
-    .action(async (commentId: string, options) => {
-      const verbose = program.opts()?.verbose ?? false;
-      try {
-        const client = await createFavroClient();
-        const api = new CommentsApiClient(client);
-        await checkResolvedScope(client, () => boardOfComment(client, commentId), options.force);
+    .action(run(async (
+      ctx: Ctx,
+      commentId: string,
+      options: { dryRun?: boolean; yes?: boolean; force?: boolean },
+    ) => {
+      await checkResolvedScope(ctx.client, () => boardOfComment(ctx.client, commentId), options.force);
 
-        if (options.dryRun) {
-          console.log(`[dry-run] Would delete comment ${commentId}`);
-          return;
-        }
-
-        const { confirmAction } = await import('../lib/safety');
-        if (!(await confirmAction(`Delete comment ${commentId}?`, { yes: options.yes }))) {
-          process.exit(0);
-        }
-
-        await api.deleteComment(commentId);
-
-        console.log(`✓ Comment deleted: ${commentId}`);
-      } catch (error) {
-        logError(error, verbose);
-        process.exit(1);
+      if (options.dryRun) {
+        return {
+          item: { dryRun: true, commentId },
+          human: () => `[dry-run] Would delete comment ${commentId}`,
+        };
       }
-    });
+
+      if (!(await confirmAction(`Delete comment ${commentId}?`, { yes: options.yes }))) {
+        return { item: { deleted: false, aborted: true, commentId }, human: () => 'Aborted.' };
+      }
+
+      await ctx.api.comments.deleteComment(commentId);
+      return {
+        item: { deleted: true, commentId },
+        human: () => `✓ Comment deleted: ${commentId}`,
+      };
+    }));
 }
 
 export default registerCommentsCommand;

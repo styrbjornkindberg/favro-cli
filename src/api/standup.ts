@@ -14,6 +14,7 @@
 
 import FavroHttpClient from '../lib/http-client';
 import ContextAPI, { type ContextCard, type BoardContextSnapshot } from './context';
+import type { Unreachable } from '../lib/read-shape';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -40,6 +41,12 @@ export interface StandupResult {
   blocked: StandupCard[];
   dueSoon: StandupCard[];
   total: number;
+  /**
+   * Carried straight off the snapshot (#116). Without it `total: 0` from a
+   * failed cards read is indistinguishable from a board with no cards, and this
+   * command's whole output is those four groups.
+   */
+  unreachable?: Unreachable[];
   generatedAt: string;
 }
 
@@ -185,6 +192,7 @@ export class StandupAPI {
       blocked,
       dueSoon,
       total: snapshot.cards.length,
+      ...(snapshot.unreachable ? { unreachable: snapshot.unreachable } : {}),
       generatedAt: snapshot.generatedAt,
     };
   }

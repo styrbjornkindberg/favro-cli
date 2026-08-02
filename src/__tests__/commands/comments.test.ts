@@ -37,10 +37,9 @@ const SAMPLE_COMMENTS = [
 
 function buildProgram(): Command {
   const program = new Command();
-  program.option('--verbose', 'Show stack traces');
-  // The root flags the real CLI declares (cli.ts) — `--pretty` is read off the
-  // root here exactly as it is there.
-  program.option('--pretty', 'Indent JSON output');
+  // The root flags the real CLI declares (cli.ts) — all three are read off the
+  // root here exactly as they are there.
+  program.option('--verbose', 'Show stack traces').option('--human').option('--pretty');
   registerCommentsCommand(program);
   return program;
 }
@@ -51,8 +50,13 @@ async function runCli(args: string[]): Promise<void> {
   await program.parseAsync(['node', 'favro', ...args]);
 }
 
+/** The runner's error envelope, off whatever went to stdout. */
+const errorEnvelope = (spy: jest.SpyInstance) =>
+  JSON.parse(spy.mock.calls.map((c) => String(c[0])).find((l) => l.startsWith('{"error"'))!);
+
 beforeEach(() => {
   jest.clearAllMocks();
+  process.exitCode = undefined;
   (config.resolveApiKey as jest.Mock).mockResolvedValue('test-token');
   (config.readConfig as jest.Mock).mockResolvedValue({});
   (safety.checkScope as jest.Mock).mockResolvedValue(undefined);
@@ -82,7 +86,7 @@ describe('favro comments list', () => {
   it('lists comments for a card', async () => {
     MockCommentsApiClient.prototype.listComments = jest.fn().mockResolvedValue(SAMPLE_COMMENTS);
 
-    await runCli(['comments', 'list', 'card-abc']);
+    await runCli(['comments', 'list', 'card-abc', '--human']);
 
     // No limit reaches the client at all (#136) — the fetch runs to completion.
     expect(MockCommentsApiClient.prototype.listComments).toHaveBeenCalledWith('card-abc');
@@ -92,15 +96,15 @@ describe('favro comments list', () => {
   it('shows "no comments" when card has no comments', async () => {
     MockCommentsApiClient.prototype.listComments = jest.fn().mockResolvedValue([]);
 
-    await runCli(['comments', 'list', 'card-empty']);
+    await runCli(['comments', 'list', 'card-empty', '--human']);
 
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('No comments found'));
   });
 
-  it('outputs JSON when --json flag is set', async () => {
+  it('outputs the JSON envelope by default — --json is gone from the leaf', async () => {
     MockCommentsApiClient.prototype.listComments = jest.fn().mockResolvedValue(SAMPLE_COMMENTS);
 
-    await runCli(['comments', 'list', 'card-abc', '--json']);
+    await runCli(['comments', 'list', 'card-abc']);
 
     const jsonCall = consoleSpy.mock.calls.find(call =>
       typeof call[0] === 'string' && call[0].includes('commentId')
@@ -117,7 +121,7 @@ describe('favro comments list', () => {
   it('honours the root --pretty flag (#136)', async () => {
     MockCommentsApiClient.prototype.listComments = jest.fn().mockResolvedValue(SAMPLE_COMMENTS);
 
-    await runCli(['--pretty', 'comments', 'list', 'card-abc', '--json']);
+    await runCli(['--pretty', 'comments', 'list', 'card-abc']);
 
     const jsonCall = consoleSpy.mock.calls.find(call =>
       typeof call[0] === 'string' && call[0].includes('commentId')
@@ -128,7 +132,7 @@ describe('favro comments list', () => {
   it('caps what --limit prints and marks the cut in JSON', async () => {
     MockCommentsApiClient.prototype.listComments = jest.fn().mockResolvedValue(SAMPLE_COMMENTS);
 
-    await runCli(['comments', 'list', 'card-abc', '--limit', '1', '--json']);
+    await runCli(['comments', 'list', 'card-abc', '--limit', '1']);
 
     expect(MockCommentsApiClient.prototype.listComments).toHaveBeenCalledWith('card-abc');
     const jsonCall = consoleSpy.mock.calls.find(call =>
@@ -142,28 +146,30 @@ describe('favro comments list', () => {
   it('never prints a capped count as the total', async () => {
     MockCommentsApiClient.prototype.listComments = jest.fn().mockResolvedValue(SAMPLE_COMMENTS);
 
-    await runCli(['comments', 'list', 'card-abc', '--limit', '1']);
+    await runCli(['comments', 'list', 'card-abc', '--limit', '1', '--human']);
 
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('showing 1 of 2 comment(s)'));
   });
 
-  it('exits with error when API key is missing', async () => {
+  it('answers an error envelope when the API key is missing', async () => {
     (config.resolveApiKey as jest.Mock).mockResolvedValue(null);
 
     await runCli(['comments', 'list', 'card-abc']);
 
-    expect(processExitSpy).toHaveBeenCalledWith(1);
-    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Error'));
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringMatching(/^\{"error":/));
+    expect(process.exitCode).toBe(1);
+    expect(processExitSpy).not.toHaveBeenCalled();
   });
 
-  it('exits with error when API call fails', async () => {
+  it('answers an error envelope when the API call fails', async () => {
     MockCommentsApiClient.prototype.listComments = jest.fn().mockRejectedValue(
       new Error('API error')
     );
 
     await runCli(['comments', 'list', 'card-abc']);
 
-    expect(processExitSpy).toHaveBeenCalledWith(1);
+    expect(errorEnvelope(consoleSpy).error.message).toBe('API error');
+    expect(process.exitCode).toBe(1);
   });
 });
 
@@ -190,17 +196,17 @@ describe('favro comments add', () => {
     const newComment = { ...SAMPLE_COMMENTS[0], commentId: 'cmt-new', text: 'Hello world' };
     MockCommentsApiClient.prototype.addComment = jest.fn().mockResolvedValue(newComment);
 
-    await runCli(['comments', 'add', 'card-abc', '--text', 'Hello world']);
+    await runCli(['comments', 'add', 'card-abc', '--text', 'Hello world', '--human']);
 
     expect(MockCommentsApiClient.prototype.addComment).toHaveBeenCalledWith('card-abc', 'Hello world');
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('cmt-new'));
   });
 
-  it('outputs JSON when --json is set', async () => {
+  it('outputs the created comment as JSON by default', async () => {
     const newComment = { ...SAMPLE_COMMENTS[0], commentId: 'cmt-new', text: 'Hello world' };
     MockCommentsApiClient.prototype.addComment = jest.fn().mockResolvedValue(newComment);
 
-    await runCli(['comments', 'add', 'card-abc', '--text', 'Hello world', '--json']);
+    await runCli(['comments', 'add', 'card-abc', '--text', 'Hello world']);
 
     const jsonCall = consoleSpy.mock.calls.find(call =>
       typeof call[0] === 'string' && call[0].includes('commentId')
@@ -210,22 +216,47 @@ describe('favro comments add', () => {
     expect(parsed.commentId).toBe('cmt-new');
   });
 
-  it('exits with error when API key is missing', async () => {
+  it('answers an error envelope when the API key is missing', async () => {
     (config.resolveApiKey as jest.Mock).mockResolvedValue(null);
 
     await runCli(['comments', 'add', 'card-abc', '--text', 'Test']);
 
-    expect(processExitSpy).toHaveBeenCalledWith(1);
-    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Error'));
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringMatching(/^\{"error":/));
+    expect(process.exitCode).toBe(1);
   });
 
-  it('exits with error when API call fails', async () => {
+  it('answers an error envelope when the API call fails', async () => {
     MockCommentsApiClient.prototype.addComment = jest.fn().mockRejectedValue(
       new Error('API error')
     );
 
     await runCli(['comments', 'add', 'card-abc', '--text', 'Test']);
 
-    expect(processExitSpy).toHaveBeenCalledWith(1);
+    expect(errorEnvelope(consoleSpy).error.message).toBe('API error');
+    expect(process.exitCode).toBe(1);
+  });
+
+  it('refuses empty text before it resolves anything', async () => {
+    MockCommentsApiClient.prototype.addComment = jest.fn();
+
+    await runCli(['comments', 'add', 'card-abc', '--text', '   ']);
+
+    expect(errorEnvelope(consoleSpy).error.message).toBe('Comment text cannot be empty.');
+    expect(errorEnvelope(consoleSpy).error.retryable).toBe(false);
+    expect(MockCommentsApiClient.prototype.addComment).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
+  });
+
+  it('a declined confirmation is exit 0 and a readable result, not silence', async () => {
+    (safety.confirmAction as jest.Mock).mockResolvedValue(false);
+    MockCommentsApiClient.prototype.addComment = jest.fn();
+
+    await runCli(['comments', 'add', 'card-abc', '--text', 'Test']);
+
+    expect(MockCommentsApiClient.prototype.addComment).not.toHaveBeenCalled();
+    expect(consoleSpy).toHaveBeenCalledWith(
+      JSON.stringify({ added: false, aborted: true, cardId: 'card-abc' }),
+    );
+    expect(process.exitCode).toBeUndefined();
   });
 });

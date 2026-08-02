@@ -14,11 +14,28 @@
  *   - Members (all board members with roles)
  *   - Cards (full card list with all relationships)
  *   - Stats (card counts by status and owner)
+ *   - `unreachable`, when a sub-fetch could not be read (#116)
  */
 import { Command } from 'commander';
-import { createFavroClient } from '../lib/client-factory';
-import { logError } from '../lib/error-handler';
-import ContextAPI from '../api/context';
+import { Ctx, run } from '../lib/run';
+
+interface ContextOptions {
+  limit?: string;
+}
+
+/**
+ * Exported for a test that calls it with a fake `Ctx` and reads the `Result`
+ * back — no stdout capture, no client mock.
+ */
+export async function contextHandler(ctx: Ctx, board: string, options: ContextOptions) {
+  const parsedLimit = parseInt(options.limit ?? '1000', 10);
+  const cardLimit = (!isNaN(parsedLimit) && parsedLimit >= 1) ? parsedLimit : 1000;
+
+  // A single read, so it stays bare (`read-shape.ts` rule 1) — the snapshot IS
+  // the entity. Its own `unreachable` rides inside it, where the composite
+  // fetch that produced the holes put it.
+  return { item: await ctx.api.context.getSnapshot(board, cardLimit) };
+}
 
 export function registerContextCommand(program: Command): void {
   program
@@ -31,7 +48,9 @@ export function registerContextCommand(program: Command): void {
       '  - Custom fields (definitions with allowed values)\n' +
       '  - Members (all board members with roles)\n' +
       '  - Cards (full card list with relationships)\n' +
-      '  - Stats (counts by status and owner)\n\n' +
+      '  - Stats (counts by status and owner)\n' +
+      '  - unreachable: the sub-fetches that failed, if any — an absent marker\n' +
+      '    is what makes an empty card list mean "empty" and not "unreadable"\n\n' +
       'Examples:\n' +
       '  favro context boards-1234\n' +
       '  favro context "Sprint 42"\n' +
@@ -41,28 +60,8 @@ export function registerContextCommand(program: Command): void {
       'Use: favro boards list to find board IDs.'
     )
     .option('--limit <number>', 'Maximum number of cards to fetch (default: 1000)', '1000')
-    .option('--pretty', 'Pretty-print JSON output (default: compact)')
-    .action(async (board: string, options) => {
-      const verbose = program.opts()?.verbose ?? false;
-
-
-      const parsedLimit = parseInt(options.limit ?? '1000', 10);
-      const cardLimit = (!isNaN(parsedLimit) && parsedLimit >= 1) ? parsedLimit : 1000;
-
-      try {
-        const client = await createFavroClient();
-        const api = new ContextAPI(client);
-
-        const snapshot = await api.getSnapshot(board, cardLimit);
-
-        if (options.pretty) {
-          console.log(JSON.stringify(snapshot, null, 2));
-        } else {
-          console.log(JSON.stringify(snapshot));
-        }
-      } catch (error) {
-        logError(error, verbose);
-        process.exit(1);
-      }
-    });
+    // `--pretty` is a ROOT flag now (ADR-0002, #113/#114). Re-declaring it here
+    // would be a leaf shadowing an ancestor, which commander resolves at the
+    // root anyway — the #115 trap.
+    .action(run(contextHandler));
 }

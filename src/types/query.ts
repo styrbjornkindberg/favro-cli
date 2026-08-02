@@ -6,6 +6,7 @@
  */
 
 import type { ContextCard } from '../api/context';
+import type { Unreachable } from '../lib/read-shape';
 
 // ─── Query Filter ─────────────────────────────────────────────────────────────
 
@@ -60,4 +61,11 @@ export interface QueryResult {
   summary: string;
   /** If no results, explanation of why (e.g. "No cards have status 'done' in this board") */
   noResultsExplanation?: string;
+  /**
+   * Facets of the board snapshot this query could not read (#116). Present only
+   * when there are any. `noResultsExplanation` is a claim about the board; with
+   * a hole in the snapshot it is only a claim about what we managed to see, and
+   * this is what says so.
+   */
+  unreachable?: Unreachable[];
 }
