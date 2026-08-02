@@ -24,6 +24,9 @@ import { logError } from '../lib/error-handler';
 import { RefusalError } from '../lib/refusal';
 import { detectStage, WorkflowStage } from '../lib/workflow-stage';
 
+/** One copy — the created file and the appended block must not drift apart. */
+const GITIGNORE_BLOCK = '# Favro CLI context (may contain team emails/IDs)\n.favro/\n';
+
 // ─── Types for context.json ──────────────────────────────────────────────────
 
 interface ContextWorkflowStep {
@@ -256,18 +259,33 @@ export function registerInitCommand(program: Command): void {
         await fs.mkdir(contextDir, { recursive: true });
         await fs.writeFile(contextFile, json + '\n', 'utf-8');
 
-        // Ensure .favro/ is in .gitignore (context may contain IDs/emails)
+        // Ensure .favro/ is in .gitignore (context may contain IDs/emails).
+        //
+        // The read is a value and the append is OUTSIDE its catch, because they
+        // used to share a `try` whose `catch` meant "there is no .gitignore,
+        // create one". A transient EACCES or a full disk on the APPEND landed
+        // in that branch too, and `writeFile` replaced a 200-line .gitignore
+        // with two lines under a success message (#144). An append that fails
+        // now propagates to the error boundary, which is the only honest
+        // outcome: the entry was not added and nothing was lost.
+        //
+        // Only ENOENT reads as "create one". Any other read failure — EACCES on
+        // a file that does exist, EISDIR, EIO — is a file we cannot see, and
+        // writing two lines over a file we cannot see is the same data loss
+        // through a quieter door. It propagates.
         const gitignorePath = path.join(process.cwd(), '.gitignore');
-        try {
-          const gitignoreContent = await fs.readFile(gitignorePath, 'utf-8');
-          if (!gitignoreContent.includes('.favro/')) {
-            await fs.appendFile(gitignorePath, '\n# Favro CLI context (may contain team emails/IDs)\n.favro/\n');
-            console.log('Added .favro/ to .gitignore');
-          }
-        } catch {
-          // No .gitignore — create one
-          await fs.writeFile(gitignorePath, '# Favro CLI context (may contain team emails/IDs)\n.favro/\n');
+        const gitignoreContent = await fs
+          .readFile(gitignorePath, 'utf-8')
+          .catch((err: NodeJS.ErrnoException) => {
+            if (err.code === 'ENOENT') return null;
+            throw err;
+          });
+        if (gitignoreContent === null) {
+          await fs.writeFile(gitignorePath, GITIGNORE_BLOCK);
           console.log('Created .gitignore with .favro/');
+        } else if (!gitignoreContent.includes('.favro/')) {
+          await fs.appendFile(gitignorePath, `\n${GITIGNORE_BLOCK}`);
+          console.log('Added .favro/ to .gitignore');
         }
 
         console.log(`\n✓ Created .favro/context.json`);

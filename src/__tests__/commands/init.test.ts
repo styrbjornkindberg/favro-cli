@@ -242,7 +242,10 @@ describe('init — the guards around the write', () => {
   });
 
   test('creates a .gitignore when the repo has none', async () => {
-    mockFs.readFile.mockRejectedValue(new Error('ENOENT'));
+    // `code`, not just a message: only ENOENT reads as "there is no file,
+    // create one" now, and every other read failure propagates rather than
+    // writing two lines over a file it could not see (#144).
+    mockFs.readFile.mockRejectedValue(Object.assign(new Error('ENOENT: no such file'), { code: 'ENOENT' }));
 
     await runCli(['init']);
 
