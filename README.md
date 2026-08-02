@@ -39,7 +39,7 @@ Cards grow. Long descriptions, ten comment threads, status changes nobody docume
   llm  Let me pull that card up.
 
        $ favro query "Sprint Board" "Migrate auth service to OAuth2"
-       $ favro cards get <id> --json
+       $ favro cards get <id>
        $ favro comments list <id>
 
        The migration was planned for Q4 but got blocked when the identity
@@ -65,7 +65,7 @@ A card that's too broad to finish in a sprint. Instead of doing it yourself:
 + you  The card "Redesign checkout flow" is way too big. Can you split it into
 +      smaller cards on the same board and link them back to the original?
 
-  llm  $ favro cards get <id> --json
+  llm  $ favro cards get <id>
 
        I can see five distinct pieces of work. Here's what I'd create,
        all linked back to the original:
@@ -103,7 +103,7 @@ A card has a vague description that should really be a step-by-step checklist:
 +      description as bullet points. Can you convert those into actual checklist
 +      items on the card?
 
-  llm  $ favro cards get <id> --json
+  llm  $ favro cards get <id>
 
        Found 8 steps. Here's what I'd add as a checklist called "Deployment Steps":
 
@@ -196,7 +196,7 @@ You have meeting notes, a spec doc, or a list of action items. Instead of manual
 
 + you  Use "Q2 Backlog". Tags for the groups. Pricing page card already exists.
 
-  llm  $ favro boards list --json
+  llm  $ favro boards list
        $ favro query "Q2 Backlog" "pricing page update"   # find existing card id
 
        Found the pricing page card. Here's what I'll create — 8 cards with tags,
@@ -305,7 +305,7 @@ Claude can now run any favro command on your behalf:
 ```diff
 + you  What boards are in my scoped collection?
 
-  claude  [calls favro_run: "collections list --json"]
+  claude  [calls favro_run: "collections list"]
 
           Found 3 boards: Sprint Backlog, Bug Tracker, Q3 Roadmap.
           Want me to show the cards from any of them?

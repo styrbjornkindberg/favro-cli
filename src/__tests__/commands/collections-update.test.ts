@@ -27,7 +27,8 @@ function buildProgram(mockUpdate: jest.Mock) {
   } as any));
 
   const parent = new Command();
-  parent.option('--verbose', 'verbose');
+  parent.option('--verbose', 'verbose').option('--human').option('--pretty');
+  parent.exitOverride();
   const collectionsCmd = parent.command('collections');
   registerCollectionsUpdateCommand(collectionsCmd);
   return parent;
@@ -36,22 +37,24 @@ function buildProgram(mockUpdate: jest.Mock) {
 describe('collections update command', () => {
   let consoleSpy: jest.SpyInstance;
   let consoleErrorSpy: jest.SpyInstance;
-  let exitSpy: jest.SpyInstance;
 
   beforeEach(() => {
+    process.exitCode = undefined;
     consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
     consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => { throw new Error('process.exit'); });
     jest.spyOn(config, 'resolveApiKey').mockResolvedValue('test-token');
   });
 
-  afterEach(() => jest.restoreAllMocks());
+  afterEach(() => {
+    jest.restoreAllMocks();
+    process.exitCode = undefined;
+  });
 
   test('updates collection name', async () => {
     const mockUpdate = jest.fn().mockResolvedValue(updatedCollection);
     const program = buildProgram(mockUpdate);
     await program.parseAsync([
-      'node', 'test', 'collections', 'update', 'coll-1', '--name', 'Updated Collection',
+      'node', 'test', 'collections', 'update', 'coll-1', '--name', 'Updated Collection', '--human',
     ]);
     expect(mockUpdate).toHaveBeenCalledWith('coll-1', { name: 'Updated Collection' });
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('coll-1'));
@@ -79,13 +82,13 @@ describe('collections update command', () => {
     });
   });
 
-  test('outputs json when --json flag provided', async () => {
+  test('with no flags it emits the bare updated collection', async () => {
     const mockUpdate = jest.fn().mockResolvedValue(updatedCollection);
     const program = buildProgram(mockUpdate);
     await program.parseAsync([
-      'node', 'test', 'collections', 'update', 'coll-1', '--name', 'Updated', '--json',
+      'node', 'test', 'collections', 'update', 'coll-1', '--name', 'Updated',
     ]);
-    expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify(updatedCollection, null, 2));
+    expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify(updatedCollection));
   });
 
   test('dry-run does not call API', async () => {
@@ -101,9 +104,8 @@ describe('collections update command', () => {
   test('exits when no fields provided', async () => {
     const mockUpdate = jest.fn();
     const program = buildProgram(mockUpdate);
-    await expect(
-      program.parseAsync(['node', 'test', 'collections', 'update', 'coll-1'])
-    ).rejects.toThrow('process.exit');
+    await program.parseAsync(['node', 'test', 'collections', 'update', 'coll-1', '--human']);
+    expect(process.exitCode).toBe(1);
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('at least one field'));
   });
 
@@ -111,9 +113,8 @@ describe('collections update command', () => {
     const err = Object.assign(new Error('Not Found'), { response: { status: 404 } });
     const mockUpdate = jest.fn().mockRejectedValue(err);
     const program = buildProgram(mockUpdate);
-    await expect(
-      program.parseAsync(['node', 'test', 'collections', 'update', 'bad-id', '--name', 'x'])
-    ).rejects.toThrow('process.exit');
+    await program.parseAsync(['node', 'test', 'collections', 'update', 'bad-id', '--name', 'x', '--human']);
+    expect(process.exitCode).toBe(1);
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('not found'));
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('bad-id'));
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('favro collections list'));
@@ -122,9 +123,8 @@ describe('collections update command', () => {
   test('exits when name is whitespace-only', async () => {
     const mockUpdate = jest.fn();
     const program = buildProgram(mockUpdate);
-    await expect(
-      program.parseAsync(['node', 'test', 'collections', 'update', 'coll-1', '--name', '   '])
-    ).rejects.toThrow('process.exit');
+    await program.parseAsync(['node', 'test', 'collections', 'update', 'coll-1', '--name', '   ', '--human']);
+    expect(process.exitCode).toBe(1);
     expect(mockUpdate).not.toHaveBeenCalled();
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('whitespace-only'));
   });
@@ -132,18 +132,16 @@ describe('collections update command', () => {
   test('exits when API key missing', async () => {
     jest.spyOn(config, 'resolveApiKey').mockResolvedValue(null as any);
     const program = buildProgram(jest.fn());
-    await expect(
-      program.parseAsync(['node', 'test', 'collections', 'update', 'coll-1', '--name', 'x'])
-    ).rejects.toThrow('process.exit');
+    await program.parseAsync(['node', 'test', 'collections', 'update', 'coll-1', '--name', 'x', '--human']);
+    expect(process.exitCode).toBe(1);
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('API key'));
   });
 
   test('exits on generic API error', async () => {
     const mockUpdate = jest.fn().mockRejectedValue(new Error('Server error'));
     const program = buildProgram(mockUpdate);
-    await expect(
-      program.parseAsync(['node', 'test', 'collections', 'update', 'coll-1', '--name', 'x'])
-    ).rejects.toThrow('process.exit');
+    await program.parseAsync(['node', 'test', 'collections', 'update', 'coll-1', '--name', 'x', '--human']);
+    expect(process.exitCode).toBe(1);
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Server error'));
   });
 });

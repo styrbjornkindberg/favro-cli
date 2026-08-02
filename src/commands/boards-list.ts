@@ -4,10 +4,8 @@
  * CLA-1784 FAVRO-022: Enhanced with collection-id arg and --include stats,velocity
  */
 import { Command } from 'commander';
-import BoardsAPI, { Board, ExtendedBoard, aggregateBoardStats, calculateVelocity } from '../lib/boards-api';
-import { createFavroClient } from '../lib/client-factory';
-import { logError } from '../lib/error-handler';
-import { writeEnvelope } from '../lib/read-shape';
+import { Board, ExtendedBoard, aggregateBoardStats, calculateVelocity } from '../lib/boards-api';
+import { Ctx, run } from '../lib/run';
 
 export function formatBoardsTable(boards: Board[]): void {
   if (boards.length === 0) {
@@ -55,6 +53,61 @@ export function formatBoardsExtendedTable(boards: ExtendedBoard[]): void {
 
 const VALID_LIST_INCLUDES = ['stats', 'velocity'];
 
+interface ListOptions {
+  collection?: string;
+  include?: string;
+}
+
+/**
+ * Exported so a test can call it with a fake `Ctx` and read the `Result` back —
+ * no stdout capture, no `http-client` mock. That is the seam ADR-0002 is for,
+ * and this is the batch's worked example of it (#114).
+ */
+export async function listBoardsHandler(
+  ctx: Ctx,
+  collectionId: string | undefined,
+  options: ListOptions,
+) {
+  const include = options.include
+    ? options.include.split(',').map((s: string) => s.trim()).filter(Boolean)
+    : undefined;
+
+  if (include) {
+    const invalid = include.filter((i: string) => !VALID_LIST_INCLUDES.includes(i));
+    if (invalid.length > 0) {
+      throw new Error(`Invalid --include values: ${invalid.join(', ')}. Valid options: stats, velocity`);
+    }
+  }
+
+  // Positional and --collection are the same filter; both take an id or an
+  // exact name and both narrow on the wire.
+  const collection: string | undefined = collectionId ?? options.collection;
+
+  const boards: ExtendedBoard[] = collection
+    ? await ctx.api.boards.listBoardsByCollection(collection, include)
+    : (await ctx.api.boards.listBoards(100)).map(b => {
+        const ext: ExtendedBoard = { ...b };
+        if (include?.includes('stats')) ext.stats = aggregateBoardStats(ext);
+        if (include?.includes('velocity')) ext.velocity = calculateVelocity();
+        return ext;
+      });
+
+  // A list read: the runner writes the envelope, compact. `boards` has no bulk
+  // field to omit, and no output cap — `normalizeWidget` already keeps a row
+  // small, so the cost here is row count alone.
+  return {
+    rows: boards,
+    human: (rows: ExtendedBoard[]) => {
+      console.log(`Found ${rows.length} board(s):`);
+      if (include?.includes('stats') || include?.includes('velocity')) {
+        formatBoardsExtendedTable(rows);
+      } else {
+        formatBoardsTable(rows);
+      }
+    },
+  };
+}
+
 export function registerBoardsListCommand(boardsParent: Command): void {
   boardsParent
     .command('list [collection]')
@@ -64,62 +117,7 @@ export function registerBoardsListCommand(boardsParent: Command): void {
       '--include <options>',
       'Comma-separated data to include: stats, velocity',
     )
-    .option('--json', 'Output as JSON')
-    .action(async (collectionId: string | undefined, options) => {
-      // Resolve --verbose from the root program (parent of parent)
-      const verbose = boardsParent.parent?.opts()?.verbose ?? false;
-      try {
-
-        const include = options.include
-          ? options.include.split(',').map((s: string) => s.trim()).filter(Boolean)
-          : undefined;
-
-        if (include) {
-          const invalid = include.filter((i: string) => !VALID_LIST_INCLUDES.includes(i));
-          if (invalid.length > 0) {
-            console.error(`✗ Invalid --include values: ${invalid.join(', ')}. Valid options: stats, velocity`);
-            process.exit(1);
-          }
-        }
-
-        const client = await createFavroClient();
-        const api = new BoardsAPI(client);
-
-        // Positional and --collection are the same filter; both take an id or an
-        // exact name and both narrow on the wire.
-        const collection: string | undefined = collectionId ?? options.collection;
-
-        let boards: ExtendedBoard[];
-
-        if (collection) {
-          boards = await api.listBoardsByCollection(collection, include);
-        } else {
-          boards = (await api.listBoards(100)).map(b => {
-            const ext: ExtendedBoard = { ...b };
-            if (include?.includes('stats')) ext.stats = aggregateBoardStats(ext);
-            if (include?.includes('velocity')) ext.velocity = calculateVelocity();
-            return ext;
-          });
-        }
-
-        if (options.json) {
-          // A list read: envelope, compact. `boards` has no bulk field to omit,
-          // and no output cap — `normalizeWidget` already keeps a row small, so
-          // the cost here is row count alone.
-          writeEnvelope({ rows: boards });
-        } else {
-          console.log(`Found ${boards.length} board(s):`);
-          if (include?.includes('stats') || include?.includes('velocity')) {
-            formatBoardsExtendedTable(boards);
-          } else {
-            formatBoardsTable(boards);
-          }
-        }
-      } catch (error) {
-        logError(error, verbose);
-        process.exit(1);
-      }
-    });
+    .action(run(listBoardsHandler));
 }
 
 export default registerBoardsListCommand;

@@ -17,7 +17,7 @@
  *   FAVRO_API_TOKEN  API key (legacy env var, still supported)
  */
 
-import { Command } from 'commander';
+import { Command, CommanderError } from 'commander';
 import * as path from 'path';
 import CardsAPI, { UpdateCardRequest } from './lib/cards-api';
 // The shared dispatch table. Importing it here is what makes the CLI a caller of
@@ -118,7 +118,19 @@ program
   // Read from package.json, never a literal: the hardcoded '2.1.0' here drifted
   // three releases behind the published 2.4.1 before anyone noticed.
   .version(require('../package.json').version as string)
-  .option('--verbose', 'Show stack traces for errors');
+  .option('--verbose', 'Show stack traces for errors')
+  // The two flags the command runner owns (ADR-0002, #113/#114). Declared once,
+  // on the root, because commander accepts an ancestor's option at any depth —
+  // so `favro boards list --human` resolves here rather than needing 128
+  // re-declarations. `resolveFormat` reads them with `optsWithGlobals()`.
+  .option('--human', 'Human-readable output instead of the default JSON')
+  .option('--pretty', 'Indent JSON output (default: compact)');
+
+// Commander's own exits — `--help`, `--version`, a parse error — become throws,
+// which is what finally makes the catch at the bottom of this file reachable
+// (ADR-0002). It must run BEFORE any `.command()` below: `copyInheritedSettings`
+// hands the callback to each subcommand at creation time.
+program.exitOverride();
 
 // The flag is declared here and nowhere else, so it is resolved here and
 // nowhere else (#85). Without this, `.opts()` being own-options-only left
@@ -1180,6 +1192,14 @@ if (require.main === module) {
     });
   } else {
     prog.parseAsync(process.argv).catch((err) => {
+      // `.exitOverride()` routes `--help`, `--version` and parse errors here as
+      // `CommanderError`. Commander has already written its own output, so the
+      // only thing left is the code it asked for — logging it again would put
+      // "✗ Error: (outputHelp)" under every `--help`.
+      if (err instanceof CommanderError) {
+        process.exitCode = err.exitCode;
+        return;
+      }
       logError(err, prog.opts().verbose);
       process.exit(1);
     });

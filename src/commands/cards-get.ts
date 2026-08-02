@@ -3,11 +3,24 @@
  * CLA-1785 (FAVRO-023): Advanced Cards Endpoints
  */
 import { Command } from 'commander';
-import CardsAPI from '../lib/cards-api';
-import { logError } from '../lib/error-handler';
-import { createFavroClient } from '../lib/client-factory';
+import { Card } from '../lib/cards-api';
+import { run } from '../lib/run';
 
 const VALID_INCLUDES = ['board', 'collection', 'custom-fields', 'links', 'comments', 'relations'];
+
+/** The one-row summary `--human` shows when no metadata was asked for. */
+function formatCardRow(card: Card): void {
+  const row: Record<string, string> = {
+    ID: card.cardId,
+    Title: card.name ?? '—',  // null guard: API may return null name (CLA-1785 critic fix)
+    Status: card.status ?? '—',
+    Assignees: (card.assignees ?? []).join(', ') || '—',
+    Tags: (card.tags ?? []).join(', ') || '—',
+    'Due Date': card.dueDate ?? '—',
+    Created: card.createdAt ? card.createdAt.slice(0, 10) : '—',
+  };
+  console.table([row]);
+}
 
 /**
  * Register `cards get <id>` as a subcommand on the `cards` parent command.
@@ -27,52 +40,27 @@ export function registerCardsGetCommand(cardsCmd: Command): void {
       '--include <items>',
       'Comma-separated list of metadata to include: board,collection,custom-fields,links,comments,relations'
     )
-    .option('--json', 'Output as JSON (default when includes present)')
-    .action(async (cardId: string, options) => {
-      const verbose = cardsCmd.parent?.opts()?.verbose ?? cardsCmd.opts()?.verbose ?? false;
-      try {
-
-        const includes: string[] = [];
-        if (options.include) {
-          const requested = options.include.split(',').map((s: string) => s.trim().toLowerCase());
-          const invalid = requested.filter((i: string) => !VALID_INCLUDES.includes(i));
-          if (invalid.length > 0) {
-            console.error(`Error: Invalid include value(s): ${invalid.join(', ')}. Valid: ${VALID_INCLUDES.join(', ')}`);
-            process.exit(1);
-          }
-          includes.push(...requested);
+    .action(run(async (ctx, cardId: string, options: { include?: string }) => {
+      const includes: string[] = [];
+      if (options.include) {
+        const requested = options.include.split(',').map((s: string) => s.trim().toLowerCase());
+        const invalid = requested.filter((i: string) => !VALID_INCLUDES.includes(i));
+        if (invalid.length > 0) {
+          throw new Error(`Invalid include value(s): ${invalid.join(', ')}. Valid: ${VALID_INCLUDES.join(', ')}`);
         }
-
-        const client = await createFavroClient();
-        const api = new CardsAPI(client);
-
-        const card = await api.getCard(cardId, { include: includes });
-
-        if (options.json || includes.length > 0) {
-          console.log(JSON.stringify(card, null, 2));
-          return;
-        }
-
-        // Default table-style output
-        const row: Record<string, string> = {
-          ID: card.cardId,
-          Title: card.name ?? '—',  // null guard: API may return null name (CLA-1785 critic fix)
-          Status: card.status ?? '—',
-          Assignees: (card.assignees ?? []).join(', ') || '—',
-          Tags: (card.tags ?? []).join(', ') || '—',
-          'Due Date': card.dueDate ?? '—',
-          Created: card.createdAt ? card.createdAt.slice(0, 10) : '—',
-        };
-        console.table([row]);
-      } catch (error: any) {
-        if (error?.response?.status === 404) {
-          console.error(`Error: Card '${cardId}' not found.`);
-        } else {
-          logError(error, verbose);
-        }
-        process.exit(1);
+        includes.push(...requested);
       }
-    });
+
+      const card = await ctx.api.cards.getCard(cardId, { include: includes }).catch((error: any) => {
+        if (error?.response?.status === 404) throw new Error(`Card '${cardId}' not found.`);
+        throw error;
+      });
+
+      // With metadata asked for, the summary row would hide most of what was
+      // fetched, so `--human` falls through to the runner's indented JSON —
+      // which is the same text the old `--json` branch printed here.
+      return { item: card, human: includes.length > 0 ? undefined : formatCardRow };
+    }));
 }
 
 export default registerCardsGetCommand;

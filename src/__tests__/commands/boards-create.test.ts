@@ -28,7 +28,8 @@ function buildProgram(mockCreate: jest.Mock) {
   } as any));
 
   const parent = new Command();
-  parent.option('--verbose', 'verbose');
+  parent.option('--verbose', 'verbose').option('--human').option('--pretty');
+  parent.exitOverride();
   const boardsCmd = parent.command('boards');
   registerBoardsCreateCommand(boardsCmd);
   return parent;
@@ -37,21 +38,23 @@ function buildProgram(mockCreate: jest.Mock) {
 describe('boards create command', () => {
   let consoleSpy: jest.SpyInstance;
   let consoleErrorSpy: jest.SpyInstance;
-  let exitSpy: jest.SpyInstance;
 
   beforeEach(() => {
+    process.exitCode = undefined;
     consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
     consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => { throw new Error('process.exit'); });
     jest.spyOn(config, 'resolveApiKey').mockResolvedValue('test-token');
   });
 
-  afterEach(() => jest.restoreAllMocks());
+  afterEach(() => {
+    jest.restoreAllMocks();
+    process.exitCode = undefined;
+  });
 
   test('creates board with name and collection-id', async () => {
     const mockCreate = jest.fn().mockResolvedValue(sampleBoard);
     const program = buildProgram(mockCreate);
-    await program.parseAsync(['node', 'test', 'boards', 'create', 'coll-1', '--name', 'My Sprint']);
+    await program.parseAsync(['node', 'test', 'boards', 'create', 'coll-1', '--name', 'My Sprint', '--human']);
     expect(mockCreate).toHaveBeenCalledWith('coll-1', {
       name: 'My Sprint',
       type: 'board',
@@ -86,11 +89,11 @@ describe('boards create command', () => {
     }));
   });
 
-  test('outputs json when --json flag provided', async () => {
+  test('with no flags it emits the bare created board', async () => {
     const mockCreate = jest.fn().mockResolvedValue(sampleBoard);
     const program = buildProgram(mockCreate);
-    await program.parseAsync(['node', 'test', 'boards', 'create', 'coll-1', '--name', 'Sprint', '--json']);
-    expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify(sampleBoard, null, 2));
+    await program.parseAsync(['node', 'test', 'boards', 'create', 'coll-1', '--name', 'Sprint']);
+    expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify(sampleBoard));
   });
 
   test('dry-run does not call API', async () => {
@@ -116,9 +119,8 @@ describe('boards create command', () => {
   test('exits with error for invalid board type', async () => {
     const mockCreate = jest.fn();
     const program = buildProgram(mockCreate);
-    await expect(
-      program.parseAsync(['node', 'test', 'boards', 'create', 'coll-1', '--name', 'Board', '--type', 'invalid'])
-    ).rejects.toThrow('process.exit');
+    await program.parseAsync(['node', 'test', 'boards', 'create', 'coll-1', '--name', 'Board', '--type', 'invalid', '--human']);
+    expect(process.exitCode).toBe(1);
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid board type'));
     expect(mockCreate).not.toHaveBeenCalled();
   });
@@ -127,9 +129,8 @@ describe('boards create command', () => {
     jest.spyOn(config, 'resolveApiKey').mockResolvedValue(null as any);
     const mockCreate = jest.fn();
     const program = buildProgram(mockCreate);
-    await expect(
-      program.parseAsync(['node', 'test', 'boards', 'create', 'coll-1', '--name', 'Sprint'])
-    ).rejects.toThrow('process.exit');
+    await program.parseAsync(['node', 'test', 'boards', 'create', 'coll-1', '--name', 'Sprint', '--human']);
+    expect(process.exitCode).toBe(1);
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Error:'));
     expect(mockCreate).not.toHaveBeenCalled();
   });
@@ -138,9 +139,8 @@ describe('boards create command', () => {
     const err = Object.assign(new Error('Not Found'), { response: { status: 404 } });
     const mockCreate = jest.fn().mockRejectedValue(err);
     const program = buildProgram(mockCreate);
-    await expect(
-      program.parseAsync(['node', 'test', 'boards', 'create', 'bad-coll', '--name', 'Sprint'])
-    ).rejects.toThrow('process.exit');
+    await program.parseAsync(['node', 'test', 'boards', 'create', 'bad-coll', '--name', 'Sprint', '--human']);
+    expect(process.exitCode).toBe(1);
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Collection not found'));
   });
 
@@ -151,23 +151,24 @@ describe('boards create command', () => {
     expect(mockCreate).toHaveBeenCalledWith('coll-1', expect.objectContaining({ type: 'board' }));
   });
 
-  test('--json outputs JSON only (no text before JSON for piping)', async () => {
+  test('JSON mode outputs JSON only (no text before it, for piping)', async () => {
     const mockCreate = jest.fn().mockResolvedValue(sampleBoard);
     const program = buildProgram(mockCreate);
-    await program.parseAsync(['node', 'test', 'boards', 'create', 'coll-1', '--name', 'Sprint', '--json']);
+    await program.parseAsync(['node', 'test', 'boards', 'create', 'coll-1', '--name', 'Sprint']);
     // Only one console.log call: the JSON output
     const logCalls = consoleSpy.mock.calls;
     expect(logCalls).toHaveLength(1);
-    expect(logCalls[0][0]).toBe(JSON.stringify(sampleBoard, null, 2));
+    expect(logCalls[0][0]).toBe(JSON.stringify(sampleBoard));
   });
 
   test('exits with error when name is whitespace only', async () => {
     const mockCreate = jest.fn();
     const program = buildProgram(mockCreate);
-    await expect(
-      program.parseAsync(['node', 'test', 'boards', 'create', 'coll-1', '--name', '   '])
-    ).rejects.toThrow('process.exit');
-    expect(consoleErrorSpy).toHaveBeenCalledWith('✗ Board name cannot be empty or whitespace only.');
+    await program.parseAsync(['node', 'test', 'boards', 'create', 'coll-1', '--name', '   ', '--human']);
+    expect(process.exitCode).toBe(1);
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Board name cannot be empty or whitespace only.'),
+    );
     expect(mockCreate).not.toHaveBeenCalled();
   });
 });

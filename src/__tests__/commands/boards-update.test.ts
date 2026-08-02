@@ -28,7 +28,8 @@ function buildProgram(mockUpdate: jest.Mock) {
   } as any));
 
   const parent = new Command();
-  parent.option('--verbose', 'verbose');
+  parent.option('--verbose', 'verbose').option('--human').option('--pretty');
+  parent.exitOverride();
   const boardsCmd = parent.command('boards');
   registerBoardsUpdateCommand(boardsCmd);
   return parent;
@@ -37,21 +38,23 @@ function buildProgram(mockUpdate: jest.Mock) {
 describe('boards update command', () => {
   let consoleSpy: jest.SpyInstance;
   let consoleErrorSpy: jest.SpyInstance;
-  let exitSpy: jest.SpyInstance;
 
   beforeEach(() => {
+    process.exitCode = undefined;
     consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
     consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => { throw new Error('process.exit'); });
     jest.spyOn(config, 'resolveApiKey').mockResolvedValue('test-token');
   });
 
-  afterEach(() => jest.restoreAllMocks());
+  afterEach(() => {
+    jest.restoreAllMocks();
+    process.exitCode = undefined;
+  });
 
   test('updates board name', async () => {
     const mockUpdate = jest.fn().mockResolvedValue(sampleBoard);
     const program = buildProgram(mockUpdate);
-    await program.parseAsync(['node', 'test', 'boards', 'update', 'board-1', '--name', 'Updated Sprint']);
+    await program.parseAsync(['node', 'test', 'boards', 'update', 'board-1', '--name', 'Updated Sprint', '--human']);
     expect(mockUpdate).toHaveBeenCalledWith('board-1', { name: 'Updated Sprint' });
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('board-1'));
   });
@@ -75,13 +78,13 @@ describe('boards update command', () => {
     expect(mockUpdate).toHaveBeenCalledWith('board-1', { name: 'New Name', description: 'New Desc' });
   });
 
-  test('outputs json when --json flag provided', async () => {
+  test('with no flags it emits the bare updated board', async () => {
     const mockUpdate = jest.fn().mockResolvedValue(sampleBoard);
     const program = buildProgram(mockUpdate);
     await program.parseAsync([
-      'node', 'test', 'boards', 'update', 'board-1', '--name', 'Sprint', '--json',
+      'node', 'test', 'boards', 'update', 'board-1', '--name', 'Sprint',
     ]);
-    expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify(sampleBoard, null, 2));
+    expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify(sampleBoard));
   });
 
   test('dry-run does not call API', async () => {
@@ -107,32 +110,32 @@ describe('boards update command', () => {
   test('exits with error when no update fields provided', async () => {
     const mockUpdate = jest.fn();
     const program = buildProgram(mockUpdate);
-    await expect(
-      program.parseAsync(['node', 'test', 'boards', 'update', 'board-1'])
-    ).rejects.toThrow('process.exit');
+    await program.parseAsync(['node', 'test', 'boards', 'update', 'board-1', '--human']);
+    expect(process.exitCode).toBe(1);
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('No update fields'));
     expect(mockUpdate).not.toHaveBeenCalled();
   });
 
-  test('--json outputs JSON only (no text before JSON for piping)', async () => {
+  test('JSON mode outputs JSON only (no text before it, for piping)', async () => {
     const mockUpdate = jest.fn().mockResolvedValue(sampleBoard);
     const program = buildProgram(mockUpdate);
     await program.parseAsync([
-      'node', 'test', 'boards', 'update', 'board-1', '--name', 'Sprint', '--json',
+      'node', 'test', 'boards', 'update', 'board-1', '--name', 'Sprint',
     ]);
     // Only one console.log call: the JSON output
     const logCalls = consoleSpy.mock.calls;
     expect(logCalls).toHaveLength(1);
-    expect(logCalls[0][0]).toBe(JSON.stringify(sampleBoard, null, 2));
+    expect(logCalls[0][0]).toBe(JSON.stringify(sampleBoard));
   });
 
   test('exits with error when name is whitespace only', async () => {
     const mockUpdate = jest.fn();
     const program = buildProgram(mockUpdate);
-    await expect(
-      program.parseAsync(['node', 'test', 'boards', 'update', 'board-1', '--name', '   '])
-    ).rejects.toThrow('process.exit');
-    expect(consoleErrorSpy).toHaveBeenCalledWith('Error: Board name cannot be empty or whitespace-only');
+    await program.parseAsync(['node', 'test', 'boards', 'update', 'board-1', '--name', '   ', '--human']);
+    expect(process.exitCode).toBe(1);
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Board name cannot be empty or whitespace-only'),
+    );
     expect(mockUpdate).not.toHaveBeenCalled();
   });
 
@@ -140,9 +143,8 @@ describe('boards update command', () => {
     jest.spyOn(config, 'resolveApiKey').mockResolvedValue(null as any);
     const mockUpdate = jest.fn();
     const program = buildProgram(mockUpdate);
-    await expect(
-      program.parseAsync(['node', 'test', 'boards', 'update', 'board-1', '--name', 'Sprint'])
-    ).rejects.toThrow('process.exit');
+    await program.parseAsync(['node', 'test', 'boards', 'update', 'board-1', '--name', 'Sprint', '--human']);
+    expect(process.exitCode).toBe(1);
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Error:'));
     expect(mockUpdate).not.toHaveBeenCalled();
   });
@@ -151,9 +153,8 @@ describe('boards update command', () => {
     const err = Object.assign(new Error('Not Found'), { response: { status: 404 } });
     const mockUpdate = jest.fn().mockRejectedValue(err);
     const program = buildProgram(mockUpdate);
-    await expect(
-      program.parseAsync(['node', 'test', 'boards', 'update', 'bad-id', '--name', 'Sprint'])
-    ).rejects.toThrow('process.exit');
+    await program.parseAsync(['node', 'test', 'boards', 'update', 'bad-id', '--name', 'Sprint', '--human']);
+    expect(process.exitCode).toBe(1);
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Board not found'));
   });
 
@@ -161,8 +162,8 @@ describe('boards update command', () => {
     const err = new Error('Network error');
     const mockUpdate = jest.fn().mockRejectedValue(err);
     const program = buildProgram(mockUpdate);
-    await expect(
-      program.parseAsync(['node', 'test', 'boards', 'update', 'board-1', '--name', 'Sprint'])
-    ).rejects.toThrow('process.exit');
+    await program.parseAsync(['node', 'test', 'boards', 'update', 'board-1', '--name', 'Sprint', '--human']);
+    expect(process.exitCode).toBe(1);
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Network error'));
   });
 });

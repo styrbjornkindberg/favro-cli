@@ -39,7 +39,8 @@ function buildProgram(mockListCollections: jest.Mock) {
   } as any));
 
   const parent = new Command();
-  parent.option('--verbose', 'verbose');
+  parent.option('--verbose', 'verbose').option('--human').option('--pretty');
+  parent.exitOverride();
   const collectionsCmd = parent.command('collections');
   registerCollectionsListCommand(collectionsCmd);
   return parent;
@@ -48,75 +49,76 @@ function buildProgram(mockListCollections: jest.Mock) {
 describe('collections list command', () => {
   let consoleSpy: jest.SpyInstance;
   let consoleErrorSpy: jest.SpyInstance;
-  let exitSpy: jest.SpyInstance;
 
   beforeEach(() => {
+    process.exitCode = undefined;
     consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
     consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => { throw new Error('process.exit'); });
     jest.spyOn(config, 'resolveApiKey').mockResolvedValue('test-token');
   });
 
   afterEach(() => {
     jest.restoreAllMocks();
+    process.exitCode = undefined;
   });
 
-  test('lists collections in table format by default', async () => {
+  test('--human lists collections in table format', async () => {
     const mockList = jest.fn().mockResolvedValue(sampleCollections);
     const program = buildProgram(mockList);
-    await program.parseAsync(['node', 'test', 'collections', 'list']);
+    await program.parseAsync(['node', 'test', 'collections', 'list', '--human']);
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('2 collection(s)'));
     expect(mockList).toHaveBeenCalledWith(100);
   });
 
-  test('lists collections in json format', async () => {
+  test('lists collections as the envelope by default', async () => {
     const mockList = jest.fn().mockResolvedValue(sampleCollections);
     const program = buildProgram(mockList);
-    await program.parseAsync(['node', 'test', 'collections', 'list', '--format', 'json']);
+    await program.parseAsync(['node', 'test', 'collections', 'list']);
     // #44: a list read emits the `{rows}` envelope, compact, with the bulk
     // fields omitted from the RENDERING only.
     expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify({ rows: sampleCollections }));
   });
 
-  test('lists collections in json format with --json flag', async () => {
-    const mockList = jest.fn().mockResolvedValue(sampleCollections);
+  test('the two bulk fields are omitted from the envelope', async () => {
+    const fat = [{ ...sampleCollections[0], sharedToUsers: [{ userId: 'u1' }], boards: [{ boardId: 'b1' }] }];
+    const mockList = jest.fn().mockResolvedValue(fat);
     const program = buildProgram(mockList);
-    await program.parseAsync(['node', 'test', 'collections', 'list', '--json']);
-    expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify({ rows: sampleCollections }));
+    await program.parseAsync(['node', 'test', 'collections', 'list']);
+    expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify({ rows: [sampleCollections[0]] }));
   });
 
   test('shows message for empty collections', async () => {
     const mockList = jest.fn().mockResolvedValue([]);
     const program = buildProgram(mockList);
-    await program.parseAsync(['node', 'test', 'collections', 'list']);
+    await program.parseAsync(['node', 'test', 'collections', 'list', '--human']);
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('0 collection(s)'));
   });
 
-  test('exits with error for invalid format', async () => {
+  // `--format table|json` is gone (ADR-0002) — a third spelling of the axis the
+  // runner now owns. Commander refuses it outright rather than half-honouring it.
+  test('--format is no longer a flag at all', async () => {
     const mockList = jest.fn().mockResolvedValue(sampleCollections);
     const program = buildProgram(mockList);
     await expect(
       program.parseAsync(['node', 'test', 'collections', 'list', '--format', 'yaml'])
-    ).rejects.toThrow('process.exit');
-    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid format'));
+    ).rejects.toThrow(/unknown option/i);
+    expect(mockList).not.toHaveBeenCalled();
   });
 
   test('exits when API key missing', async () => {
     jest.spyOn(config, 'resolveApiKey').mockResolvedValue(null as any);
     const mockList = jest.fn().mockResolvedValue([]);
     const program = buildProgram(mockList);
-    await expect(
-      program.parseAsync(['node', 'test', 'collections', 'list'])
-    ).rejects.toThrow('process.exit');
+    await program.parseAsync(['node', 'test', 'collections', 'list', '--human']);
+    expect(process.exitCode).toBe(1);
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('API key'));
   });
 
   test('exits on API error', async () => {
     const mockList = jest.fn().mockRejectedValue(new Error('API error'));
     const program = buildProgram(mockList);
-    await expect(
-      program.parseAsync(['node', 'test', 'collections', 'list'])
-    ).rejects.toThrow('process.exit');
+    await program.parseAsync(['node', 'test', 'collections', 'list', '--human']);
+    expect(process.exitCode).toBe(1);
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('API error'));
   });
 });

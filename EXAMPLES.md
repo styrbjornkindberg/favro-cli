@@ -622,7 +622,7 @@ favro boards get board-001 --include custom-fields,cards,members,stats,velocity
 IDs rarely change. Store them in environment variables to avoid repeated list calls:
 
 ```bash
-export SPRINT_BOARD=$(favro boards list --json | jq -r '.[] | select(.name == "Sprint 43") | .boardId')
+export SPRINT_BOARD=$(favro boards list | jq -r '.rows[] | select(.name == "Sprint 43") | .boardId')
 favro cards list --board $SPRINT_BOARD
 favro activity log $SPRINT_BOARD --since 1d
 ```
@@ -692,7 +692,8 @@ Use `favro-cli` to manage shared household projects:
 
 ```bash
 # 1. Initialize a household project board (one-time setup)
-board_id=$(favro boards create "2026 Home Projects" --json | jq -r '.boardId')
+collection_id=$(favro collections list | jq -r '.rows[0].collectionId')
+board_id=$(favro boards create "$collection_id" --name "2026 Home Projects" | jq -r '.boardId')
 
 # 2. Bulk create tasks from a list
 echo "Renovate kitchen,Garden fence repair,Paint basement" | \
@@ -717,7 +718,8 @@ Monitor and resolve technical debt semi-automatically:
 
 ```bash
 # 1. Create a "Technical Debt" board
-debt_board=$(favro boards create "Tech Debt Q1 2026" --json | jq -r '.boardId')
+collection_id=$(favro collections list | jq -r '.rows[0].collectionId')
+debt_board=$(favro boards create "$collection_id" --name "Tech Debt Q1 2026" | jq -r '.boardId')
 
 # 2. Get board context for analysis
 favro context $debt_board > debt-snapshot.json

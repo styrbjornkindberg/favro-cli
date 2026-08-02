@@ -5,9 +5,8 @@
  * favro boards get <id> [--include custom-fields,cards,members,stats,velocity]
  */
 import { Command } from 'commander';
-import BoardsAPI, { ExtendedBoard } from '../lib/boards-api';
-import { createFavroClient } from '../lib/client-factory';
-import { logError } from '../lib/error-handler';
+import { ExtendedBoard } from '../lib/boards-api';
+import { run } from '../lib/run';
 
 const VALID_INCLUDES = ['custom-fields', 'cards', 'members', 'stats', 'velocity'];
 
@@ -80,41 +79,26 @@ export function registerBoardsGetCommand(boardsParent: Command): void {
       '--include <options>',
       `Comma-separated data to include: ${VALID_INCLUDES.join(', ')}`,
     )
-    .option('--json', 'Output as JSON')
-    .action(async (id: string, options) => {
-      const verbose = boardsParent.parent?.opts()?.verbose ?? false;
-      try {
+    // No bare "not found" arm: BoardsAPI already classified the failure and
+    // resolution refusals carry their own candidate list, so the runner's error
+    // boundary is the whole of it.
+    .action(run(async (ctx, id: string, options: { include?: string }) => {
+      const include = options.include
+        ? options.include.split(',').map((s: string) => s.trim()).filter(Boolean)
+        : undefined;
 
-        const include = options.include
-          ? options.include.split(',').map((s: string) => s.trim()).filter(Boolean)
-          : undefined;
-
-        if (include) {
-          const invalid = include.filter((i: string) => !VALID_INCLUDES.includes(i));
-          if (invalid.length > 0) {
-            console.error(`✗ Invalid include option(s): ${invalid.join(', ')}`);
-            console.error(`  Valid options: ${VALID_INCLUDES.join(', ')}`);
-            process.exit(1);
-          }
+      if (include) {
+        const invalid = include.filter((i: string) => !VALID_INCLUDES.includes(i));
+        if (invalid.length > 0) {
+          throw new Error(
+            `Invalid include option(s): ${invalid.join(', ')}\n` +
+            `  Valid options: ${VALID_INCLUDES.join(', ')}`,
+          );
         }
-
-        const client = await createFavroClient();
-        const api = new BoardsAPI(client);
-
-        const board = await api.getBoardWithIncludes(id, include);
-
-        if (options.json) {
-          console.log(JSON.stringify(board, null, 2));
-        } else {
-          formatBoardDetails(board);
-        }
-      } catch (error: any) {
-        // No bare "not found" here: BoardsAPI already classified the failure and
-        // resolution refusals carry their own candidate list.
-        logError(error, verbose);
-        process.exit(1);
       }
-    });
+
+      return { item: await ctx.api.boards.getBoardWithIncludes(id, include), human: formatBoardDetails };
+    }));
 }
 
 export default registerBoardsGetCommand;

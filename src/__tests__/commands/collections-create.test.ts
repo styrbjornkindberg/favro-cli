@@ -27,7 +27,8 @@ function buildProgram(mockCreate: jest.Mock) {
   } as any));
 
   const parent = new Command();
-  parent.option('--verbose', 'verbose');
+  parent.option('--verbose', 'verbose').option('--human').option('--pretty');
+  parent.exitOverride();
   const collectionsCmd = parent.command('collections');
   registerCollectionsCreateCommand(collectionsCmd);
   return parent;
@@ -36,21 +37,23 @@ function buildProgram(mockCreate: jest.Mock) {
 describe('collections create command', () => {
   let consoleSpy: jest.SpyInstance;
   let consoleErrorSpy: jest.SpyInstance;
-  let exitSpy: jest.SpyInstance;
 
   beforeEach(() => {
+    process.exitCode = undefined;
     consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
     consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => { throw new Error('process.exit'); });
     jest.spyOn(config, 'resolveApiKey').mockResolvedValue('test-token');
   });
 
-  afterEach(() => jest.restoreAllMocks());
+  afterEach(() => {
+    jest.restoreAllMocks();
+    process.exitCode = undefined;
+  });
 
   test('creates collection with name', async () => {
     const mockCreate = jest.fn().mockResolvedValue(createdCollection);
     const program = buildProgram(mockCreate);
-    await program.parseAsync(['node', 'test', 'collections', 'create', '--name', 'New Collection']);
+    await program.parseAsync(['node', 'test', 'collections', 'create', '--name', 'New Collection', '--human']);
     expect(mockCreate).toHaveBeenCalledWith({ name: 'New Collection', description: undefined });
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('new-coll-123'));
   });
@@ -69,13 +72,13 @@ describe('collections create command', () => {
     });
   });
 
-  test('outputs json when --json flag provided', async () => {
+  test('with no flags it emits the bare created collection', async () => {
     const mockCreate = jest.fn().mockResolvedValue(createdCollection);
     const program = buildProgram(mockCreate);
     await program.parseAsync([
-      'node', 'test', 'collections', 'create', '--name', 'New Collection', '--json',
+      'node', 'test', 'collections', 'create', '--name', 'New Collection',
     ]);
-    expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify(createdCollection, null, 2));
+    expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify(createdCollection));
   });
 
   test('dry-run does not call API', async () => {
@@ -102,9 +105,8 @@ describe('collections create command', () => {
   test('exits when name is whitespace-only', async () => {
     const mockCreate = jest.fn();
     const program = buildProgram(mockCreate);
-    await expect(
-      program.parseAsync(['node', 'test', 'collections', 'create', '--name', '   '])
-    ).rejects.toThrow('process.exit');
+    await program.parseAsync(['node', 'test', 'collections', 'create', '--name', '   ', '--human']);
+    expect(process.exitCode).toBe(1);
     expect(mockCreate).not.toHaveBeenCalled();
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('whitespace-only'));
   });
@@ -112,18 +114,16 @@ describe('collections create command', () => {
   test('exits when API key missing', async () => {
     jest.spyOn(config, 'resolveApiKey').mockResolvedValue(null as any);
     const program = buildProgram(jest.fn());
-    await expect(
-      program.parseAsync(['node', 'test', 'collections', 'create', '--name', 'x'])
-    ).rejects.toThrow('process.exit');
+    await program.parseAsync(['node', 'test', 'collections', 'create', '--name', 'x', '--human']);
+    expect(process.exitCode).toBe(1);
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('API key'));
   });
 
   test('exits on API error', async () => {
     const mockCreate = jest.fn().mockRejectedValue(new Error('API error'));
     const program = buildProgram(mockCreate);
-    await expect(
-      program.parseAsync(['node', 'test', 'collections', 'create', '--name', 'x'])
-    ).rejects.toThrow('process.exit');
+    await program.parseAsync(['node', 'test', 'collections', 'create', '--name', 'x', '--human']);
+    expect(process.exitCode).toBe(1);
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('API error'));
   });
 });
