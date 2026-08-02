@@ -204,7 +204,16 @@ export async function releaseCheckHandler(ctx: Ctx, board: string) {
     human: formatHuman,
     // The finding IS the code. `ready` is the only clean answer, so anything
     // else exits 1 — the same convention `git diff --exit-code` uses.
-    exitCode: result.status === 'ready' ? 0 : 1,
+    // Gated on the two counters this command already defines as real, not on
+    // `status`. `statusFor` reads `totalIssues`, which includes
+    // `missing-due-date` — but `summary.missingFields` deliberately excludes it
+    // (see its filter above; that line was drawn on purpose). So a board whose
+    // only flaw was unset optional due dates reported `blockers: 0,
+    // missingFields: 0` and still failed: the summary said nothing was missing
+    // while the verdict said not ready. That incoherence predates this change;
+    // promoting it from a printed emoji into a CI gate is what made it matter.
+    // `status` in the payload is unchanged.
+    exitCode: result.summary.blockers > 0 || result.summary.missingFields > 0 ? 1 : 0,
   };
 }
 

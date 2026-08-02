@@ -160,7 +160,11 @@ describe('risks command', () => {
     expect(process.exitCode).toBe(1);
   });
 
-  it('declares riskLevel medium and exits 1 on soft risks alone', async () => {
+  // Soft risks still SAY medium/high — the payload is the report. They do not
+  // fail the build: `hasMissingFields` counts `!card.dueDate`, so gating exit
+  // on "not healthy" made the code a constant 1 on any ordinary backlog, and an
+  // exit code that never varies is one users silence with `|| true`.
+  it('declares riskLevel medium on soft risks alone, and still exits 0', async () => {
     listCards.mockResolvedValue([sampleCards[3]]); // unassigned only
 
     await runCli(['risks', 'board-1']);
@@ -169,10 +173,10 @@ describe('risks command', () => {
     expect(report.riskLevel).toBe('medium');
     expect(report.summary.overdue).toBe(0);
     expect(report.summary.blocked).toBe(0);
-    expect(process.exitCode).toBe(1);
+    expect(process.exitCode).toBe(0);
   });
 
-  it('declares riskLevel high when soft risks pass ten cards', async () => {
+  it('declares riskLevel high when soft risks pass ten cards, and still exits 0', async () => {
     listCards.mockResolvedValue(
       Array.from({ length: 11 }, (_, i) => ({ ...sampleCards[3], cardId: `card-${i}` })),
     );
@@ -180,7 +184,7 @@ describe('risks command', () => {
     await runCli(['risks', 'board-1']);
 
     expect(json().riskLevel).toBe('high');
-    expect(process.exitCode).toBe(1);
+    expect(process.exitCode).toBe(0);
   });
 
   it('a negative finding and a wire failure are distinguishable by stdout', async () => {

@@ -187,6 +187,27 @@ describe('release-check command', () => {
     expect(process.exitCode).toBe(1);
   });
 
+  // The exit code reads `summary`, not `status`, and this is the case that
+  // separates them. `summary.missingFields` deliberately EXCLUDES
+  // `missing-due-date` (that line was drawn on purpose by the original author),
+  // while `statusFor` reads `totalIssues`, which includes it. So a card whose
+  // only flaw is an unset optional due date produced `blockers: 0,
+  // missingFields: 0` — a summary saying nothing is missing — beside a verdict
+  // saying the release is not ready. Printed as an emoji that incoherence was
+  // survivable; as a CI gate it fails every ordinary board forever.
+  it('an unset due date alone does not fail the build, whatever status says', async () => {
+    const { dueDate: _dropped, ...noDueDate } = sampleCards[1]; // Review, assigned, unblocked
+    listCards.mockResolvedValue([noDueDate as Card]);
+
+    await runCli(['release-check', 'board-1']);
+
+    const report = json();
+    expect(report.summary.blockers).toBe(0);
+    expect(report.summary.missingFields).toBe(0);
+    expect(report.summary.totalIssues).toBeGreaterThan(0);
+    expect(process.exitCode).toBe(0);
+  });
+
   /**
    * The acceptance criterion of #117, stated as one test.
    *

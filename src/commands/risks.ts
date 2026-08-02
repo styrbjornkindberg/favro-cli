@@ -286,7 +286,14 @@ export async function risksHandler(ctx: Ctx, board: string) {
   return {
     item: report,
     human: formatHuman,
-    exitCode: report.riskLevel === 'healthy' ? 0 : 1,
+    // Only `critical` fails the build. Gating on "not healthy" made this a
+    // constant 1: `hasMissingFields` counts `!card.dueDate`, and a backlog of
+    // 20 cards with no due dates — zero overdue, zero blocked, zero unassigned
+    // — came out `high`, exit 1. An exit code that never varies carries no
+    // information, and the thing users do about it is write `|| true`, which
+    // kills the check permanently. `critical` is the command's own top tier,
+    // not a threshold invented here; `riskLevel` in the payload is unchanged.
+    exitCode: report.riskLevel === 'critical' ? 1 : 0,
   };
 }
 
