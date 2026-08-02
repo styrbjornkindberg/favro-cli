@@ -287,6 +287,13 @@ describe('skill create / export / import / delete / edit', () => {
   });
 
   test('edit names the file and the editor it is opening it in', async () => {
+    // THIS DOES NOT PROVE `skill edit` WORKS — see #129. It asserts the two
+    // things before the launch, and stops there deliberately, because the
+    // launch itself is broken: `skill.ts:208` calls
+    // `exec(cmd, { stdio: 'inherit' } as any)`, and `child_process.exec` has no
+    // `stdio` option — it buffers and hands the child no TTY, so the editor
+    // never attaches to the terminal. The call is not awaited either. The `as
+    // any` is the tell. Covering the launch would mean pinning the bug.
     await runCli(['skill', 'edit', 'mine']);
 
     expect(store.getSkillPath).toHaveBeenCalledWith('mine');

@@ -28,19 +28,36 @@ function written(): Record<string, unknown> | undefined {
   return calls.length ? (calls[calls.length - 1][0] as Record<string, unknown>) : undefined;
 }
 
+/**
+ * `process.exit` really does stop the action. A stub that returns lets the code
+ * after a guard keep running, which would let "refuses and exits 1" pass while
+ * the write it was guarding still happened. Nothing follows `process.exit(1)`
+ * in this module today, but this is the guardrail the whole write contract
+ * rests on — it is the last suite that should be blind to that.
+ */
+class ExitCalled extends Error {
+  constructor(readonly code: number) {
+    super(`process.exit(${code})`);
+  }
+}
+
 async function runCli(args: string[]): Promise<void> {
   const program = new Command();
   program.option('--verbose', 'Show stack traces');
   registerScopeCommand(program);
   program.exitOverride();
-  await program.parseAsync(['node', 'favro', ...args]);
+  await program.parseAsync(['node', 'favro', ...args]).catch((e) => {
+    if (!(e instanceof ExitCalled)) throw e;
+  });
 }
 
 beforeEach(() => {
   jest.clearAllMocks();
   logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
   errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-  exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+  exitSpy = jest.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+    throw new ExitCalled(code ?? 0);
+  }) as never);
 
   stored = {};
   (config.readConfig as jest.Mock).mockImplementation(async () => stored);

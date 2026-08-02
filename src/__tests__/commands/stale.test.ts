@@ -155,18 +155,33 @@ describe('stale — which cards survive', () => {
     expect(json().unassignedStale[0].id).toBe('live');
   });
 
-  test('a card with no creation date is reported stale with -1 days', async () => {
+  test('a card with no creation date is reported stale with -1 days — BUG #130', async () => {
+    // NOT intended design — this documents the bug in #130, it does not bless it.
+    //
     // Favro sends no last-modified field, so age is measured from creation, and
-    // a card without one has an unknown age. Current behaviour: it is INCLUDED
-    // (Infinity >= any threshold) and carries -1 as its day count.
+    // a card without one has an unknown age. `daysSince` answers `Infinity`,
+    // and `Infinity >= staleDays` is true for every threshold, so an undated
+    // card is ALWAYS stale however recent it really is — `--days` cannot
+    // exclude it.
+    //
+    // The second-order symptom is the worse half: the day count is flattened to
+    // -1, and both groups sort most-stale-first (`stale.ts:142-143`), so -1
+    // sorts LAST. The cards whose freshness is least known are ranked least
+    // urgent — the exact inversion of what the command is for. Asserted below
+    // so this stays evidence rather than prose.
     MockAggregate.prototype.getMultiBoardSnapshot = jest.fn().mockResolvedValue({
-      allCards: [card({ id: 'undated', createdAt: undefined })],
+      allCards: [
+        card({ id: 'undated', createdAt: undefined }),
+        card({ id: 'dated', createdAt: daysAgo(20) }),
+      ],
     });
 
     await runCli(['stale']);
 
-    expect(json().total).toBe(1);
-    expect(json().unassignedStale[0].daysSinceUpdate).toBe(-1);
+    expect(json().total).toBe(2);
+    const undated = json().unassignedStale.find((c: { id: string }) => c.id === 'undated');
+    expect(undated.daysSinceUpdate).toBe(-1);
+    expect(json().unassignedStale.map((c: { id: string }) => c.id)).toEqual(['dated', 'undated']);
   });
 
   test('a non-numeric --days falls back to 14 rather than letting NaN pass everything', async () => {
