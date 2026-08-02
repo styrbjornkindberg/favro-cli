@@ -4,6 +4,7 @@
  */
 import { Command } from 'commander';
 import CardsAPI from '../lib/cards-api';
+import BoardsAPI from '../lib/boards-api';
 import { LINK_TYPES, linkTypeToIsBefore } from '../lib/dependency-direction';
 import { logError } from '../lib/error-handler';
 import { createFavroClient } from '../lib/client-factory';
@@ -195,12 +196,12 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
     .description(
       'Move a card to a different board.\n\n' +
       'Examples:\n' +
-      '  favro cards move <card> --to-board <boardId>\n' +
-      '  favro cards move <card> --to-board <boardId> --position top\n' +
-      '  favro cards move <card> --to-board <boardId> --position bottom\n\n' +
+      '  favro cards move <card> --to-board <board>\n' +
+      '  favro cards move <card> --to-board <board> --position top\n' +
+      '  favro cards move <card> --to-board <board> --position bottom\n\n' +
       `Valid positions: ${VALID_POSITIONS.join(', ')}`
     )
-    .requiredOption('--to-board <boardId>', 'Destination board ID')
+    .requiredOption('--to-board <board>', 'Destination board, by name or boardId')
     .option('--position <pos>', `Position on board: ${VALID_POSITIONS.join('|')}`)
     .option('--json', 'Output updated card as JSON')
     .option('-y, --yes', 'Skip confirmation prompt')
@@ -220,12 +221,16 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
         const cardOrigin = await api.getCard(cardId);
         
         const { readConfig } = await import('../lib/config');
-        const { checkScope, confirmAction } = await import('../lib/safety');
+        const { checkScope, checkResolvedScope, confirmAction } = await import('../lib/safety');
         const config = await readConfig();
-        
-        // Check scope of both origin board and destination board
+
+        // Check scope of both origin board and destination board. The origin is
+        // already a `widgetCommonId`; `--to-board` is whatever the user typed,
+        // so it settles FIRST — the lock GETs `/widgets/<id>`, and handed a name
+        // it 404s into "Board Backlog - Web Hub not found", a refusal naming the
+        // wrong problem (#82). The thunk keeps an unlocked user off the network.
         await checkScope(cardOrigin.boardId ?? '', client, config, options.force);
-        await checkScope(options.toBoard, client, config, options.force);
+        await checkResolvedScope(client, () => new BoardsAPI(client).resolveBoardId(options.toBoard), options.force);
         
         if (!(await confirmAction(`Move card ${cardId} to board ${options.toBoard}?`, { yes: options.yes }))) {
           console.log('Aborted.');

@@ -1,4 +1,5 @@
 import FavroHttpClient from './http-client';
+import BoardsAPI from './boards-api';
 import { getAllPages } from './paginate';
 
 export interface Widget {
@@ -36,11 +37,28 @@ export class WidgetsAPI {
   }
 
   /**
+   * Settle a board reference — a NAME or an id — to the `widgetCommonId` the
+   * wire wants. The twin of `CardsAPI.boardIdOf`, here because `widgets add`
+   * is a `PUT /cards/:cardId` carrying `widgetCommonId` — card-shaped by every
+   * definition #82 uses — that never touches `CardsAPI`, so the guard over
+   * there cannot see it. Unresolved, Favro answers 200 and the write lands
+   * nowhere, and the caller prints a success (#82).
+   */
+  private boardIdOf(board: string): Promise<string> {
+    return new BoardsAPI(this.client).resolveBoardId(board);
+  }
+
+  /**
    * Add a card to a board by committing it via the cards API.
    * Favro's PUT /cards/:cardId with widgetCommonId + dragMode 'commit'
    * adds the card to the target board without removing it from its current board.
+   *
+   * `board` is a NAME or a `widgetCommonId`; it settles BEFORE the card lookup,
+   * so an unresolvable board refuses without reading anything.
    */
-  async addWidgetToBoard(boardId: string, cardCommonId: string, columnId?: string): Promise<Widget> {
+  async addWidgetToBoard(board: string, cardCommonId: string, columnId?: string): Promise<Widget> {
+    const boardId = await this.boardIdOf(board);
+
     // Step 1: Resolve cardCommonId → cardId by fetching any instance
     const res = await this.client.get<{ entities: Array<{ cardId: string; cardCommonId: string; name: string }> }>(
       '/cards',
