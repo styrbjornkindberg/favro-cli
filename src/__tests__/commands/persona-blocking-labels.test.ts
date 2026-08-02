@@ -55,7 +55,10 @@ function snapshotOf(cards: AggregateCard[]) {
   };
 }
 
-let stdoutSpy: jest.SpyInstance;
+// `console.log`, not `process.stdout.write`: the runner writes through the
+// former, and under jest that is a BufferedConsole which never reaches the
+// latter (#115).
+let logSpy: jest.SpyInstance;
 
 async function runCli(
   register: (p: Command) => void,
@@ -65,19 +68,21 @@ async function runCli(
   MockAggregateAPI.prototype.getMultiBoardSnapshot.mockResolvedValue(snapshotOf(cards) as any);
   MockAggregateAPI.prototype.getCollectionSnapshot.mockResolvedValue(snapshotOf(cards) as any);
   const program = new Command();
+  // Before the first `.command()`: `copyInheritedSettings` copies
+  // `_exitCallback` when the subcommand is created, not when it runs.
+  program.exitOverride();
   program.option('--verbose');
   register(program);
-  program.exitOverride();
   await program.parseAsync(['node', 'favro', ...args]);
-  const written = stdoutSpy.mock.calls.map((c) => String(c[0])).join('');
+  const written = logSpy.mock.calls.map((c) => String(c[0])).join('\n');
   return JSON.parse(written);
 }
 
 beforeEach(() => {
   jest.clearAllMocks();
-  stdoutSpy = jest.spyOn(process.stdout, 'write').mockImplementation(() => true);
+  process.exitCode = undefined;
+  logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
   jest.spyOn(console, 'error').mockImplementation(() => {});
-  jest.spyOn(process, 'exit').mockImplementation((() => {}) as any);
   (config.resolveApiKey as jest.Mock).mockResolvedValue('test-token');
   (config.resolveUserId as jest.Mock).mockResolvedValue(USER);
   (config.readConfig as jest.Mock).mockResolvedValue({});
@@ -85,6 +90,7 @@ beforeEach(() => {
 
 afterEach(() => {
   jest.restoreAllMocks();
+  process.exitCode = undefined;
 });
 
 // A card parked in a column literally named "Blocked". `detectStage` has no

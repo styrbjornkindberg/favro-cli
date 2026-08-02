@@ -3,12 +3,8 @@
  * v2.0 LLM-first command: outputs JSON by default.
  */
 import { Command } from 'commander';
-import { createFavroClient } from '../lib/client-factory';
-import { readConfig } from '../lib/config';
-import AggregateAPI from '../api/aggregate';
 import { extractEffort } from '../api/context';
-import { outputResult, resolveFormat } from '../lib/output';
-import { logError } from '../lib/error-handler';
+import { Ctx, run } from '../lib/run';
 
 const ACTIVE_STAGES = ['active', 'review', 'testing'];
 const DONE_STAGES = ['done', 'approved', 'archived'];
@@ -58,104 +54,99 @@ function formatHuman(data: TeamResult): string {
   return lines.join('\n');
 }
 
+interface TeamOptions {
+  collection?: string;
+  limit: string;
+}
+
+export async function teamHandler(ctx: Ctx, options: TeamOptions) {
+  const cardLimit = parseInt(options.limit, 10) || 1000;
+
+  let snapshot;
+  let scope: string;
+  if (options.collection) {
+    snapshot = await ctx.api.aggregate.getCollectionSnapshot(options.collection, cardLimit);
+    scope = options.collection;
+  } else if (ctx.config.scopeCollectionId) {
+    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({ collectionIds: [ctx.config.scopeCollectionId] }, cardLimit);
+    scope = ctx.config.scopeCollectionName ?? ctx.config.scopeCollectionId;
+  } else {
+    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({}, cardLimit);
+    scope = 'all collections';
+  }
+
+  // Build per-member stats
+  const memberMap = new Map<string, TeamMember>();
+
+  for (const card of snapshot.allCards) {
+    const assignees = card.assignees?.length ? card.assignees : [];
+    for (const uid of assignees) {
+      if (!memberMap.has(uid)) {
+        const member = snapshot.members.find(m => m.id === uid);
+        memberMap.set(uid, {
+          name: member?.name ?? uid,
+          email: member?.email ?? '',
+          activeBoards: [],
+          totalCards: 0,
+          wipCount: 0,
+          doneCount: 0,
+          dependencyCount: 0,
+          completionRate: 0,
+          effortSum: 0,
+        });
+      }
+      const tm = memberMap.get(uid)!;
+      tm.totalCards++;
+      tm.effortSum += extractEffort(card) ?? 0;
+
+      const bName = card.boardName;
+      if (bName && !tm.activeBoards.includes(bName)) tm.activeBoards.push(bName);
+
+      if (ACTIVE_STAGES.includes(card.stage ?? '')) tm.wipCount++;
+      if (DONE_STAGES.includes(card.stage ?? '')) tm.doneCount++;
+      if ((card.blockedBy && card.blockedBy.length > 0)) tm.dependencyCount++;
+    }
+  }
+
+  // Compute completion rates
+  for (const [, tm] of memberMap) {
+    tm.completionRate = tm.totalCards > 0 ? tm.doneCount / tm.totalCards : 0;
+  }
+
+  const members = Array.from(memberMap.values())
+    .filter(m => m.name !== 'unassigned')
+    .sort((a, b) => b.wipCount - a.wipCount);
+
+  const avgWip = members.length > 0
+    ? members.reduce((sum, m) => sum + m.wipCount, 0) / members.length
+    : 0;
+
+  const bottleneck = members.reduce<TeamResult['bottleneck']>((worst, m) => {
+    if (!worst || m.dependencyCount > worst.dependencyCount) {
+      return { name: m.name, dependencyCount: m.dependencyCount };
+    }
+    return worst;
+  }, undefined);
+
+  const result: TeamResult = {
+    scope,
+    members,
+    avgWip,
+    bottleneck: bottleneck && bottleneck.dependencyCount > 0 ? bottleneck : undefined,
+    totalMembers: members.length,
+    generatedAt: new Date().toISOString(),
+  };
+
+  return { item: result, human: formatHuman };
+}
+
 export function registerTeamCommand(program: Command): void {
   program
     .command('team')
     .description('Cross-board team utilization and bottleneck analysis (LLM-first JSON)')
     .option('--collection <name>', 'Filter to a specific collection')
     .option('--limit <n>', 'Max cards', '1000')
-    .option('--human', 'Human-readable formatted output')
-    .option('--json', 'JSON output (default)')
-    .action(async (options) => {
-      const verbose = program.opts()?.verbose ?? false;
-      try {
-        const client = await createFavroClient();
-        const api = new AggregateAPI(client);
-        const config = await readConfig();
-        const cardLimit = parseInt(options.limit, 10) || 1000;
-
-        let snapshot;
-        let scope: string;
-        if (options.collection) {
-          snapshot = await api.getCollectionSnapshot(options.collection, cardLimit);
-          scope = options.collection;
-        } else if (config.scopeCollectionId) {
-          snapshot = await api.getMultiBoardSnapshot({ collectionIds: [config.scopeCollectionId] }, cardLimit);
-          scope = config.scopeCollectionName ?? config.scopeCollectionId;
-        } else {
-          snapshot = await api.getMultiBoardSnapshot({}, cardLimit);
-          scope = 'all collections';
-        }
-
-        // Build per-member stats
-        const memberMap = new Map<string, TeamMember>();
-
-        for (const card of snapshot.allCards) {
-          const assignees = card.assignees?.length ? card.assignees : [];
-          for (const uid of assignees) {
-            if (!memberMap.has(uid)) {
-              const member = snapshot.members.find((m: any) => m.id === uid);
-              memberMap.set(uid, {
-                name: member?.name ?? uid,
-                email: member?.email ?? '',
-                activeBoards: [],
-                totalCards: 0,
-                wipCount: 0,
-                doneCount: 0,
-                dependencyCount: 0,
-                completionRate: 0,
-                effortSum: 0,
-              });
-            }
-            const tm = memberMap.get(uid)!;
-            tm.totalCards++;
-            tm.effortSum += extractEffort(card) ?? 0;
-
-            const bName = (card as any).boardName;
-            if (bName && !tm.activeBoards.includes(bName)) tm.activeBoards.push(bName);
-
-            if (ACTIVE_STAGES.includes(card.stage ?? '')) tm.wipCount++;
-            if (DONE_STAGES.includes(card.stage ?? '')) tm.doneCount++;
-            if ((card.blockedBy && card.blockedBy.length > 0)) tm.dependencyCount++;
-          }
-        }
-
-        // Compute completion rates
-        for (const [, tm] of memberMap) {
-          tm.completionRate = tm.totalCards > 0 ? tm.doneCount / tm.totalCards : 0;
-        }
-
-        const members = Array.from(memberMap.values())
-          .filter(m => m.name !== 'unassigned')
-          .sort((a, b) => b.wipCount - a.wipCount);
-
-        const avgWip = members.length > 0
-          ? members.reduce((sum, m) => sum + m.wipCount, 0) / members.length
-          : 0;
-
-        const bottleneck = members.reduce<TeamResult['bottleneck']>((worst, m) => {
-          if (!worst || m.dependencyCount > worst.dependencyCount) {
-            return { name: m.name, dependencyCount: m.dependencyCount };
-          }
-          return worst;
-        }, undefined);
-
-        const result: TeamResult = {
-          scope,
-          members,
-          avgWip,
-          bottleneck: bottleneck && bottleneck.dependencyCount > 0 ? bottleneck : undefined,
-          totalMembers: members.length,
-          generatedAt: new Date().toISOString(),
-        };
-
-        const format = resolveFormat(options);
-        outputResult(result, { format }, formatHuman);
-      } catch (err: any) {
-        logError(err, verbose);
-        process.exit(1);
-      }
-    });
+    .action(run(teamHandler));
 }
 
 export default registerTeamCommand;

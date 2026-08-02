@@ -3,12 +3,9 @@
  * v2.0 LLM-first command: outputs JSON by default.
  */
 import { Command } from 'commander';
-import { createFavroClient } from '../lib/client-factory';
-import { readConfig } from '../lib/config';
-import AggregateAPI, { AggregateCard } from '../api/aggregate';
+import { AggregateCard } from '../api/aggregate';
 import { extractEffort } from '../api/context';
-import { outputResult, resolveFormat } from '../lib/output';
-import { logError } from '../lib/error-handler';
+import { Ctx, run } from '../lib/run';
 
 const ACTIVE_STAGES = ['active', 'review', 'testing'];
 const OVERLOAD_THRESHOLD = 8;
@@ -117,6 +114,55 @@ function formatHuman(data: WorkloadResult): string {
   return lines.join('\n');
 }
 
+interface WorkloadOptions {
+  board?: string;
+  collection?: string;
+  limit: string;
+}
+
+export async function workloadHandler(ctx: Ctx, options: WorkloadOptions) {
+  const cardLimit = parseInt(options.limit, 10) || 1000;
+
+  let snapshot;
+  let scope: string;
+  if (options.board) {
+    // `ctx.api.context` replaces the dynamic `await import` + `new ContextAPI`
+    // this arm used to do; the namespace getter is lazy, so the board arm is
+    // still the only path that constructs it.
+    const boardSnapshot = await ctx.api.context.getSnapshot(options.board, cardLimit);
+    // Convert to aggregate format
+    snapshot = {
+      allCards: boardSnapshot.cards.map(c => ({
+        ...c,
+        boardName: boardSnapshot.board.name,
+      })) as AggregateCard[],
+      members: boardSnapshot.members,
+    };
+    scope = boardSnapshot.board.name;
+  } else if (options.collection) {
+    snapshot = await ctx.api.aggregate.getCollectionSnapshot(options.collection, cardLimit);
+    scope = options.collection;
+  } else if (ctx.config.scopeCollectionId) {
+    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({ collectionIds: [ctx.config.scopeCollectionId] }, cardLimit);
+    scope = ctx.config.scopeCollectionName ?? ctx.config.scopeCollectionId;
+  } else {
+    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({}, cardLimit);
+    scope = 'all collections';
+  }
+
+  const { members, alerts } = buildWorkloads(snapshot.allCards, snapshot.members);
+
+  const result: WorkloadResult = {
+    scope,
+    members,
+    alerts,
+    total: snapshot.allCards.length,
+    generatedAt: new Date().toISOString(),
+  };
+
+  return { item: result, human: formatHuman };
+}
+
 export function registerWorkloadCommand(program: Command): void {
   program
     .command('workload')
@@ -124,62 +170,7 @@ export function registerWorkloadCommand(program: Command): void {
     .option('--board <name>', 'Filter to a specific board')
     .option('--collection <name>', 'Filter to a specific collection')
     .option('--limit <n>', 'Max cards', '1000')
-    .option('--human', 'Human-readable formatted output')
-    .option('--json', 'JSON output (default)')
-    .action(async (options) => {
-      const verbose = program.opts()?.verbose ?? false;
-      try {
-        const client = await createFavroClient();
-        const api = new AggregateAPI(client);
-        const config = await readConfig();
-        const cardLimit = parseInt(options.limit, 10) || 1000;
-
-        let snapshot;
-        let scope: string;
-        if (options.board) {
-          const ContextAPI = (await import('../api/context')).default;
-          const ctx = new ContextAPI(client);
-          const boardSnapshot = await ctx.getSnapshot(options.board, cardLimit);
-          // Convert to aggregate format
-          snapshot = {
-            allCards: boardSnapshot.cards.map(c => ({
-              ...c,
-              boardName: boardSnapshot.board.name,
-            })) as AggregateCard[],
-            members: boardSnapshot.members,
-          };
-          scope = boardSnapshot.board.name;
-        } else if (options.collection) {
-          const result = await api.getCollectionSnapshot(options.collection, cardLimit);
-          snapshot = result;
-          scope = options.collection;
-        } else if (config.scopeCollectionId) {
-          const result = await api.getMultiBoardSnapshot({ collectionIds: [config.scopeCollectionId] }, cardLimit);
-          snapshot = result;
-          scope = config.scopeCollectionName ?? config.scopeCollectionId;
-        } else {
-          const result = await api.getMultiBoardSnapshot({}, cardLimit);
-          snapshot = result;
-          scope = 'all collections';
-        }
-
-        const { members, alerts } = buildWorkloads(snapshot.allCards, snapshot.members);
-
-        const result: WorkloadResult = {
-          scope,
-          members,
-          alerts,
-          total: snapshot.allCards.length,
-          generatedAt: new Date().toISOString(),
-        };
-
-        const format = resolveFormat(options);
-        outputResult(result, { format }, formatHuman);
-      } catch (err: any) {
-        logError(err, verbose);
-        process.exit(1);
-      }
-    });
+    .action(run(workloadHandler));
 }
 
 export default registerWorkloadCommand;

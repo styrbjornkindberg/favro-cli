@@ -1,6 +1,12 @@
 /**
  * LLM-first output utility for v2 commands.
  * New v2 commands default to JSON output; use --human for formatted tables.
+ *
+ * SUPERSEDED by `run()` (ADR-0002). #115 took the eight persona commands off
+ * this module; **`src/commands/main-menu.ts` is the one caller left**, and it is
+ * still on the runner ratchet's allowlist. Delete this file — and
+ * `src/__tests__/lib/output.test.ts` with it — the moment `main-menu` migrates.
+ * Nothing new should import it.
  */
 
 export type OutputFormat = 'json' | 'human';
