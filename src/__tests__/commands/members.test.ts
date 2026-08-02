@@ -219,6 +219,26 @@ describe('favro members add', () => {
     });
   });
 
+  it('takes the scope lock BEFORE the preview, so a dry-run cannot route around it', async () => {
+    // #103's order, stated in `batch.ts` for its siblings: a preview that says
+    // "would add alice to board-outside-the-lock" describes a write that will
+    // refuse. The preview has to be refused too, or it is misinformation.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const safety = require('../../lib/safety');
+    (safety.checkScope as jest.Mock).mockRejectedValueOnce(
+      new Error('Board board-9 is outside the locked collection.'),
+    );
+    MockFavroApiClient.prototype.addMember = jest.fn();
+
+    await runCli(['members', 'add', 'alice@example.com', '--to', 'board-9', '--dry-run']);
+
+    expect(MockFavroApiClient.prototype.addMember).not.toHaveBeenCalled();
+    const output = consoleSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(output).toContain('outside the locked collection');
+    expect(output).not.toContain('dryRun');
+    expect(process.exitCode).toBe(1);
+  });
+
   it.each([['not-an-email'], ['']])('refuses the invalid email %p before any write', async (email) => {
     MockFavroApiClient.prototype.addMember = jest.fn();
 

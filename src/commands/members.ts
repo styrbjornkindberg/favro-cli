@@ -97,12 +97,16 @@ export function registerMembersCommand(program: Command): void {
       // Default to board target unless --collection-target is specified
       const isBoardTarget = !options.collectionTarget;
 
-      // ponytail: the preview still returns BEFORE the scope check, which is
-      // the order this command has always had. #103 inverted that pair for
-      // `cards update --from-csv --dry-run` on the grounds that a preview must
-      // not be a way around the lock, and the same argument applies here — but
-      // it is a behaviour change, not a migration, so it is reported on #116
-      // rather than smuggled into it.
+      // Before the PREVIEW, not just before the write — the order #103 settled
+      // for `cards update --from-csv` and `batch.ts` states for its siblings: a
+      // preview is not a way around the lock, and a dry-run that cheerfully
+      // reports "would add alice@example.com to board-outside-the-lock" when the
+      // real run will refuse is misinformation about the write it exists to
+      // describe. It costs nothing extra in credentials — the runner has already
+      // built the client by the time this handler runs (#135) — only one
+      // resolving GET on a locked preview, which is the price #103 accepted.
+      await checkTargetScope(ctx, options.to, isBoardTarget, options.force);
+
       if (options.dryRun) {
         return {
           item: {
@@ -115,8 +119,6 @@ export function registerMembersCommand(program: Command): void {
             `[dry-run] Would add member ${email} to ${isBoardTarget ? 'board' : 'collection'} ${options.to}`,
         };
       }
-
-      await checkTargetScope(ctx, options.to, isBoardTarget, options.force);
 
       return {
         item: await ctx.api.members.addMember(email, options.to, isBoardTarget),
