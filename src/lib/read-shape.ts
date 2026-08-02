@@ -143,9 +143,11 @@ export function omitBulk<T extends object>(
 }
 
 /**
- * Write one list read to stdout as compact JSON. Compact, not pretty: 19% of the
- * bytes for output nothing reads with its eyes.
+ * Write one list read to stdout as compact JSON. Compact by default, not pretty:
+ * 19% of the bytes for output nothing reads with its eyes. `--pretty` — a root
+ * flag owned by the command runner (#113) — is the one way to widen it, and it
+ * stays a parameter here so there is still only one writer of the envelope.
  */
-export function writeEnvelope<T>(envelope: ListEnvelope<T>): void {
-  console.log(JSON.stringify(envelope));
+export function writeEnvelope<T>(envelope: ListEnvelope<T>, pretty = false): void {
+  console.log(JSON.stringify(envelope, null, pretty ? 2 : undefined));
 }
