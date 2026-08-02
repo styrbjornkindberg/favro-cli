@@ -90,7 +90,8 @@ describe('favro webhooks list', () => {
 
     await runCli(['webhooks', 'list', '--format', 'json']);
 
-    expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify(SAMPLE_WEBHOOKS, null, 2));
+    // An envelope, not a bare array — the shape every list read emits (#99).
+    expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify({ rows: SAMPLE_WEBHOOKS }));
     expect(consoleTableSpy).not.toHaveBeenCalled();
   });
 

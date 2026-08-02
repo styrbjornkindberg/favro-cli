@@ -116,6 +116,21 @@ describe('the handler returns a Result', () => {
     expect(result.rows).toEqual([sampleBoards[1]]);
   });
 
+  test('--limit rides on the result, so the RUNNER caps and marks it (#99)', async () => {
+    // The cap is not applied here on purpose: a handler that sliced its own
+    // rows would put the cut somewhere `truncated` cannot be set. The handler's
+    // whole job is to hand the flag over untouched — including as the string
+    // commander gave it.
+    const result = await listBoardsHandler(
+      ctxWith(jest.fn().mockResolvedValue(sampleBoards)),
+      undefined,
+      { limit: '2' },
+    );
+
+    expect(result.rows).toHaveLength(3);
+    expect(result.limit).toBe('2');
+  });
+
   test('an unknown --include is refused before any request goes out', async () => {
     const listAll = jest.fn();
 

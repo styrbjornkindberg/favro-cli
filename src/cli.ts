@@ -88,7 +88,7 @@ import { runMainMenu } from './commands/main-menu';
 import { logError, latchVerbose } from './lib/error-handler';
 import { ProgressBar } from './lib/progress';
 import { createFavroClient } from './lib/client-factory';
-import { capRows, omitBulk, writeEnvelope } from './lib/read-shape';
+import { capRows, noteTruncation, omitBulk, writeEnvelope } from './lib/read-shape';
 
 /**
  * Build the CLI program (exported for testing).
@@ -300,8 +300,8 @@ cards
   .option('--board <id>', 'Board ID to list cards from (alternative to positional arg)')
   .option('--status <column>', 'Narrow to one column, by name or columnId. Filtered on the wire.')
   .option('--archived <mode>', 'Which cards to read: true, false or all. Filtered on the wire.', 'false')
-  .option('--assignee <user>', 'Filter by assignee')
-  .option('--tag <tag>', 'Filter by tag')
+  .option('--assignee <user>', 'Narrow to one assignee — a name, an email, a userId or @me. Same as --filter "assignee:…".')
+  .option('--tag <tag>', 'Narrow to one tag, by exact name. Same as --filter "tag:…"; an unknown name is refused.')
   .option('--filter <expression>', 'Filter cards using query syntax (e.g. "status:done AND tag:bug")')
   .option('--body', 'Include card descriptions, omitted by default')
   .option('--include <keys>', 'Comma-separated extras to keep in output: custom-fields')
@@ -341,17 +341,17 @@ cards
 
       const api = new CardsAPI(client);
 
-      // The filter is parsed AND its values settled against Favro's own
-      // vocabularies BEFORE the fetch — so a typo'd tag or column refuses
-      // instead of costing a whole board read and answering a plausible 0 rows.
-      let query: import('./lib/query-parser').Query | undefined;
-      if (options.filter) {
-        const { resolveQuery } = await import('./lib/query-values');
-        query = await resolveQuery(options.filter, {
-          client,
-          boardId: effectiveBoardId,
-        });
-      }
+      // The WHOLE filtering flag row — `--filter`, `--tag`, `--assignee` — is
+      // parsed AND its values settled against Favro's own vocabularies BEFORE
+      // the fetch, so a typo'd tag, user or column refuses instead of costing a
+      // whole board read and answering a plausible 0 rows. `--tag`/`--assignee`
+      // are the flag spelling of `tag:`/`assignee:` and take the same call
+      // rather than a filter of their own (#84).
+      const { resolveCardFilter } = await import('./lib/query-values');
+      const query = await resolveCardFilter(
+        { filter: options.filter, tag: options.tag, assignee: options.assignee },
+        { client, boardId: effectiveBoardId }
+      );
 
       // `--status` and `--archived` are resolved and narrowed on the wire.
       let cardList = await api.listCards({
@@ -378,16 +378,6 @@ cards
         }
         cardList = filterCards(query, cardList, ctx);
       }
-      if (options.assignee) {
-        cardList = cardList.filter(c => (c.assignees ?? []).some(
-          a => a.toLowerCase().includes(options.assignee.toLowerCase())
-        ));
-      }
-      if (options.tag) {
-        cardList = cardList.filter(c => (c.tags ?? []).some(
-          t => t.toLowerCase().includes(options.tag.toLowerCase())
-        ));
-      }
 
       // Cap last, and say so.
       const capped = capRows(cardList, limit);
@@ -402,7 +392,7 @@ cards
           ...capped,
           rows: omitBulk('card', capped.rows, keep),
           ...(unreachable.length > 0 ? { unreachable } : {}),
-        });
+        }, Boolean(program.opts()?.pretty));
       } else {
         console.log(`Found ${capped.rows.length} card(s):`);
         if (capped.rows.length > 0) {
@@ -416,9 +406,8 @@ cards
           }));
           console.table(rows);
         }
-        if (capped.truncated) {
-          console.log(`(truncated to ${limit} of ${cardList.length} — raise --limit to see the rest)`);
-        }
+        // The wording every other list read now shares — it started here.
+        noteTruncation(capped, cardList.length);
         if (unreachable.length > 0) {
           console.log(`(${unreachable.length} blocker(s) could not be checked, so their cards stayed blocked:)`);
           unreachable.forEach((u) => console.log(`  ${u.id} — ${u.reason}`));

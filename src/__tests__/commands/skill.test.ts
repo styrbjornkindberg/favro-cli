@@ -101,12 +101,15 @@ describe('skill list', () => {
     expect(output()).toContain('favro skill create <name>');
   });
 
-  test('--json emits the raw list', async () => {
+  test('--json emits the list in the envelope, like every other list read', async () => {
     (store.listSkills as jest.Mock).mockReturnValue([{ name: 'standup', description: 'd', source: 'builtin' }]);
 
     await runCli(['skill', 'list', '--json']);
 
-    expect(JSON.parse(output())).toEqual([{ name: 'standup', description: 'd', source: 'builtin' }]);
+    // A local read rather than a Favro one, but one shape for an agent (#99).
+    expect(JSON.parse(output())).toEqual({
+      rows: [{ name: 'standup', description: 'd', source: 'builtin' }],
+    });
   });
 });
 
