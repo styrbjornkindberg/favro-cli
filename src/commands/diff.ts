@@ -3,25 +3,32 @@
  *
  * favro diff <boardRef> --since 1d        — Show changes in the last 24h
  * favro diff <boardRef> --since 1w        — Show changes in the last week
- * favro diff <boardRef> --json            — JSON output
+ * favro diff <boardRef> --since 1d --human — Color-coded terminal view
  *
  * Color-coded:
  *   Green  → new cards / moved to done
  *   Red    → removed / blocked
  *   Yellow → status changed / reassigned
+ *
+ * An ANSWER-CODE command (#117, ADR-0002): exit 1 means "there is drift", the
+ * convention `git diff --exit-code` uses. A wire failure also exits 1 but writes
+ * `{ error: … }` instead of a report, so the two are told apart on stdout.
  */
 import { Command } from 'commander';
-import { logError } from '../lib/error-handler';
-import { createFavroClient } from '../lib/client-factory';
-import { ContextAPI, ContextCard } from '../api/context';
-import { c, kv } from '../lib/theme';
+import { ContextCard } from '../api/context';
+import { Ctx, run } from '../lib/run';
+import { parseLimit, Unreachable } from '../lib/read-shape';
+import { RefusalError } from '../lib/refusal';
+import { c } from '../lib/theme';
 
 // ─── Time Parsing ─────────────────────────────────────────────────────────────
 
 function parseSinceArg(since: string): Date {
   const now = Date.now();
   const match = since.match(/^(\d+)\s*(h|d|w|m)$/i);
-  if (!match) throw new Error(`Invalid --since format: "${since}". Use: 1h, 1d, 1w, 1m`);
+  // A RefusalError, not a bare one: the same argument declines identically, so
+  // `retryable: true` would tell an agent to loop on a typo (`refusal.ts`).
+  if (!match) throw new RefusalError(`Invalid --since format: "${since}". Use: 1h, 1d, 1w, 1m`);
 
   const n = parseInt(match[1], 10);
   const unit = match[2].toLowerCase();
@@ -36,6 +43,26 @@ interface DiffEntry {
   cardId: string;
   title: string;
   detail: string;
+}
+
+/** The report, and the shape an agent parses. */
+export interface DiffReport {
+  board: string;
+  /** ISO — the boundary `--since` resolved to, so the answer is reproducible. */
+  since: string;
+  changes: DiffEntry[];
+  summary: {
+    added: number;
+    moved: number;
+    updated: number;
+    removed: number;
+  };
+  /**
+   * Facets of the snapshot that could not be read (#116). Present only when
+   * non-empty, so absent stays distinguishable from empty — and while it IS
+   * present, "no changes" is not an answer this command is entitled to give.
+   */
+  unreachable?: Unreachable[];
 }
 
 function analyzeDiff(cards: ContextCard[], since: Date): DiffEntry[] {
@@ -72,14 +99,24 @@ function formatRelative(date: Date): string {
 
 // ─── Rendering ────────────────────────────────────────────────────────────────
 
-function renderDiff(entries: DiffEntry[], boardName: string, since: Date): string {
+function renderDiff(report: DiffReport): string {
+  const entries = report.changes;
+  const since = new Date(report.since);
   const lines: string[] = [];
 
   lines.push('');
-  lines.push(c.heading(`  📊 Board Diff — ${boardName}`));
+  lines.push(c.heading(`  📊 Board Diff — ${report.board}`));
   lines.push(`  ${c.muted(`Changes since ${since.toLocaleDateString()} ${since.toLocaleTimeString()}`)}`);
   lines.push(`  ${c.separator()}`);
   lines.push('');
+
+  // Ahead of the entries, not under them: "no changes detected" read as an
+  // answer when it was a failed read, and a footnote does not undo a headline.
+  if (report.unreachable?.length) {
+    lines.push(`  ${c.error(`⚠️  Incomplete — ${report.unreachable.length} part(s) of this board could not be read:`)}`);
+    for (const hole of report.unreachable) lines.push(`    ${c.muted(`${hole.id} — ${hole.reason}`)}`);
+    lines.push('');
+  }
 
   if (entries.length === 0) {
     lines.push(`  ${c.muted('No changes detected in this period.')}`);
@@ -152,42 +189,62 @@ function renderDiff(entries: DiffEntry[], boardName: string, since: Date): strin
 
 // ─── Command ──────────────────────────────────────────────────────────────────
 
+interface DiffOptions {
+  since: string;
+  limit?: string;
+}
+
+/**
+ * Exported for a test that calls it with a fake `Ctx` and reads the `Result`
+ * back — no stdout capture, no client mock.
+ */
+export async function diffHandler(ctx: Ctx, boardRef: string, options: DiffOptions) {
+  const since = parseSinceArg(options.since);
+  const snapshot = await ctx.api.context.getSnapshot(boardRef, parseLimit(options.limit) ?? 1000);
+  const changes = analyzeDiff(snapshot.cards, since);
+  const holes = snapshot.unreachable ?? [];
+
+  const report: DiffReport = {
+    board: snapshot.board.name,
+    since: since.toISOString(),
+    changes,
+    summary: {
+      added: changes.filter(e => e.type === 'added').length,
+      moved: changes.filter(e => e.type === 'moved').length,
+      updated: changes.filter(e => e.type === 'updated').length,
+      removed: changes.filter(e => e.type === 'removed').length,
+    },
+    // Spread in only when non-empty, so absent means "nothing was missed" and
+    // never "nobody asked" (#116).
+    ...(holes.length > 0 ? { unreachable: holes } : {}),
+  };
+
+  return {
+    item: report,
+    human: renderDiff,
+    // Exit 0 is a POSITIVE claim — "nothing changed" — so a snapshot with a hole
+    // in it cannot earn one. `getSnapshot` fans out over five facets and each
+    // falls back on failure; a failed cards read used to come back as an empty
+    // card list, which this command rendered as "No changes detected".
+    exitCode: changes.length > 0 || holes.length > 0 ? 1 : 0,
+  };
+}
+
 export function registerDiffCommand(program: Command): void {
   program
     .command('diff <boardRef>')
-    .description('Show board changes over time — color-coded diff view')
+    .description(
+      'Show board changes over time — color-coded diff view.\n\n' +
+      'Exit code IS the answer: 0 when nothing changed and the whole board was\n' +
+      'readable, 1 when there is drift OR part of the board could not be read. A\n' +
+      'wire failure also exits 1 but writes {"error": …} instead of a report.'
+    )
     .requiredOption('--since <period>', 'Time range: 1h, 1d, 1w, 1m')
-    .option('--json', 'Output as JSON')
+    // Whole digits only — `parseInt` took a numeric PREFIX, so `--limit 1e9`
+    // read as 1 (#143). Currently unobservable: `getSnapshot` declares
+    // `cardLimit` and never reads it, which is a separate escalation from #116.
     .option('--limit <n>', 'Max cards to scan (default: 1000)')
-    .action(async (boardRef, options) => {
-      try {
-        const client = await createFavroClient();
-        const ctx = new ContextAPI(client);
-        const since = parseSinceArg(options.since);
-        const limit = parseInt(options.limit ?? '1000', 10);
-
-        const snapshot = await ctx.getSnapshot(boardRef, limit);
-        const entries = analyzeDiff(snapshot.cards, since);
-
-        if (options.json) {
-          console.log(JSON.stringify({
-            board: snapshot.board.name,
-            since: since.toISOString(),
-            changes: entries,
-            summary: {
-              added: entries.filter(e => e.type === 'added').length,
-              moved: entries.filter(e => e.type === 'moved').length,
-              updated: entries.filter(e => e.type === 'updated').length,
-              removed: entries.filter(e => e.type === 'removed').length,
-            },
-          }, null, 2));
-          return;
-        }
-
-        console.log(renderDiff(entries, snapshot.board.name, since));
-      } catch (err) {
-        logError(err, program.opts().verbose);
-        process.exit(1);
-      }
-    });
+    // No `--json`: JSON is the default and `--human` / `--pretty` are root flags
+    // the runner owns (ADR-0002, #113).
+    .action(run(diffHandler));
 }

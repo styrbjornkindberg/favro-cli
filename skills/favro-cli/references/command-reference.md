@@ -848,12 +848,17 @@ Supported goal patterns:
 - `unassign all <filter> cards`
 
 ### `risks <board>` 📖 READ
-Board risk analysis — surfaces blocked, stale, unassigned, and incomplete cards.
+Board risk analysis — surfaces overdue, blocked, unassigned, and incomplete cards.
 
-| Flag | Description |
-|------|-------------|
-| `--json` | Output raw JSON |
-| `--stale-days <n>` | Days without update to consider stale |
+JSON by default; `--human` renders the dashboard. Exit code is the answer: 0 when
+`riskLevel` is `healthy`, 1 otherwise. A wire failure also exits 1 but writes
+`{"error": …}` instead of a report.
+
+Staleness is reported under `unreachable`, not as a risk list: Favro sends no
+last-modified field on a card, so days-since-update cannot be computed. There is
+no `--stale-days` flag — the command never had one.
+
+This command takes no flags of its own.
 
 ---
 

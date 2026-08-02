@@ -136,13 +136,21 @@ interface HealthOptions {
 }
 
 /**
- * No `exitCode` on the `Result`.
+ * No `exitCode` on the `Result`, and `health` is now the only answer-code
+ * command without one.
  *
  * ADR-0002 and #115 both describe `health` as exiting 1 on an unhealthy report
  * — it never has. The only hard exit this command carried was the error
- * boundary's, and the same is true of `release-check` and `diff`. Turning a red
- * signal into a non-zero exit would be a new behaviour, not a migration, so it
- * is raised on the issue rather than smuggled in here.
+ * boundary's, and the same was true of `release-check`, `diff` and `risks`
+ * until #117, whose acceptance criterion asked for the code explicitly and so
+ * settled it for those three: they exit 1 when their own verdict field is not
+ * the clean one.
+ *
+ * #117 did NOT settle it here, because `health` scores rather than finds: the
+ * cut is `red` versus `yellow`, and picking it is a product decision, not the
+ * migration this file already went through in #115. That decision is #115's
+ * last open acceptance box. When it lands the change is one line —
+ * `exitCode: result.overallSignal === 'red' ? 1 : 0` — plus a test.
  */
 export async function healthHandler(ctx: Ctx, options: HealthOptions) {
   const cardLimit = parseInt(options.limit, 10) || 1000;
