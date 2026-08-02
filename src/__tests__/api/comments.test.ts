@@ -67,10 +67,11 @@ describe('CommentsApiClient.listComments', () => {
   it('paginates across multiple pages', async () => {
     const client = {
       get: jest.fn()
-        // First mock is consumed by resolveCardCommonId
-        .mockResolvedValueOnce({
-          entities: [{ commentId: 'c-0', text: 'Zero', createdAt: '2024-01-01T00:00:00Z' }],
-        })
+        // First mock is consumed by resolveCardCommonId, so it has to be a CARD.
+        // It used to be a comment page, which left the resolver with no
+        // `cardCommonId` — and the resolver used to answer that by handing back
+        // the reference, so this passed for the wrong reason. It refuses now (#89).
+        .mockResolvedValueOnce({ cardId: 'card-1', cardCommonId: 'card-1' })
         .mockResolvedValueOnce({
           entities: [{ commentId: 'c-1', text: 'First', createdAt: '2024-01-01T00:00:00Z' }],
           requestId: 'req-1',

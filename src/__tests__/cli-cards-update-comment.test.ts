@@ -4,12 +4,22 @@
  * There were two comments modules. This path used the one that did NOT resolve
  * identifiers, and then open-coded `card.cardCommonId ?? cardId` at the call
  * site — importing the module that was supposed to own that translation and
- * doing it by hand anyway. The fallback was the bug: on a card whose read came
- * back without `cardCommonId`, it posted a `cardId` to an endpoint that only
- * takes a `cardCommonId`, and Favro answers that with a 200 and no comment.
+ * doing it by hand anyway.
  *
- * The surviving client resolves the reference itself, so what these pin is that
- * the CLI hands it the reference the user typed and nothing else.
+ * What these pin is only that: the CLI hands the client the reference the user
+ * typed and resolves nothing itself. They mock `../api/comments` wholesale, so
+ * they say nothing about what the resolver then does — the `?? reference`
+ * fallback lived on inside `toCardCommonId` until it was made to throw in the
+ * same change (`card-reference.ts:commonIdOf`, pinned in
+ * `cards-api-reference-wire.test.ts` against a real socket).
+ *
+ * UNMEASURED: what Favro does with a `cardId` in the `cardCommonId` slot of
+ * `POST /comments` has never been observed from this repo. `docs/research/
+ * card-identifier-semantics.md` §3.2 reasons it is a 404 at best and an orphaned
+ * comment at worst, and §3.1 records the *read* side answering an empty list
+ * rather than an error — but neither is a measurement, and the write side is not
+ * the read side. The refusal above is justified by the keyspaces being disjoint,
+ * which is documented; it does not need the failure mode to be known.
  */
 import { buildProgram } from '../cli';
 import { Command } from 'commander';

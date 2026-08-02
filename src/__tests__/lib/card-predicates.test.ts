@@ -50,6 +50,14 @@ describe('isOverdue', () => {
   it('returns false for an unparseable due date rather than guessing', () => {
     expect(isOverdue(card({ dueDate: 'sometime next week' }))).toBe(false);
   });
+
+  it('rejects a date-shaped string whose parts are out of range, instead of rolling it over', () => {
+    // `new Date(2026, 12, 45)` is Feb 2027, not NaN. A month-13 due date is
+    // corrupt input, and guessing a date ten months out is worse than declining.
+    expect(isOverdue(card({ dueDate: '2026-13-45' }))).toBe(false);
+    expect(isOverdue(card({ dueDate: '2020-13-45' }))).toBe(false);
+    expect(isOverdue(card({ dueDate: '2026-02-30' }))).toBe(false);
+  });
 });
 
 describe('isBlocked', () => {

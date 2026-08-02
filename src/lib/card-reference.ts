@@ -86,6 +86,31 @@ function describe(instance: CardInstance): string {
   return `${instance.cardId} (board ${board}${instance.name ? `, "${instance.name}"` : ''})`;
 }
 
+/**
+ * The `cardCommonId` off a card we successfully read, or a refusal (#89).
+ *
+ * Both branches of `toCardCommonId` used to fall back to the reference here.
+ * That is the one wrong answer these endpoints cannot report: they take
+ * `cardCommonId` as a query or body value, never a path segment, so a `cardId`
+ * substituted into that slot is a *well-formed* request for a card that does
+ * not exist — a read comes back empty and a write lands nowhere, neither of
+ * them as an error. `cardCommonId` is a documented field of the Card object, so
+ * a card that arrived without one is off-contract; the honest move is to say so
+ * rather than issue the call anyway. See `docs/research/card-identifier-semantics.md`
+ * §3.2, which reached the same conclusion and is where the fallback was first
+ * written up as a defect.
+ */
+function commonIdOf(instance: CardInstance, reference: string): string {
+  if (instance.cardCommonId) return instance.cardCommonId;
+  throw new CardResolutionError(
+    `Card "${reference}" came back with no cardCommonId, which comments, tasks and tasklists require. ` +
+      'Favro documents it on every card, so this is a wire-shape surprise rather than a bad reference — ' +
+      're-run with --verbose and report what /cards returned.',
+    reference,
+    [instance],
+  );
+}
+
 export class CardReferenceResolver {
   constructor(private client: FavroHttpClient) {}
 
@@ -168,7 +193,7 @@ export class CardReferenceResolver {
     if (!isSequentialReference(ref)) {
       try {
         const card = await this.client.get<CardInstance>(`/cards/${encodeURIComponent(ref)}`);
-        return card.cardCommonId ?? ref;
+        return commonIdOf(card, ref);
       } catch (err) {
         const classification = classifyThrownError(err);
         if (!classification?.escalatableOnRead) throw err;
@@ -176,8 +201,7 @@ export class CardReferenceResolver {
         return ref;
       }
     }
-    const instance = await this.resolve(ref, options);
-    return instance.cardCommonId ?? instance.cardId;
+    return commonIdOf(await this.resolve(ref, options), ref);
   }
 
   private async query(params: Record<string, unknown>): Promise<CardInstance[]> {

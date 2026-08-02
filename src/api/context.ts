@@ -111,6 +111,20 @@ export function buildWorkflow(columns: Array<{ id: string; name: string }>): Wor
  *
  * The field is matched by NAME, on the card's own field order — Favro has no
  * effort concept, so this is a guess at a custom field and stays one.
+ *
+ * Reconciling the four changed behaviour for two callers, deliberately:
+ *
+ *   - `favro next` — an empty effort field (`{Effort: null}`) used to reach
+ *     `Number(null) === 0` and score the card as a zero-effort *quick win*. It
+ *     is now `undefined` and scores no bonus.
+ *   - `favro sprint plan` — this was the copy with the 8-entry literal key list,
+ *     so three things move. Iteration order flips from a fixed key priority to
+ *     the card's own field order (`{Estimate: 8, Effort: 3}` was 3, is now 8).
+ *     Name matching broadens to a substring regex, which picks up `Effort
+ *     (hours)` and also `Checkpoints`. And `{Effort: ''}` was `Number('') === 0`
+ *     and is now `undefined`, which `compareSprintCards` sorts as `Infinity` —
+ *     the card moves from first in its priority band to last and stops
+ *     contributing to `cumulative` / `withinBudget`.
  */
 const EFFORT_FIELD = /effort|story.?points?|points?|estimate/i;
 

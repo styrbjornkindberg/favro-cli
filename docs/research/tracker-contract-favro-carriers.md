@@ -167,7 +167,7 @@ tables can stay terse. "One call" means: present on a row of a single
 | **dependency edge** (`dependencies[].isBefore`) | `POST /cards/:cardId/dependencies {dependencies:[{cardId,isBefore}]}` (a), verified live in #12 | **Yes — settled by §1.3** (d) | Yes, and this is *why* wayfinder wants it (capability C) — but **which way `isBefore` reads in the UI is still unconfirmed** (#1, open) (e) | No |
 | **`parentCardId`** | `POST`/`PUT /cards` `{parentCardId}` (a); **same-widget only, never cross-board** (#4) | **Yes** — `parentCardId` on every row (d) | Yes — nesting under the parent | (c) unknown — whether dragging a child out of its parent clears `parentCardId`. Plausible and untested |
 | **`archived`** | `PUT {archive:true}` (a)(d) | **Yes** — `archived` on every row; but the default list **includes** archived cards, so exclusion is client-side (d, §1.4-ii) | Yes — the card leaves the board view | (c) unknown — archiving is a menu action, not a drag; low risk |
-| **comment** | `POST /comments {cardCommonId, comment}` (a); `src/lib/comments-api.ts:101` | **No.** Comments are a separate endpoint keyed on **`cardCommonId`**, one call per card — **derived N** across a frontier | Yes — the card's comment thread | No |
+| **comment** | `POST /comments {cardCommonId, comment}` (a); `src/api/comments.ts:100` | **No.** Comments are a separate endpoint keyed on **`cardCommonId`**, one call per card — **derived N** across a frontier | Yes — the card's comment thread | No |
 
 Two carriers the skills might expect that Favro does **not** have:
 
@@ -292,7 +292,7 @@ can hold a ~40-line structured brief (`triage/AGENT-BRIEF.md:41-68`). Also read 
 
 | Candidate | W | 1 | UI | Desync | Notes |
 |---|---|---|---|---|---|
-| **comment** | Yes — `POST /comments {cardCommonId, comment}` | **No** — separate endpoint, `cardCommonId`-keyed, one call per card | Yes — the card's thread | No | The only true append-only carrier, and the only one with an author and a timestamp (`created`, `userId` on the raw shape — `src/lib/comments-api.ts:14-21`; the docs also list `lastUpdated`). Its one-call failure is tolerable *here*: resolutions are written and read for **one** ticket at a time, not across a frontier. It becomes fatal only if a frontier query needs to read them (see K) |
+| **comment** | Yes — `POST /comments {cardCommonId, comment}` | **No** — separate endpoint, `cardCommonId`-keyed, one call per card | Yes — the card's thread | No | The only true append-only carrier, and the only one with an author and a timestamp (`created`, `userId` on the raw shape — `src/api/comments.ts:21-32`; the docs also list `lastUpdated`). Its one-call failure is tolerable *here*: resolutions are written and read for **one** ticket at a time, not across a frontier. It becomes fatal only if a frontier query needs to read them (see K) |
 | append to `detailedDescription` | Yes | Yes | Yes | No | One call, but read-modify-write: two concurrent sessions clobber each other, which is exactly the concurrency wayfinder warns about (`:128`). Also collides with capability I's body |
 | custom field (text) | Yes | Yes | Yes | No | Not append-only; same clobber problem; no author, no timestamp |
 | attachment | (a) `addDescriptionFiles` / `favroAttachments` | key present, content not | Yes | No | Wayfinder does say *"Assets created while resolving a ticket are linked from the issue, not pasted in"* (`:71`) — so attachments serve **assets**, not the resolution text itself |
@@ -373,7 +373,7 @@ still made **one call**. The one-call frontier is **achievable**.
    name and, for selects, an optionId rather than a label (d). Interpreting them always
    costs one extra bounded call.
 6. **Comments and tasks are `cardCommonId`-keyed separate endpoints** (#2,
-   `src/lib/comments-api.ts:101`), so neither can ever be part of a one-call frontier.
+   `src/api/comments.ts:100`), so neither can ever be part of a one-call frontier.
 7. **`normalizeCard` is lossy in ways that matter here.** It reads `raw.status` — a field
    Favro never sends (`src/lib/cards-api.ts:40`) — and drops `assignments[].completed`
    (`:42`), `dependencies`, `archived`-vs-column distinctions, `position`/`listPosition`,
@@ -475,7 +475,7 @@ Supply side:
   "Update a card", the Card entity, "Card assignment", "Card custom field parameters",
   "Card dependency" / "Card dependency option", the dependency endpoints, "Get all
   comments", "Create a comment", "Get all tags".
-- `src/lib/cards-api.ts`, `src/lib/tags-api.ts`, `src/lib/comments-api.ts`,
+- `src/lib/cards-api.ts`, `src/lib/tags-api.ts`, `src/api/comments.ts`,
   `src/lib/custom-fields-api.ts`, `src/lib/dependency-direction.ts`,
   `src/lib/query-parser.ts`, `src/api/context.ts`, `src/commands/cards-update.ts`
 - Prior research in this repo: `docs/research/dependencies-and-parent-child-semantics.md`;
