@@ -1,4 +1,5 @@
 import FavroHttpClient from './http-client';
+import { getAllPages } from './paginate';
 import CardReferenceResolver from './card-reference';
 
 export interface Task {
@@ -7,12 +8,6 @@ export interface Task {
   completed?: boolean;
   position?: number;
   cardCommonId: string;
-}
-
-export interface PaginatedResponse<T> {
-  entities: T[];
-  requestId?: string;
-  pages?: number;
 }
 
 export class TasksAPI {
@@ -24,29 +19,7 @@ export class TasksAPI {
   async listTasks(cardRef: string): Promise<Task[]> {
     // Accepts CLA-1804, a cardId or a cardCommonId (#40).
     const cardCommonId = await new CardReferenceResolver(this.client).toCardCommonId(cardRef);
-    const allTasks: Task[] = [];
-    let requestId: string | undefined;
-    let page = 0;
-
-    while (true) {
-      const params: Record<string, any> = { cardCommonId };
-      if (requestId) {
-        params.requestId = requestId;
-        params.page = page;
-      }
-
-      const response = await this.client.get<PaginatedResponse<Task>>('/tasks', { params });
-      
-      if (response && response.entities) {
-        allTasks.push(...response.entities);
-      }
-
-      requestId = response.requestId;
-      if (!requestId || !response.pages || page >= response.pages - 1 || !response.entities || response.entities.length === 0) {
-        break;
-      }
-      page++;
-    }
+    const allTasks = await getAllPages<Task>(this.client, '/tasks', { cardCommonId });
 
     return allTasks.sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
   }

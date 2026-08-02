@@ -7,16 +7,11 @@
  * This client accepts cardId and resolves cardCommonId automatically.
  */
 import FavroHttpClient from '../lib/http-client';
+import { getAllPages } from '../lib/paginate';
 import CardReferenceResolver from '../lib/card-reference';
 import { Comment } from '../types/comments';
 
 export { Comment };
-
-interface PaginatedResponse<T> {
-  entities: T[];
-  requestId?: string;
-  pages?: number;
-}
 
 interface RawComment {
   commentId?: string;
@@ -55,35 +50,9 @@ export class CommentsApiClient {
     // Resolve cardCommonId: if the passed ID is a 24-char hex cardId, look it up
     const cardCommonId = await this.resolveCardCommonId(cardIdOrCommonId);
 
-    const allComments: Comment[] = [];
-    let requestId: string | undefined;
-    let page = 1;
-
-    while (allComments.length < limit) {
-      const params: Record<string, unknown> = {
-        cardCommonId,
-        limit: Math.min(limit - allComments.length, 100),
-      };
-      if (requestId) {
-        params.requestId = requestId;
-        params.page = page;
-      }
-
-      // Favro: GET /comments?cardCommonId=<cardCommonId>
-      const response = await this.client.get<PaginatedResponse<RawComment>>(
-        '/comments',
-        { params }
-      );
-
-      const batch = (response.entities ?? []).map(raw => normalizeComment(raw, cardIdOrCommonId));
-      allComments.push(...batch);
-
-      requestId = response.requestId;
-      if (!requestId || !response.pages || page >= response.pages || batch.length === 0) break;
-      page++;
-    }
-
-    return allComments.slice(0, limit);
+    // Favro: GET /comments?cardCommonId=<cardCommonId>
+    const raw = await getAllPages<RawComment>(this.client, '/comments', { cardCommonId }, { max: limit });
+    return raw.map(r => normalizeComment(r, cardIdOrCommonId));
   }
 
   /**
