@@ -488,6 +488,35 @@ describe('detectStage', () => {
     expect(proposal.done?.columnId).toBe(DONE);
   });
 
+  it('reads a Swedish column name in either normalisation form (#141)', async () => {
+    // The keyword list in `workflow-stage.ts` is NOT all ASCII — `färdig`,
+    // `godkän`, `pågå`, `önskelista` are NFC literals in the source. A column
+    // name off the wire in NFD is a plain letter plus a combining mark, which
+    // none of those literals match, so every Swedish column fell through to
+    // `queued` and `proposeColumnMapping` then picked the wrong two columns
+    // for `init` to write into context.json as the board's workflow.
+    //
+    // Built from code points, not typed: a normalising editor would otherwise
+    // rewrite one side of the comparison into the other and the test would
+    // pass because both became identical, not because the fold works.
+    const { detectStage, proposeColumnMapping } = await import('../lib/workflow-stage');
+    const RING = String.fromCodePoint(0x030a); // COMBINING RING ABOVE
+    const DIAERESIS = String.fromCodePoint(0x0308); // COMBINING DIAERESIS
+    const pagarNFD = `pa${RING}ga${RING}r`; // "pågår", decomposed
+    const fardigNFD = `Fa${DIAERESIS}rdig`; // "Färdig", decomposed
+
+    expect(pagarNFD).not.toBe(pagarNFD.normalize('NFC'));
+    expect(detectStage(pagarNFD)).toBe('active');
+    expect(detectStage(fardigNFD)).toBe('done');
+
+    const proposal = proposeColumnMapping([
+      { columnId: DOING, name: pagarNFD },
+      { columnId: DONE, name: fardigNFD },
+    ]);
+    expect(proposal.active?.columnId).toBe(DOING);
+    expect(proposal.done?.columnId).toBe(DONE);
+  });
+
   it('proposes Doing as open and Done as closed', async () => {
     const { proposeColumnMapping } = await import('../lib/workflow-stage');
     const proposal = proposeColumnMapping([
