@@ -29,6 +29,12 @@ import { registerSkillCommands } from '../../commands/skill';
 const SKILL_YAML = 'name: e2e\ndescription: round trip\nsteps: []\n';
 const EDITED = '# edited by the fake editor\n';
 
+class ExitCalled extends Error {
+  constructor(readonly code: number) {
+    super(`process.exit(${code})`);
+  }
+}
+
 let tmpDir: string;
 let editorPath: string;
 let skillPath: string;
@@ -47,7 +53,8 @@ async function runEdit(name: string): Promise<void> {
   registerSkillCommands(program);
   program.exitOverride();
   await program.parseAsync(['node', 'favro', 'skill', 'edit', name]).catch((e) => {
-    if (!(e instanceof Error) || !/process\.exit/.test(e.message)) throw e;
+    // Only the stubbed exit is swallowed; anything else is a real failure.
+    if (!(e instanceof ExitCalled)) throw e;
   });
 }
 
@@ -69,7 +76,7 @@ beforeEach(() => {
   logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
   errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
   exitSpy = jest.spyOn(process, 'exit').mockImplementation(((code?: number) => {
-    throw new Error(`process.exit(${code ?? 0})`);
+    throw new ExitCalled(code ?? 0);
   }) as never);
 });
 
@@ -90,8 +97,8 @@ test('the editor really runs, gets the skill path, and the command waits for it'
   expect(fs.readFileSync(skillPath, 'utf-8')).toBe(SKILL_YAML + EDITED);
   expect(exitSpy).not.toHaveBeenCalled();
   // ADR-0002: a successful command prints something. The editor has repainted
-  // the terminal by now, so the closing line matters more than the opening one.
-  expect(logSpy.mock.calls.map((c) => String(c[0])).join('\n')).toContain(skillPath);
+  // the terminal by now, so it has to be the CLOSING line, not just `Opening`.
+  expect(logSpy.mock.calls.map((c) => String(c[0])).join('\n')).toContain(`✓ Closed ${skillPath}`);
 });
 
 test('$EDITOR arguments reach the editor as separate argv entries', async () => {

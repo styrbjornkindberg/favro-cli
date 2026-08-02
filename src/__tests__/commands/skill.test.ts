@@ -319,7 +319,11 @@ describe('skill create / export / import / delete / edit', () => {
     expect(spawnSyncMock()).toHaveBeenCalledWith('vi', ['/home/me/.favro/skills/mine.yaml'], {
       stdio: 'inherit',
     });
-    expect(output()).toContain('/home/me/.favro/skills/mine.yaml');
+    // Both lines, not just the opening one: the editor has repainted the
+    // terminal by the time it exits, so the closing line is the one the user
+    // is actually left looking at (ADR-0002).
+    expect(output()).toContain('Opening /home/me/.favro/skills/mine.yaml');
+    expect(output()).toContain('✓ Closed /home/me/.favro/skills/mine.yaml');
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
@@ -332,7 +336,7 @@ describe('skill create / export / import / delete / edit', () => {
     await runCli(['skill', 'edit', 'mine']);
 
     const [bin, args, opts] = spawnSyncMock().mock.calls[0];
-    expect(opts.shell).toBeUndefined();
+    expect(opts.shell).toBeFalsy();
     expect(bin).toBe('vi;');
     expect(args).toEqual(['touch', '/tmp/pwned', '/home/me/.favro/skills/mine.yaml']);
   });
@@ -380,7 +384,8 @@ describe('skill create / export / import / delete / edit', () => {
 
     await runCli(['skill', 'edit', 'mine']);
 
-    expect(errors()).toContain('nosuchedit');
+    expect(errors()).toContain('Could not start editor "nosuchedit"');
+    expect(errors()).toContain('spawn nosuchedit ENOENT');
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
