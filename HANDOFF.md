@@ -112,8 +112,43 @@ five others nothing consumes — pre-existing debt, worth its own issue.
 The agents are gone; the worktrees survive. Check each before restarting from
 scratch.
 
-- **#82** (`worktree-agent-afa54d8a0d15ff264`) — nothing committed, nothing
-  dirty. Restart it.
+### #82 finished and committed — needs review, then merge
+
+`worktree-agent-afa54d8a0d15ff264`, `94e8d44` + `63cdfcc` (merge of main @
+`906242b`). Self-verified **on the merge result**: typecheck clean, cycles
+clean, **142 suites / 2570 tests**. Not independently reviewed.
+
+**Nine entry points forwarded a raw board reference into `widgetCommonId`, not
+the two the ticket names** — `listCards`, `getCard`, `createCard`, `updateCard`,
+`moveCard`, `findCardBySequentialId`, `resolveCardId`, `resolveCardCommonId`,
+and the bare-string `listCards(board)` shorthand. Fixing only the two named
+would have left six siblings answering zero rows. One guard at the convergence:
+`CardsAPI.boardIdOf` → `BoardsAPI.resolveBoardId`, resolving board **before**
+column so the refusal stops naming the wrong problem.
+
+Reused #122's existing refusal wording and `NameResolutionError`'s `ambiguous`
+kind rather than inventing a second phrasing. Corrects one claim in this
+handoff's earlier record: #122 *provided* criteria 3 and 4 but only met them for
+`next` (which goes via `ContextAPI.resolveBoard`); every `CardsAPI` path was
+still open, and criteria 1, 2 and 5 entirely so. #91 did not reduce the symptom
+— the zero rows were never a page-1 skip.
+
+Cost it names honestly: a board id absent from `GET /widgets` now refuses rather
+than reads. Unavoidable if existence is validated at all — a bogus
+`widgetCommonId` returns 200, not a classified not-found. Warm path costs no
+network.
+
+**Two things it reported rather than absorbed, both worth tickets:**
+
+- **`assertScope` takes a raw board reference** — `GET /widgets/{boardId}` with
+  whatever the caller hands it, at six sites (`cards-link.ts:223`,
+  `batch.ts:321/465`, `batch-smart.ts:463`, `git.ts:430`, `cli.ts:851`). Under a
+  configured lock a board *name* fails there before reaching the new seam. It
+  fails **closed and loudly**, never zero rows, and it is pre-existing — but the
+  convergent one-line fix belongs in `safety.ts`, which #120 was actively moving.
+- **`columns list`, `custom-fields list --board`, `members list --board`** have
+  the same 200-empty fail-open through their own API classes. Not card-shaped so
+  outside #82's criteria, and their help text honestly says "Board ID".
 
 ### #99 finished and committed — needs review, then merge
 

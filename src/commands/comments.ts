@@ -11,7 +11,7 @@ import { createFavroClient } from '../lib/client-factory';
 import { logError } from '../lib/error-handler';
 import { boardOfCard, boardOfComment, checkResolvedScope, confirmAction } from '../lib/safety';
 import CommentsApiClient from '../api/comments';
-import { capRows, writeEnvelope } from '../lib/read-shape';
+import { capRows, parseLimit, writeEnvelope } from '../lib/read-shape';
 import { formatTimestamp } from '../lib/time';
 
 export function registerCommentsCommand(program: Command): void {
@@ -69,8 +69,9 @@ export function registerCommentsCommand(program: Command): void {
       const verbose = program.opts()?.verbose ?? false;
       try {
 
-        const limitRaw = parseInt(options.limit, 10);
-        const limit = !isNaN(limitRaw) && limitRaw >= 1 ? limitRaw : 100;
+        // `parseLimit`, not a local `parseInt`: the prefix parse read
+        // `--limit 1e9` as 1 and printed one comment marked `truncated` (#99).
+        const limit = parseLimit(options.limit) ?? 100;
 
         const client = await createFavroClient();
         const api = new CommentsApiClient(client);

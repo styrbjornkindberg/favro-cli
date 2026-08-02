@@ -259,8 +259,8 @@ describe('cli.ts — CLA-1785 critic fixes: limit cap and null guard', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const queryValues = require('../lib/query-values') as typeof import('../lib/query-values');
     const validate = jest
-      .spyOn(queryValues, 'validateQueryValues')
-      .mockImplementation(async (query) => query);
+      .spyOn(queryValues, 'resolveCardFilter')
+      .mockImplementation(async () => undefined);
 
     try {
       const program = buildProgram();

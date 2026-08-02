@@ -11,6 +11,7 @@ import ColumnsAPI from '../lib/columns-api';
 import { createFavroClient } from '../lib/client-factory';
 import { logError } from '../lib/error-handler';
 import { checkScope, confirmAction, dryRunLog } from '../lib/safety';
+import { capRows, noteTruncation, writeEnvelope } from '../lib/read-shape';
 import { readConfig } from '../lib/config';
 
 export function registerColumnsCommands(program: Command): void {
@@ -19,6 +20,7 @@ export function registerColumnsCommands(program: Command): void {
   columnsCommand
     .command('list <boardId>')
     .description('List all columns on a board')
+    .option('--limit <n>', 'Cap how many rows are printed; sets "truncated"')
     .option('--json', 'Output as JSON')
     .action(async (boardId: string, options) => {
       const verbose = columnsCommand.opts()?.verbose ?? false;
@@ -26,14 +28,16 @@ export function registerColumnsCommands(program: Command): void {
         const client = await createFavroClient();
         const api = new ColumnsAPI(client);
         const columns = await api.listColumns(boardId);
+        // The fetch already ran to completion; `--limit` cuts the PRINT (#99).
+        const envelope = capRows(columns, options.limit);
 
         if (options.json) {
-          console.log(JSON.stringify(columns, null, 2));
+          writeEnvelope(envelope, Boolean(program.opts()?.pretty));
         } else {
-          console.log(`Found ${columns.length} column(s) on board ${boardId}:`);
+          console.log(`Found ${envelope.rows.length} column(s) on board ${boardId}:`);
           // cardCount / timeSum / estimationSum ride along on the same
           // response — rendering them means a per-column count costs no call.
-          const rows = columns.map(c => ({
+          const rows = envelope.rows.map(c => ({
             Position: c.position,
             ID: c.columnId,
             Name: c.name,
@@ -42,6 +46,7 @@ export function registerColumnsCommands(program: Command): void {
             Estimate: c.estimationSum ?? 0,
           }));
           console.table(rows);
+          noteTruncation(envelope, columns.length);
         }
       } catch (error: any) {
         logError(error, verbose);

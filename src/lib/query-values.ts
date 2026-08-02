@@ -17,12 +17,126 @@ import ColumnDirectory from './column-directory';
 import { cachedTags } from './tags-api';
 import { invalidateCache } from './name-cache';
 import { resolveAssignee } from './assignee';
-import { ParseError, Query, QueryNode, FieldPredicate } from './query-parser';
+import { parseQuery, ParseError, Operator, Query, QueryNode, FieldPredicate } from './query-parser';
 
 export interface ValueContext {
   client: FavroHttpClient;
   /** The board whose columns settle a `status:` value. */
   boardId?: string;
+}
+
+/**
+ * Parse a `--filter` string AND settle its closed-vocabulary values — the whole
+ * protocol, in ONE call (#83).
+ *
+ * `parseQuery` on its own is half of it. It fails closed on field NAMES with no
+ * network, and says nothing about VALUES; a caller that stops there refuses
+ * `tag:` with a typo'd *field* and answers a plausible `0 rows` for a typo'd
+ * *tag*. `cards export` stopped there while `cards list` did not, so the same
+ * grammar carried opposite guarantees depending on which command you typed.
+ * Composing the two steps here is what makes the second one
+ * unskippable: `src/__tests__/filter-fail-closed-coverage.test.ts` fails the
+ * build if any command reaches for `parseQuery` directly again.
+ *
+ * @throws ParseError — carrying `detail`, for every refusal either half raises.
+ */
+export async function resolveQuery(filter: string, ctx: ValueContext): Promise<Query> {
+  return validateQueryValues(parseQuery(filter), ctx);
+}
+
+/**
+ * The filtering flags a card read declares, in one bag.
+ *
+ * `--tag` and `--assignee` are not a second filtering mechanism; they are the
+ * flag spelling of `tag:` and `assignee:`, two predicates in the grammar
+ * `--filter` already speaks.
+ */
+export interface FilterFlags {
+  /** `--filter`, the query grammar. */
+  filter?: string;
+  /** `--tag`, i.e. `tag:<value>`. */
+  tag?: string;
+  /** `--assignee`, i.e. `assignee:<value>`. */
+  assignee?: string;
+}
+
+/**
+ * Settle the WHOLE filtering flag row into one resolved query (#84).
+ *
+ * `--tag` and `--assignee` used to be a raw lowercase `includes()` over the
+ * fetched cards, sitting on the same flag row as a `--filter` that refuses an
+ * unknown tag and prints the org's vocabulary. Three things came of that, and
+ * only the first is an empty answer:
+ *
+ *   - `--tag typoo` answered zero rows where `--filter "tag:typoo"` refused;
+ *   - `--tag bug` also matched `debug` — populated and wrong, which is worse.
+ *     A substring that happens to hit one tag is right by luck, and turns wrong
+ *     the day someone creates a second tag containing it;
+ *   - `--assignee` matched against `card.assignees`, which holds `userId`s, so
+ *     it compared a typed name to an opaque id.
+ *
+ * Guarding each flag where it is applied would be the same bug with two more
+ * places to forget it. They are predicates, so they become predicates — ANDed
+ * onto whatever `--filter` said and handed to the one resolution both halves
+ * already share. Built as AST nodes rather than spliced into the filter string:
+ * a tag named `in progress` or `a:b` must not become grammar.
+ *
+ * Returns `undefined` when no filtering flag was passed at all. A flag passed
+ * with an EMPTY value is not that: `--tag "$SPRINT_TAG"` with the variable
+ * unset asked to narrow to one tag, and answering the whole board instead is a
+ * fail-open on the exact axis this function exists to close. It refuses.
+ *
+ * @throws ParseError / RefusalError — whatever the closed vocabulary raises.
+ */
+export async function resolveCardFilter(
+  flags: FilterFlags,
+  ctx: ValueContext
+): Promise<Query | undefined> {
+  const nodes: QueryNode[] = [];
+  const raw: string[] = [];
+
+  refuseEmpty('filter', flags.filter);
+  if (flags.filter) {
+    raw.push(flags.filter);
+    const parsed = parseQuery(flags.filter);
+    if (parsed.ast) nodes.push(parsed.ast);
+  }
+
+  const predicates: ReadonlyArray<[field: string, value: string | undefined]> = [
+    ['tag', flags.tag],
+    ['assignee', flags.assignee],
+  ];
+  for (const [field, value] of predicates) {
+    refuseEmpty(field, value);
+    if (!value) continue;
+    // `=`, never `~`: exact is the only thing that resolves. See `checkTag`.
+    nodes.push({ kind: 'field', field, operator: '=', value });
+    raw.push(`${field}:${value}`);
+  }
+
+  if (raw.length === 0) return undefined;
+  const ast = nodes.length === 0
+    ? null
+    : nodes.reduce((left, right): QueryNode => ({ kind: 'and', left, right }));
+  // Parenthesise on composition. The AST is already right — the reduce ANDs
+  // whole parsed nodes — but `--filter "a OR b" --tag bug` flattens to
+  // `a OR b AND tag:bug`, which re-parses to the WRONG tree. Nothing re-parses
+  // `raw` today; a trap laid for the first reader who does is still a trap.
+  const composed = raw.length === 1 ? raw[0] : raw.map((r) => `(${r})`).join(' AND ');
+  return validateQueryValues({ ast, raw: composed }, ctx);
+}
+
+/**
+ * A flag passed with an empty value narrows nothing, and treating it as an
+ * absent flag answers the whole board — the fail-open direction. Refuse.
+ */
+function refuseEmpty(field: string, value: string | undefined): void {
+  if (value === undefined || value.trim() !== '') return;
+  throw new ParseError(
+    `--${field} was passed with an empty value — it narrows nothing, and ignoring ` +
+      `it would answer the whole board. Pass a value, or drop the flag.`,
+    { kind: 'unknown-value', field, value }
+  );
 }
 
 /**
@@ -45,7 +159,7 @@ async function walk(node: QueryNode, ctx: ValueContext): Promise<QueryNode> {
   switch (node.field) {
     case 'tag':
     case 'label':
-      return mapValues(node, (v) => checkTag(v, ctx));
+      return mapValues(node, (v) => checkTag(v, ctx, node.operator));
     case 'status':
       return mapValues(node, (v) => resolveStatus(v, ctx));
     case 'assignee':
@@ -67,14 +181,34 @@ async function mapValues(
 }
 
 /**
- * The tag must exist in the org. `~` matches a substring — still closed, since
- * a substring matching no tag can only ever return nothing.
+ * The tag must exist in the org, spelled the way the OPERATOR will match it.
+ *
+ * `~` asks for a substring and is settled by one — still closed, since a
+ * substring matching no tag can only ever return nothing. Every other operator
+ * matches the card's tag exactly, so an inexact hit is not evidence the value
+ * is in the vocabulary: `tag:bu` used to validate against `bug` and then match
+ * no card at all, which is the plausible zero rows this module exists to
+ * abolish (#84).
+ *
+ * CASE COLLISIONS DO NOT REFUSE, deliberately — #84's "ambiguity refuses and
+ * lists every colliding id" is an `assignee:` criterion (`resolveAssignee`
+ * meets it, naming userId, name and email per collision). A tag has no id to
+ * disambiguate TO: it is filtered by name, and an org holding both `Bug` and
+ * `bug` gets the cards of both. "Cards tagged bug, any casing" is a coherent
+ * answer to a coherent question; "assign this to one of two Alices" is not.
+ *
+ * Returns the TYPED value, not the canonical spelling — unlike `resolveStatus`,
+ * which must return the column's own name because a `columnId` was accepted as
+ * input. That works because `compareValues` lowercases both sides, which is the
+ * same case-insensitivity this function validated under.
  */
-async function checkTag(value: string, ctx: ValueContext): Promise<string> {
+async function checkTag(value: string, ctx: ValueContext, operator: Operator): Promise<string> {
   const orgId = ctx.client.organizationId;
   const hit = (names: string[]) => {
     const wanted = value.toLowerCase();
-    return names.some((n) => n.toLowerCase() === wanted || n.toLowerCase().includes(wanted));
+    return names.some((n) =>
+      operator === '~' ? n.toLowerCase().includes(wanted) : n.toLowerCase() === wanted
+    );
   };
 
   let names = (await cachedTags(ctx.client, orgId)).map((t) => t.name);

@@ -8,6 +8,13 @@ import * as path from 'path';
 import * as os from 'os';
 
 import { registerCardsExportCommand, applyFilter, applyFilters } from '../commands/cards-export';
+import { ParseError } from '../lib/query-parser';
+import {
+  STUB_BOARD,
+  stubFilterContext,
+  stubVocabularyClient,
+  useTempConfigDir,
+} from '../test-support/filter-vocabulary';
 import { escapeCsvField, cardsToCSV, normalizeCard, writeCardsCSV, writeCardsJSON } from '../lib/csv';
 import CardsAPI, { Card } from '../lib/cards-api';
 import FavroHttpClient from '../lib/http-client';
@@ -16,6 +23,11 @@ import * as config from '../lib/config';
 jest.mock('../lib/cards-api');
 jest.mock('../lib/http-client');
 jest.mock('../lib/config');
+
+useTempConfigDir();
+
+/** The org every filter here is settled against — see #83. */
+const ctx = () => stubFilterContext();
 
 // ----------------------------
 // Sample card fixtures
@@ -251,80 +263,74 @@ describe('cardsToCSV', () => {
 // ----------------------------
 
 describe('applyFilter', () => {
-  test('filters by assignee using ~ (contains operator)', () => {
-    const result = applyFilter(sampleCards, 'assignee~alice');
+  test('filters by assignee using ~ (contains operator)', async () => {
+    const result = await applyFilter(sampleCards, 'assignee~alice', ctx());
     expect(result.length).toBe(2);
     result.forEach(c => expect(c.assignees).toContain('alice@example.com'));
   });
 
-  test('filters by assignee exact match', () => {
-    const result = applyFilter(sampleCards, 'assignee:alice@example.com');
+  test('filters by assignee exact match', async () => {
+    const result = await applyFilter(sampleCards, 'assignee:alice@example.com', ctx());
     expect(result.length).toBe(2);
     result.forEach(c => expect(c.assignees).toContain('alice@example.com'));
   });
 
-  test('filters by status (exact match)', () => {
-    const result = applyFilter(sampleCards, 'status:todo');
+  test('filters by status (exact match)', async () => {
+    const result = await applyFilter(sampleCards, 'status:todo', ctx());
     expect(result.length).toBe(1);
     expect(result[0].cardId).toBe('card-002');
   });
 
-  test('filters by label/tag using ~ (contains)', () => {
-    const result = applyFilter(sampleCards, 'label~bug');
+  test('filters by label/tag using ~ (contains)', async () => {
+    const result = await applyFilter(sampleCards, 'label~bug', ctx());
     expect(result.length).toBe(1);
     expect(result[0].cardId).toBe('card-001');
   });
 
-  test('filters by tag exact match', () => {
-    const result = applyFilter(sampleCards, 'tag:bug');
+  test('filters by tag exact match', async () => {
+    const result = await applyFilter(sampleCards, 'tag:bug', ctx());
     expect(result.length).toBe(1);
     expect(result[0].cardId).toBe('card-001');
   });
 
-  test('filters using AND operator', () => {
-    const result = applyFilter(sampleCards, 'assignee~alice AND status:done');
+  test('filters using AND operator', async () => {
+    const result = await applyFilter(sampleCards, 'assignee~alice AND status:done', ctx());
     expect(result.length).toBe(1);
     expect(result[0].cardId).toBe('card-003');
   });
 
-  test('filters using OR operator', () => {
-    const result = applyFilter(sampleCards, 'status:done OR status:todo');
+  test('filters using OR operator', async () => {
+    const result = await applyFilter(sampleCards, 'status:done OR status:todo', ctx());
     expect(result.length).toBe(2);
   });
 
-  test('returns empty array when no cards match', () => {
-    const result = applyFilter(sampleCards, 'assignee~nobody');
+  test('returns empty array when the vocabulary matches nothing', async () => {
+    // A tag that EXISTS and no card carries is a true empty. `assignee~nobody`
+    // used to sit here and is now a refusal — see the next test.
+    const result = await applyFilter(sampleCards, 'tag:high-priority', ctx());
     expect(result.length).toBe(0);
   });
 
-  test('exits with error on invalid filter syntax', () => {
-    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    const exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => { throw new Error('process.exit'); });
-
-    expect(() => applyFilter(sampleCards, 'invalid:(((unmatched')).toThrow('process.exit');
-    expect(errorSpy).toHaveBeenCalled();
-
-    errorSpy.mockRestore();
-    exitSpy.mockRestore();
+  test('an assignee outside the org refuses instead of answering zero rows (#83)', async () => {
+    await expect(applyFilter(sampleCards, 'assignee~nobody', ctx()))
+      .rejects.toThrow(/nobody/);
   });
 
-  test('refuses `unblocked` and names where it lives, rather than over-excluding', () => {
+  test('refuses invalid filter syntax', async () => {
+    await expect(applyFilter(sampleCards, 'invalid:(((unmatched', ctx()))
+      .rejects.toBeInstanceOf(ParseError);
+  });
+
+  test('refuses `unblocked` and names where it lives, rather than over-excluding', async () => {
     // An export writes a file: no envelope, so no way to say which blockers it
     // could not check. Answering would silently drop every card with any edge.
-    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    const exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => { throw new Error('process.exit'); });
-
-    expect(() => applyFilter(sampleCards, 'unblocked')).toThrow('process.exit');
-    const said = errorSpy.mock.calls.map((c) => String(c[0])).join('\n');
-    expect(said).toContain('cards list');
-    expect(said).not.toContain('Invalid filter expression');
+    // The refusal is RAISED, so the command reports it the way `cards list`
+    // reports its own (#83) — it is not printed and exited from in here.
+    await expect(applyFilter(sampleCards, 'unblocked', ctx()))
+      .rejects.toThrow(/cards list/);
 
     // A specific edge needs no judgement, so it still works.
-    errorSpy.mockClear();
-    expect(() => applyFilter(sampleCards, 'blocked-by:CLA-1')).not.toThrow();
-
-    errorSpy.mockRestore();
-    exitSpy.mockRestore();
+    await expect(applyFilter(sampleCards, 'blocked-by:CLA-1', ctx())).resolves.toEqual([]);
   });
 });
 
@@ -415,7 +421,10 @@ describe('registerCardsExportCommand', () => {
     // Set token so tests don't fail on missing token check
     process.env.FAVRO_API_TOKEN = 'test-token';
     (config.resolveApiKey as jest.Mock).mockResolvedValue('test-token');
-    (FavroHttpClient as jest.MockedClass<typeof FavroHttpClient>).mockImplementation(() => ({} as any));
+    // A filter now settles its values against the org before it runs (#83), so
+    // the client the command builds has to be able to answer /tags and /widgets.
+    (FavroHttpClient as jest.MockedClass<typeof FavroHttpClient>)
+      .mockImplementation(() => stubVocabularyClient());
   });
 
   afterEach(() => {
@@ -532,7 +541,7 @@ describe('registerCardsExportCommand', () => {
 
     await program.parseAsync([
       'node', 'test',
-      'cards', 'export', 'board-123',
+      'cards', 'export', STUB_BOARD,
       '--format', 'json',
       '--filter', 'status:todo',
       '--out', outFile,
@@ -545,6 +554,37 @@ describe('registerCardsExportCommand', () => {
 
     consoleSpy.mockRestore();
   });
+
+  test('a --filter naming a column this board does not have refuses (#83)', async () => {
+    // The whole ticket: this used to write an empty file and call it the export.
+    mockApi(sampleCards);
+    const outFile = path.join(tmpDir, 'refused.json');
+    const exitSpy = jest.spyOn(process, 'exit')
+      .mockImplementation(() => { throw new Error('process.exit'); });
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(program2([
+      'node', 'test',
+      'cards', 'export', STUB_BOARD,
+      '--format', 'json',
+      '--filter', 'status:Shipped',
+      '--out', outFile,
+    ])).rejects.toThrow('process.exit');
+
+    expect(fs.existsSync(outFile)).toBe(false);
+    const said = errorSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(said).toContain('Shipped');
+
+    errorSpy.mockRestore();
+    exitSpy.mockRestore();
+  });
+
+  /** A fresh program, registered and run — the refusal path needs its own. */
+  function program2(argv: string[]): Promise<unknown> {
+    const p = new Command();
+    registerCardsExportCommand(p);
+    return p.parseAsync(argv);
+  }
 
   test('exits with error for invalid format', async () => {
     mockApi(sampleCards);
@@ -687,43 +727,43 @@ describe('registerCardsExportCommand', () => {
 // ----------------------------
 
 describe('applyFilters', () => {
-  test('returns all cards when filters array is empty', () => {
-    const result = applyFilters(sampleCards, []);
+  test('returns all cards when filters array is empty', async () => {
+    const result = await applyFilters(sampleCards, [], ctx());
     expect(result).toHaveLength(sampleCards.length);
   });
 
-  test('applies a single filter correctly', () => {
-    const result = applyFilters(sampleCards, ['status:done']);
+  test('applies a single filter correctly', async () => {
+    const result = await applyFilters(sampleCards, ['status:done'], ctx());
     expect(result).toHaveLength(1);
     expect(result[0].cardId).toBe('card-003');
   });
 
-  test('applies two filters with AND logic (assignee AND status)', () => {
+  test('applies two filters with AND logic (assignee AND status)', async () => {
     // alice@example.com has cards card-001 (in-progress) and card-003 (done)
-    const result = applyFilters(sampleCards, ['assignee~alice', 'status:done']);
+    const result = await applyFilters(sampleCards, ['assignee~alice', 'status:done'], ctx());
     expect(result).toHaveLength(1);
     expect(result[0].cardId).toBe('card-003');
     expect(result[0].assignees).toContain('alice@example.com');
     expect(result[0].status).toBe('done');
   });
 
-  test('returns empty array when filters eliminate all cards (AND logic)', () => {
+  test('returns empty array when filters eliminate all cards (AND logic)', async () => {
     // alice doesn't have any todo cards
-    const result = applyFilters(sampleCards, ['assignee~alice', 'status:todo']);
+    const result = await applyFilters(sampleCards, ['assignee~alice', 'status:todo'], ctx());
     expect(result).toHaveLength(0);
   });
 
-  test('applies three filters with AND logic', () => {
-    const result = applyFilters(sampleCards, ['assignee~alice', 'status:in-progress', 'tag:bug']);
+  test('applies three filters with AND logic', async () => {
+    const result = await applyFilters(sampleCards, ['assignee~alice', 'status:in-progress', 'tag:bug'], ctx());
     expect(result).toHaveLength(1);
     expect(result[0].cardId).toBe('card-001');
   });
 
-  test('each filter is applied in sequence (reducer behavior)', () => {
+  test('each filter is applied in sequence (reducer behavior)', async () => {
     // Start with 3 cards
     // assignee~alice → 2 cards (card-001, card-003)
     // tag:release → 1 card (card-003)
-    const result = applyFilters(sampleCards, ['assignee~alice', 'tag:release']);
+    const result = await applyFilters(sampleCards, ['assignee~alice', 'tag:release'], ctx());
     expect(result).toHaveLength(1);
     expect(result[0].cardId).toBe('card-003');
   });

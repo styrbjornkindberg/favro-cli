@@ -185,6 +185,20 @@ describe('the envelope and the output cap', () => {
     expect(capRows([1, 2], 10)).toEqual({ rows: [1, 2] });
   });
 
+  it('a cap exactly the size of the data leaves no marker', () => {
+    // The off-by-one: `rows.length <= cap` is the boundary, and nothing was cut.
+    expect(capRows([1, 2, 3], 3)).toEqual({ rows: [1, 2, 3] });
+    expect(capRows([1, 2, 3], '3')).toEqual({ rows: [1, 2, 3] });
+  });
+
+  it('a numeric PREFIX is not a cap — `parseInt` read `1e9` as 1', () => {
+    // Each of these returned `{rows:[1], truncated:true}` or similar: a
+    // well-formed, plausible, wrong answer to "give me effectively everything".
+    for (const limit of ['1e9', '2abc', '2.7', '5,000', '1_000', 'banana']) {
+      expect(capRows([1, 2, 3], limit)).toEqual({ rows: [1, 2, 3] });
+    }
+  });
+
   it('the cap is applied to output only — the read already ran to completion', async () => {
     const { client, received } = await startServer({ pages: 3, perPage: 2 });
     const cards = await new CardsAPI(client).listCards({ boardId: BOARD });

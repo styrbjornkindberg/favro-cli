@@ -540,6 +540,12 @@ export type ParseFailure =
   | 'unknown-value'
   /** `status:` was asked without the board whose columns settle it. */
   | 'missing-board'
+  /**
+   * The predicate is well-formed and this command still cannot answer it.
+   * `unblocked` on `cards export` is the one: judging a blocker takes extra
+   * reads, and a file has no `unreachable` to report the ones it missed.
+   */
+  | 'unsupported-here'
   /** Anything structural: unclosed parens, bad dates, limits. */
   | 'syntax';
 
