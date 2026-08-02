@@ -4,7 +4,8 @@
  *
  * The command arm drives `buildProgram()` — the program `bin/favro` builds —
  * and nothing else. It used to drive `registerCardsExportCommand`, a second
- * registration in `commands/cards-export.ts` that `cli.ts` never called (#139).
+ * registration in the then-`commands/cards-export.ts` that `cli.ts` never
+ * called (#139; what survives of that file now lives in `lib/`).
  * Both routed through `applyFilters`, so the suite LOOKED like end-to-end
  * coverage of the export: deleting the live `applyFilters` call left every one
  * of these tests green. A twin close enough to pass the real path's tests is
@@ -433,7 +434,6 @@ describe('cards export (live command)', () => {
     tmpDir = fs.mkdtempSync(path.join(process.cwd(), '.test-tmp-'));
     process.env.FAVRO_API_TOKEN = 'test-token';
     (config.resolveApiKey as jest.Mock).mockResolvedValue('test-token');
-    (config.readConfig as jest.Mock).mockResolvedValue({});
     // A filter settles its values against the org before it runs (#83), so the
     // client `createFavroClient` builds has to answer /tags, /widgets, /users.
     (FavroHttpClient as jest.MockedClass<typeof FavroHttpClient>)
@@ -485,7 +485,7 @@ describe('cards export (live command)', () => {
     // the CSV arm of this branch could be swapped for the JSON one with
     // nothing going red — the shape of the very defect #139 deletes.
     const [header, ...rows] = fs.readFileSync(outFile, 'utf-8').trim().split('\n');
-    expect(header.startsWith('"id","title"')).toBe(true);
+    expect(header).toMatch(/^"id","title"/);
     expect(rows).toHaveLength(sampleCards.length);
     expect(rows[0]).toContain('"card-001"');
     expect(rows[0]).toContain('"Fix login bug"');
