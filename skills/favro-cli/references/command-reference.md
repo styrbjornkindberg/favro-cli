@@ -269,8 +269,8 @@ List all comments on a card.
 
 | Flag | Description |
 |------|-------------|
-| `--limit <n>` | Max comments (default: 100) |
-| `--json` | Output raw JSON |
+| `--limit <n>` | Max comments **printed** (default: 100). The fetch always runs to completion, so a filter never sees a partial set |
+| `--json` | Output the list envelope — `{"rows":[...]}`, plus `"truncated":true` when `--limit` cut rows. Check `truncated` before treating `rows.length` as the total |
 
 ### `comments get <commentId>` 📖 READ
 Get a single comment by ID.

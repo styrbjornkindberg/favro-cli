@@ -38,6 +38,9 @@ const SAMPLE_COMMENTS = [
 function buildProgram(): Command {
   const program = new Command();
   program.option('--verbose', 'Show stack traces');
+  // The root flags the real CLI declares (cli.ts) — `--pretty` is read off the
+  // root here exactly as it is there.
+  program.option('--pretty', 'Indent JSON output');
   registerCommentsCommand(program);
   return program;
 }
@@ -81,7 +84,8 @@ describe('favro comments list', () => {
 
     await runCli(['comments', 'list', 'card-abc']);
 
-    expect(MockCommentsApiClient.prototype.listComments).toHaveBeenCalledWith('card-abc', 100);
+    // No limit reaches the client at all (#136) — the fetch runs to completion.
+    expect(MockCommentsApiClient.prototype.listComments).toHaveBeenCalledWith('card-abc');
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('2 comment'));
   });
 
@@ -103,16 +107,44 @@ describe('favro comments list', () => {
     );
     expect(jsonCall).toBeDefined();
     const parsed = JSON.parse(jsonCall![0]);
-    expect(Array.isArray(parsed)).toBe(true);
-    expect(parsed).toHaveLength(2);
+    // An envelope, not a bare array — the shape every list read emits (#136).
+    expect(parsed.rows).toHaveLength(2);
+    expect(parsed.truncated).toBeUndefined();
+    // Compact unless `--pretty` asks otherwise.
+    expect(jsonCall![0]).not.toContain('\n');
   });
 
-  it('respects --limit option', async () => {
-    MockCommentsApiClient.prototype.listComments = jest.fn().mockResolvedValue([SAMPLE_COMMENTS[0]]);
+  it('honours the root --pretty flag (#136)', async () => {
+    MockCommentsApiClient.prototype.listComments = jest.fn().mockResolvedValue(SAMPLE_COMMENTS);
+
+    await runCli(['--pretty', 'comments', 'list', 'card-abc', '--json']);
+
+    const jsonCall = consoleSpy.mock.calls.find(call =>
+      typeof call[0] === 'string' && call[0].includes('commentId')
+    );
+    expect(jsonCall![0]).toContain('\n  "rows"');
+  });
+
+  it('caps what --limit prints and marks the cut in JSON', async () => {
+    MockCommentsApiClient.prototype.listComments = jest.fn().mockResolvedValue(SAMPLE_COMMENTS);
+
+    await runCli(['comments', 'list', 'card-abc', '--limit', '1', '--json']);
+
+    expect(MockCommentsApiClient.prototype.listComments).toHaveBeenCalledWith('card-abc');
+    const jsonCall = consoleSpy.mock.calls.find(call =>
+      typeof call[0] === 'string' && call[0].includes('commentId')
+    );
+    const parsed = JSON.parse(jsonCall![0]);
+    expect(parsed.rows).toHaveLength(1);
+    expect(parsed.truncated).toBe(true);
+  });
+
+  it('never prints a capped count as the total', async () => {
+    MockCommentsApiClient.prototype.listComments = jest.fn().mockResolvedValue(SAMPLE_COMMENTS);
 
     await runCli(['comments', 'list', 'card-abc', '--limit', '1']);
 
-    expect(MockCommentsApiClient.prototype.listComments).toHaveBeenCalledWith('card-abc', 1);
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('showing 1 of 2 comment(s)'));
   });
 
   it('exits with error when API key is missing', async () => {
