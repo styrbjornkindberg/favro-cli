@@ -85,7 +85,7 @@ import { registerTeamCommand } from './commands/team';
 import { registerInitCommand } from './commands/init';
 import { registerTrackerInitCommand } from './commands/tracker-init';
 import { runMainMenu } from './commands/main-menu';
-import { logError } from './lib/error-handler';
+import { logError, latchVerbose } from './lib/error-handler';
 import { ProgressBar } from './lib/progress';
 import { createFavroClient } from './lib/client-factory';
 import { capRows, omitBulk, writeEnvelope } from './lib/read-shape';
@@ -119,6 +119,11 @@ program
   // three releases behind the published 2.4.1 before anyone noticed.
   .version(require('../package.json').version as string)
   .option('--verbose', 'Show stack traces for errors');
+
+// The flag is declared here and nowhere else, so it is resolved here and
+// nowhere else (#85). Without this, `.opts()` being own-options-only left
+// `--verbose` dead on every command below the root. See `latchVerbose`.
+latchVerbose(program);
 
 // ─── auth commands ────────────────────────────────────────────────────────────
 registerAuthCommand(program);
