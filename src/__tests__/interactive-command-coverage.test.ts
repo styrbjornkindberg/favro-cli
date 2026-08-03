@@ -61,9 +61,18 @@
  * and a second should have to be argued on an issue.
  *
  * ponytail: the AST helpers below are a second copy of the ones in
- * `scope-lock-coverage.test.ts`. Extract both into `src/test-support/` when a
- * third ratchet needs them; refactoring a proven ratchet was not this ticket's
- * to do.
+ * `scope-lock-coverage.test.ts` — 136 lines byte-identical, measured. Extract
+ * both into `src/test-support/` when a third ratchet needs them; refactoring a
+ * proven ratchet was not this ticket's to do.
+ *
+ * WHEN YOU DO, THE JOIN IS NOT CLEAN, so do not reach for a straight move. The
+ * call graph is the divergence: this file CUTS the `confirmAction` edges as it
+ * builds the graph, and `scope-lock` does not, so `callGraph` and `callers`
+ * have to become `buildCallGraph(cut)` before either can share them. Get that
+ * wrong and the scope-lock ratchet silently stops seeing the writes behind a
+ * confirmation — a blind ratchet, which is the failure this repo keeps paying
+ * for. The two also cost nothing by being separate: jest gives each test file
+ * its own module registry, so `ts.createProgram` runs twice either way.
  */
 import * as path from 'path';
 import * as ts from 'typescript';
