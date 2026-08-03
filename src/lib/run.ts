@@ -27,9 +27,9 @@ import { createFavroClient } from './client-factory';
 import { readConfig, FavroConfig } from './config';
 import { capRows, noteTruncation, writeEnvelope } from './read-shape';
 import { reportDispatch } from './report-dispatch';
-import { DispatchResult, isRetryable } from './dispatch';
+import { DispatchResult, retryAdvice } from './dispatch';
 import { isVerbose, logError } from './error-handler';
-import { classifyThrownError, isWireFailure } from './favro-error';
+import { classifyThrownError } from './favro-error';
 
 import { CardsAPI } from './cards-api';
 import { BoardsAPI } from './boards-api';
@@ -404,27 +404,20 @@ function messageOf(error: unknown): string {
 }
 
 /**
- * "Should I try again?" — asked of a DIFFERENT population from the dispatch
- * table's (#134, and the ADR-0002 amendment it wrote).
+ * "Should I try again?" — `retryAdvice`, the ONE expression (#134, and the
+ * ADR-0002 amendment it wrote).
  *
- * The table only ever sees errors raised inside a write it instrumented, so
- * "unclassifiable" there means a wire hiccup after a clean unwind, and
- * retryable is the right reading. This boundary sees everything any of 128
- * commands can throw — argument validation, missing config, file I/O, our own
- * bugs — and the same reading told an agent to retry `--include bogus` forever.
- *
- * So the wire is the gate and the table is what runs behind it. A failure that
- * came off the wire keeps the one derivation, in full: `isRetryable` still
- * decides which HTTP failures are deterministic, so the CLI and the table
- * cannot drift on the question they DO share (#66). A failure that never
- * touched the wire is `false` without asking — unknown means
- * deterministic-until-proven-otherwise, because a wrong `false` costs one
- * honest failure and a wrong `true` costs an infinite loop.
+ * This boundary sees everything any of 128 commands can throw — argument
+ * validation, missing config, file I/O, our own bugs — and before #134 it read
+ * `isRetryable` raw, which told an agent to retry `--include bogus` forever. The
+ * fix was the wire gate; what has changed since is only that the gate is no
+ * longer spelled out here. `retryAdvice` holds it, and the dispatch table now
+ * asks the same question through the same function rather than a third
+ * hand-written copy of the rule.
  *
  * `'rolled-back'` is still the arm passed: the boundary has no transaction, so
  * it is the one that asks the only question left.
  */
-const retryableFrom = (error: unknown): boolean =>
-  isWireFailure(error) && isRetryable('rolled-back', error);
+const retryableFrom = (error: unknown): boolean => retryAdvice('rolled-back', error);
 
 export default run;

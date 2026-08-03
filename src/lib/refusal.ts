@@ -1,5 +1,10 @@
 /**
- * The one refusal base class.
+ * The two markers the dispatch table's retry advice reads: `RefusalError` for
+ * "deterministic, do not retry", `TransientError` for "measured transient, retry
+ * is worth it". Both live here, in one leaf module importing nothing, so any
+ * module can raise either without an import cycle back through `dispatch`.
+ *
+ * ─── the one refusal base class ─────────────────────────────────────────────
  *
  * A refusal is a DETERMINISTIC decline: we did not write, and the same call will
  * decline again for the same reason. That is the whole distinction the dispatch
@@ -26,6 +31,39 @@ export class RefusalError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'RefusalError';
+  }
+}
+
+/**
+ * A failure the raising site MEASURED transient: the world is unchanged and the
+ * next attempt is genuinely allowed to behave differently.
+ *
+ * The mirror of `RefusalError`, and the reason the dispatch table can afford to
+ * default the other way. Errors raised inside a write the table instrumented
+ * used to be read as transient WHOLESALE, because "we could not classify it"
+ * was assumed to mean "a wire hiccup" — which is true of a socket reset and
+ * false of a `TypeError` of ours, and #151 left that reading in place because
+ * inverting it would have taken out the one in-process failure that really is
+ * transient. So the table now asks the same question its two siblings ask —
+ * `isWireFailure`, the gate — and this type is the ONE exemption behind it
+ * (`retryAdvice` in `dispatch.ts`, ADR-0002 "Two populations").
+ *
+ * **The whole population is one throw site.** `TxCards.setArchived`'s
+ * "answered 200 but did not take" is the only in-process failure in the intent
+ * closure that is transient rather than deterministic — every other decline
+ * reachable from `intent.run` is already a `RefusalError` subclass
+ * (`refusal-drift.test.ts` holds that), and a bug of ours is by definition not
+ * transient. That measurement is what makes the marker cheap: one site to
+ * remember rather than a discipline every future author has to keep.
+ *
+ * Reach for it only with an OBSERVATION behind it, never as a default. An
+ * unmarked bare `Error` is now `retryable: false`, which is the fail-closed
+ * side: a wrong `false` costs one honest failure, a wrong `true` costs a loop.
+ */
+export class TransientError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TransientError';
   }
 }
 

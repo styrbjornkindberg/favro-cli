@@ -23,11 +23,11 @@ import FavroHttpClient from './http-client';
 import { FavroConfig } from './config';
 import CardsAPI, { Card } from './cards-api';
 import { assertScope } from './safety';
-import { classifyThrownError } from './favro-error';
+import { classifyThrownError, isWireFailure } from './favro-error';
 import { foldName } from './fold-name';
 import { CompensationLog, Orphan, TxCards, TxOutcome } from './tx-cards';
 import { CATEGORY_TAGS, STATE_TAGS, VerifiedTracker } from './tracker-config';
-import { RefusalError } from './refusal';
+import { RefusalError, TransientError } from './refusal';
 import { capRows, ListEnvelope, parseLimit } from './read-shape';
 
 // ─── contract ────────────────────────────────────────────────────────────────
@@ -65,11 +65,15 @@ export interface DispatchResult<T = unknown> {
    *
    * This is the ONE derivation. `reportDispatch`, the skill engine and
    * `skill run` all read it rather than re-deriving it from the outcome, which
-   * is what let three sites drift apart in #66. A reader holding a WIDER
-   * population than this table's asks `isWireFailure` first and only then this
-   * — `run.ts` since #134, the skill engine's end-of-run unwind since #151 —
-   * which narrows the answer without re-deriving it (ADR-0002, "Two
-   * populations").
+   * is what let three sites drift apart in #66. It is `retryAdvice` — the gate
+   * and the derivation in one expression, shared verbatim with `run.ts`'s error
+   * boundary and the skill engine's end-of-run unwind, so the three cannot drift
+   * again (ADR-0002, "Two populations").
+   *
+   * Nothing in this codebase LOOPS on it: every reader prints advice or emits it
+   * in the machine envelope. The reader that acts on it is the agent, which the
+   * help topic tells to obey the field — which is why a wrong `true` is the
+   * expensive direction.
    */
   retryable: boolean;
   value?: T;
@@ -178,11 +182,9 @@ export { RefusalError };
  * rolled-back-is-retryable reading: the world is genuinely back where it
  * started, and the next attempt may well behave differently.
  *
- * That last reading is only sound for THIS population — errors raised inside a
- * write this table instrumented, where unclassifiable means a wire hiccup. Every
- * caller holding a wider one gates this call behind `isWireFailure` for exactly
- * that reason: the CLI's error boundary since #134, the skill engine's
- * end-of-run unwind since #151 (ADR-0002 "Two populations").
+ * That last reading is only sound for a failure that came off the WIRE, where
+ * unclassifiable means a wire hiccup. Nothing calls this function raw for that
+ * reason — every caller goes through `retryAdvice` below, which owns the gate.
  */
 export function isRetryable(outcome: TxOutcome, error: unknown): boolean {
   if (outcome !== 'rolled-back') return false;
@@ -192,6 +194,35 @@ export function isRetryable(outcome: TxOutcome, error: unknown): boolean {
   // cannot name". Both are the transient family. `none` cannot reach here.
   return kind === undefined || kind === 'unknown' || kind === 'none';
 }
+
+/**
+ * **The retry advice.** One expression, every caller — the gate and the
+ * derivation behind it (#134, #151, and #151's carried-forward half).
+ *
+ * The rule: *the wire is the gate, the table runs behind it*, and the ONE
+ * exemption is a failure whose site measured it transient and said so with a
+ * `TransientError`. Unknown therefore means deterministic-until-proven-
+ * otherwise, everywhere — a wrong `false` costs one honest failure, a wrong
+ * `true` costs an agent looping on a call that can never succeed.
+ *
+ * This used to be three expressions for one rule, and the third was the odd one
+ * out: `dispatch` asked `isRetryable` RAW, on the theory that its population is
+ * narrow enough for unclassifiable to mean "wire hiccup". Narrow is not the same
+ * as clean — `intent.run` is our code, so a `TypeError` of ours raised in there
+ * came back `retryable: true`, which is #134's `--include bogus` bug wearing the
+ * table's clothes. The reason it survived #151 was the fear that inverting the
+ * default would break the in-process failures that ARE transient; the
+ * enumeration says that population is exactly ONE throw site
+ * (`TxCards.setArchived`, see `TransientError`), so the marker costs one line
+ * and the default gets to be fail-closed.
+ *
+ * `isWireFailure` FIRST is not decoration: it is what keeps a deterministic
+ * error of ours out of `isRetryable`'s unclassifiable-is-transient arm at all.
+ * `isRetryable` still decides which HTTP failures are deterministic, so the
+ * question the three sites genuinely share stays shared and #66 stays closed.
+ */
+export const retryAdvice = (outcome: TxOutcome, error: unknown): boolean =>
+  (isWireFailure(error) || error instanceof TransientError) && isRetryable(outcome, error);
 
 /** An intent nobody registered. Names the table so the refusal is reachable. */
 export class UnknownIntentError extends Error {
@@ -331,7 +362,7 @@ export async function dispatch<T = unknown>(
     return {
       intent: name,
       outcome,
-      retryable: isRetryable(outcome, error),
+      retryable: retryAdvice(outcome, error),
       error: error instanceof Error ? error.message : String(error),
       ...(orphans.length > 0 ? { orphans } : {}),
     };
