@@ -258,14 +258,48 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
 
   // ─── cards move ─────────────────────────────────────────────────────────────
 
-  test('moves card to target board', async () => {
-    const { mockMoveCard } = buildMockApi();
+  /**
+   * The ✓ names the OBSERVED board. `moveCard` runs its PUT body through
+   * `normalizeCard`, so `card.boardId` is the echoed `widgetCommonId` — the same
+   * field `widgets add` spends its ✓ on, from the same PUT. The old assertion
+   * pinned `✓ Card card-src moved to board board-2`, where `board-2` was the
+   * ARGUMENT: it read identically whether the move landed or Favro 200'd and
+   * wrote nothing.
+   */
+  test('moves card to target board and reports the observed board', async () => {
+    const { mockMoveCard } = buildMockApi({
+      moveCard: jest.fn().mockResolvedValue({ ...sampleCard, boardId: 'board-2' }),
+    });
     const cardsCmd = new Command('cards');
     registerCardsLinkCommands(cardsCmd);
     await cardsCmd.parseAsync(['node', 'cards', 'move', 'card-src', '--to-board', 'board-2']);
 
     expect(mockMoveCard).toHaveBeenCalledWith('card-src', { toBoardId: 'board-2', position: undefined });
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('✓ Card card-src moved'));
+    expect(consoleSpy).toHaveBeenCalledWith(
+      expect.stringContaining('✓ Card card-src moved to board (board-2)'),
+    );
+  });
+
+  /**
+   * No echo, no ✓, and exit 1 — a hole forbids a clean exit code (#148), and
+   * `favro cards move … && next-step` reads the code, not the prose.
+   */
+  test('an unobserved board prints UNCONFIRMED and exits 1', async () => {
+    buildMockApi({
+      moveCard: jest.fn().mockResolvedValue({ ...sampleCard, boardId: undefined }),
+    });
+    const cardsCmd = new Command('cards');
+    registerCardsLinkCommands(cardsCmd);
+
+    await expect(
+      cardsCmd.parseAsync(['node', 'cards', 'move', 'card-src', '--to-board', 'board-2']),
+    ).rejects.toThrow('process.exit');
+
+    const printed = consoleSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(printed).not.toMatch(/✓/);
+    expect(printed).toContain('UNCONFIRMED');
+    expect(printed).toContain('carried no widgetCommonId');
+    expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
   /**

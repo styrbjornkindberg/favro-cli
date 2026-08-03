@@ -224,6 +224,67 @@ describe('favro custom-fields set', () => {
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('✓ Custom field updated'));
   });
 
+  /**
+   * `confirmed: false` means the PUT was accepted and NOTHING observed the stored
+   * value. The old code degraded `displayValue` to the caller's argument, so this
+   * case printed `✓ Custom field updated successfully. Value: Some text` — the
+   * value we sent, presented as the value Favro holds.
+   *
+   * No ✓, and no `Value:` line at all: the only value available here is the one
+   * we sent, and printing it under that label is the fabrication.
+   *
+   * And exit 1, because the exit code is the half of the report a script reads:
+   * `UNCONFIRMED` on stdout next to exit 0 tells the human and the machine
+   * opposite things, and `set … && next-step` believes the machine.
+   */
+  it('an unconfirmed write prints no ✓, no Value line, and exits 1', async () => {
+    MockCustomFieldsAPI.prototype.setFieldValue = jest.fn().mockResolvedValue({
+      fieldId: 'field-1',
+      value: null,
+      confirmed: false,
+    });
+    const mockExit = jest.spyOn(process, 'exit').mockImplementation(() => {
+      throw new Error('process.exit called');
+    });
+
+    await expect(
+      runCli(['custom-fields', 'set', 'card-1', 'field-1', 'Some text']),
+    ).rejects.toThrow('process.exit called');
+
+    const printed = consoleSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(printed).not.toContain('✓');
+    expect(printed).toContain('UNCONFIRMED');
+    expect(printed).toContain('Sent:  Some text');
+    expect(printed).not.toMatch(/Value:/);
+    expect(mockExit).toHaveBeenCalledWith(1);
+    mockExit.mockRestore();
+  });
+
+  /**
+   * `--json` gets the same exit code as the human path — the format must not
+   * change what the command CLAIMS. `confirmed:false` is in the payload, and the
+   * non-zero code is the machine-readable half of the same statement.
+   */
+  it('an unconfirmed write with --json still exits 1, payload intact', async () => {
+    MockCustomFieldsAPI.prototype.setFieldValue = jest.fn().mockResolvedValue({
+      fieldId: 'field-1',
+      value: null,
+      confirmed: false,
+    });
+    const mockExit = jest.spyOn(process, 'exit').mockImplementation(() => {
+      throw new Error('process.exit called');
+    });
+
+    await expect(
+      runCli(['custom-fields', 'set', 'card-1', 'field-1', 'Some text', '--json']),
+    ).rejects.toThrow('process.exit called');
+
+    const printed = consoleSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(JSON.parse(printed)).toMatchObject({ confirmed: false, value: null });
+    expect(mockExit).toHaveBeenCalledWith(1);
+    mockExit.mockRestore();
+  });
+
   it('sets a field value as JSON with --json flag', async () => {
     MockCustomFieldsAPI.prototype.setFieldValue = jest.fn().mockResolvedValue(SAMPLE_FIELD_VALUE);
     await runCli(['custom-fields', 'set', 'card-1', 'field-1', 'text', '--json']);

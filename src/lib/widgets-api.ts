@@ -14,6 +14,28 @@ export interface Widget {
   columns?: Array<{ columnId: string; name: string; position?: number; color?: string }>;
 }
 
+/**
+ * What `addWidgetToBoard` can honestly report back.
+ *
+ * `widgetCommonId` is **optional here and required on `Widget`**, and that
+ * asymmetry is the whole point. A GET row carries `widgetCommonId` — probe-
+ * measured on every row of `GET /cards`
+ * (`docs/research/tracker-contract-favro-carriers.md` §1.3, full key set), and
+ * documented (not probed) on a `GET /widgets` row
+ * (`docs/research/name-id-resolution.md:82`, quoting Favro's "Get all widgets"
+ * response fields). Whether the **commit PUT's response** echoes it back is
+ * **unmeasured** either way, and a read-side row is not a write-side echo — the
+ * distinction `UpdateCardRequest.columnId` records for itself (#101), and the
+ * step ADR-0003 refuses.
+ *
+ * So the field is absent when the response did not carry it, and the caller
+ * reports the write UNCONFIRMED rather than substituting the board it asked
+ * for. That substitution is what re-opened #82.
+ */
+export interface CommittedWidget extends Omit<Widget, 'widgetCommonId'> {
+  widgetCommonId?: string;
+}
+
 export class WidgetsAPI {
   constructor(private client: FavroHttpClient) {}
 
@@ -55,8 +77,14 @@ export class WidgetsAPI {
    *
    * `board` is a NAME or a `widgetCommonId`; it settles BEFORE the card lookup,
    * so an unresolvable board refuses without reading anything.
+   *
+   * The returned `widgetCommonId` is the **observed** one and may be absent —
+   * see `CommittedWidget`. It is never backfilled from `boardId`: this endpoint
+   * IS #82's, whose bug was `✓ Widget added to board` printing for a write that
+   * never landed, and answering with the board we asked for cannot distinguish a
+   * landed commit from a silent one.
    */
-  async addWidgetToBoard(board: string, cardCommonId: string, columnId?: string): Promise<Widget> {
+  async addWidgetToBoard(board: string, cardCommonId: string, columnId?: string): Promise<CommittedWidget> {
     const boardId = await this.boardIdOf(board);
 
     // Step 1: Resolve cardCommonId → cardId by fetching any instance
@@ -82,9 +110,14 @@ export class WidgetsAPI {
 
     const updated = await this.client.put<any>(`/cards/${cardId}`, data);
 
-    // Return a Widget-shaped response for CLI compatibility
+    // Return a Widget-shaped response for CLI compatibility.
+    //
+    // `widgetCommonId` carries NO fallback — an absent echo stays absent. The
+    // two fields below do fall back, and legitimately: they degrade to values
+    // READ from the `GET /cards` above, not to an argument. `boardId` is the
+    // argument, which is why it is not allowed to stand in for the observation.
     return {
-      widgetCommonId: updated.widgetCommonId ?? boardId,
+      widgetCommonId: updated.widgetCommonId,
       name: updated.name ?? res.entities[0].name,
       type: 'card',
       cardId: updated.cardId ?? cardId,

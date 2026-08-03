@@ -197,11 +197,31 @@ export function registerCustomFieldsCommands(program: Command): void {
 
         if (options.json) {
           console.log(JSON.stringify(result, null, 2));
+        } else if (result.confirmed === false) {
+          // No ✓, and NO value line: the only value we could print here is the
+          // one we sent. Printing it read exactly like a confirmed write, which
+          // is the fabrication — `Value: High` whether or not the field changed.
+          console.log(`Custom field write was accepted (200) but is UNCONFIRMED.`);
+          console.log(`  Field: ${fieldId}`);
+          console.log(`  Sent:  ${value}`);
+          console.log(
+            `  The response carried no value for this field, so nothing here observed what is stored.\n` +
+            `  Whether this PUT echoes customFields is unmeasured, so an absent echo is not by itself a failure.\n` +
+            `  Verify with: favro cards get ${cardId}\n` +
+            `  (customFields come back inline on the card row, keyed by customFieldId.)`
+          );
         } else {
           console.log(`✓ Custom field updated successfully.`);
           console.log(`  Field: ${fieldId}`);
-          console.log(`  Value: ${result.displayValue ?? result.value ?? value}`);
+          console.log(`  Value: ${result.displayValue ?? result.value}`);
         }
+        // An unconfirmed write is a HOLE, and a hole forbids a clean exit code —
+        // exit 0 is a positive claim (#148; `diff.ts` gates exit 1 on
+        // `holes.length`). `confirmed: false` in the report and exit 0 next to it
+        // contradict each other, and `favro custom-fields set … && next-step`
+        // believes the exit code. Non-zero reports a finding, not a failure — the
+        // report is still on stdout either way (#117).
+        if (result.confirmed === false) process.exit(1);
       } catch (error) {
         logError(error, verbose);
         process.exit(1);

@@ -136,6 +136,62 @@ describe('widgets add', () => {
     expect(output()).toContain('✓ Widget added to board (w-3)');
   });
 
+  /**
+   * The ✓ is spent on an OBSERVED board id and nothing else.
+   *
+   * `addWidgetToBoard` used to answer `updated.widgetCommonId ?? boardId`, so a
+   * response that said nothing still produced `✓ Widget added to board
+   * (board-b)` — the board the user typed, printed back as though Favro had
+   * confirmed it. That is #82's original bug verbatim: the success line for a
+   * write that never landed.
+   */
+  test('an unobserved board id prints no ✓ and does not name it as reached', async () => {
+    MockWidgets.prototype.addWidgetToBoard = jest.fn().mockResolvedValue({ widgetCommonId: undefined });
+
+    await runCli(['widgets', 'add', 'board-b', 'ccid-1', '-y']);
+
+    expect(output()).not.toContain('✓');
+    expect(output()).toContain('UNCONFIRMED');
+    expect(output()).toContain('carried no widgetCommonId');
+    // And exit 1: a hole forbids a clean exit code (#148). Not a throw — the
+    // report still lands on stdout, which is what keeps a finding
+    // distinguishable from a failure (#117). Throwing on an unmeasured echo
+    // would be #101's regression; a non-zero code next to a printed report is
+    // not.
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  /**
+   * A `null` or empty-string echo is not the same value as an absent one, and
+   * neither is an observation. Nothing may launder either into a ✓.
+   */
+  test.each([[null], ['']])('a %p board id echo is not an observation', async (echoed) => {
+    MockWidgets.prototype.addWidgetToBoard = jest.fn().mockResolvedValue({ widgetCommonId: echoed });
+
+    await runCli(['widgets', 'add', 'board-b', 'ccid-1', '-y']);
+
+    expect(output()).not.toContain('✓');
+    expect(output()).toContain('UNCONFIRMED');
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  test('--json is unaffected — it prints the observed shape, holes included', async () => {
+    MockWidgets.prototype.addWidgetToBoard = jest.fn().mockResolvedValue({
+      widgetCommonId: undefined,
+      cardId: 'card-1',
+    });
+
+    await runCli(['widgets', 'add', 'board-b', 'ccid-1', '-y', '--json']);
+
+    // Parsed, not substring-matched: `not.toContain('board-b')` passes just as
+    // happily against no output at all.
+    const payload = JSON.parse(output());
+    expect(payload).toMatchObject({ cardId: 'card-1' });
+    expect(payload.widgetCommonId).toBeUndefined();
+    // The format does not change what the command claims.
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
   test('--column places the new instance in a named column', async () => {
     await runCli(['widgets', 'add', 'board-b', 'ccid-1', '-y', '--column', 'col-9']);
 
