@@ -188,7 +188,6 @@ interface OverviewOptions {
 }
 
 export async function overviewHandler(ctx: Ctx, options: OverviewOptions) {
-
   let snapshot;
   let scope: string;
   if (options.collection) {

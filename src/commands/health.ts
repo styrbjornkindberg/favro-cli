@@ -178,7 +178,6 @@ interface HealthOptions {
  * test.
  */
 export async function healthHandler(ctx: Ctx, options: HealthOptions) {
-
   let snapshot;
   let scope: string;
   if (options.collection) {

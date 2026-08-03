@@ -72,7 +72,6 @@ interface TeamOptions {
 }
 
 export async function teamHandler(ctx: Ctx, options: TeamOptions) {
-
   let snapshot;
   let scope: string;
   if (options.collection) {

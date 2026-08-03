@@ -133,7 +133,6 @@ interface WorkloadOptions {
 }
 
 export async function workloadHandler(ctx: Ctx, options: WorkloadOptions) {
-
   // Annotated rather than inferred: the four arms produce four different object
   // types, and a union of them trips the excess-property check at the
   // `excludeUnreadableBoards` call below. This names the three fields this

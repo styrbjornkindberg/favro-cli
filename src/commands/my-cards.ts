@@ -115,7 +115,6 @@ export async function myCardsHandler(ctx: Ctx, options: MyCardsOptions) {
     throw new Error('userId not configured. Run `favro auth login` to resolve your identity.');
   }
 
-
   let snapshot;
   if (options.collection) {
     snapshot = await ctx.api.aggregate.getCollectionSnapshot(options.collection);
