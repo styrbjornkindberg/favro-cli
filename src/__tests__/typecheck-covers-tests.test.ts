@@ -4,8 +4,8 @@
  * WHAT IT GUARDS
  * Two configs that must disagree, on purpose:
  *
- *   - `tsconfig.json` BUILDS, so it excludes `**\/*.test.ts` to keep test files
- *     out of `dist/`.
+ *   - `tsconfig.json` BUILDS, so it excludes the test-only directories and
+ *     `**\/*.test.ts` to keep test code out of `dist/`.
  *   - `tsconfig.test.json` CHECKS, so it must not.
  *
  * Before #121 only the first existed, and `tsc --noEmit` — the CI gate — never
@@ -23,7 +23,7 @@ import * as ts from 'typescript';
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
-function fileNamesOf(configName: string): string[] {
+function parsedConfig(configName: string): ts.ParsedCommandLine {
   const configPath = path.join(REPO_ROOT, configName);
   const read = ts.readConfigFile(configPath, ts.sys.readFile);
   expect(read.error).toBeUndefined();
@@ -31,13 +31,51 @@ function fileNamesOf(configName: string): string[] {
   const parsed = ts.parseJsonConfigFileContent(read.config, ts.sys, REPO_ROOT);
   expect(parsed.errors).toEqual([]);
 
-  return parsed.fileNames.map((f) => path.relative(REPO_ROOT, f));
+  return parsed;
 }
 
+const relative = (files: readonly string[]): string[] =>
+  files.map((f) => path.relative(REPO_ROOT, f));
+
+const fileNamesOf = (configName: string): string[] =>
+  relative(parsedConfig(configName).fileNames);
+
+/**
+ * Test-only code, by DIRECTORY and not just by extension (#128).
+ *
+ * #121 filtered on `.test.ts` and so never noticed `src/__integration__/helpers.ts`
+ * or `src/test-support/*` — neither is named `*.test.ts`, both were in the build
+ * config's file list, and both were emitted into `dist/` and shipped.
+ */
+const TEST_ONLY = /(^|\/)(__tests__|__integration__|test-support)(\/|$)|\.test\.ts$/;
+
+const posix = (f: string): string => f.split(path.sep).join('/');
+
 describe('type-check coverage', () => {
-  it('keeps test files out of the build config, so dist/ stays clean', () => {
-    const built = fileNamesOf('tsconfig.json').filter((f) => f.endsWith('.test.ts'));
-    expect(built).toEqual([]);
+  it('keeps test-only code out of the build config, so dist/ stays clean', () => {
+    const config = parsedConfig('tsconfig.json');
+    const built = relative(config.fileNames);
+
+    // Self-check: a scan that enumerated nothing would pass the filter vacuously.
+    expect(built.length).toBeGreaterThan(50);
+    expect(built).toContain(path.join('src', 'cli.ts'));
+
+    expect(built.filter((f) => TEST_ONLY.test(posix(f)))).toEqual([]);
+
+    // `exclude` only prunes the ROOT list — tsc still compiles and emits whatever
+    // those roots import, so a production `import './test-support/x'` puts test
+    // code back in dist/ with the filter above still green. Ask TypeScript for
+    // the real closure: a regex over one import syntax misses the side-effect
+    // (`import 'x'`) and `require('x')` forms, which emit just the same.
+    const emitted = relative(
+      ts
+        .createProgram(config.fileNames, config.options)
+        .getSourceFiles()
+        .map((s) => s.fileName)
+    ).filter((f) => f.startsWith(`src${path.sep}`));
+
+    expect(emitted.length).toBeGreaterThanOrEqual(built.length);
+    expect(emitted.filter((f) => TEST_ONLY.test(posix(f)))).toEqual([]);
   });
 
   it('checks the unit and integration suites through tsconfig.test.json', () => {
