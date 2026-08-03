@@ -363,6 +363,14 @@ describe('the inert fetch cap is gone, and its flag refuses out loud', () => {
     expect(limitOptionsOf('cards', 'list')).toEqual(['--limit']);
   });
 
+  it('the surface probe THROWS on a name it cannot find, at either depth', () => {
+    // Pins the `if (!child) throw`. Softening it to `return []` left all 61 tests
+    // green — a renamed or unregistered command would then have reported "no
+    // --limit" because there was nothing to look at. Found by mutation.
+    expect(() => limitOptionsOf('no-such-command')).toThrow('no such command');
+    expect(() => limitOptionsOf('cards', 'no-such-leaf')).toThrow('no such command');
+  });
+
   it('an unknown flag is named as ITSELF, not as --limit', async () => {
     // The discriminator. Without it, the fourteen rows above would pass on any
     // unknown option whatsoever rather than on the one that was removed.
