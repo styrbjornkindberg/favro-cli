@@ -230,8 +230,14 @@ export async function assertScope(
  * `{"error":{message,retryable}}` envelope was never written: stdout came back
  * EMPTY on the one failure a write guardrail exists to produce, which reads to a
  * caller as "the command produced no result" rather than "I refused to look".
- * `assertOrgScope` next door already threw, and its refusal reached stdout; this
- * one did not, and the difference was only which function you happened to call.
+ * `assertOrgScope` next door already threw, so its refusal reached stdout from a
+ * MIGRATED caller; this one reached it from none. Measured on the built CLI
+ * under a lock, not inferred: `webhooks delete` (migrated) wrote 523 bytes of
+ * envelope to stdout and nothing to stderr both before and after this fix, while
+ * `tags delete` and `groups delete` — still legacy `catch { logError; exit(1) }`
+ * — wrote 0 bytes to stdout and the refusal to stderr, before and after. So
+ * throwing is necessary and not sufficient: the caller has to be inside `run()`
+ * too, which is #115–#119's half and not this ticket's.
  *
  * What survives is the 404 rewording: `assertScope` GETs `/widgets/{boardId}`,
  * and "Not Found" off the wire does not say which board or that the lock was

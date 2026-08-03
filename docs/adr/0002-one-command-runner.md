@@ -145,11 +145,11 @@ exit=1   stdout: (empty)   stderr: ✗ Scope violation: target collection "coll-
 ```
 
 That is the exact shape rule 3 was written against, surviving on the one failure a write
-guardrail exists to produce — and it was reachable only through those two helpers.
-`assertScope` and `assertOrgScope`, one function over, already threw and already reached stdout
-as an envelope. So the guards now throw `ScopeError` too, and the boundary renders it.
+guardrail exists to produce. After: `exit=1`, 268 bytes of `{"error":{…,"retryable":false}}` on
+stdout, 0 bytes on stderr. `assertScope` and `assertOrgScope`, one function over, already threw.
+So the guards now throw `ScopeError` too, and the boundary renders it.
 
-Two things the fix holds that a smaller one would have dropped:
+Three things the fix holds that a smaller one would have dropped:
 
 - **Exit 1 stays.** A refusal is a negative finding, and stdout carrying the envelope is not a
   reason to claim success. Both are required: parseable stdout *and* a non-zero code.
@@ -157,12 +157,29 @@ Two things the fix holds that a smaller one would have dropped:
   `Scope violation:` rather than `Error:`, keyed on `.name` because `safety.ts` imports that
   module and the class cannot be imported back without a cycle. The refusal MESSAGE is now
   plain where three of its lines were coloured: JSON is the default even at a TTY, so a
-  coloured message would put escape codes inside the value an agent parses. Byte-identical on
-  a pipe; a TTY loses the colour on `'favro scope show'` and `--force`.
+  coloured message would put escape codes inside the value an agent parses. Measured on
+  `collections delete --human`: 224 stderr bytes before and 224 after on a pipe, and under
+  `FORCE_COLOR=1` 273 before against 244 after — the 29 bytes are the three escape pairs on
+  `'favro scope show'`, `'favro scope set …'` and `--force`, which is the stated cost.
+- **A refusal is not a failed write.** `git commit --comment` resolves its board inside a
+  best-effort `catch` that reports "(Could not add comment to card)". While the guard EXITED
+  that catch could not see it; once it throws, an unfiltered catch downgrades the lock to a
+  notice — measured at exit 0 with the violation gone. The catch now rethrows a `RefusalError`.
+  It is the only swallowing catch downstream of a scope check (grepped: `catch {` across
+  `cli.ts`, `src/commands/`, `src/lib/`).
 
 The ban is now scanned over `src/lib/` as well, for `process.exit(` alone — the other four
 preamble spellings are command-shaped and a library has no `run()` to adopt. One exception is
 argued rather than assumed: `ErrorFormatter.fatal`, whose exit is its declared `never`.
+
+**What throwing does NOT buy, stated because it was nearly claimed.** The envelope reaches stdout
+only where the CALLER is inside `run()`. Measured under a lock, on the built CLI, before and
+after this amendment alike: `webhooks delete` (migrated) writes 523 stdout bytes; `tags delete`
+and `groups delete` — same `assertOrgScope`, still legacy `catch { logError; exit(1) }` — write 0
+stdout bytes and put the refusal on stderr. Nine `RefusalError` subclasses exist and none of them
+is silent by virtue of its class; silence is a property of the entry point. #133 closes the two
+helpers that were silent from EVERY caller. The residual is #115–#119's migration, not a second
+defect in `safety.ts`.
 
 ### Amendment (#134): two populations of error, one derivation behind a gate
 
