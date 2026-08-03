@@ -303,7 +303,7 @@ export interface UpdateCardRequest {
    *
    * That is the WRITE shape and it is not what a card reads back: `dueDate`
    * returns as a full ISO timestamp encoding a local day boundary
-   * (`2023-07-27T07:00:00.000Z`), measured across 204 dated cards with zero
+   * (`2023-07-27T07:00:00.000Z`), measured across 853 dated cards with zero
    * date-only (#132, `duedate-wire-shape.test.ts`). Do not infer one from the
    * other — whether the write side also accepts an ISO timestamp is unmeasured.
    */

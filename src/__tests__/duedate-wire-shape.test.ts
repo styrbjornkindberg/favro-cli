@@ -10,13 +10,17 @@
  *
  * ── THE MEASUREMENT ─────────────────────────────────────────────────────────
  *
- * Read-only scan of a live Favro workspace on 2026-08-03: 100 boards,
- * 1262 unarchived cards.
+ * Read-only scan of one live Favro organization on 2026-08-03, reading
+ * `/widgets` and `/cards` to the LAST page: 422 boards, 10601 unarchived cards.
+ * (Both list endpoints clamp to 100 entities per page. Stopping at the first
+ * page reports 100 boards and 1262 cards and silently understates every count
+ * below by roughly 4x — the numbers here are paginated to completion.)
  *
- *   dueDate full ISO (`2023-07-27T07:00:00.000Z`) : 204
- *   dueDate date-only (`2023-07-27`)              :   0
- *   dueDate present but null                      :   0
- *   dueDate key absent from the card entirely     : 1058
+ *   dueDate full ISO (`2023-07-27T07:00:00.000Z`) :  853
+ *   dueDate date-only (`2023-07-27`)              :    0
+ *   dueDate any other shape                       :    0
+ *   dueDate present but null                      :    0
+ *   dueDate key absent from the card entirely     : 9748
  *
  * **Favro sends a full ISO timestamp. Date-only never occurred.** Both
  * `GET /cards/<id>` and `GET /cards?widgetCommonId=…` returned the byte-identical
@@ -27,13 +31,18 @@
  * `hasOwnProperty('dueDate')` is false — which is why `isOverdue`'s falsy guard
  * is the right test and a `=== null` check would not be.
  *
- * The time-of-day part is not a constant. Across the 204 dated cards it ranged
- * over `T22:00:00.000Z`, `T23:00:00.000Z`, `T21:59:59.999Z`, `T09:00:00.000Z`,
- * `T08:00:00.000Z`, `T07:00:00.000Z`, `T00:00:00.000Z` and others — Favro
- * encodes a *local* day boundary for whoever set the date, so the timestamp is
- * load-bearing and truncating it to ten characters would move the day. Card
- * `startDate` was measured at the same time and is the same shape: full ISO,
- * zero date-only out of 161.
+ * The time-of-day part is not a constant. Eleven distinct values occur across
+ * the 853 dated cards — `T00:00:00.000Z`, `T07:00:00.000Z`, `T08:00:00.000Z`,
+ * `T08:58:00.000Z`, `T09:00:00.000Z`, `T10:00:00.000Z`, `T12:00:00.000Z`,
+ * `T21:59:59.999Z`, `T22:00:00.000Z`, `T22:59:59.999Z`, `T23:00:00.000Z` —
+ * Favro encodes a *local* day boundary for whoever set the date, so the
+ * timestamp is load-bearing and truncating it to ten characters would move the
+ * day. Card `startDate` was measured at the same time and is the same shape:
+ * full ISO, zero date-only out of 524.
+ *
+ * Sample size is one organization on one day. It is a large and perfectly
+ * consistent sample, and it is still not a published contract — which is why
+ * `isOverdue` keeps its date-only branch rather than deleting it.
  *
  * ── WHY IT IS PINNED HERE ───────────────────────────────────────────────────
  *

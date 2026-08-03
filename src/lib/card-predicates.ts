@@ -11,11 +11,14 @@
  * otherwise, so each caller keeps the case it had right.
  *
  * FAVRO SENDS A FULL ISO TIMESTAMP — measured, not inferred (#132). A read-only
- * scan of a live workspace on 2026-08-03 (100 boards, 1262 unarchived cards)
- * returned 204 dated cards, every one of them full ISO (`2023-07-27T07:00:00.000Z`)
- * and **not one** date-only. `GET /cards/<id>` and `GET /cards?widgetCommonId=…`
- * agreed byte-for-byte. An undated card omits the key entirely: zero nulls,
- * 1058 absent. `duedate-wire-shape.test.ts` pins the shape off a real socket.
+ * scan of one live organization on 2026-08-03, reading `/widgets` and `/cards`
+ * to the last page (422 boards, 10601 unarchived cards), returned 853 dated
+ * cards, every one of them full ISO (`2023-07-27T07:00:00.000Z`) and **not one**
+ * date-only. `GET /cards/<id>` and `GET /cards?widgetCommonId=…` agreed
+ * byte-for-byte. An undated card omits the key entirely: zero nulls, zero empty
+ * strings, 9748 absent. `duedate-wire-shape.test.ts` pins the shape off a real
+ * socket. One org on one day is the whole of the evidence — a large consistent
+ * sample, not a contract Favro has published.
  *
  * So it is the `new Date(…)` branch below that runs in production, and the
  * date-only branch is defensive: nothing observed has taken it. Keep it anyway —
@@ -25,21 +28,31 @@
  * unmeasured — #132 probed reads only, and deliberately made no writes).
  *
  * That makes the #89 consequence the LIVE one. The pre-#89 `batch smart` copy
- * split on `-` and read `27T07:00:00.000Z` as `NaN`, so its `overdue` filter
- * matched NOTHING against what Favro actually sends. Measured on the same
- * workspace: the old splitter matches **0** cards, this function matches **198**,
- * spread over 16 boards with the heaviest single board at 100. That filter feeds
- * `buildCardFilter`, and so
- * `batch smart <board> --goal "move all overdue cards to Review" --yes` — a bulk
- * write with a skippable confirm. `batch smart` is scoped to ONE board, so a
- * given invocation moves that board's share (up to 100 here), not all 198. Any
- * scheduled invocation was a silent no-op before #89 and writes for real on its
- * next run: a behaviour change for existing automation, not a latent one.
+ * split on `-` and read `27T07:00:00.000Z` as `NaN`; `NaN < today` is `false`
+ * rather than a throw, so its `overdue` filter matched NOTHING against what
+ * Favro actually sends — silently, with no error to notice. Run side by side
+ * over the same 10601 cards: the old splitter matches **0**, this function
+ * matches **829**, spread over 96 boards. That filter feeds `buildCardFilter`,
+ * and so `batch smart <board> --goal "move all overdue cards to Review" --yes` —
+ * a bulk write with a skippable confirm. Any scheduled invocation was a silent
+ * no-op before #89 and writes for real on its next run: a behaviour change for
+ * existing automation, not a latent one.
+ *
+ * `batch smart` is scoped to ONE board, so an invocation moves that board's
+ * overdue set, not all 829. There is NO per-run cap of 100: `batch smart` calls
+ * `listCards`, which calls `getAllPages` with no `max` and therefore reads every
+ * page. The 100 in `listCards`'s `limit` is Favro's per-page clamp, not a fetch
+ * ceiling — mistake it for one and you will size this an order of magnitude
+ * short. The heaviest board on the scanned org was `Planned sprints` at 135
+ * overdue of 143 cards; the bound on a single run is that board's whole overdue
+ * set, whatever it grows to.
  *
  * The function itself is unchanged and correct on the measured shape; the
- * timestamps encode a *local* day boundary (`T22:00:00.000Z`, `T21:59:59.999Z`,
- * `T07:00:00.000Z` all occur), which is exactly what `new Date(…)` reads back
- * correctly and what truncating to ten characters would break.
+ * timestamps encode a *local* day boundary — eleven distinct time-of-day parts
+ * occur across the scan, including `T00:00:00.000Z`, `T07:00:00.000Z`,
+ * `T08:58:00.000Z`, `T21:59:59.999Z` and `T22:59:59.999Z` — which is exactly
+ * what `new Date(…)` reads back correctly and what truncating to ten characters
+ * would break.
  *
  * Note this is *tag-and-status* blocking — the word in a label or a column
  * name. It is not the `isBefore` edge: see `judgeBlockers` in `blocking.ts` for
