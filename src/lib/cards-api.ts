@@ -298,7 +298,15 @@ export interface UpdateCardRequest {
   addTagIds?: string[];
   /** Tag **ids** to remove. Same reason as `addTagIds`. */
   removeTagIds?: string[];
-  /** Due date in YYYY-MM-DD format. Supported by Favro API updateCard endpoint. */
+  /**
+   * Due date in YYYY-MM-DD format. Supported by Favro API updateCard endpoint.
+   *
+   * That is the WRITE shape and it is not what a card reads back: `dueDate`
+   * returns as a full ISO timestamp encoding a local day boundary
+   * (`2023-07-27T07:00:00.000Z`), measured across 204 dated cards with zero
+   * date-only (#132, `duedate-wire-shape.test.ts`). Do not infer one from the
+   * other — whether the write side also accepts an ISO timestamp is unmeasured.
+   */
   dueDate?: string;
   /** Target board ID when moving a card between boards. Supported by Favro API updateCard endpoint. */
   boardId?: string;

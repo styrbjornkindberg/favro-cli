@@ -10,23 +10,36 @@
  * surviving copy takes the date-only branch for a date-only string and `Date`
  * otherwise, so each caller keeps the case it had right.
  *
- * WHICH SHAPE FAVRO ACTUALLY SENDS IS UNMEASURED. `dueDate` passes through
- * `normalizeCard` untouched via `...rest` (`cards-api.ts`), every fixture in
- * this repo is date-only, and no wire test pins it. The two branches have
- * different consequences and only one of them can be the real one:
+ * FAVRO SENDS A FULL ISO TIMESTAMP — measured, not inferred (#132). A read-only
+ * scan of a live workspace on 2026-08-03 (100 boards, 1262 unarchived cards)
+ * returned 204 dated cards, every one of them full ISO (`2023-07-27T07:00:00.000Z`)
+ * and **not one** date-only. `GET /cards/<id>` and `GET /cards?widgetCommonId=…`
+ * agreed byte-for-byte. An undated card omits the key entirely: zero nulls,
+ * 1058 absent. `duedate-wire-shape.test.ts` pins the shape off a real socket.
  *
- *   - **If Favro sends date-only.** `batch smart` is unchanged; `risks` stops
- *     over-reporting overdue cards in negative-UTC-offset timezones. Read-only
- *     either way.
- *   - **If Favro sends full ISO timestamps.** `risks` is unchanged, but the
- *     `overdue` filter in `batch smart` (`buildCardFilter`) goes from matching
- *     NOTHING to matching the real set — and that filter feeds
- *     `batch-smart <board> --goal "move all overdue cards to Review" --yes`,
- *     a bulk write with a skippable confirm. A scheduled invocation that was a
- *     silent no-op starts mutating cards on its next run.
+ * So it is the `new Date(…)` branch below that runs in production, and the
+ * date-only branch is defensive: nothing observed has taken it. Keep it anyway —
+ * a read shape is not a contract, this measured one org on one day, and a
+ * date-only string is still spellable from our own side (`UpdateCardRequest`
+ * documents `dueDate` as `YYYY-MM-DD`, though the WRITE shape is separately
+ * unmeasured — #132 probed reads only, and deliberately made no writes).
  *
- * The function is correct under both; the disclosure is the point. Measuring it
- * needs a live wire and credentials this repo's test suite does not have.
+ * That makes the #89 consequence the LIVE one. The pre-#89 `batch smart` copy
+ * split on `-` and read `27T07:00:00.000Z` as `NaN`, so its `overdue` filter
+ * matched NOTHING against what Favro actually sends. Measured on the same
+ * workspace: the old splitter matches **0** cards, this function matches **198**,
+ * spread over 16 boards with the heaviest single board at 100. That filter feeds
+ * `buildCardFilter`, and so
+ * `batch smart <board> --goal "move all overdue cards to Review" --yes` — a bulk
+ * write with a skippable confirm. `batch smart` is scoped to ONE board, so a
+ * given invocation moves that board's share (up to 100 here), not all 198. Any
+ * scheduled invocation was a silent no-op before #89 and writes for real on its
+ * next run: a behaviour change for existing automation, not a latent one.
+ *
+ * The function itself is unchanged and correct on the measured shape; the
+ * timestamps encode a *local* day boundary (`T22:00:00.000Z`, `T21:59:59.999Z`,
+ * `T07:00:00.000Z` all occur), which is exactly what `new Date(…)` reads back
+ * correctly and what truncating to ten characters would break.
  *
  * Note this is *tag-and-status* blocking — the word in a label or a column
  * name. It is not the `isBefore` edge: see `judgeBlockers` in `blocking.ts` for
