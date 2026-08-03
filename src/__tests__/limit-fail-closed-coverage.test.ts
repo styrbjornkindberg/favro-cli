@@ -670,3 +670,83 @@ describe('every --limit goes through parseLimit', () => {
     expect(fires('const d = options.days; const n = parseInt(d as string, 10);')).toBe(false);
   });
 });
+
+// ─── arm five: no snapshot read grows a cap parameter again ──────────────────
+
+/**
+ * `ContextAPI.getSnapshot` and `AggregateAPI.getMultiBoardSnapshot` take a board
+ * or a scope and NOTHING ELSE.
+ *
+ * This is the ratchet the original defect needed and did not have. A dead
+ * `cardLimit: number = 1000` sat on both of these long enough to grow four
+ * pass-throughs feeding it (`QueryAPI.execute`, `SprintPlanAPI.getSuggestions`,
+ * `StandupAPI.getStandup`, `getCollectionSnapshot`) and fourteen commands
+ * computing a number for it. Every one of those was correct code written around
+ * a parameter with zero reads.
+ *
+ * Re-adding the parameter ALONE was confirmed to leave all 3051 tests green —
+ * nothing passes it, so nothing observes it. Found by mutation. It is inert on
+ * the day it lands and load-bearing six commits later, which is exactly the
+ * shape a ratchet is for.
+ *
+ * Parameters are counted through the checker rather than `Function.length`,
+ * because `length` stops at the first default — `cardLimit: number = 1000` is
+ * invisible to it, which is part of how this went unnoticed.
+ *
+ * ponytail: three methods by name, not "every method returning a snapshot".
+ * These are the ones the six parameters hung off. Widen it when a fourth appears.
+ */
+const UNCAPPED_READS: Array<[string, string, string[]]> = [
+  // file (relative to src), method, the exact parameter list allowed
+  [path.join('api', 'context.ts'), 'getSnapshot', ['boardRef']],
+  [path.join('api', 'aggregate.ts'), 'getMultiBoardSnapshot', ['scope']],
+  [path.join('api', 'aggregate.ts'), 'getCollectionSnapshot', ['collectionRef']],
+  [path.join('api', 'query.ts'), 'execute', ['boardRef', 'query']],
+  [path.join('api', 'sprint-plan.ts'), 'getSuggestions', ['boardRef', 'budget']],
+  [path.join('api', 'standup.ts'), 'getStandup', ['boardRef', 'dueSoonDays']],
+];
+
+/** Parameter names of one method declaration, found through the real program. */
+function parametersOf(relFile: string, method: string): string[] {
+  const sf = scannableFiles.find(
+    (f) => path.relative(path.join(REPO_ROOT, 'src'), f.fileName) === relFile,
+  );
+  // Not a soft return — a moved file must fail here rather than report "no
+  // parameters" because it found no file to look in.
+  if (!sf) throw new Error(`not in the program: ${relFile}`);
+
+  const found: string[][] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isMethodDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === method) {
+      found.push(node.parameters.map((p) => sf.text.slice(p.name.pos, p.name.end).trim()));
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(sf, visit);
+
+  if (found.length !== 1) {
+    throw new Error(`${found.length} declarations of ${method} in ${relFile}`);
+  }
+  return found[0];
+}
+
+describe('the snapshot reads take no cap parameter', () => {
+  it.each(UNCAPPED_READS)('%s %s takes exactly (%s)', (file, method, params) => {
+    // The whole list, not a count: a second parameter under any name is a
+    // review conversation, and `cardLimit` back by that name is this ticket
+    // reopening. Re-adding it is invisible to every other test in the repo.
+    expect(parametersOf(file, method)).toEqual(params);
+  });
+
+  it('the parameter probe fails loudly on a method or a file it cannot find', () => {
+    // Without this, the rows above could pass on a probe that always answered
+    // with whatever it was asked for — the too-thin-stand shape that once let
+    // `() => true` pass 2934 tests in this repo.
+    expect(() => parametersOf(path.join('api', 'context.ts'), 'noSuchMethod')).toThrow(
+      '0 declarations',
+    );
+    expect(() => parametersOf(path.join('api', 'no-such-file.ts'), 'getSnapshot')).toThrow(
+      'not in the program',
+    );
+  });
+});
