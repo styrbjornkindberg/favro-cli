@@ -10,7 +10,8 @@
     "!dist/**/__tests__",
     "!dist/**/__integration__",
     "!dist/**/test-support",
-    "!dist/**/*.test.*"
+    "!dist/**/*.test.*",
+    "!dist/**/*.map"
   ],
   "bin": {
     "favro": "dist/cli.js",
