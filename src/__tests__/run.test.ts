@@ -758,6 +758,128 @@ describe('the context the handler receives', () => {
   });
 });
 
+// ─── #135: a dry run pays for what its preview reaches for ───────────────────
+
+/**
+ * The rule: on `--dry-run`, a missing credential is deferred to first touch of
+ * `ctx.client` / `ctx.api` rather than refused up front.
+ *
+ * Every arm below asserts something PRESENT — a printed preview, or the refusal
+ * itself on stdout. Nothing here asserts that an error was absent: an absence
+ * assertion under a mocked `console.log` cannot fail for the right reason, and
+ * this suite has shipped that shape before. The pair that discriminates is the
+ * credential-free preview (prints, exit undefined) against the same command
+ * touching the client (refuses, exit 1).
+ */
+describe('--dry-run defers the credential refusal, it does not skip it', () => {
+  /** A leaf with `--dry-run`, and no credentials anywhere to resolve. */
+  function dryRunProgram(): { root: Command; leaf: Command } {
+    delete process.env.FAVRO_API_KEY;
+    delete process.env.FAVRO_EMAIL;
+    const { root, leaf } = program();
+    leaf.option('--dry-run');
+    return { root, leaf };
+  }
+
+  it('prints a preview built from argv and config with no credentials at all', async () => {
+    // The seven measured commands — `boards create/update/delete`,
+    // `collections create/update/delete`, `webhooks create` — are this shape:
+    // the preview reads `ctx.config` and its arguments and returns.
+    const { root, leaf } = dryRunProgram();
+    leaf.action(
+      run(async (ctx, opts: { dryRun?: boolean }) =>
+        opts.dryRun ? { item: { dryRun: true, lock: ctx.config.scopeCollectionId ?? null } } : undefined,
+      ),
+    );
+
+    await parse(root, ['thing', '--dry-run']);
+
+    expect(stdout()).toEqual(['{"dryRun":true,"lock":null}']);
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it('refuses the same command without --dry-run — the omit arm', async () => {
+    // Deletes the `opts.dryRun` conjunct if it survives: the real write must
+    // still meet the missing key before the handler runs.
+    const { root, leaf } = dryRunProgram();
+    let ran = false;
+    leaf.action(run(async () => void (ran = true)));
+
+    await parse(root, ['thing']);
+
+    expect(stdout()).toEqual([
+      JSON.stringify({
+        error: { message: "✗ API key not found. Run 'favro auth login' first", retryable: false },
+      }),
+    ]);
+    expect(process.exitCode).toBe(1);
+    expect(ran).toBe(false);
+  });
+
+  it('refuses a dry run that reaches for ctx.client — the comments trio', async () => {
+    // `checkResolvedScope(ctx.client, …)` evaluates its first argument eagerly,
+    // so this is exactly what `comments add/update/delete --dry-run` does. The
+    // refusal is the same message at the same boundary.
+    const { root, leaf } = dryRunProgram();
+    let reached = false;
+    leaf.action(
+      run(async (ctx) => {
+        void ctx.client;
+        reached = true;
+      }),
+    );
+
+    await parse(root, ['thing', '--dry-run']);
+
+    expect(stdout()).toEqual([
+      JSON.stringify({
+        error: { message: "✗ API key not found. Run 'favro auth login' first", retryable: false },
+      }),
+    ]);
+    expect(process.exitCode).toBe(1);
+    expect(reached).toBe(false);
+  });
+
+  it('refuses a dry run that reaches for ctx.api — every class needs a client', async () => {
+    const { root, leaf } = dryRunProgram();
+    let reached = false;
+    leaf.action(
+      run(async (ctx) => {
+        void ctx.api;
+        reached = true;
+      }),
+    );
+
+    await parse(root, ['thing', '--dry-run']);
+
+    expect(stdout()).toEqual([
+      JSON.stringify({
+        error: { message: "✗ API key not found. Run 'favro auth login' first", retryable: false },
+      }),
+    ]);
+    expect(process.exitCode).toBe(1);
+    expect(reached).toBe(false);
+  });
+
+  it('still builds a real client on a dry run when credentials DO resolve', async () => {
+    // The foreign arm for the deferral: `--dry-run` must not become a way to get
+    // a poisoned context when there was nothing wrong. Credentials are restored
+    // here rather than deleted, so the getter path is not taken at all.
+    process.env.FAVRO_API_KEY = 'test-key';
+    process.env.FAVRO_EMAIL = 'runner@example.com';
+    const { root } = program();
+    const leaf = root.commands[0];
+    leaf.option('--dry-run');
+    let ctx: Ctx | undefined;
+    leaf.action(run(async (c) => void (ctx = c)));
+
+    await parse(root, ['thing', '--dry-run']);
+
+    expect(ctx!.client).toBeInstanceOf(FavroHttpClient);
+    expect(process.exitCode).toBeUndefined();
+  });
+});
+
 // ─── the api namespace ───────────────────────────────────────────────────────
 
 describe('ctx.api is lazy and memoised', () => {

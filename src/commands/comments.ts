@@ -101,7 +101,10 @@ export function registerCommentsCommand(program: Command): void {
       'Tip: Use `favro cards list --board <board>` to find card IDs.'
     )
     .requiredOption('--text <comment>', 'Comment text to add')
-    .option('--dry-run', 'Print what would be added without making API calls')
+    // Measured, and NOT "without making API calls" like its siblings say (#135):
+    // the scope check below reads the card to name its board, so this preview
+    // needs credentials and issues one GET whenever a lock is configured.
+    .option('--dry-run', 'Preview the comment. Reads the card first to check the scope lock')
     .option('-y, --yes', 'Skip confirmation prompt')
     .option('--force', 'Bypass scope check')
     .action(run(async (
@@ -146,7 +149,7 @@ export function registerCommentsCommand(program: Command): void {
       'Tip: Use `favro comments list <card>` to find comment IDs.'
     )
     .requiredOption('--text <comment>', 'New comment text')
-    .option('--dry-run', 'Print what would be updated without making API calls')
+    .option('--dry-run', 'Preview the update. Reads the comment first to check the scope lock')
     .option('-y, --yes', 'Skip confirmation prompt')
     .option('--force', 'Bypass scope check')
     .action(run(async (
@@ -185,7 +188,7 @@ export function registerCommentsCommand(program: Command): void {
       '  favro comments delete <commentId> --yes\n\n' +
       'Tip: Use `favro comments list <card>` to find comment IDs.'
     )
-    .option('--dry-run', 'Preview without making API calls')
+    .option('--dry-run', 'Preview the delete. Reads the comment first to check the scope lock')
     .option('-y, --yes', 'Skip confirmation prompt')
     .option('--force', 'Bypass scope check')
     .action(run(async (

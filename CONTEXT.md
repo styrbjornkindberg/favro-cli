@@ -174,9 +174,16 @@ matching its shape.
 write resolves its board and checks it against the locked collection before anything
 happens; a batch that straddles the lock refuses as a whole, and a write that names a
 board it cannot resolve is *uncheckable*, not exempt. `--force` is the only escape
-hatch, and it does not rescue the no-board case. `--dry-run` is a preview, never a
-safety wall — and the lock runs *before* the preview, so a preview is not a way around
-it. `assertScope` in `src/lib/safety.ts`.
+hatch, and it does not rescue the no-board case. `assertScope` in `src/lib/safety.ts`.
+
+`--dry-run` is a preview, never a safety wall, and it is not a way around the lock —
+because a preview writes nothing for the lock to guard. Where the lock runs *relative*
+to the preview varies, measured against a built CLI rather than assumed: `boards create`
+and `comments add/update/delete` check first, so their preview carries the verdict;
+`boards update/delete` and `collections update/delete` return from the preview before
+checking, so theirs does not. That is an information difference, not a safety one — the
+real run checks in every case. This paragraph used to claim the lock always ran first,
+which was false for four commands (#135).
 
 Its remit has an edge, decided rather than implied (#104): a write to an **org-scoped**
 entity — a tag, a group, a webhook, a collection being created — lands on no board at

@@ -314,16 +314,71 @@ export function run(
   };
 }
 
+/**
+ * The client, and #135's rule: **a `--dry-run` pays for exactly what its own
+ * preview reaches for, and nothing more.**
+ *
+ * Construction is still eager and still first — what is deferred on a dry run is
+ * only the REFUSAL for a credential nobody has. Measured, against a built CLI at
+ * `874df19`: of the ELEVEN eager-arm migrated commands declaring `--dry-run`
+ * (`skill run` is the twelfth and is `anonymous`, so the runner never built it a
+ * client), eight preview arms are derived entirely from argv and `ctx.config` —
+ * `boards create/update/delete`, `collections create/update/delete`, `webhooks
+ * create`, `members add --collection-target` — byte-identical to what the pre-#114
+ * CLI printed with no credentials at all. They consume zero bytes off the wire, so
+ * charging them a credential check bought nothing and cost the safest invocation
+ * in the CLI. `[dry-run] Would delete board board-1` is an echo of argv; it should
+ * not need an API key.
+ *
+ * The other four — `comments add/update/delete` and `members add --board-target`
+ * — reach for `ctx.client` BEFORE their preview, because the scope check resolves
+ * the target's board over the wire and that verdict IS most of their preview.
+ * Those keep refusing, identically, and the comments trio always did: the client
+ * came first there before #116 migrated them too.
+ *
+ * So the honest answer differs per command — and on `members add`, per FLAG within
+ * one command, which no allowlist can express. This is the one mechanism that is
+ * right about every arm without knowing any of them by name: touching the client
+ * is the discriminator, and it is the same question as "does this preview need the
+ * wire".
+ *
+ * Skipping construction outright (the issue's literal suggestion) would instead
+ * hand those four an absent `ctx.client` and break them, which is why the arm
+ * moved here and not ahead of it.
+ *
+ * Not narrowed to `RefusalError`: `readConfig()` already ran and threw in `run()`
+ * before this, so the only failures left are the two missing-credential declines
+ * `createFavroClient` raises. A discriminator for a case that cannot arrive is a
+ * branch nothing exercises.
+ */
 async function withClient(
   base: AnonymousCtx,
   opts: Record<string, unknown>,
 ): Promise<Ctx> {
-  const client = await createFavroClient({
-    apiKey: opts.apiKey as string | undefined,
-    email: opts.email as string | undefined,
-    organizationId: opts.organizationId as string | undefined,
-  });
-  return { ...base, client, api: apiNamespace(client) };
+  try {
+    const client = await createFavroClient({
+      apiKey: opts.apiKey as string | undefined,
+      email: opts.email as string | undefined,
+      organizationId: opts.organizationId as string | undefined,
+    });
+    return { ...base, client, api: apiNamespace(client) };
+  } catch (error) {
+    if (!opts.dryRun) throw error;
+    // Deferred, not discarded. A preview that reaches for either member meets
+    // the same refusal, at the same boundary, with the same wording.
+    const unresolved = (): never => {
+      throw error;
+    };
+    return {
+      ...base,
+      get client(): FavroHttpClient {
+        return unresolved();
+      },
+      get api(): ApiNamespace {
+        return unresolved();
+      },
+    };
+  }
 }
 
 // ─── output ──────────────────────────────────────────────────────────────────

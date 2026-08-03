@@ -102,9 +102,15 @@ export function registerMembersCommand(program: Command): void {
       // preview is not a way around the lock, and a dry-run that cheerfully
       // reports "would add alice@example.com to board-outside-the-lock" when the
       // real run will refuse is misinformation about the write it exists to
-      // describe. It costs nothing extra in credentials — the runner has already
-      // built the client by the time this handler runs (#135) — only one
-      // resolving GET on a locked preview, which is the price #103 accepted.
+      // describe. It costs one resolving GET on a locked preview, which is the
+      // price #103 accepted.
+      //
+      // What it costs in CREDENTIALS now depends on the target, and this command
+      // is the reason #135's rule is a mechanism rather than a list: the
+      // board-target arm reads `ctx.client`, so a preview of it refuses without
+      // an API key exactly as before; the collection-target arm checks against
+      // `ctx.config` alone, so that preview runs credential-free. One command,
+      // both answers, decided by a flag — measured against the built CLI.
       await checkTargetScope(ctx, options.to, isBoardTarget, options.force);
 
       if (options.dryRun) {

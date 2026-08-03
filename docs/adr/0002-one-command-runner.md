@@ -370,6 +370,77 @@ safe outcome, and opening the loop takes a deliberate `import { TransientError }
 two came apart the moment a fully-undone run met a failure that can never succeed. No second field
 was added to carry the first claim: the object's presence already does.
 
+### Amendment (#135): a `--dry-run` pays for exactly what its own preview reaches for
+
+As accepted, client construction is eager and first. A `--dry-run` arm lives inside the
+handler, so a preview became gated on working auth — **asking a destructive command what it
+would do cost a credential check.** Not decided; a side effect.
+
+Decided now, and the measurement is what decided it rather than either stated preference.
+Driven against `dist/cli.js` at `874df19` with `FAVRO_CONFIG_DIR` pointed at an empty
+directory and `FAVRO_API_*` / `FAVRO_EMAIL` / `FAVRO_ORG_ID` unset.
+
+**The population is twelve migrated commands declaring `--dry-run`, not the six the issue
+names** — accurate at filing, stale once #116 migrated `comments`, `webhooks` and `members`.
+Enumerated from source (every `.command(` block in `src/commands/` containing `'--dry-run'`,
+split by whether it is `.action(run(`), not from a count in a ticket. Eleven are on the eager
+arm; `skill run` is `run({ anonymous: true })` and the runner never built it a client, so it
+was never gated. Of the eleven:
+
+- **Eight preview arms are derived entirely from argv and `ctx.config` and consume nothing
+  off the wire**: `boards create/update/delete`, `collections create/update/delete`,
+  `webhooks create`, and `members add --collection-target`. Proven rather than read: the
+  pre-#114 CLI (`6db4e36^`, built and driven) prints byte-identical previews with no
+  credentials in the environment at all. `[dry-run] Would delete board board-1` is an echo
+  of argv.
+- **Four reach for the wire before their preview exists**: `comments add/update/delete` call
+  `checkResolvedScope(ctx.client, () => boardOfCard/boardOfComment(…))`, and on a target
+  they cannot read the preview is *replaced* by a scope refusal — measured, off a 403. Their
+  dry run has never been credential-free, including before #116 migrated them, so it is not
+  a #114 regression. `members add --board-target` (the default) is the fourth, via
+  `checkScope`.
+
+`members add` is therefore **one command that answers both ways depending on a flag**, which
+is the strongest argument against any per-command list: no allowlist can express it, and
+"does this preview touch the client" expresses it exactly.
+
+So the issue's decisive argument — *"a dry-run that skips scope resolution can no longer
+tell the user their target is outside the lock"* — is true for exactly those four and false
+for the other eight, four of which already return from the preview **before** their scope
+check and therefore have no verdict to lose. Any single global answer is wrong about one
+group.
+
+**The rule: credential resolution stays eager and first, but on a `--dry-run` invocation the
+REFUSAL for a missing credential is deferred to the first touch of `ctx.client` or
+`ctx.api`.** `withClient` in `run.ts` catches, and hands back a context whose two members
+re-throw the same error at the same boundary with the same wording.
+
+- It holds **uniformly across all 128 actions by construction**, which is the acceptance
+  criterion: the mechanism names no command and keys on no list, so there is nothing for
+  #116–#118 to remember or for an allowlist to rust into. A migrated write inherits it.
+- It is **not a safety regression**, measured rather than argued. The scope verdict the
+  seven can produce is config-derived, and it survives: under a lock, `boards create
+  <foreign-collection> --dry-run` still refuses with exit 1 and no credentials. The four
+  that produce no verdict produced none before either. The three that need the wire still
+  pay for it. Nothing that previously refused now proceeds.
+- Skipping construction outright — the issue's literal suggestion, "move the dry-run arm
+  ahead of client construction" — was rejected on the same measurement: it hands the
+  comments trio an absent `ctx.client` and breaks them, so it would need a per-command
+  exception, which is the shape this ADR exists to delete.
+- Flag validation reaches the user credential-free as a consequence, which is the
+  concern #114's ticket anticipated: `boards create col-1 --type bogus --dry-run` now
+  answers `Invalid board type: "bogus"` instead of `API key not found`.
+
+**Not narrowed to `RefusalError`.** `readConfig()` already ran and threw in `run()` before
+this point, so the only failures reaching the catch are the two missing-credential declines
+`createFavroClient` raises. A discriminator for a case that cannot arrive is a branch nothing
+exercises.
+
+Two documentation claims the measurement falsified, corrected with it: `CONTEXT.md` said the
+lock always runs before the preview (false for four commands), and `comments`' three
+`--dry-run` help strings said "without making API calls" (false for all three — they issue
+the resolving GET).
+
 ## Consequences
 
 - **#99 is re-scoped.** "Route every list read through the envelope" stops being a migration
