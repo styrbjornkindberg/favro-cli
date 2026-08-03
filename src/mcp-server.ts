@@ -100,7 +100,22 @@ export function createMcpServer(opts: { credsEnv?: Record<string, string> } = {}
       if (stderr) text += '\n--- stderr ---\n' + stderr;
       return { content: [{ type: 'text', text }] };
     } catch (err: unknown) {
-      return { content: [{ type: 'text', text: err instanceof Error ? err.message : String(err) }], isError: true };
+      // CARRY THE REASON, NOT JUST "Command failed" (ADR-0002, #147). Node folds
+      // the child's STDERR into `err.message` and leaves its STDOUT on the error
+      // object — and machine mode, which is the default and the mode an agent
+      // gets, writes the `{"error":{message,retryable}}` envelope to STDOUT
+      // (ADR-0002 rule 3). So the message alone was "Command failed: node …/cli.js
+      // auth login --email --api-key" and nothing else: every in-CLI refusal —
+      // the 48 `confirmAction` declines, `promptInput`'s no-terminal guard, every
+      // scope-lock violation — reached the agent with its reason dropped. The
+      // refusals the list itself returns above never had this problem, which is
+      // exactly why it went unnoticed.
+      const text = err instanceof Error ? err.message : String(err);
+      const envelope = (err as { stdout?: string }).stdout?.trim();
+      return {
+        content: [{ type: 'text', text: envelope ? `${text}\n${envelope}` : text }],
+        isError: true,
+      };
     }
   }
 
