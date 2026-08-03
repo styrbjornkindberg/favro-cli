@@ -207,7 +207,8 @@ export function registerCustomFieldsCommands(program: Command): void {
           console.log(
             `  The response carried no value for this field, so nothing here observed what is stored.\n` +
             `  Whether this PUT echoes customFields is unmeasured, so an absent echo is not by itself a failure.\n` +
-            `  Check the field on the card in Favro before treating this as done.`
+            `  Verify with: favro cards get ${cardId}\n` +
+            `  (customFields come back inline on the card row, keyed by customFieldId.)`
           );
         } else {
           console.log(`✓ Custom field updated successfully.`);
