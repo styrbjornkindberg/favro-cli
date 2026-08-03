@@ -1203,12 +1203,11 @@ if (require.main === module) {
   // No subcommand given → run persistent interactive menu
   const userArgs = process.argv.slice(2);
   if (userArgs.length === 0) {
-    runMainMenu(prog.version() ?? '', () => prog.outputHelp()).then(() => {
-      process.exit(0);
-    }).catch((err) => {
-      logError(err, prog.opts().verbose);
-      process.exit(1);
-    });
+    // `runMainMenu` is `run(handler)` (#118): it owns the error boundary and
+    // the exit code, and it never rejects — so there is nothing to `.catch`,
+    // and nothing to `process.exit(0)` for. The menu releases stdin on the way
+    // out and node leaves once the event loop drains, after stdout flushes.
+    void runMainMenu(prog.version() ?? '', prog);
   } else {
     prog.parseAsync(process.argv).catch((err) => {
       // `.exitOverride()` routes `--help`, `--version` and parse errors here as

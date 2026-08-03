@@ -8,6 +8,15 @@
  * (#66). The other is the recording state machine, which is module-level
  * mutable state shared between `record`, `recordStep` and `stop`.
  */
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+// Before any require that might touch the real ~/.favro — the runner reads the
+// config before every handler now (#118), and `jest.mock('fs')` below does not
+// cover `fs/promises`, which is what `readConfig` uses.
+process.env.FAVRO_CONFIG_DIR = mkdtempSync(join(tmpdir(), 'favro-skill-'));
+
 import { Command } from 'commander';
 import { registerSkillCommands, isRecording, recordStep } from '../../commands/skill';
 import * as store from '../../lib/skill-store';
@@ -20,25 +29,34 @@ jest.mock('../../lib/skill-engine');
 jest.mock('fs');
 jest.mock('child_process');
 
-class ExitCalled extends Error {
-  constructor(readonly code: number) {
-    super(`process.exit(${code})`);
-  }
-}
-
 let logSpy: jest.SpyInstance;
 let errorSpy: jest.SpyInstance;
 let stdoutSpy: jest.SpyInstance;
 let exitSpy: jest.SpyInstance;
 
+/**
+ * `--human` and `--pretty` are root flags the runner owns (ADR-0002); `cli.ts`
+ * declares them on the real root and `resolveFormat` merges globals, so
+ * declaring them on the parse root here is equivalent.
+ *
+ * JSON is now the DEFAULT, so a test that reads the human rendering has to ask
+ * for it — the leaf `--json` these commands used to carry is gone (#118).
+ */
 async function runCli(args: string[]): Promise<void> {
   const program = new Command();
-  program.option('--verbose', 'Show stack traces');
+  program.option('--human').option('--pretty').option('--verbose', 'Show stack traces');
   registerSkillCommands(program);
   program.exitOverride();
-  await program.parseAsync(['node', 'favro', ...args]).catch((e) => {
-    if (!(e instanceof ExitCalled)) throw e;
-  });
+  await program.parseAsync(['node', 'favro', '--human', ...args]);
+}
+
+/** The same run without `--human`: the machine path, which is the default. */
+async function runJson(args: string[]): Promise<void> {
+  const program = new Command();
+  program.option('--human').option('--pretty').option('--verbose');
+  registerSkillCommands(program);
+  program.exitOverride();
+  await program.parseAsync(['node', 'favro', ...args]);
 }
 
 const output = () => logSpy.mock.calls.map((c) => String(c[0])).join('\n');
@@ -57,11 +75,14 @@ const savedEditorEnv = { EDITOR: process.env.EDITOR, VISUAL: process.env.VISUAL 
 
 beforeEach(() => {
   jest.clearAllMocks();
+  process.exitCode = undefined;
   logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
   errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
   stdoutSpy = jest.spyOn(process.stdout, 'write').mockImplementation(() => true);
-  exitSpy = jest.spyOn(process, 'exit').mockImplementation(((code?: number) => {
-    throw new ExitCalled(code ?? 0);
+  // The runner sets `process.exitCode`; this spy proves it never reaches for
+  // the hard exit, rather than steering control flow the way it used to.
+  exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {
+    throw new Error('process.exit must not be called under run()');
   }) as never);
 
   (store.listSkills as jest.Mock).mockReturnValue([]);
@@ -74,6 +95,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  process.exitCode = undefined;
   jest.restoreAllMocks();
   for (const [key, value] of Object.entries(savedEditorEnv)) {
     if (value === undefined) delete process.env[key];
@@ -101,10 +123,11 @@ describe('skill list', () => {
     expect(output()).toContain('favro skill create <name>');
   });
 
-  test('--json emits the list in the envelope, like every other list read', async () => {
+  test('the default emits the list in the envelope, like every other list read', async () => {
     (store.listSkills as jest.Mock).mockReturnValue([{ name: 'standup', description: 'd', source: 'builtin' }]);
 
-    await runCli(['skill', 'list', '--json']);
+    // No flag: JSON is the default now, and the leaf `--json` is gone (#118).
+    await runJson(['skill', 'list']);
 
     // A local read rather than a Favro one, but one shape for an agent (#99).
     expect(JSON.parse(output())).toEqual({
@@ -163,15 +186,18 @@ describe('skill run', () => {
     expect(output()).toContain('Skill "standup" partial (1/3 steps)');
   });
 
-  test('--json suppresses the per-step chatter and emits the whole result', async () => {
+  test('the machine mode suppresses the per-step chatter and emits the whole result', async () => {
     (engine.runSkill as jest.Mock).mockImplementation(async (_s: unknown, opts: engine.SkillRunOptions) => {
       opts.onStepComplete?.({ step: 1, command: 'standup', status: 'success', output: 'two cards' });
       return runResult();
     });
 
-    await runCli(['skill', 'run', 'standup', '--json']);
+    // The default. The chatter is written AS THE RUN HAPPENS, so it cannot be
+    // deferred into `human` — the handler reads the format and stays quiet.
+    await runJson(['skill', 'run', 'standup']);
 
     expect(output()).not.toContain('✓ Step 1');
+    expect(output()).not.toContain('Running skill:');
     const printed = JSON.parse(logSpy.mock.calls.map((c) => String(c[0])).find((l) => l.trim().startsWith('{'))!);
     expect(printed.status).toBe('completed');
   });
@@ -184,7 +210,7 @@ describe('skill run', () => {
     await runCli(['skill', 'run', 'standup']);
 
     expect(output()).toContain('safe to retry');
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   test('a clean unwind of a DETERMINISTIC failure forbids one — the outcome alone cannot say this', async () => {
@@ -225,7 +251,7 @@ describe('skill run', () => {
 
     expect(engine.runSkill).not.toHaveBeenCalled();
     expect(errors()).toContain('Skill "ghost" not found');
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 });
 
@@ -276,7 +302,7 @@ describe('skill create / export / import / delete / edit', () => {
 
     expect(store.importSkill).not.toHaveBeenCalled();
     expect(errors()).toContain('ENOENT');
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   test('delete removes the named skill', async () => {
@@ -295,7 +321,7 @@ describe('skill create / export / import / delete / edit', () => {
 
     expect(output()).not.toContain('✓ Skill deleted');
     expect(errors()).toContain('builtin skills cannot be deleted');
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   // ─── skill edit (#129) ──────────────────────────────────────────────────
@@ -404,7 +430,7 @@ describe('skill create / export / import / delete / edit', () => {
     await runCli(['skill', 'edit', 'mine']);
 
     expect(spawnSyncMock()).not.toHaveBeenCalled();
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   test('with no editor configured it refuses by name rather than guessing one', async () => {
@@ -416,7 +442,7 @@ describe('skill create / export / import / delete / edit', () => {
     expect(spawnSyncMock()).not.toHaveBeenCalled();
     expect(errors()).toContain('EDITOR');
     expect(errors()).toContain('VISUAL');
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   test('an editor that does not exist is reported, not swallowed', async () => {
@@ -427,7 +453,7 @@ describe('skill create / export / import / delete / edit', () => {
 
     expect(errors()).toContain('Could not start editor "nosuchedit"');
     expect(errors()).toContain('spawn nosuchedit ENOENT');
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   test('a non-zero editor exit fails the command and promises no write-back', async () => {
@@ -438,7 +464,7 @@ describe('skill create / export / import / delete / edit', () => {
 
     expect(errors()).toContain('exited with code 3');
     expect(errors()).toContain('wrote nothing');
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   test('an editor killed by a signal reports the signal, not a null code', async () => {
@@ -448,7 +474,7 @@ describe('skill create / export / import / delete / edit', () => {
     await runCli(['skill', 'edit', 'mine']);
 
     expect(errors()).toContain('SIGKILL');
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 });
 
@@ -497,7 +523,7 @@ describe('skill record / stop — the recording state machine', () => {
     await runCli(['skill', 'record', 'second']);
 
     expect(errors()).toContain('Already recording skill "first"');
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
     // Still the FIRST session — the second did not take it over.
     recordStep('standup');
     await runCli(['skill', 'stop']);
@@ -518,7 +544,7 @@ describe('skill record / stop — the recording state machine', () => {
     await runCli(['skill', 'stop']);
 
     expect(errors()).toContain('favro skill record <name>');
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   test('an undescribed recording gets a default description', async () => {

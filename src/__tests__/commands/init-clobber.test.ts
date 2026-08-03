@@ -67,12 +67,6 @@ const MockMembers = FavroApiClient as jest.MockedClass<typeof FavroApiClient>;
 /** The sentinel. Deliberately not valid context.json — any rewrite changes it. */
 const SENTINEL = '{"do-not":"clobber me"}\n';
 
-class ExitCalled extends Error {
-  constructor(readonly code: number) {
-    super(`process.exit(${code})`);
-  }
-}
-
 let repoDir: string;
 let contextFile: string;
 let exitSpy: jest.SpyInstance;
@@ -91,8 +85,9 @@ beforeEach(() => {
   errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
   // Throwing, not returning: a returning stub cannot distinguish "the guard
   // stopped the run" from "the guard was ignored and the run finished".
-  exitSpy = jest.spyOn(process, 'exit').mockImplementation(((code?: number) => {
-    throw new ExitCalled(code ?? 0);
+  process.exitCode = undefined;
+  exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {
+    throw new Error('process.exit must not be called under run()');
   }) as never);
 
   (clientFactory.createFavroClient as jest.Mock).mockResolvedValue({
@@ -108,6 +103,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  process.exitCode = undefined;
   jest.restoreAllMocks();
   fs.rmSync(repoDir, { recursive: true, force: true });
 });
@@ -118,20 +114,18 @@ afterAll(() => {
 
 async function runInit(...args: string[]): Promise<void> {
   const program = new Command();
-  program.option('--verbose', 'Show stack traces');
+  program.option('--human').option('--pretty').option('--verbose', 'Show stack traces');
   registerInitCommand(program);
   program.exitOverride();
-  await program.parseAsync(['node', 'favro', 'init', ...args]).catch((e) => {
-    if (!(e instanceof ExitCalled)) throw e;
-  });
+  await program.parseAsync(['node', 'favro', '--human', 'init', ...args]);
 }
 
 test('leaves an existing context.json byte-for-byte unchanged and exits non-zero', async () => {
   await runInit();
 
   expect(fs.readFileSync(contextFile, 'utf-8')).toBe(SENTINEL);
-  expect(exitSpy).toHaveBeenCalledWith(1);
-  expect(exitSpy.mock.calls.every(([code]) => code !== 0)).toBe(true);
+  expect(process.exitCode).toBe(1);
+  expect(exitSpy).not.toHaveBeenCalled();
 });
 
 test('the refusal names the file in the way and both ways past it', async () => {

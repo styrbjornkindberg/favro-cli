@@ -3,6 +3,16 @@
   "version": "2.4.1",
   "description": "Favro command-line interface",
   "main": "dist/index.js",
+  "//files": "#128 defence in depth: a build-config regression must not ship test code. `skills` is runtime — skill-store.ts resolves <pkg>/skills/builtin.",
+  "files": [
+    "dist",
+    "skills",
+    "!dist/**/__tests__",
+    "!dist/**/__integration__",
+    "!dist/**/test-support",
+    "!dist/**/*.test.*",
+    "!dist/**/*.map"
+  ],
   "bin": {
     "favro": "dist/cli.js",
     "favro-mcp": "dist/mcp-server.js",

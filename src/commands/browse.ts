@@ -7,14 +7,12 @@
  * Uses enquirer for arrow-key menu navigation with search.
  */
 import { Command } from 'commander';
-import { logError } from '../lib/error-handler';
-import { createFavroClient } from '../lib/client-factory';
-import CollectionsAPI, { Collection } from '../lib/collections-api';
-import BoardsAPI, { Board } from '../lib/boards-api';
-import CardsAPI, { Card } from '../lib/cards-api';
+import { ApiNamespace, Ctx, run } from '../lib/run';
+import type CardsAPI from '../lib/cards-api';
+import type { Card } from '../lib/cards-api';
 import { c, stripAnsi } from '../lib/theme';
-import { renderBoard, renderStatusBar, RenderColumn, RenderCard } from '../lib/board-renderer';
 import { isOverdue } from '../lib/card-predicates';
+import { isPromptCancelled } from '../lib/prompt-cancelled';
 
 // ─── enquirer import (CJS) ───────────────────────────────────────────────────
 
@@ -159,7 +157,7 @@ async function browseCards(
 }
 
 async function browseBoards(
-  boardsApi: BoardsAPI,
+  boardsApi: ApiNamespace['boards'],
   cardsApi: CardsAPI,
   collectionId: string,
   collectionName: string,
@@ -199,8 +197,8 @@ async function browseBoards(
 }
 
 async function browseCollections(
-  collectionsApi: CollectionsAPI,
-  boardsApi: BoardsAPI,
+  collectionsApi: ApiNamespace['collections'],
+  boardsApi: ApiNamespace['boards'],
   cardsApi: CardsAPI,
 ): Promise<void> {
   while (true) {
@@ -238,6 +236,39 @@ async function browseCollections(
 
 // ─── Command ──────────────────────────────────────────────────────────────────
 
+/**
+ * ON THE `void` ARM (ADR-0002, #118). Every screen this command draws is its
+ * own, so it returns nothing and the runner writes nothing over it.
+ *
+ * Exported so a test can hand it a fake `Ctx` — no client mock.
+ */
+export async function browseHandler(ctx: Ctx, options: { board?: string }): Promise<void> {
+  try {
+    if (options.board) {
+      // Jump directly to card browsing on a specific board
+      let boardName = options.board;
+      try {
+        const board = await ctx.api.boards.getBoard(options.board);
+        boardName = board.name ?? options.board;
+      } catch { /* use ID as name fallback */ }
+
+      await browseCards(ctx.api.cards, options.board, boardName);
+    } else {
+      await browseCollections(ctx.api.collections, ctx.api.boards, ctx.api.cards);
+    }
+
+    console.log(`\n  ${c.muted('Goodbye!')}\n`);
+  } catch (error: unknown) {
+    // Ctrl+C only. Everything else goes to the runner's boundary, which is the
+    // one place that decides the stream and the exit code.
+    if (isPromptCancelled(error)) {
+      console.log(`\n  ${c.muted('Goodbye!')}\n`);
+      return;
+    }
+    throw error;
+  }
+}
+
 export function registerBrowseCommand(program: Command): void {
   program
     .command('browse')
@@ -249,38 +280,7 @@ export function registerBrowseCommand(program: Command): void {
       '  favro browse --board <boardId>  — Jump directly into a board',
     )
     .option('--board <boardId>', 'Jump directly to a specific board')
-    .action(async (options) => {
-      const verbose = program.opts()?.verbose ?? false;
-      try {
-        const client = await createFavroClient();
-        const collectionsApi = new CollectionsAPI(client);
-        const boardsApi = new BoardsAPI(client);
-        const cardsApi = new CardsAPI(client);
-
-        if (options.board) {
-          // Jump directly to card browsing on a specific board
-          let boardName = options.board;
-          try {
-            const board = await boardsApi.getBoard(options.board);
-            boardName = board.name ?? options.board;
-          } catch { /* use ID as name fallback */ }
-
-          await browseCards(cardsApi, options.board, boardName);
-        } else {
-          await browseCollections(collectionsApi, boardsApi, cardsApi);
-        }
-
-        console.log(`\n  ${c.muted('Goodbye!')}\n`);
-      } catch (error: any) {
-        if (error?.message === '' || error?.code === 'ERR_USE_AFTER_CLOSE') {
-          // User pressed Ctrl+C
-          console.log(`\n  ${c.muted('Goodbye!')}\n`);
-          return;
-        }
-        logError(error, verbose);
-        process.exit(1);
-      }
-    });
+    .action(run(browseHandler));
 }
 
 export default registerBrowseCommand;

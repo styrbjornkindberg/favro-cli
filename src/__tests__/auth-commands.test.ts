@@ -30,6 +30,21 @@ jest.mock('../lib/http-client');
 import FavroHttpClient from '../lib/http-client';
 const MockedFavroHttpClient = FavroHttpClient as jest.MockedClass<typeof FavroHttpClient>;
 
+/**
+ * A root carrying the flags the runner owns. `cli.ts` declares them on the real
+ * root; `resolveFormat` reads them with globals merged, so declaring them on
+ * the parse root here is equivalent.
+ *
+ * The error assertions below pass `--human`, which is what puts the message on
+ * stderr through `logError`. Without it the runner's default is JSON and the
+ * same message arrives as `{error:{message, retryable}}` on stdout (#118).
+ */
+function buildRoot(): Command {
+  const program = new Command();
+  program.option('--human').option('--pretty').option('--verbose');
+  return program;
+}
+
 describe('auth login command', () => {
   let consoleLogSpy: jest.SpyInstance;
   let consoleErrorSpy: jest.SpyInstance;
@@ -39,9 +54,12 @@ describe('auth login command', () => {
     jest.resetAllMocks();  // Clears queued mock return values to prevent cross-test leakage
     consoleLogSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
     consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => {
-      throw new Error('process.exit');
-    });
+    // The runner sets `process.exitCode` and never calls `process.exit` — the
+    // spy is here to prove the second half, not to steer control flow (#118).
+    process.exitCode = undefined;
+    exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {
+      throw new Error('process.exit must not be called under run()');
+    }) as never);
 
     mockFs.mkdir.mockResolvedValue(undefined as any);
     mockFs.writeFile.mockResolvedValue(undefined);
@@ -66,13 +84,14 @@ describe('auth login command', () => {
   });
 
   afterEach(() => {
+    process.exitCode = undefined;
     consoleLogSpy.mockRestore();
     consoleErrorSpy.mockRestore();
     exitSpy.mockRestore();
   });
 
   test('saves API key via --api-key flag without prompt', async () => {
-    const program = new Command();
+    const program = buildRoot();
     registerAuthCommand(program);
 
     await program.parseAsync(['node', 'test', 'auth', 'login', '--email', 'test@example.com', '--api-key', 'my-test-key']);
@@ -85,7 +104,7 @@ describe('auth login command', () => {
   });
 
   test('confirms with ✓ API key saved message', async () => {
-    const program = new Command();
+    const program = buildRoot();
     registerAuthCommand(program);
 
     await program.parseAsync(['node', 'test', 'auth', 'login', '--email', 'test@example.com', '--api-key', 'key-abc']);
@@ -95,7 +114,7 @@ describe('auth login command', () => {
   });
 
   test('saves config with correct file permissions (0o600)', async () => {
-    const program = new Command();
+    const program = buildRoot();
     registerAuthCommand(program);
 
     await program.parseAsync(['node', 'test', 'auth', 'login', '--email', 'test@example.com', '--api-key', 'secure-key']);
@@ -111,15 +130,14 @@ describe('auth login command', () => {
     const permErr = Object.assign(new Error('EACCES'), { code: 'EACCES' });
     mockFs.writeFile.mockRejectedValueOnce(permErr);
 
-    const program = new Command();
+    const program = buildRoot();
     registerAuthCommand(program);
 
-    await expect(
-      program.parseAsync(['node', 'test', 'auth', 'login', '--email', 'test@example.com', '--api-key', 'key-xyz'])
-    ).rejects.toThrow('process.exit');
+    await program.parseAsync(['node', 'test', '--human', 'auth', 'login', '--email', 'test@example.com', '--api-key', 'key-xyz']);
 
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('permission error'));
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
+    expect(exitSpy).not.toHaveBeenCalled();
   });
 
   test('exits with error if no API key provided', async () => {
@@ -135,15 +153,39 @@ describe('auth login command', () => {
     };
     (mockReadline.createInterface as jest.Mock).mockReturnValue(mockRl);
 
-    const program = new Command();
+    const program = buildRoot();
     registerAuthCommand(program);
 
-    await expect(
-      program.parseAsync(['node', 'test', 'auth', 'login'])
-    ).rejects.toThrow();
+    await program.parseAsync(['node', 'test', '--human', 'auth', 'login']);
 
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('No API key'));
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  test('an empty key is a refusal, so the machine mode says do not retry', async () => {
+    const mockRl = {
+      question: jest.fn()
+        .mockImplementationOnce((_q: string, cb: (a: string) => void) => cb('test@example.com'))
+        .mockImplementationOnce((_q: string, cb: (a: string) => void) => cb('')),
+      close: jest.fn(),
+      output: { write: jest.fn() },
+    };
+    (mockReadline.createInterface as jest.Mock).mockReturnValue(mockRl);
+
+    const program = buildRoot();
+    registerAuthCommand(program);
+
+    // No `--human`: JSON is the default, and the envelope is on STDOUT because
+    // MCP hands an agent stdout first (ADR-0002 rule 3).
+    await program.parseAsync(['node', 'test', 'auth', 'login']);
+
+    const envelope = consoleLogSpy.mock.calls
+      .map((cl) => String(cl[0]))
+      .filter((line) => line.startsWith('{"error"'))
+      .map((line) => JSON.parse(line).error)[0];
+    expect(envelope).toEqual({ message: 'No API key provided.', retryable: false });
+    expect(process.exitCode).toBe(1);
   });
 
   test('prompts interactively when no --api-key flag given', async () => {
@@ -156,7 +198,7 @@ describe('auth login command', () => {
     };
     (mockReadline.createInterface as jest.Mock).mockReturnValue(mockRl);
 
-    const program = new Command();
+    const program = buildRoot();
     registerAuthCommand(program);
 
     await program.parseAsync(['node', 'test', 'auth', 'login']);
@@ -168,13 +210,13 @@ describe('auth login command', () => {
 
   test('merges new apiKey into existing config (preserves other fields)', async () => {
     // readFile returns existing config with other fields
-    mockFs.readFile.mockResolvedValueOnce(JSON.stringify({
+    mockFs.readFile.mockResolvedValue(JSON.stringify({
       apiKey: 'old-key',
       defaultBoard: 'board-existing',
       outputFormat: 'json',
     }) as any);
 
-    const program = new Command();
+    const program = buildRoot();
     registerAuthCommand(program);
 
     await program.parseAsync(['node', 'test', 'auth', 'login', '--email', 'test@example.com', '--api-key', 'new-key']);
@@ -196,9 +238,12 @@ describe('auth check command', () => {
     jest.resetAllMocks();  // Clears queued mock values AND implementations to prevent leakage
     consoleLogSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
     consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => {
-      throw new Error('process.exit');
-    });
+    // The runner sets `process.exitCode` and never calls `process.exit` — the
+    // spy is here to prove the second half, not to steer control flow (#118).
+    process.exitCode = undefined;
+    exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {
+      throw new Error('process.exit must not be called under run()');
+    }) as never);
 
     // Re-establish fs mocks after resetAllMocks
     mockFs.mkdir.mockResolvedValue(undefined as any);
@@ -211,6 +256,7 @@ describe('auth check command', () => {
   });
 
   afterEach(() => {
+    process.exitCode = undefined;
     consoleLogSpy.mockRestore();
     consoleErrorSpy.mockRestore();
     exitSpy.mockRestore();
@@ -219,15 +265,14 @@ describe('auth check command', () => {
   });
 
   test('exits with error when no key is configured', async () => {
-    const program = new Command();
+    const program = buildRoot();
     registerAuthCommand(program);
 
-    await expect(
-      program.parseAsync(['node', 'test', 'auth', 'check'])
-    ).rejects.toThrow('process.exit');
+    await program.parseAsync(['node', 'test', '--human', 'auth', 'check']);
 
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('API key not found'));
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
+    expect(exitSpy).not.toHaveBeenCalled();
   });
 
   test('prints ✓ API key is valid when check succeeds', async () => {
@@ -236,7 +281,7 @@ describe('auth check command', () => {
     };
     MockedFavroHttpClient.mockImplementationOnce(() => mockClientInstance as any);
 
-    const program = new Command();
+    const program = buildRoot();
     registerAuthCommand(program);
 
     await program.parseAsync(['node', 'test', 'auth', 'check', '--api-key', 'valid-key']);
@@ -253,27 +298,26 @@ describe('auth check command', () => {
     };
     MockedFavroHttpClient.mockImplementationOnce(() => mockClientInstance as any);
 
-    const program = new Command();
+    const program = buildRoot();
     registerAuthCommand(program);
 
-    await expect(
-      program.parseAsync(['node', 'test', 'auth', 'check', '--api-key', 'bad-key'])
-    ).rejects.toThrow('process.exit');
+    await program.parseAsync(['node', 'test', '--human', 'auth', 'check', '--api-key', 'bad-key']);
 
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('invalid or unauthorized'));
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
+    expect(exitSpy).not.toHaveBeenCalled();
   });
 
   test('--api-key flag overrides config and env', async () => {
     process.env.FAVRO_API_KEY = 'env-key';
-    mockFs.readFile.mockResolvedValueOnce(JSON.stringify({ apiKey: 'config-key' }) as any);
+    mockFs.readFile.mockResolvedValue(JSON.stringify({ apiKey: 'config-key' }) as any);
 
     const mockClientInstance = {
       get: jest.fn().mockResolvedValueOnce({}),
     };
     MockedFavroHttpClient.mockImplementationOnce(() => mockClientInstance as any);
 
-    const program = new Command();
+    const program = buildRoot();
     registerAuthCommand(program);
 
     await program.parseAsync(['node', 'test', 'auth', 'check', '--api-key', 'flag-key']);
@@ -295,7 +339,7 @@ describe('auth check command', () => {
     };
     MockedFavroHttpClient.mockImplementationOnce(() => mockClientInstance as any);
 
-    const program = new Command();
+    const program = buildRoot();
     registerAuthCommand(program);
 
     await program.parseAsync(['node', 'test', 'auth', 'check']);
@@ -306,14 +350,14 @@ describe('auth check command', () => {
   });
 
   test('config file key used when no flag or env', async () => {
-    mockFs.readFile.mockResolvedValueOnce(JSON.stringify({ apiKey: 'config-key' }) as any);
+    mockFs.readFile.mockResolvedValue(JSON.stringify({ apiKey: 'config-key' }) as any);
 
     const mockClientInstance = {
       get: jest.fn().mockResolvedValueOnce({}),
     };
     MockedFavroHttpClient.mockImplementationOnce(() => mockClientInstance as any);
 
-    const program = new Command();
+    const program = buildRoot();
     registerAuthCommand(program);
 
     await program.parseAsync(['node', 'test', 'auth', 'check']);
@@ -324,15 +368,14 @@ describe('auth check command', () => {
   });
 
   test('shows helpful hint to run auth login when no key configured', async () => {
-    const program = new Command();
+    const program = buildRoot();
     registerAuthCommand(program);
 
-    await expect(
-      program.parseAsync(['node', 'test', 'auth', 'check'])
-    ).rejects.toThrow('process.exit');
+    await program.parseAsync(['node', 'test', '--human', 'auth', 'check']);
 
     const errorOutput = consoleErrorSpy.mock.calls.map(c => c[0]).join('\n');
     expect(errorOutput).toContain('favro auth login');
+    expect(process.exitCode).toBe(1);
   });
 });
 

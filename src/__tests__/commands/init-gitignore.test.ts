@@ -80,12 +80,6 @@ const EXISTING_GITIGNORE = [
   '',
 ].join('\n');
 
-class ExitCalled extends Error {
-  constructor(readonly code: number) {
-    super(`process.exit(${code})`);
-  }
-}
-
 let repoDir: string;
 let gitignorePath: string;
 let contextFile: string;
@@ -105,8 +99,9 @@ beforeEach(() => {
   jest.spyOn(console, 'error').mockImplementation(() => {});
   // Throwing, not returning: a returning stub lets the run continue past a
   // refusal and cannot distinguish "stopped" from "ignored".
-  exitSpy = jest.spyOn(process, 'exit').mockImplementation(((code?: number) => {
-    throw new ExitCalled(code ?? 0);
+  process.exitCode = undefined;
+  exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {
+    throw new Error('process.exit must not be called under run()');
   }) as never);
 
   (clientFactory.createFavroClient as jest.Mock).mockResolvedValue({
@@ -122,6 +117,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  process.exitCode = undefined;
   jest.restoreAllMocks();
   fs.rmSync(repoDir, { recursive: true, force: true });
 });
@@ -132,12 +128,10 @@ afterAll(() => {
 
 async function runInit(...args: string[]): Promise<void> {
   const program = new Command();
-  program.option('--verbose', 'Show stack traces');
+  program.option('--human').option('--pretty').option('--verbose', 'Show stack traces');
   registerInitCommand(program);
   program.exitOverride();
-  await program.parseAsync(['node', 'favro', 'init', ...args]).catch((e) => {
-    if (!(e instanceof ExitCalled)) throw e;
-  });
+  await program.parseAsync(['node', 'favro', '--human', 'init', ...args]);
 }
 
 /** The one failure the old `catch` could not tell apart from "no file yet". */
@@ -154,8 +148,8 @@ test('a failing append leaves .gitignore byte-for-byte unchanged and exits non-z
   await runInit();
 
   expect(fs.readFileSync(gitignorePath, 'utf-8')).toBe(EXISTING_GITIGNORE);
-  expect(exitSpy).toHaveBeenCalledWith(1);
-  expect(exitSpy.mock.calls.every(([code]) => code !== 0)).toBe(true);
+  expect(process.exitCode).toBe(1);
+  expect(exitSpy).not.toHaveBeenCalled();
 });
 
 test('writes context.json before it touches .gitignore — the append is genuinely reached', async () => {
@@ -208,5 +202,5 @@ test('an unreadable .gitignore refuses rather than replacing it', async () => {
   await runInit();
 
   expect(fs.readFileSync(gitignorePath, 'utf-8')).toBe(EXISTING_GITIGNORE);
-  expect(exitSpy).toHaveBeenCalledWith(1);
+  expect(process.exitCode).toBe(1);
 });

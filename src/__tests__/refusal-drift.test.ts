@@ -24,6 +24,8 @@ import { TagsAPI } from '../lib/tags-api';
 import { UsersAPI } from '../lib/users-api';
 import { resolveAssignee } from '../lib/assignee';
 import CardReferenceResolver from '../lib/card-reference';
+import { createFavroClient } from '../lib/client-factory';
+import { loadSkill, getSkillPath } from '../lib/skill-store';
 
 const LIB_DIR = path.resolve(__dirname, '..', 'lib');
 
@@ -138,6 +140,73 @@ describe('every module that resolves an identifier refuses with a RefusalError',
 
   it.each(resolvers)('%s', async (_name, run) => {
     await expect(run()).rejects.toBeInstanceOf(RefusalError);
+  });
+});
+
+// ─── the credential absences ─────────────────────────────────────────────────
+
+/**
+ * An unset credential is a REFUSAL, not a failure (#118).
+ *
+ * Not a resolver, so neither arm above reaches it — but it is the same mistake
+ * with a wider blast radius, because the runner builds the client before EVERY
+ * non-anonymous handler. A bare `Error` here has no HTTP response to classify,
+ * so `isRetryable` calls it retryable and an agent is told to repeat a call
+ * that needs a key nobody has set. It is also, for a fresh install, the very
+ * first error the CLI can produce.
+ */
+describe('an unset credential refuses rather than inviting a retry', () => {
+  const saved = {
+    dir: process.env.FAVRO_CONFIG_DIR,
+    key: process.env.FAVRO_API_KEY,
+    email: process.env.FAVRO_EMAIL,
+  };
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'favro-no-creds-'));
+    process.env.FAVRO_CONFIG_DIR = tmpDir;
+    delete process.env.FAVRO_API_KEY;
+    delete process.env.FAVRO_EMAIL;
+  });
+
+  afterEach(() => {
+    for (const [name, value] of [
+      ['FAVRO_CONFIG_DIR', saved.dir],
+      ['FAVRO_API_KEY', saved.key],
+      ['FAVRO_EMAIL', saved.email],
+    ] as const) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('no API key anywhere', async () => {
+    await expect(createFavroClient()).rejects.toBeInstanceOf(RefusalError);
+  });
+
+  it('a key but no email', async () => {
+    process.env.FAVRO_API_KEY = 'a-key';
+    // Empty rather than deleted: `createFavroClient` falls back to a fixture
+    // address under NODE_ENV=test, and `''` is not nullish so it survives the
+    // `??` chain and reaches the guard.
+    process.env.FAVRO_EMAIL = '';
+    await expect(createFavroClient()).rejects.toBeInstanceOf(RefusalError);
+  });
+
+  /**
+   * `skill-store.ts` declines the same way and for the same reason: a name
+   * nothing matches, or a name that is really a path, refuses identically on
+   * every retry. Same fix, same ticket (#118) — the skill commands adopted the
+   * runner, so these reach the error envelope now instead of a `logError` line.
+   */
+  it('a skill nobody has', () => {
+    expect(() => loadSkill('definitely-not-a-skill-xyz')).toThrow(RefusalError);
+  });
+
+  it('a skill name that is really a path', () => {
+    expect(() => getSkillPath('../../etc/passwd')).toThrow(RefusalError);
   });
 });
 

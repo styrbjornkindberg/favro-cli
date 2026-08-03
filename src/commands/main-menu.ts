@@ -3,16 +3,21 @@
  *
  * Navigation: Collections → Boards → Board view (kanban) → Card detail
  * Always traverse back up the hierarchy. Only Exit or Ctrl+C leaves.
+ *
+ * ON THE `void` ARM (ADR-0002, #118). Every frame is this command's own, so it
+ * returns nothing and the runner writes nothing over it — but it is NOT
+ * anonymous: four of the six menu items read Favro, so the runner builds the
+ * client and a machine with no key is told so up front instead of being handed
+ * a menu where two-thirds of the entries fail one at a time.
  */
+import type { Command } from 'commander';
 import { c } from '../lib/theme';
-import { createFavroClient } from '../lib/client-factory';
-import CollectionsAPI from '../lib/collections-api';
-import BoardsAPI from '../lib/boards-api';
-import CardsAPI from '../lib/cards-api';
-import { ContextAPI, ContextCard } from '../api/context';
+import { ContextCard } from '../api/context';
 import { renderBoard, renderStatusBar, snapshotToColumns } from '../lib/board-renderer';
-import { readConfig, resolveUserId } from '../lib/config';
-import { outputResult, resolveFormat } from '../lib/output';
+import { resolveUserId } from '../lib/config';
+import { isOverdue } from '../lib/card-predicates';
+import { isPromptCancelled } from '../lib/prompt-cancelled';
+import { Ctx, run } from '../lib/run';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { Select, AutoComplete } = require('enquirer');
@@ -66,30 +71,15 @@ function pause(): Promise<void> {
   });
 }
 
-// ─── API singleton ───────────────────────────────────────────────────────────
-
-let _collections: CollectionsAPI | null = null;
-let _boards: BoardsAPI | null = null;
-let _cards: CardsAPI | null = null;
-let _context: ContextAPI | null = null;
-
-async function api() {
-  if (!_boards) {
-    const client = await createFavroClient();
-    _collections = new CollectionsAPI(client);
-    _boards = new BoardsAPI(client);
-    _cards = new CardsAPI(client);
-    _context = new ContextAPI(client);
-  }
-  return { collections: _collections!, boards: _boards!, cards: _cards!, context: _context! };
-}
-
 // ─── Actions ─────────────────────────────────────────────────────────────────
+//
+// `ctx.api` replaces the four module-level API singletons this file used to
+// memoise for itself: the runner's namespace is already lazy and already
+// memoised, and a module-level cache outlives the run that filled it.
 
 async function showAuthCheck(): Promise<void> {
   console.log(`\n  ${c.muted('Checking API credentials…')}`);
   try {
-    await api();
     const { resolveAuth } = await import('../lib/config');
     const auth = await resolveAuth({});
     const { validateApiKey } = await import('../commands/auth');
@@ -105,8 +95,8 @@ async function showAuthCheck(): Promise<void> {
   await pause();
 }
 
-async function showCollections(): Promise<void> {
-  const { collections } = await api();
+async function showCollections(ctx: Ctx): Promise<void> {
+  const collections = ctx.api.collections;
 
   while (true) {
     console.log(`\n  ${c.heading('Collections')}`);
@@ -129,12 +119,12 @@ async function showCollections(): Promise<void> {
     if (answer === 'back') return;
 
     const col = list[parseInt(answer, 10)];
-    if (col) await showBoardsInCollection(col.collectionId, col.name);
+    if (col) await showBoardsInCollection(ctx, col.collectionId, col.name);
   }
 }
 
-async function showBoardsInCollection(collectionId: string, collectionName: string): Promise<void> {
-  const { boards } = await api();
+async function showBoardsInCollection(ctx: Ctx, collectionId: string, collectionName: string): Promise<void> {
+  const boards = ctx.api.boards;
 
   while (true) {
     console.log(`\n  ${c.heading(collectionName)}`);
@@ -160,12 +150,12 @@ async function showBoardsInCollection(collectionId: string, collectionName: stri
     if (answer === 'back') return;
 
     const board = list[parseInt(answer, 10)];
-    if (board) await showBoardView(board.boardId, board.name);
+    if (board) await showBoardView(ctx, board.boardId);
   }
 }
 
-async function showBoardView(boardId: string, boardName: string): Promise<void> {
-  const { context, cards: cardsApi } = await api();
+async function showBoardView(ctx: Ctx, boardId: string): Promise<void> {
+  const context = ctx.api.context;
 
   while (true) {
     console.log(`\n  ${c.muted('Loading board…')}`);
@@ -226,16 +216,14 @@ async function showBoardView(boardId: string, boardName: string): Promise<void> 
 
     const idx = parseInt(answer, 10);
     const selected = cardLookup[idx];
-    if (selected) await showCardDetail(selected.id);
+    if (selected) await showCardDetail(ctx, selected.id);
   }
 }
 
-async function showCardDetail(cardId: string): Promise<void> {
-  const { cards: cardsApi } = await api();
-
+async function showCardDetail(ctx: Ctx, cardId: string): Promise<void> {
   console.log(`  ${c.muted('Loading…')}`);
   try {
-    const card = await cardsApi.getCard(cardId, { include: ['comments', 'relations'] });
+    const card = await ctx.api.cards.getCard(cardId, { include: ['comments', 'relations'] });
 
     console.log('');
     console.log(`  ${c.heading(card.name)}`);
@@ -245,7 +233,12 @@ async function showCardDetail(cardId: string): Promise<void> {
     if (card.assignees?.length) console.log(`  ${c.label('Assignees')}   ${card.assignees.map(a => c.assignee(`@${a}`)).join('  ')}`);
     if (card.tags?.length) console.log(`  ${c.label('Tags')}        ${card.tags.map(t => c.tag(t)).join('  ')}`);
     if (card.dueDate) {
-      const overdue = new Date(card.dueDate) < new Date();
+      // The FOURTH inline copy of the overdue test (#89 killed three of them).
+      // `new Date(dueDate) < new Date()` compares a date-only string parsed as
+      // UTC midnight against *now*, so a card due today read as overdue from
+      // 00:00 onwards west of Greenwich. `isOverdue` is the surviving copy and
+      // takes the date-only branch for a date-only string.
+      const overdue = isOverdue(card);
       console.log(`  ${c.label('Due')}         ${overdue ? c.error(`${card.dueDate} (overdue)`) : c.value(card.dueDate)}`);
     }
     if (card.createdAt) console.log(`  ${c.label('Created')}     ${c.muted(card.createdAt.slice(0, 10))}`);
@@ -274,20 +267,18 @@ async function showCardDetail(cardId: string): Promise<void> {
 
 // ─── Main Menu Loop ──────────────────────────────────────────────────────────
 
-async function showMyWork(): Promise<void> {
+async function showMyWork(ctx: Ctx): Promise<void> {
   console.log(`\n  ${c.heading('My Work')}`);
   console.log(`  ${c.muted('Loading your cards…')}`);
   try {
-    const config = await readConfig();
+    const config = ctx.config;
     const userId = await resolveUserId();
     if (!userId) {
       console.log(`  ${c.error('Could not resolve your userId. Run "favro auth login" to set up credentials.')}`);
       await pause();
       return;
     }
-    const client = await createFavroClient();
-    const AggregateAPI = (await import('../api/aggregate')).default;
-    const agg = new AggregateAPI(client);
+    const agg = ctx.api.aggregate;
 
     let snapshot;
     if (config.scopeCollectionId) {
@@ -332,14 +323,12 @@ async function showMyWork(): Promise<void> {
   await pause();
 }
 
-async function showTeamDashboard(): Promise<void> {
+async function showTeamDashboard(ctx: Ctx): Promise<void> {
   console.log(`\n  ${c.heading('Team Dashboard')}`);
   console.log(`  ${c.muted('Loading team data…')}`);
   try {
-    const config = await readConfig();
-    const client = await createFavroClient();
-    const AggregateAPI = (await import('../api/aggregate')).default;
-    const agg = new AggregateAPI(client);
+    const config = ctx.config;
+    const agg = ctx.api.aggregate;
 
     let snapshot;
     let scope: string;
@@ -395,8 +384,12 @@ const MENU_ITEMS = [
 
 /**
  * Run the persistent interactive menu. Loops until user exits.
+ *
+ * Takes the root `Command` rather than an `outputHelp` closure so the runner
+ * can resolve `--human`/`--verbose` off it the way it does for every other
+ * action — `commandFrom` detects it by shape as the last argument.
  */
-export async function runMainMenu(version: string, outputHelp: () => void): Promise<void> {
+async function mainMenuHandler(ctx: Ctx, version: string, program: Command): Promise<void> {
   console.log(LOGO);
   console.log(`  ${c.muted(`CLI v${version}`)}`);
 
@@ -423,19 +416,35 @@ export async function runMainMenu(version: string, outputHelp: () => void): Prom
 
     try {
       switch (item.label) {
-        case 'My Work':          await showMyWork(); break;
-        case 'Team Dashboard':   await showTeamDashboard(); break;
-        case 'Browse':           await showCollections(); break;
+        case 'My Work':          await showMyWork(ctx); break;
+        case 'Team Dashboard':   await showTeamDashboard(ctx); break;
+        case 'Browse':           await showCollections(ctx); break;
         case 'Auth / Configure': await showAuthCheck(); break;
-        case 'Help':             outputHelp(); await pause(); break;
-        case 'Exit':             console.log(`\n  ${c.muted('Goodbye.')}\n`); return;
+        case 'Help':             program.outputHelp(); await pause(); break;
+        case 'Exit':             console.log(`\n  ${c.muted('Goodbye.')}\n`); return leave();
       }
     } catch (err: any) {
-      if (err?.message === '' || err?.code === 'ERR_USE_AFTER_CLOSE') break;
-      console.log(`\n  ${c.error(err.message ?? 'Something went wrong')}`);
+      if (isPromptCancelled(err)) break;
+      console.log(`\n  ${c.error(err?.message ?? 'Something went wrong')}`);
       await pause();
     }
   }
 
   console.log(`\n  ${c.muted('Goodbye.')}\n`);
+  leave();
 }
+
+/**
+ * Release stdin so node can leave on its own.
+ *
+ * `pause()` resumes stdin and never pauses it back, which keeps a live handle
+ * on the event loop — that is what the old hard `process.exit` in `cli.ts` was
+ * papering over. A hard exit terminates before a pending stdout write flushes
+ * (ADR-0002 rule 2), so the handle is released instead and the runner's exit
+ * code stands.
+ */
+function leave(): void {
+  process.stdin.pause();
+}
+
+export const runMainMenu = run(mainMenuHandler);
