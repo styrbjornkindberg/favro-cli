@@ -18,14 +18,19 @@ export interface ClientFlags {
 /**
  * Resolve credentials and return a ready-to-use FavroHttpClient.
  *
- * Both absences are `RefusalError`s, which is what makes them report
- * `retryable: false`. An unset key stays unset and an unset email stays unset,
- * so the same call declines identically — `isRetryable` reads an UNCLASSIFIABLE
- * error as retryable (`dispatch.ts`, and the ceiling `run.ts` names), and these
- * two have no HTTP response to classify. #118 made that visible: the runner
- * builds the client before the handler, so a credential-less `favro`,
- * `favro board` or `favro browse` now meets this error at the error boundary
- * and used to be told `retryable: true` — "try again", for a key nobody has set.
+ * Both absences are `RefusalError`s. An unset key stays unset and an unset
+ * email stays unset, so the same call declines identically, and #118 made that
+ * matter: the runner builds the client before the handler, so a credential-less
+ * `favro`, `favro board` or `favro browse` meets this error at the error
+ * boundary and used to be told `retryable: true` — "try again", for a key
+ * nobody has set. `isRetryable` reads an UNCLASSIFIABLE error as retryable
+ * (`dispatch.ts`) and these two have no HTTP response to classify, so naming
+ * them refusals was what closed it.
+ *
+ * Since #134 the boundary also defaults an unclassifiable error to
+ * `retryable: false` (ADR-0002, "Two populations"), so this no longer rests on
+ * the type alone — but `skill-engine.ts` still asks the table ungated, and the
+ * type is what answers there.
  */
 export async function createFavroClient(flags?: ClientFlags): Promise<FavroHttpClient> {
   const token = await resolveApiKey(flags?.apiKey);

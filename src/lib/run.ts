@@ -29,7 +29,7 @@ import { capRows, noteTruncation, writeEnvelope } from './read-shape';
 import { reportDispatch } from './report-dispatch';
 import { DispatchResult, isRetryable } from './dispatch';
 import { isVerbose, logError } from './error-handler';
-import { classifyThrownError } from './favro-error';
+import { classifyThrownError, isWireFailure } from './favro-error';
 
 import { CardsAPI } from './cards-api';
 import { BoardsAPI } from './boards-api';
@@ -404,22 +404,27 @@ function messageOf(error: unknown): string {
 }
 
 /**
- * "Should I try again?", from the ONE derivation.
+ * "Should I try again?" — asked of a DIFFERENT population from the dispatch
+ * table's (#134, and the ADR-0002 amendment it wrote).
  *
- * `isRetryable` gates on the transaction outcome first; the error boundary has
- * no transaction, so `'rolled-back'` is the arm that asks the only question
- * left — is this failure deterministic. Reusing it rather than restating
- * `RefusalError` + `classifyThrownError` here is what stops the CLI and the
- * dispatch table drifting apart on the same question, which is #66 all over.
+ * The table only ever sees errors raised inside a write it instrumented, so
+ * "unclassifiable" there means a wire hiccup after a clean unwind, and
+ * retryable is the right reading. This boundary sees everything any of 128
+ * commands can throw — argument validation, missing config, file I/O, our own
+ * bugs — and the same reading told an agent to retry `--include bogus` forever.
  *
- * ponytail: the ceiling. `isRetryable` reads an UNCLASSIFIABLE error as
- * retryable, because in the dispatch table an unclassifiable error is a wire
- * hiccup after a clean unwind. This boundary also catches errors that never
- * touched the wire — an `ENOENT` from `--out /nope/x.csv`, a `TypeError` of our
- * own — and calls them retryable too, which is advice an agent should not act
- * on. Narrowing it to `classifyThrownError(error) ? … : false` contradicts the
- * derivation ADR-0002 states, so it is raised on #113 rather than changed here.
+ * So the wire is the gate and the table is what runs behind it. A failure that
+ * came off the wire keeps the one derivation, in full: `isRetryable` still
+ * decides which HTTP failures are deterministic, so the CLI and the table
+ * cannot drift on the question they DO share (#66). A failure that never
+ * touched the wire is `false` without asking — unknown means
+ * deterministic-until-proven-otherwise, because a wrong `false` costs one
+ * honest failure and a wrong `true` costs an infinite loop.
+ *
+ * `'rolled-back'` is still the arm passed: the boundary has no transaction, so
+ * it is the one that asks the only question left.
  */
-const retryableFrom = (error: unknown): boolean => isRetryable('rolled-back', error);
+const retryableFrom = (error: unknown): boolean =>
+  isWireFailure(error) && isRetryable('rolled-back', error);
 
 export default run;

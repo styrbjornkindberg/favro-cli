@@ -162,3 +162,24 @@ export function classifyThrownError(error: unknown): FavroErrorClassification | 
   if (!response || typeof response.status !== 'number') return undefined;
   return classifyFavroError(response.status, response.data?.message);
 }
+
+/**
+ * Did this failure come off the wire AT ALL? (#134)
+ *
+ * `classifyThrownError` answers "which kind of HTTP failure", and returns
+ * `undefined` for two things that are not remotely alike: a transport failure
+ * that never got a response, and an `ENOENT`, a `TypeError`, a bad flag. The
+ * dispatch table may conflate them — everything it sees was raised inside a
+ * write it instrumented, so "unclassifiable" there really does mean "a wire
+ * hiccup after a clean unwind". The CLI's error boundary sees the whole
+ * population and may not (ADR-0002, "Two populations of error").
+ *
+ * Structural, not string-matched: axios stamps `isAxiosError` on everything it
+ * raises, transport failures included, so the discriminator is a property of
+ * where the error CAME FROM rather than of how its message is worded. The
+ * second clause admits an error carrying an HTTP response without that stamp —
+ * a hand-built response object still describes a wire answer.
+ */
+export const isWireFailure = (error: unknown): boolean =>
+  (error as { isAxiosError?: unknown } | null | undefined)?.isAxiosError === true ||
+  classifyThrownError(error) !== undefined;

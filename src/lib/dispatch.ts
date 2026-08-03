@@ -169,6 +169,11 @@ export { RefusalError };
  * classify — a 5xx, a timeout, a bug of our own — keeps the
  * rolled-back-is-retryable reading: the world is genuinely back where it
  * started, and the next attempt may well behave differently.
+ *
+ * That last reading is only sound for THIS population — errors raised inside a
+ * write this table instrumented, where unclassifiable means a wire hiccup. The
+ * CLI's error boundary sees a wider one and gates this call behind
+ * `isWireFailure` for exactly that reason (#134, ADR-0002 "Two populations").
  */
 export function isRetryable(outcome: TxOutcome, error: unknown): boolean {
   if (outcome !== 'rolled-back') return false;

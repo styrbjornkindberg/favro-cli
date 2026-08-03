@@ -234,11 +234,15 @@ describe('my-cards — output', () => {
   });
 
   test('a failed snapshot exits 1 and emits the error envelope instead of a result', async () => {
-    MockAggregate.prototype.getMultiBoardSnapshot = jest.fn().mockRejectedValue(new Error('502 upstream'));
+    // A bare `Error`, and it used to be spelled "502 upstream" — which it was
+    // not. It carries no HTTP response, so the boundary cannot see a wire
+    // failure in it and must not claim one (#134). A genuine 5xx through a real
+    // socket is `boundary-retryable-wire.test.ts`.
+    MockAggregate.prototype.getMultiBoardSnapshot = jest.fn().mockRejectedValue(new Error('the snapshot read failed'));
 
     await runCli(['my-cards']);
 
-    expect(json()).toEqual({ error: { message: '502 upstream', retryable: true } });
+    expect(json()).toEqual({ error: { message: 'the snapshot read failed', retryable: false } });
     expect(process.exitCode).toBe(1);
   });
 });

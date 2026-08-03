@@ -58,12 +58,14 @@ export async function confirmAction(message: string, flags?: { yes?: boolean }):
  * earlier step already wrote, asks `isRetryable(outcome, abortCause)` at the
  * end-of-run unwind. That is live, and measured: a two-step skill whose second
  * step straddles the lock reported `retryable: true` before this change and
- * `false` after, with nothing else touched. The runner's error boundary
- * (`run.ts`'s `retryableFrom`) asks the identical question and would get the
- * identical answer, but no `run()` handler dispatches or calls `assertScope`
- * yet — the two that touch scope go through `checkScope`, which still exits.
- * It goes live as #115–#119 migrate the write surface, and #133 makes
- * `checkScope` throw.
+ * `false` after, with nothing else touched. That path is the reason this type
+ * still earns its keep: the skill engine asks the table directly, so `false`
+ * there depends on the refusal being NAMED one.
+ *
+ * The runner's error boundary no longer asks the identical question. Since #134
+ * it gates on `isWireFailure` first (ADR-0002, "Two populations"), so a
+ * `ScopeError` answers `false` there for a second, independent reason — it
+ * never touched the wire — whether or not it extends `RefusalError`.
  */
 export class ScopeError extends RefusalError {
   constructor(

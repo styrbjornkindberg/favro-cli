@@ -91,11 +91,11 @@ describe('assertScope', () => {
    * through to the transient arm. Retrying a scope violation cannot change the
    * answer, so that was advice to loop forever.
    *
-   * The runner's error boundary (`run.ts`'s `retryableFrom`) asks the identical
-   * question and would get the identical answer, but is NOT reachable today —
-   * no `run()` handler dispatches or calls `assertScope`, and the two that
-   * touch scope go through `checkScope`, which exits. Latent, not live; it
-   * arrives with #115–#119 and #133.
+   * That skill-engine call is still the one that depends on the TYPE: it asks
+   * the table directly, so `false` there needs the refusal to be named one.
+   * The runner's error boundary no longer asks the identical question — since
+   * #134 it gates on `isWireFailure` first (ADR-0002, "Two populations"), so a
+   * `ScopeError` answers `false` there for a second, independent reason.
    */
   it('is not retryable — a scope refusal is a deterministic decline', () => {
     const refusal = new ScopeError('Scope violation: nope', 'board-1', 'col-1');

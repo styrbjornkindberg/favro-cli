@@ -127,11 +127,53 @@ returns `{ item: report, exitCode: report.ok ? 0 : 1 }`. Three commands need thi
 failure.
 
 In JSON mode an error is an envelope on **stdout**: `{ error: { message, retryable } }`. Human
-mode keeps `logError` on stderr unchanged. `retryable` reuses the existing derivation
-(`instanceof RefusalError` → false, else `classifyThrownError`) so the CLI and the dispatch
-table give one answer to "should I try again". The reason it goes to stdout is the product's own
+mode keeps `logError` on stderr unchanged. The reason it goes to stdout is the product's own
 honest-failure thesis: MCP hands an agent stdout first and stderr as an appended blob, so a
 failed command currently yields `(no output)` plus a decorated `✗` line, which is unparseable.
+
+### Amendment (#134): two populations of error, one derivation behind a gate
+
+As accepted, `retryable` at the boundary was `isRetryable('rolled-back', error)` — the dispatch
+table's derivation, reused whole, so that the CLI and the table could not drift apart on "should
+I try again". That reuse was wrong, and the wording above overstated what the two share.
+
+**They are asked about different populations.** The table only ever sees errors raised inside a
+write it instrumented, so an error it cannot classify is a wire hiccup after a clean unwind, and
+`retryable: true` is the honest reading. The boundary sees everything any of the 128 commands can
+throw: argument validation, missing config, file I/O, our own bugs. Reusing one derivation across
+both is what made `favro boards list --include bogus` and a `TypeError` of ours both answer
+`retryable: true` — an instruction to loop forever on a failure that cannot change.
+
+The rule now: **the wire is the gate, the table runs behind it.**
+
+- A failure that came off the wire (`isWireFailure` in `favro-error.ts` — axios raised it, or it
+  carries an HTTP response) keeps the one derivation in full. `isRetryable` still decides which
+  HTTP failures are deterministic, so the shared question stays shared and #66 stays closed.
+- Anything else is `retryable: false` without asking. Unknown means
+  deterministic-until-proven-otherwise: a wrong `false` costs one honest failure, a wrong `true`
+  costs an infinite loop, and that asymmetry is the whole argument.
+- Validation and configuration failures therefore never claim retryable, by falling into the
+  second arm rather than by being recognised. A dedicated `ValidationError` type was considered
+  and not built: it would classify correctly only at the sites that remembered to raise it, while
+  the default already covers every site that does not. `RefusalError` remains the type to reach
+  for when a decline wants to be *named* — it is what made the missing API key honest (#118) —
+  and **at this boundary** nothing depends on it being reached for.
+
+The discriminator is structural, not a string match on the message: it asks where the error came
+from, not what it says.
+
+**The gate is on the boundary, not on `isRetryable`, and one other caller is still ungated.**
+`skill-engine.ts` derives `rollback.retryable` as `isRetryable(unwound.outcome, abortCause)` at
+the end-of-run unwind, where `abortCause` is whatever a step threw outside the table's own
+instrumentation — an interpolation typo, an unknown intent, a `ParseError`. That is the boundary's
+wide population, read by the table's narrow rule, and there a decline answers `false` only
+because someone remembered to raise a `RefusalError` — the cost the paragraph above declines to
+pay at the boundary is still being paid at that one site (`safety.ts` traces and measures it). So
+a skill that writes in step 1 and mistypes `{{made.nope}}` in step 2 still reports
+`retryable: true` on stdout and prints "safe to retry"; `skill-capture-wire.test.ts` and
+`skill-dispatch-wire.test.ts` both pin that answer as intended. #134 scoped itself to the CLI
+boundary and left it standing. It is the same defect and wants its own issue, not a silent
+widening of this one.
 
 ## Consequences
 
