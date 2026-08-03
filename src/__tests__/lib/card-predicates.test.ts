@@ -9,6 +9,12 @@
  * parse read a date-only string as UTC midnight (so a card due today reads as
  * overdue west of Greenwich). The surviving one handles both, which is what
  * these tests pin.
+ *
+ * Which shape Favro sends is no longer an open question: it is a full ISO
+ * timestamp, measured live in #132 and pinned in `duedate-wire-shape.test.ts`.
+ * The date-only cases below are therefore defensive, not representative — every
+ * date-only string in THIS file was composed here, so nothing in it is evidence
+ * about the wire. Do not add a fixture here and call it a measurement.
  */
 import { Card } from '../../lib/cards-api';
 import { isOverdue, isBlocked } from '../../lib/card-predicates';
