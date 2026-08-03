@@ -32,6 +32,12 @@
  *     ratchet over the real surface is what stops the third.
  *   - THE LIVE COMMAND drives `buildProgram()`, because the two arms above call
  *     library functions and neither reaches the command a user types.
+ *   - LIVE PARITY (#138) drives all THREE commands that take `--filter` and
+ *     compares the printed refusals to each other. Two of them are WRITE
+ *     commands — `batch move` and `batch assign` — which carried a third
+ *     grammar of their own until #138 deleted it. Same words, same exit code,
+ *     and no write attempted; three commands refusing three ways is the next
+ *     version of this bug, and only a comparison catches that.
  *   - EXACT MEMBERSHIP reads the source again, for anyone deciding tag or
  *     assignee membership by substring — the flag-shaped spelling of the same
  *     bug (#84).
@@ -80,7 +86,9 @@ function makeClient() {
   const get = jest.fn(async (url: string) => {
     if (url === '/widgets') return { entities: WIDGETS };
     if (url === '/tags') return { entities: TAGS };
-    if (url === '/users') return { entities: [] };
+    // One real user, so `batch assign --to alice` gets past its own resolution
+    // and the FILTER is what the parity arm below is comparing.
+    if (url === '/users') return { entities: [{ userId: 'u-alice', name: 'alice', email: 'alice@example.com' }] };
     throw new Error(`unexpected GET ${url}`);
   });
   return { get, organizationId: 'org-a' } as any;
@@ -158,6 +166,19 @@ describe('cards list and cards export refuse the same filter identically', () =>
       boardId: BOARD,
     });
     expect(rows.map((c) => c.cardId)).toEqual(['c1']);
+  });
+
+  test('repeated --filter flags AND as written, not by operator precedence', async () => {
+    // AND binds tighter than OR, so a bare `join(' AND ')` turns these two
+    // flags into `tag:bug OR (tag:backend AND status:"To Do")` — which matches
+    // `c1` as well, a strictly WIDER set than was asked for. On `cards export`
+    // that was extra rows in a file; since #138 `batch move`/`batch assign`
+    // reach this same call, and would have WRITTEN to them.
+    const rows = await applyFilters(CARDS, ['tag:bug OR tag:backend', 'status:"To Do"'], {
+      client: makeClient(),
+      boardId: BOARD,
+    });
+    expect(rows.map((c) => c.cardId)).toEqual(['c2']);
   });
 
   test('a refusal names candidates, so the user can act on it', async () => {
@@ -299,6 +320,93 @@ describe('the live cards export refuses a filter it cannot settle', () => {
   });
 });
 
+// ─── arm five: every live --filter command refuses in the SAME words ─────────
+
+/**
+ * `batch move` and `batch assign` carried a THIRD `--filter` grammar until #138
+ * — `parseFilterExpression`, which read an unknown field as `() => false` and
+ * substring-matched tags. On a WRITE command that meant a bulk operation
+ * reporting success having done nothing, with a typo indistinguishable from an
+ * empty result.
+ *
+ * Arm three drives one live command. This arm drives all THREE that take
+ * `--filter`, through `buildProgram()`, and asserts the refusals are byte-for-
+ * byte the same text at the same exit code. "Three commands refusing three
+ * ways" is the next version of this bug, and only a comparison catches it —
+ * each command's own test would happily pin its own wording.
+ *
+ * Write commands get `--yes`: the confirmation prompt must not be what stands
+ * between a user and an unresolvable filter, or `-y` in a script re-opens it.
+ */
+describe('cards export, batch move and batch assign refuse identically', () => {
+  const listCards = jest.fn(async () => CARDS);
+  const updateCard = jest.fn(async () => CARDS[0]);
+  let outDir: string;
+
+  beforeEach(async () => {
+    jest.clearAllMocks();
+    outDir = await fsp.mkdtemp(path.join(process.cwd(), '.favro-parity-'));
+    (clientFactory.createFavroClient as jest.Mock).mockImplementation(async () => makeClient());
+    (CardsAPI as jest.MockedClass<typeof CardsAPI>).mockImplementation(
+      () => ({ listCards, updateCard } as any)
+    );
+  });
+
+  afterEach(async () => {
+    await fsp.rm(outDir, { recursive: true, force: true });
+  });
+
+  /** Run one command to its refusal and return what the user saw. */
+  async function refusal(argv: string[]) {
+    let code: number | undefined;
+    const exit = jest.spyOn(process, 'exit').mockImplementation(((c?: number) => {
+      code = c;
+      throw new Error('process.exit');
+    }) as never);
+    const said = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const alsoSaid = jest.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await buildProgram().parseAsync(['node', 'favro', ...argv]);
+    } catch (err) {
+      if ((err as Error).message !== 'process.exit') throw err;
+    }
+    const printed = said.mock.calls.map((c) => String(c[0])).join('\n');
+    said.mockRestore();
+    alsoSaid.mockRestore();
+    exit.mockRestore();
+    return { code, printed };
+  }
+
+  const COMMANDS: Array<[label: string, argv: (filter: string) => string[]]> = [
+    ['cards export', (f) => ['cards', 'export', BOARD, '--filter', f, '--out', 'unused.json']],
+    ['batch move', (f) => ['batch', 'move', '--board', BOARD, '--status', 'Doing', '--filter', f, '--yes']],
+    ['batch assign', (f) => ['batch', 'assign', '--board', BOARD, '--to', 'alice', '--filter', f, '--yes']],
+  ];
+
+  test.each(BAD_INPUTS)('%s reads the same on every command', async (_label, filter, unresolvable) => {
+    const seen: Array<{ label: string; code?: number; printed: string }> = [];
+    for (const [label, argv] of COMMANDS) {
+      const built = argv(filter).map((a) => (a === 'unused.json' ? path.join(outDir, 'unused.json') : a));
+      seen.push({ label, ...(await refusal(built)) });
+    }
+
+    for (const s of seen) {
+      expect({ command: s.label, code: s.code }).toEqual({ command: s.label, code: 1 });
+      expect(s.printed).toContain(unresolvable);
+    }
+    // The whole point of the arm: not merely that all three refused, but that
+    // they refused with the same words.
+    expect(seen.map((s) => s.printed)).toEqual(seen.map(() => seen[0].printed));
+  });
+
+  test('no write is attempted on a refusal, on either write command', async () => {
+    for (const [, argv] of COMMANDS.slice(1)) await refusal(argv('tag:typoo'));
+    expect(updateCard).not.toHaveBeenCalled();
+    // …and the board is never even paged: a refusal needs no card data.
+    expect(listCards).not.toHaveBeenCalled();
+  });
+});
+
 // ─── arm four: nobody substring-matches a card's tags or assignees ───────────
 
 /**
@@ -363,12 +471,13 @@ const SUBSTRING_OVER_VOCABULARY = new RegExp(
 const SUBSTRING_DEBT: Record<string, string> = {
   [path.join('api', 'query.ts')]:
     '#95 — the second, regex-based grammar behind `favro query`; re-pointed or deleted there',
-  [path.join('commands', 'batch.ts')]:
-    '#138 — `parseFilterExpression`, a third `--filter` grammar on a WRITE command. ' +
-    'Its worst caller is not the one #138 names: `cards update --board <b> --label bug ' +
-    '--status done` (cli.ts, `filterExprs.push(`tag:${options.label}`)`) routes through ' +
-    'the same `buildFilterFn`, so in an org holding both `bug` and `debug` that command ' +
-    'WRITES to the `debug` cards too. Batch move/assign is the same grammar, lower stakes.',
+  // `commands/batch.ts` was here until #138. `parseFilterExpression` is deleted,
+  // not repaired: `batch move` and `batch assign` run `applyFilters`, and the
+  // `cards update --board --label` path in `cli.ts` that shared its
+  // `buildFilterFn` runs `resolveCardFilter` — an AST node, so a tag holding a
+  // space or a colon stays a value instead of becoming grammar.
+  // That closed the worse half too — in an org holding both `bug` and `debug`,
+  // `cards update --board <b> --label bug` used to WRITE to the `debug` cards.
 };
 
 /** Every production file whose source still matches element-wise. */
