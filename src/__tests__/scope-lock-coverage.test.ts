@@ -24,6 +24,13 @@
  *   - GUARDED  = the call closure of `assertScope` / `checkScope` /
  *     `checkCollectionScope` in `src/lib/safety.ts`.
  *   - ROUTED   = the call closure of `dispatch()` in `src/lib/dispatch.ts`.
+ *   - DELETES  = the call closure of `FavroHttpClient.delete` alone. Same walk,
+ *     narrowed to the verb, because an org-level write's containment depends on
+ *     whether it is REVERSIBLE and the http verb is the only honest signal for
+ *     that. Feeds the org-level arm at the bottom (#125).
+ *   - ORG_GUARDED = the call closure of `assertOrgScope`, kept separate from
+ *     GUARDED on purpose: the two guards answer different questions, and folding
+ *     them together would make `tags delete` read as collection-locked.
  *
  * Closures, not single frames, because both the write and the check are often a
  * helper or two down (`comments.ts:addComment`, `cards-tracker.ts:run`,
@@ -87,8 +94,8 @@ const ALLOWLIST: Record<string, string> = {};
  * or always refuse, since `assertScope` treats an unresolvable board as a
  * violation rather than an exemption. Always-refuse would break tag and group
  * management outright for every locked user, which is not the lock doing its
- * job. An org-level guardrail would have to be a DIFFERENT guardrail; one does
- * not exist today.
+ * job. An org-level guardrail had to be a DIFFERENT guardrail — `assertOrgScope`
+ * is it, built in #125, and the arm at the bottom of this file ratchets it.
  *
  * The same reasoning is written at the head of each command's own source (#104),
  * because a reader hunting the missing check reads the command, not this file.

@@ -202,6 +202,18 @@ describe('an org-wide destructive write refuses while a collection lock is set',
     ]);
   });
 
+  it('refuses an EMPTY id through the CLI even with no lock — the #138 shape, end to end', async () => {
+    // The actual attack path, not a unit of it: `favro tags delete "$TAG" --yes`
+    // with TAG unset, and nothing locked so the org guard is a no-op. The scope
+    // of this delete cannot be established, so it must refuse — never widen to
+    // the whole tag collection.
+    const { served } = await standWithConfig({});
+
+    await runCli(['tags', 'delete', '', '--yes']);
+
+    expect(served).toEqual([]);
+  });
+
   it('costs an unlocked user no extra request — the guard reads config, never the API', async () => {
     const { served } = await standWithConfig({});
 
