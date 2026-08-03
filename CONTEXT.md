@@ -122,7 +122,17 @@ mean "no cap" on the print path and "the default" on the fetch path, which is a 
 answer built from input we could not read. `0` is refused by decision, not omission: it
 parses, and `capRows` read it as *everything*. **A behaviour change** — anything scripted
 against the old silent-ignore now exits 1 (#142/#143). The same parser and the same
-wording serve `sprint-plan --budget`; the flag name is substituted.
+wording serve `sprint-plan --budget` on both its spellings — the CLI flag and the skill
+step — with the flag name substituted; the skill step kept a `parseInt` through #143 and
+planned a one-point sprint for `budget: 1e9`. A `--limit` arriving as a JSON **number**
+rather than a flag string — only the dispatch surface can do that — is range-checked at
+`dispatch.ts` instead, because there is no string to parse; it declines in the same words.
+A ratchet (`limit-fail-closed-coverage.test.ts`) walks the compiled surface and follows the
+value one declaration hop, so a local, a destructure or a `Number.parseInt` cannot
+reintroduce a second parser. Note what this does **not** claim: on the fetch commands the
+cap itself is inert — `ContextAPI.getSnapshot` and `AggregateAPI.getMultiBoardSnapshot`
+accept `cardLimit` and never read it, measured — so what #142/#143 fixed is the *number*
+each command computes, not the size of the read.
 
 **refusal** — a deterministic decline: nothing was written, and the same call declines
 again for the same reason. That is the whole distinction the dispatch table needs, and

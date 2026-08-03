@@ -28,7 +28,7 @@ import { foldName } from './fold-name';
 import { CompensationLog, Orphan, TxCards, TxOutcome } from './tx-cards';
 import { CATEGORY_TAGS, STATE_TAGS, VerifiedTracker } from './tracker-config';
 import { RefusalError } from './refusal';
-import { capRows, ListEnvelope } from './read-shape';
+import { capRows, ListEnvelope, parseLimit } from './read-shape';
 
 // ─── contract ────────────────────────────────────────────────────────────────
 
@@ -590,17 +590,32 @@ export interface ReadArgs {
 const truthyArg = (v: boolean | string | undefined): boolean =>
   typeof v === 'string' ? !['', 'false', '0', 'no'].includes(v.trim().toLowerCase()) : v === true;
 
-/** `"2"` is a limit of 2. Anything that is not a positive integer is no cap. */
+/**
+ * `"2"` is a limit of 2. An absent or empty `limit` is no cap; anything else
+ * that is not a positive whole number is a refusal.
+ *
+ * The STRING arm is `parseLimit`'s, not a second grammar. This used to be
+ * `Number(v)` guarded by `Number.isInteger`, which is a *different* dialect of
+ * `--limit` from the one every CLI site speaks: it read `"1e9"` as 1000000000,
+ * `"0x10"` as 16 and `"5.0"` as 5, all of which `parseLimit` declines. So the
+ * dispatch surface — MCP and skill steps — accepted spellings the flag refuses,
+ * which is exactly the "one parser, three outcomes, no fourth" claim
+ * `CONTEXT.md` makes, unmade. Found in review of #142/#143.
+ *
+ * A NUMBER cannot come off a flag; it only arrives from a JSON tool call, so it
+ * is checked here rather than in `parseLimit`. `0` refuses on both arms —
+ * `capRows` would read it as EVERYTHING (#142).
+ */
 function readLimit(v: number | string | undefined): number | undefined {
   if (v === undefined || v === '') return undefined;
-  const n = Number(v);
-  if (!Number.isInteger(n) || n < 1) {
+  if (typeof v === 'string') return parseLimit(v);
+  if (!Number.isInteger(v) || v < 1) {
     throw new RefusalError(
-      `--limit must be a positive whole number; got "${v}". ` +
+      `--limit takes a whole number of 1 or more — got "${v}". ` +
         `It caps the printed rows, never the fetch — omit it to print every row.`,
     );
   }
-  return n;
+  return v;
 }
 
 export interface ReadResult {

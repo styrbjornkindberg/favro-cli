@@ -33,6 +33,7 @@
  *     through a numeric conversion of its own, with the usual four arms.
  */
 import http from 'http';
+import fs from 'fs';
 import fsp from 'fs/promises';
 import os from 'os';
 import path from 'path';
@@ -294,7 +295,8 @@ describe('a fetch cap is parsed, defaulted or refused — never invented', () =>
 // ─── arm four: the ratchet ───────────────────────────────────────────────────
 
 /**
- * No `--limit` may be turned into a number by anything but `parseLimit`.
+ * No `--limit` (or `--budget`) may be turned into a number by anything but
+ * `parseLimit`.
  *
  * The eighteen sites #143 counted were eighteen copies of one parse, and a
  * nineteenth is one `parseInt` away. This walks the REAL compiled surface —
@@ -303,17 +305,25 @@ describe('a fetch cap is parsed, defaulted or refused — never invented', () =>
  * program cannot be silently skipped by a directory crawl the way a `readdir`
  * walk would.
  *
- * WHAT COUNTS: an expression reading a property named `limit` (`options.limit`,
- * `args.limit`, `opts['limit']`) passed to a numeric conversion that is not
- * `parseLimit` — `parseInt`, `parseFloat`, `Number(…)`, or a unary `+`. The last
- * three are in because they are the obvious next spellings of the same bug, and
- * a ratchet that only knows the spelling it was born from is a ratchet you get
- * to write twice.
+ * WHAT COUNTS: an expression reading a property named `limit` or `budget`
+ * (`options.limit`, `args.budget`, `opts['limit']`) passed to a conversion that is not
+ * `parseLimit` — `parseInt`, `parseFloat`, `Number(…)`, their `Number.parseInt`
+ * spellings, or a unary `+`. The alternatives are in because they are the
+ * obvious next spellings of the same bug, and a ratchet that only knows the
+ * spelling it was born from is a ratchet you get to write twice.
  *
- * ponytail: the argument EXPRESSION is what is inspected, so a value laundered
- * through a local first — `const l = options.limit; parseInt(l, 10)` — is the
- * known ceiling. Nothing is written that way; follow the symbol with
- * `checker.getSymbolAtLocation` if one ever is.
+ * The value is FOLLOWED, not just matched where it stands: an identifier is
+ * resolved with `checker.getSymbolAtLocation` and its declaration re-tested, so
+ * `const l = options.limit; parseInt(l, 10)` and `const { limit } = options;`
+ * both fire. The first draft matched the argument expression only, and all three
+ * launderings — a local, a destructure, and `Number.parseInt` — were confirmed
+ * by construction to slip past it with the suite green. Found in review.
+ *
+ * ponytail: one hop through a DECLARATION, not full dataflow. A value carried
+ * into another function's parameter — `readLimit(a.limit)`, then `Number(v)`
+ * inside — still evades; that shape existed in `dispatch.ts` and was deleted
+ * rather than allowlisted. Upgrade path if it comes back: resolve the enclosing
+ * function's call sites through the checker and test each argument.
  */
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const NOT_PRODUCTION = /(^|\/)(__tests__|__integration__|test-support)(\/|$)/;
@@ -329,27 +339,121 @@ const limitProgram = ts.createProgram(limitConfig.fileNames, {
   noEmit: true,
 });
 
+/**
+ * The one file allowed to convert a `--limit` into a number, because it is the
+ * parser everything else is funnelled into. `parseLimit`'s own `Number(trimmed)`
+ * is a true positive under the rule above and the only one in `src` — exempting
+ * the file rather than the two expressions keeps the rule one line, and the
+ * self-check below fails if the file ever stops being part of the program, so a
+ * rename cannot silently widen this into "some file I do not scan".
+ */
+const THE_PARSER = path.join('lib', 'read-shape.ts');
+
 /** Every production source the compiler itself says is part of `src`. */
-const productionFiles = limitProgram
+const scannableFiles = limitProgram
   .getSourceFiles()
   .filter((sf) => !sf.isDeclarationFile)
   .filter((sf) => sf.fileName.startsWith(path.join(REPO_ROOT, 'src') + path.sep))
   .filter((sf) => !NOT_PRODUCTION.test(path.relative(path.join(REPO_ROOT, 'src'), sf.fileName)));
 
+const productionFiles = scannableFiles.filter(
+  (sf) => path.relative(path.join(REPO_ROOT, 'src'), sf.fileName) !== THE_PARSER,
+);
+
 const NUMERIC_CONVERSIONS = new Set(['parseInt', 'parseFloat', 'Number']);
 
-/** Reads a property or index named `limit`, at any depth of `node`. */
-function readsALimit(node: ts.Node): boolean {
-  if (ts.isPropertyAccessExpression(node) && node.name.text === 'limit') return true;
-  if (
-    ts.isElementAccessExpression(node) &&
-    ts.isStringLiteralLike(node.argumentExpression) &&
-    node.argumentExpression.text === 'limit'
-  ) {
-    return true;
+/**
+ * The flags that share `parseLimit`'s grammar, so they must share its parser.
+ *
+ * `budget` is here because #143 counted `limit` sites only, and the `sprint-plan`
+ * SKILL step kept its `parseInt(args.budget, 10)` — `budget: "1e9"` planned a
+ * one-point sprint, the same defect the CLI's `--budget` had already fixed, in
+ * the same file the ticket edited twenty lines above. Found in review.
+ */
+const CAP_FLAGS = new Set(['limit', 'budget']);
+
+/**
+ * The value a numeric conversion is being handed, or `undefined` if this node is
+ * not one. `Number.parseInt(x, 10)` counts: same function, different spelling,
+ * and the callee is a property access rather than a bare identifier — which is
+ * precisely how it slipped past the first draft.
+ */
+function convertedValue(node: ts.Node): ts.Expression | undefined {
+  if (ts.isCallExpression(node)) {
+    if (ts.isIdentifier(node.expression) && NUMERIC_CONVERSIONS.has(node.expression.text)) {
+      return node.arguments[0];
+    }
+    if (
+      ts.isPropertyAccessExpression(node.expression) &&
+      ts.isIdentifier(node.expression.expression) &&
+      node.expression.expression.text === 'Number' &&
+      NUMERIC_CONVERSIONS.has(node.expression.name.text)
+    ) {
+      return node.arguments[0];
+    }
+    return undefined;
   }
-  return ts.forEachChild(node, readsALimit) === true;
+  if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.PlusToken) {
+    return node.operand;
+  }
+  return undefined;
 }
+
+/**
+ * Reads a `limit` anywhere under `node`, FOLLOWING identifiers one hop through
+ * their declaration — a local (`const l = options.limit`), a destructured
+ * binding (`const { limit } = options`, `const { limit: cap } = options`), or a
+ * parameter actually named `limit`.
+ *
+ * `seen` is per call, not module-level: it breaks a declaration cycle without
+ * making the predicate remember an answer between calls.
+ */
+function makeReadsALimit(checker: ts.TypeChecker): (node: ts.Node) => boolean {
+  return (root: ts.Node): boolean => {
+    const seen = new Set<ts.Symbol>();
+
+    const declares = (decl: ts.Declaration): boolean => {
+      if (ts.isBindingElement(decl)) {
+        const named = decl.propertyName ?? decl.name;
+        return ts.isIdentifier(named) && CAP_FLAGS.has(named.text);
+      }
+      if (ts.isVariableDeclaration(decl)) {
+        return decl.initializer !== undefined && walk(decl.initializer);
+      }
+      if (ts.isParameter(decl)) {
+        return ts.isIdentifier(decl.name) && CAP_FLAGS.has(decl.name.text);
+      }
+      return false;
+    };
+
+    const walk = (node: ts.Node): boolean => {
+      if (ts.isPropertyAccessExpression(node) && CAP_FLAGS.has(node.name.text)) return true;
+      if (
+        ts.isElementAccessExpression(node) &&
+        ts.isStringLiteralLike(node.argumentExpression) &&
+        CAP_FLAGS.has(node.argumentExpression.text)
+      ) {
+        return true;
+      }
+      if (ts.isIdentifier(node)) {
+        const symbol = checker.getSymbolAtLocation(node);
+        if (symbol && !seen.has(symbol)) {
+          seen.add(symbol);
+          if ((symbol.declarations ?? []).some(declares)) return true;
+        }
+      }
+      return ts.forEachChild(node, walk) === true;
+    };
+
+    return walk(root);
+  };
+}
+
+const readsALimit = makeReadsALimit(limitProgram.getTypeChecker());
+
+/** Probe sources for the positive control live on disk so they get a program. */
+const probeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'favro-limit-probe-'));
+let probeSeq = 0;
 
 interface Offence {
   file: string;
@@ -357,24 +461,18 @@ interface Offence {
 }
 
 /** Every numeric conversion of a `--limit`, and every conversion seen at all. */
-function scan(): { offences: Offence[]; conversionsSeen: number } {
+function scan(
+  files: readonly ts.SourceFile[],
+  reads: (node: ts.Node) => boolean,
+): { offences: Offence[]; conversionsSeen: number } {
   const offences: Offence[] = [];
   let conversionsSeen = 0;
 
   const visit = (sf: ts.SourceFile, node: ts.Node): void => {
-    let converted: ts.Expression | undefined;
+    const converted = convertedValue(node);
+    if (converted) conversionsSeen += 1;
 
-    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
-      if (NUMERIC_CONVERSIONS.has(node.expression.text)) {
-        conversionsSeen += 1;
-        converted = node.arguments[0];
-      }
-    } else if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.PlusToken) {
-      conversionsSeen += 1;
-      converted = node.operand;
-    }
-
-    if (converted && readsALimit(converted)) {
+    if (converted && reads(converted)) {
       offences.push({
         file: path.relative(path.join(REPO_ROOT, 'src'), sf.fileName),
         // `sf.text.slice`, not `node.getText()`: a node off a `createProgram`
@@ -387,7 +485,7 @@ function scan(): { offences: Offence[]; conversionsSeen: number } {
     ts.forEachChild(node, (child) => visit(sf, child));
   };
 
-  for (const sf of productionFiles) ts.forEachChild(sf, (child) => visit(sf, child));
+  for (const sf of files) ts.forEachChild(sf, (child) => visit(sf, child));
   return { offences, conversionsSeen };
 }
 
@@ -401,10 +499,24 @@ function scan(): { offences: Offence[]; conversionsSeen: number } {
  */
 const HAND_PARSED: Record<string, string> = {};
 
-describe('every --limit goes through parseLimit', () => {
-  const { offences, conversionsSeen } = scan();
+/**
+ * Run the REAL scan over one probe source, through a real one-file program so
+ * the checker — and therefore the follow-the-identifier arm — is the same one
+ * production is scanned with. Hand-rolling a checkerless copy of the predicate
+ * here is how a positive control ends up proving something the scan does not do.
+ */
+function fires(source: string): boolean {
+  const file = path.join(probeDir, `probe-${probeSeq++}.ts`);
+  fs.writeFileSync(file, source);
+  const program = ts.createProgram([file], { ...limitConfig.options, noEmit: true });
+  const sf = program.getSourceFile(file)!;
+  return scan([sf], makeReadsALimit(program.getTypeChecker())).offences.length > 0;
+}
 
-  it('no production module converts a --limit itself', () => {
+describe('every --limit goes through parseLimit', () => {
+  const { offences, conversionsSeen } = scan(productionFiles, readsALimit);
+
+  it('no production module converts a --limit or --budget itself', () => {
     expect(offences.filter((o) => !(o.file in HAND_PARSED))).toEqual([]);
   });
 
@@ -428,29 +540,20 @@ describe('every --limit goes through parseLimit', () => {
     expect(names).toContain(path.join('commands', 'next.ts'));
     expect(names).toContain(path.join('lib', 'skill-engine.ts'));
     expect(names.some((n) => NOT_PRODUCTION.test(n))).toBe(false);
+    // The one exemption is load-bearing, not a hole: the file is in the program
+    // and it really does convert a limit, so a rename that quietly dropped it
+    // out of the scan would fail here instead of widening the exemption.
+    const parser = scannableFiles.filter(
+      (sf) => path.relative(path.join(REPO_ROOT, 'src'), sf.fileName) === THE_PARSER,
+    );
+    expect(parser).toHaveLength(1);
+    expect(scan(parser, readsALimit).offences.length).toBeGreaterThan(0);
+    expect(names).not.toContain(THE_PARSER);
   });
 
   it('the detector recognises every shape #143 deleted, and no false friend', () => {
     // A positive control, because an offender list of zero proves nothing about
-    // a detector nobody has seen fire. Parsed as real TypeScript, not matched as
-    // text, so this exercises the same AST predicate the scan runs.
-    const fires = (source: string): boolean => {
-      const sf = ts.createSourceFile('probe.ts', source, ts.ScriptTarget.ES2020, true);
-      let found = false;
-      const visit = (node: ts.Node): void => {
-        let converted: ts.Expression | undefined;
-        if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
-          if (NUMERIC_CONVERSIONS.has(node.expression.text)) converted = node.arguments[0];
-        } else if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.PlusToken) {
-          converted = node.operand;
-        }
-        if (converted && readsALimit(converted)) found = true;
-        ts.forEachChild(node, visit);
-      };
-      ts.forEachChild(sf, visit);
-      return found;
-    };
-
+    // a detector nobody has seen fire. `fires` runs the real `scan`.
     // Verbatim shapes from the sixteen sites, plus the next spellings.
     expect(fires('const n = parseInt(options.limit, 10) || 1000;')).toBe(true);
     expect(fires("const n = parseInt(options.limit ?? '500', 10) || 500;")).toBe(true);
@@ -459,9 +562,22 @@ describe('every --limit goes through parseLimit', () => {
     expect(fires('const n = +options.limit;')).toBe(true);
     expect(fires("const n = parseInt(opts['limit'], 10);")).toBe(true);
 
+    // The three launderings that were CONFIRMED to evade the first draft — each
+    // written into a real command, suite still green. Regression, not theory.
+    expect(fires('const n = Number.parseInt(options.limit as string, 10);')).toBe(true);
+    expect(fires('const l = options.limit; const n = parseInt(l as string, 10);')).toBe(true);
+    expect(fires('const { limit } = options; const n = parseInt(limit as string, 10);')).toBe(true);
+    expect(fires('const { limit: cap } = options; const n = parseInt(cap as string, 10);')).toBe(true);
+    expect(fires('function f(limit: string) { return Number(limit); }')).toBe(true);
+    // `--budget` shares the grammar, so it shares the ratchet — the skill step
+    // #143 missed was exactly this line.
+    expect(fires('const b = args.budget ? parseInt(args.budget, 10) : undefined;')).toBe(true);
+
     // …and leaves the correct call, and every unrelated `parseInt`, alone.
     expect(fires('const n = parseLimit(options.limit) ?? 1000;')).toBe(false);
     expect(fires('const n = parseInt(options.position, 10);')).toBe(false);
     expect(fires("const n = parseInt(process.env.FAVRO_MCP_PORT || '3000', 10);")).toBe(false);
+    // A local that never touched a limit must not fire just for being a local.
+    expect(fires('const d = options.days; const n = parseInt(d as string, 10);')).toBe(false);
   });
 });

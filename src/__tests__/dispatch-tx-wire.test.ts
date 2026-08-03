@@ -1491,7 +1491,33 @@ describe('read is reachable as a skill step, where every arg is a STRING', () =>
     const stand = await startServer();
     await expect(
       dispatch<ReadResult>('read', { card: CARD, children: 'true', limit: 'two' }, ctx(stand)),
-    ).rejects.toThrow(/positive whole number/);
+    ).rejects.toThrow(/whole number of 1 or more/);
+  });
+
+  it.each(['1e9', '0x10', '5.0', '0', '-1'])(
+    'the dispatch surface speaks the FLAG grammar, so limit:%p refuses too',
+    async (limit) => {
+      // This arm used to be `Number(v)` guarded by `Number.isInteger`, a second
+      // `--limit` dialect: `1e9` was 1000000000 here and a refusal on every CLI
+      // site, `0x10` was 16, `5.0` was 5. One parser means one answer. Found in
+      // review of #142/#143.
+      const stand = await startServer();
+      await expect(
+        dispatch<ReadResult>('read', { card: CARD, children: 'true', limit }, ctx(stand)),
+      ).rejects.toThrow(/whole number of 1 or more/);
+    },
+  );
+
+  it('a NUMERIC limit still has its own guard, because a JSON call can send one', async () => {
+    const stand = await startServer();
+    // `0` matters: `capRows` reads a numeric 0 as NO cap, so letting it through
+    // would return every child — the exact #142 shape.
+    await expect(
+      dispatch<ReadResult>('read', { card: CARD, children: 'true', limit: 0 }, ctx(stand)),
+    ).rejects.toThrow(/whole number of 1 or more/);
+    await expect(
+      dispatch<ReadResult>('read', { card: CARD, children: 'true', limit: 2.5 }, ctx(stand)),
+    ).rejects.toThrow(/whole number of 1 or more/);
   });
 });
 

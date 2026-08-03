@@ -233,12 +233,13 @@ export function parseLimit(limit?: string, flag = '--limit'): number | undefined
  * so with `truncated`.
  *
  * `limit` is `number | string` because commander hands a flag over as a string
- * and every one of the eighteen call sites would otherwise re-type the same
- * `parseInt`. Parsing here rather than eighteen times is also what makes the
- * unparseable case answer once — and since #142 that answer is a REFUSAL, not a
- * silent no-cap: a string goes through `parseLimit`, which throws on anything
- * that is not a whole number of 1 or more. This function therefore throws for a
- * malformed string, which `run`'s error boundary turns into exit 1.
+ * and every call site would otherwise re-type the same `parseInt` — the count is
+ * deliberately not written down here, because it read "eighteen" for two tickets
+ * after it stopped being eighteen. Parsing here rather than once per caller is
+ * what makes the unparseable case answer once — and since #142 that answer is a
+ * REFUSAL, not a silent no-cap: a string goes through `parseLimit`, which throws
+ * on anything that is not a whole number of 1 or more. This function therefore
+ * throws for a malformed string, which `run`'s boundary turns into exit 1.
  *
  * A NUMBER handed in by a non-commander caller is not re-validated, so `NaN`
  * still has to be caught here — that is what `!(cap >= 1)` is for.
