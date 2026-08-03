@@ -4,8 +4,8 @@
  * WHAT IT GUARDS
  * Two configs that must disagree, on purpose:
  *
- *   - `tsconfig.json` BUILDS, so it excludes `**\/*.test.ts` to keep test files
- *     out of `dist/`.
+ *   - `tsconfig.json` BUILDS, so it excludes the test-only directories and
+ *     `**\/*.test.ts` to keep test code out of `dist/`.
  *   - `tsconfig.test.json` CHECKS, so it must not.
  *
  * Before #121 only the first existed, and `tsc --noEmit` — the CI gate — never
@@ -18,6 +18,7 @@
  * config ends up compiling, not how it got there.
  */
 
+import * as fs from 'fs';
 import * as path from 'path';
 import * as ts from 'typescript';
 
@@ -34,10 +35,36 @@ function fileNamesOf(configName: string): string[] {
   return parsed.fileNames.map((f) => path.relative(REPO_ROOT, f));
 }
 
+/**
+ * Test-only code, by DIRECTORY and not just by extension (#128).
+ *
+ * #121 filtered on `.test.ts` and so never noticed `src/__integration__/helpers.ts`
+ * or `src/test-support/*` — neither is named `*.test.ts`, both were in the build
+ * config's file list, and both were emitted into `dist/` and shipped.
+ */
+const TEST_ONLY = /(^|\/)(__tests__|__integration__|test-support)(\/|$)|\.test\.ts$/;
+
+const posix = (f: string): string => f.split(path.sep).join('/');
+
 describe('type-check coverage', () => {
-  it('keeps test files out of the build config, so dist/ stays clean', () => {
-    const built = fileNamesOf('tsconfig.json').filter((f) => f.endsWith('.test.ts'));
-    expect(built).toEqual([]);
+  it('keeps test-only code out of the build config, so dist/ stays clean', () => {
+    const built = fileNamesOf('tsconfig.json');
+
+    // Self-check: a scan that enumerated nothing would pass the filter vacuously.
+    expect(built.length).toBeGreaterThan(50);
+    expect(built).toContain(path.join('src', 'cli.ts'));
+
+    expect(built.filter((f) => TEST_ONLY.test(posix(f)))).toEqual([]);
+
+    // `exclude` only prunes the ROOT list — tsc still compiles and emits whatever
+    // those roots import. So a production `import '../test-support/x'` would put
+    // test code back in dist/ with the filter above still green.
+    const importers = built.filter((f) =>
+      [...fs.readFileSync(path.join(REPO_ROOT, f), 'utf8').matchAll(/from '([^']+)'/g)].some(
+        ([, spec]) => TEST_ONLY.test(spec)
+      )
+    );
+    expect(importers).toEqual([]);
   });
 
   it('checks the unit and integration suites through tsconfig.test.json', () => {
