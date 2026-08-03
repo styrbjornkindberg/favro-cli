@@ -146,7 +146,7 @@ function formatHuman(data: HealthResult): string {
   // Read off `unreachable` rather than restated, so the human line and the JSON
   // key cannot drift — the hole `risks --human` used to hide (#117).
   if (data.unreachable?.length) {
-    lines.push(`\n  ⚠️  Not scored — ${data.unreachable.length} part(s) of this scope could not be read:`);
+    lines.push(`\n  ⚠️  Incomplete read — ${data.unreachable.length} part(s) of this scope could not be read:`);
     for (const hole of data.unreachable) lines.push(`     ${hole.id} — ${hole.reason}`);
   }
 
@@ -226,11 +226,18 @@ export async function healthHandler(ctx: Ctx, options: HealthOptions) {
   // Keyed on boards actually DROPPED, not on `unreachable` being non-empty: a
   // failed members read is also a hole but costs no board, so gating on the
   // list itself made an empty scope with an unreadable member list refuse with
-  // "no board in scope could be read" — a false statement about a scope that
+  // a claim that no board could be read — a false statement about a scope that
   // read fine and simply holds nothing.
+  //
+  // The message states the condition the guard actually tests, and not "no
+  // board in scope could be read": a scope whose ONLY populated board went dark
+  // reaches here even though its other, empty boards were read perfectly, so
+  // that phrasing was false in exactly the sibling case the paragraph above
+  // fixed for members. Refusing is still right — there is nothing to score —
+  // but the reason has to be the true one.
   if (cards.length < snapshot.allCards.length && boardCardMap.size === 0) {
     throw new RefusalError(
-      `Cannot score health for ${scope}: no board in scope could be read.\n` +
+      `Cannot score health for ${scope}: every board that holds cards went dark.\n` +
       unreachable.map(h => `  ${h.id} — ${h.reason}`).join('\n'),
     );
   }

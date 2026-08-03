@@ -42,6 +42,11 @@ interface Wire {
   /** Serve an empty `/cards` — a real scope that simply holds no cards yet. */
   noCards?: boolean;
   /**
+   * Only these boards hold cards; the others are real, readable and empty.
+   * Lets a test put the ONLY populated board behind a failed columns read.
+   */
+  cardsOnlyFor?: string[];
+  /**
    * The refusal status. 403 by default and NOT for want of realism: the client
    * retries any 5xx four times with 1s/2s/4s/8s backoff, so every 500 in this
    * file would cost 15 real seconds. The code path under test is identical —
@@ -129,7 +134,8 @@ function startServer(wire: Wire = {}): Promise<FavroHttpClient> {
       return ok(res, columnsOf(boardId));
     }
     if (p === '/api/v1/cards') {
-      return ok(res, wire.noCards ? [] : [...cardsOf(GOOD), ...cardsOf(DARK)]);
+      if (wire.noCards) return ok(res, []);
+      return ok(res, (wire.cardsOnlyFor ?? [GOOD, DARK]).flatMap(cardsOf));
     }
     if (p === '/api/v1/users') {
       if (wire.failMembers) return refuse(res);
@@ -248,12 +254,25 @@ describe('health does not report a red board off a read that failed (#148)', () 
     expect(result.exitCode).toBe(1);
   }, 40000);
 
-  it('refuses outright when no board in scope could be read', async () => {
+  it('refuses outright when every board in scope went dark', async () => {
     const client = await startServer({ failColumnsFor: [GOOD, DARK] });
 
     // An empty `boards[]` rolls up to 100/green, so omission alone would print
     // "we read nothing" as "all clear".
-    await expect(healthHandler(ctxFor(client), LIMIT)).rejects.toThrow(/no board in scope could be read/);
+    await expect(healthHandler(ctxFor(client), LIMIT))
+      .rejects.toThrow(/every board that holds cards went dark/);
+  });
+
+  it('refuses with a TRUE reason when the only populated board went dark', async () => {
+    // `board-good` is readable and simply empty; `board-dark` holds every card
+    // and its columns read failed. The guard still fires — there is nothing
+    // scoreable — but the old wording said "no board in scope could be read",
+    // which is false: `board-good` was read perfectly. Same class of false
+    // statement the members case above already guards against.
+    const client = await startServer({ failColumnsFor: [DARK], cardsOnlyFor: [DARK] });
+
+    await expect(healthHandler(ctxFor(client), LIMIT))
+      .rejects.toThrow(/every board that holds cards went dark/);
   });
 
   it('does NOT refuse when the scope is simply empty and only members went dark', async () => {
