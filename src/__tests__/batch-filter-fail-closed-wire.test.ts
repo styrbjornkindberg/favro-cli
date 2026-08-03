@@ -30,6 +30,7 @@ import * as fs from 'fs/promises';
 import * as fsSync from 'fs';
 import { AddressInfo } from 'net';
 import FavroHttpClient from '../lib/http-client';
+import { invalidateCache } from '../lib/name-cache';
 
 // The only seam: the CLI builds its own client from real credentials, and this
 // points that client at the stand-in. Everything below it is the real thing.
@@ -58,6 +59,9 @@ const TODO = 'col-todo';
 const DONE = 'col-done';
 const ALICE = 'aaaaaaaaaaaaaaaaa';
 
+/** A second board with NO columns — a `--to-board` whose vocabulary is empty. */
+const OTHER_BOARD = 'board-b';
+
 const BOARDS = [
   {
     widgetCommonId: BOARD,
@@ -68,6 +72,7 @@ const BOARDS = [
       { columnId: DONE, name: 'Done', position: 1 },
     ],
   },
+  { widgetCommonId: OTHER_BOARD, name: 'Board B', collectionIds: ['coll-a'], columns: [] },
 ];
 
 /**
@@ -256,7 +261,12 @@ afterEach(async () => {
   errSpy.mockRestore();
   // The name cache persists across tests in this file; a stale `columns` or
   // `tags` record would let a later refusal be answered from an earlier fetch.
-  await fs.rm(path.join(CONFIG_DIR, 'name-cache.json'), { force: true });
+  //
+  // `invalidateCache()`, NOT `fs.rm` of the file: `name-cache` memoises the
+  // parsed file in a module global that only its own `writeFile` clears, so
+  // deleting the file left the previous test's records being served from memory
+  // and this cleanup did nothing at all.
+  await invalidateCache();
 });
 
 afterAll(async () => {
@@ -450,6 +460,60 @@ describe('cards update --board --label treats the label as a value, not grammar'
 
     expect(mutations(stand.received)).toEqual([]);
     expect(code).toBe(1);
+  });
+});
+
+// ─── the TARGET status is a column too ───────────────────────────────────────
+
+/**
+ * `--filter "status:…"` has been settled since #138; the `--status` a `move`
+ * WRITES was not, and it is the same closed vocabulary one flag over. Found by
+ * running #150's `batch-smart` mutation at this sibling site.
+ *
+ * Measured against the built CLI before the fix: `batch move --board <b>
+ * --status Frobnicated --dry-run` printed a plan for every card on the board and
+ * exited 0, and without `--dry-run` it printed the same plan, then failed card by
+ * card at the wire and rolled back. A dry run that plans a write which cannot
+ * land is #150's lie wearing the other flag.
+ */
+describe('batch move refuses a target --status it cannot settle', () => {
+  test('and writes nothing', async () => {
+    const stand = await startServer();
+
+    const code = await exitCodeOf('move', '--board', BOARD, '--status', 'Frobnicated', '--yes');
+
+    expect(mutations(stand.received)).toEqual([]);
+    expect(code).toBe(1);
+    expect(said()).toContain('Frobnicated');
+    expect(said()).toContain('To Do');
+    expect(said()).not.toContain('No cards match');
+  });
+
+  test('under --dry-run too, where it used to print a full plan and exit 0', async () => {
+    const stand = await startServer();
+
+    const code = await exitCodeOf('move', '--board', BOARD, '--status', 'Frobnicated', '--dry-run');
+
+    expect(mutations(stand.received)).toEqual([]);
+    expect(code).toBe(1);
+    expect(said()).toContain('Frobnicated');
+    expect(said()).not.toContain('Dry-run preview');
+  });
+
+  test('a --to-board move settles the status against the DESTINATION board', async () => {
+    const stand = await startServer();
+
+    // `Done` is a column on `board-a`. `board-b` has none, so a move THERE with
+    // `--status Done` must refuse — `updateCard` resolves the target status
+    // against the board the card lands on, so settling it against the source
+    // would let a write through that the wire then rejects per card.
+    const code = await exitCodeOf(
+      'move', '--board', BOARD, '--to-board', OTHER_BOARD, '--status', 'Done', '--yes',
+    );
+
+    expect(mutations(stand.received)).toEqual([]);
+    expect(code).toBe(1);
+    expect(said()).toContain('Done');
   });
 });
 

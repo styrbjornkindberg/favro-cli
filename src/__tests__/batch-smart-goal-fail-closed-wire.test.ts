@@ -39,6 +39,7 @@ import * as fs from 'fs/promises';
 import * as fsSync from 'fs';
 import { AddressInfo } from 'net';
 import FavroHttpClient from '../lib/http-client';
+import { invalidateCache } from '../lib/name-cache';
 
 // The only seam: the CLI builds its own client from real credentials, and this
 // points that client at the stand-in. Everything below it is the real thing.
@@ -75,17 +76,16 @@ const ALICE = 'aaaaaaaaaaaaaaaaa';
  * so a token settled to a differently-cased column must come back as the
  * column's OWN spelling or it matches no card at all.
  */
-const BOARDS = [
-  {
-    widgetCommonId: BOARD,
-    name: BOARD_NAME,
-    collectionIds: ['coll-a'],
-    columns: [
-      { columnId: TODO, name: 'To Do', position: 0 },
-      { columnId: PROGRESS, name: 'In Progress', position: 1 },
-      { columnId: DONE, name: 'Done', position: 2 },
-    ],
-  },
+interface StandColumn { columnId: string; name: string; position: number }
+
+const DEFAULT_COLUMNS: StandColumn[] = [
+  { columnId: TODO, name: 'To Do', position: 0 },
+  { columnId: PROGRESS, name: 'In Progress', position: 1 },
+  { columnId: DONE, name: 'Done', position: 2 },
+];
+
+const boardsWith = (columns: StandColumn[]) => [
+  { widgetCommonId: BOARD, name: BOARD_NAME, collectionIds: ['coll-a'], columns },
 ];
 
 const USERS = [{ userId: ALICE, name: 'alice', email: 'alice@example.com' }];
@@ -126,7 +126,13 @@ function card(id: string, over: Partial<StoredCard> = {}): StoredCard {
   };
 }
 
-function startServer(): Promise<Stand> {
+/**
+ * @param columns The board's own columns. Overridden by the tests that need the
+ *   board's spelling, or the absence of a `Done` column, to be observable —
+ *   every arm above rests on the default three.
+ */
+function startServer(columns: StandColumn[] = DEFAULT_COLUMNS): Promise<Stand> {
+  const BOARDS = boardsWith(columns);
   const received: Received[] = [];
   // Two in `To Do`, one already in `Done`, NONE overdue and NONE in
   // `In Progress` — the last two are what the zero-match arms rest on.
@@ -285,7 +291,16 @@ afterEach(async () => {
   errSpy.mockRestore();
   // The name cache persists across tests in this file; a stale `columns` or
   // `boards` record would let a later refusal be answered from an earlier fetch.
-  await fs.rm(path.join(CONFIG_DIR, 'name-cache.json'), { force: true });
+  //
+  // `invalidateCache()`, NOT `fs.rm` of the file. `name-cache` memoises the
+  // parsed file in a module global that only its own `writeFile` clears, so
+  // deleting the file leaves the previous test's columns being served from
+  // memory — measured: the two boards below whose columns differ from the
+  // default three got answered from each other's fetch, and every arm in this
+  // file that shares one column list would have gone on passing without ever
+  // hitting the stand. `invalidateCache()` truncates through `writeFile`, which
+  // is what drops the memo.
+  await invalidateCache();
 });
 
 afterAll(async () => {
@@ -504,6 +519,126 @@ describe('positive controls — the command still writes when the goal settles',
     // The userId, never the typed name — `card.assignees` holds ids (#59).
     expect(JSON.stringify(writes.map((w) => w.body))).toContain(ALICE);
     expect(JSON.stringify(writes.map((w) => w.body))).not.toContain('"alice"');
+  });
+});
+
+// ─── THE BOARD OWNS THE SPELLING ─────────────────────────────────────────────
+
+/**
+ * The arms above all run on a board whose columns are spelled exactly as an
+ * English goal would type them — `Done`, `To Do` — so every one of them passes
+ * on a `batch-smart` that ignored the settled vocabulary and went back to
+ * guessing. Mutation testing said so: `columns?.get('done') ?? 'Done'` →
+ * `'Done'`, `columns?.get(typedTarget) ?? toTitleCase(typedTarget)` →
+ * `toTitleCase(typedTarget)`, and dropping `settledColumns` from the second
+ * `parseGoal` call outright all survived all 85 tests.
+ *
+ * These boards are spelled so that the guess and the board disagree.
+ *
+ * WHAT IS AND IS NOT AT STAKE. `resolveColumnId` folds case, so a guess that is
+ * merely mis-cased still reaches the right column and the PUT is unaffected —
+ * measured, not assumed. What the guess gets wrong is everything the user is
+ * SHOWN: the goal line, the preview, the per-card summary, and the rollback
+ * `previousState`. On a bulk write behind a skippable confirm, the preview is
+ * the only thing the user gets to check, so it has to name the column the board
+ * actually has.
+ */
+describe('the board owns the column spelling, not the goal grammar', () => {
+  const SHOUTY = [
+    { columnId: TODO, name: 'To Do', position: 0 },
+    { columnId: DONE, name: 'DONE', position: 1 },
+  ];
+  const NO_DONE = [
+    { columnId: TODO, name: 'To Do', position: 0 },
+    { columnId: 'col-qa', name: 'QA', position: 1 },
+    { columnId: DONE, name: 'Complete', position: 2 },
+  ];
+
+  test('close names the board\'s own done column, not the word "Done"', async () => {
+    const stand = await startServer(SHOUTY);
+
+    const code = await exitCodeOf(BOARD, '--goal', 'close all cards', '--yes');
+
+    expect(code).toBeUndefined();
+    // The board says `DONE`. Nothing may quietly substitute `Done` for it.
+    expect(said()).toContain('DONE (closed)');
+    expect(said()).not.toContain('Done (closed)');
+    // And the write still landed, so this is not passing on a broken command.
+    expect(stand.cards.get('card-1')?.columnId).toBe(DONE);
+  });
+
+  test('close on a board with no done column REFUSES, before the preview', async () => {
+    const stand = await startServer(NO_DONE);
+
+    const code = await exitCodeOf(BOARD, '--goal', 'close all cards', '--yes');
+
+    // Before #150 this previewed all three cards, promised the write, then
+    // failed per card at the wire with the same message and rolled back.
+    expect(mutations(stand.received)).toEqual([]);
+    expect(code).toBe(1);
+    namedTheWord('done');
+    expect(said()).toContain('Complete');
+    expect(said()).not.toContain('Preview (');
+  });
+
+  test('move names the board\'s own target column, not a title-cased guess', async () => {
+    const stand = await startServer(NO_DONE);
+
+    // `QA` is not what `toTitleCase` makes of `qa`, which is `Qa`.
+    const code = await exitCodeOf(BOARD, '--goal', 'move all To Do cards to qa', '--yes');
+
+    expect(code).toBeUndefined();
+    expect(said()).toContain('status: QA');
+    expect(said()).not.toContain('status: Qa');
+    expect(stand.cards.get('card-1')?.columnId).toBe('col-qa');
+  });
+
+  test('a columnId in the filter matches the cards in that column', async () => {
+    const stand = await startServer();
+
+    // `resolveColumnId` takes an id as readily as a name, so `col-todo` settles
+    // — to the column's NAME, which is what `card.status` carries. Comparing the
+    // typed token against `card.status` instead, as every version of this before
+    // the settle did, matches nothing and reports zero.
+    const code = await exitCodeOf(BOARD, '--goal', `move all ${TODO} cards to Done`, '--yes');
+
+    expect(code).toBeUndefined();
+    expect(said()).not.toContain('No cards match');
+    expect(stand.cards.get('card-1')?.columnId).toBe(DONE);
+    expect(stand.cards.get('card-2')?.columnId).toBe(DONE);
+  });
+
+  test('close skips a card already in the done column, by that column\'s name', async () => {
+    // `Done ` — a trailing space, which people really do leave in a column name.
+    // It FOLDS to `done`, so `resolveColumnId('done')` finds it, but it does not
+    // equal `'done'`: the already-in-target skip has to compare against the
+    // settled name and not the literal word, or `card-3` is written again for no
+    // reason. The only observable is the wire, since the redundant PUT would put
+    // the card back where it already was.
+    const stand = await startServer([
+      { columnId: TODO, name: 'To Do', position: 0 },
+      { columnId: DONE, name: 'Done ', position: 1 },
+    ]);
+
+    const code = await exitCodeOf(BOARD, '--goal', 'close all cards', '--yes');
+
+    expect(code).toBeUndefined();
+    const written = mutations(stand.received).map((r) => r.path);
+    expect(written).toEqual(['/cards/card-1', '/cards/card-2']);
+    expect(written).not.toContain('/cards/card-3');
+  });
+
+  test('a bare "the" narrows nothing and is not looked up as a column', async () => {
+    const stand = await startServer();
+
+    // `move all the cards to Done` — English, and `the` names no column. It has
+    // to stay a non-filter, or the refusal path swallows a valid goal.
+    const code = await exitCodeOf(BOARD, '--goal', 'move all the cards to Done', '--yes');
+
+    expect(code).toBeUndefined();
+    namedTheWord('Done');
+    expect(stand.cards.get('card-1')?.columnId).toBe(DONE);
+    expect(stand.cards.get('card-2')?.columnId).toBe(DONE);
   });
 });
 

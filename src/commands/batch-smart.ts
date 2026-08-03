@@ -141,8 +141,13 @@ export function parseGoal(
     const filterStr = (moveMatch[1] ?? '').trim() || 'all';
     const typedTarget = moveMatch[2].trim();
     // The column's own spelling once settled; `toTitleCase` is the pre-settle
-    // GUESS the caller throws away — it was never more than a guess, and a board
-    // whose column is "in progress" got a write to "In Progress".
+    // GUESS the caller throws away.
+    //
+    // What the guess got wrong was the DISPLAY, not the write: `resolveColumnId`
+    // folds case, so `Qa` still reached a column named `QA` and the PUT was
+    // correct — measured against the built CLI. What the user was shown was not.
+    // On a bulk write behind a skippable `--yes`, the preview is the only thing
+    // there is to check, so it names the column the board actually has.
     const targetStatus = columns?.get(typedTarget) ?? toTitleCase(typedTarget);
     const filter = buildCardFilter(filterStr, columns);
     return {
@@ -580,10 +585,15 @@ export function registerBatchSmartCommand(program: Command): void {
         // always accepted it. The scope lock GETs `/widgets/<id>`, and handed the
         // raw argument it 404s into "Scope check failed: Board Board A not
         // found" — a refusal naming the wrong problem (#82/#150). Settle it
-        // first, at most once, and only if something asks: the thunk is what
-        // keeps an unlocked user with a keyword-only goal off the network
-        // entirely (#102/#104). Twin of `boardIdOnce` in `batch.ts`; inlined
-        // rather than shared because #110 deletes this file.
+        // first, at most once, and only if something asks (#102/#104). Twin of
+        // `boardIdOnce` in `batch.ts`; inlined rather than shared because #110
+        // deletes this file.
+        //
+        // The thunk saves REPEATED work, not wire traffic: measured against the
+        // built CLI, dropping the memo changes the request sequence not at all,
+        // because `resolveBoardId` and `ColumnDirectory` both sit behind the
+        // name cache. It is not what keeps anyone off the network — this command
+        // reads the board either way.
         let pendingBoardId: Promise<string> | undefined;
         const boardId = () => (pendingBoardId ??= new BoardsAPI(client).resolveBoardId(board));
 

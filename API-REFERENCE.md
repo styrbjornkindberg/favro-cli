@@ -1855,12 +1855,17 @@ goal — filter words and the `move` target alike — are settled against the bo
 real columns before anything is read or written, by the same resolution
 `cards list --filter "status:…"` uses. So `--goal "move all frobnicated cards to
 Done"` names the word and lists the board's columns, and exits 1; it does not
-report "no cards matched", which is what it did before v2.4.2. The refusal fires
+report "no cards matched", which is what it did before #150. The refusal fires
 under `--dry-run` and under `--yes` too: nothing reaches the wire.
 
 A goal that resolves but genuinely matches nothing is the other outcome and stays
 one — `"move all overdue cards to Done"` on a board with no overdue cards prints
 "No cards match the goal" and exits 0.
+
+The column's **own** spelling is what a `move` writes and what every preview
+line shows: `--goal "move all cards to qa"` on a board whose column is `QA` says
+`→ status: QA`. `close` settles the same way, so a board with no column named
+`Done` refuses instead of promising the write and failing card by card.
 
 **Atomic execution:** Operations run sequentially. If any operation fails, all previously completed operations are rolled back. The confirmation prompt is shown unless `--yes` is passed.
 
