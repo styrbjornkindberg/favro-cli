@@ -321,10 +321,13 @@ describe('a chain reference that cannot resolve fails loudly', () => {
     // And the run is one transaction, so step 1's card is gone.
     expect(stand.cards.size).toBe(0);
     expect(result.rollback?.outcome).toBe('rolled-back');
-    // An interpolation failure is an ordinary in-process throw carrying no wire
-    // classification, so the end-of-run unwind still reports it as retryable —
-    // the discriminator that keeps #66's rule from collapsing into "never".
-    expect(result.rollback?.retryable).toBe(true);
+    // WAS `true`, PINNED ON PURPOSE — do not "fix" it back (#151). The old
+    // reading was that an in-process throw carries no wire classification, so
+    // the unwind reports it retryable. But `{{made.nope}}` is a typo in the
+    // YAML: it will fail identically on every retry, forever. `rolled-back`
+    // above is what says the world is unchanged; `retryable` answers only
+    // "could this succeed next time", and here it cannot.
+    expect(result.rollback?.retryable).toBe(false);
   });
 
   it('a capture referenced whole, not by field, refuses rather than blobbing JSON', async () => {

@@ -310,8 +310,22 @@ describe('the run is ONE transaction — one log, threaded through every step', 
     expect(result.status).toBe('failed');
     expect(result.rollback?.outcome).toBe('rolled-back');
     expect(result.rollback?.orphans).toEqual([]);
-    // An ordinary in-process failure carries no wire classification, so the
-    // rolled-back-is-retryable reading stands. The discriminator for #66.
+    // Still `true`, and #151 did NOT flip it — measured, against the issue's
+    // own claim that this pins the same bug as `skill-capture-wire.ts`. It does
+    // not: `probe-skill-fail` throws INSIDE `intent.run`, so the table catches
+    // it, unwinds, derives `retryable` itself and hands the engine a
+    // `StepDispatchFailure`; `rollback` is carried from that, and the
+    // end-of-run unwind #151 gated never runs (the table emptied the log).
+    // Forcing that line to `false` leaves this assertion green — measured.
+    //
+    // So this is the table's own population, which #66 and #134 left ungated on
+    // the reading that everything it sees was raised inside a write it
+    // instrumented. `probe-skill-fail` is the case that reading does not cover:
+    // it instruments nothing and throws a bare `Error`, so "unclassifiable"
+    // here is a bug of OURS being called a wire hiccup. #151 stopped at the
+    // wide site and named this as the rule's one exception (ADR-0002, "Two
+    // populations") — gating the table too fails seven tests, one of which
+    // asserts this reading deliberately, so it is a decision, not a typo.
     expect(result.rollback?.retryable).toBe(true);
     // What a caller can see afterwards: the card step 1 made is gone.
     expect(stand.cards.size).toBe(0);
@@ -406,6 +420,104 @@ describe('the run is ONE transaction — one log, threaded through every step', 
     // Read back: step 1's card really is gone from the wire.
     expect(stand.cards.size).toBe(0);
     expect(stand.received.filter((r) => r.method === 'DELETE')).toHaveLength(1);
+  });
+
+  it('a WIRE failure escaping uninstrumented undoes step 1 and STILL says retry', async () => {
+    // The other half of #151's gate: defaulting the end-of-run unwind to
+    // `false` is only safe if a genuine wire failure still comes back `true`.
+    //
+    // The scope lock is the seam, because `dispatch` calls `assertScope`
+    // OUTSIDE its own try — so its `GET /widgets/{board}` throws past the
+    // table's instrumentation and the engine is what classifies it, exactly as
+    // it classifies an interpolation typo. Same path, opposite population.
+    //
+    // Only step 2's board is dead, named by path rather than by a call count:
+    // step 1 checks `/widgets/board-a` and lands, step 2 checks
+    // `/widgets/board-b` and never gets an answer. `400` with a message nothing
+    // recognises, because `favro-error` calls that `unknown` — the transient
+    // family — and unlike a 429 or a 5xx `http-client` does not retry it, so
+    // this costs no backoff.
+    const stand = await startServer({
+      fail: (r) =>
+        r.path === `/widgets/${OTHER_BOARD}`
+          ? { status: 400, message: 'upstream had a moment' }
+          : undefined,
+    });
+
+    const result = await runSkill(
+      skill(
+        { command: 'create', args: { name: 'first', board: BOARD } },
+        { command: 'create', args: { name: 'second', board: OTHER_BOARD } },
+      ),
+      opts(stand, { config: { scopeCollectionId: 'coll-a' } }),
+    );
+
+    expect(result.steps[1].error).toContain('400');
+    expect(result.status).toBe('failed');
+    expect(result.rollback?.outcome).toBe('rolled-back');
+    // Came off the wire, so the table's derivation runs behind the gate and
+    // answers for itself — a 400 nobody can name may behave differently next
+    // time, and that advice survives #151.
+    expect(result.rollback?.retryable).toBe(true);
+    // And the transaction still unwound: step 1's card is gone from the wire.
+    expect(stand.cards.size).toBe(0);
+  });
+
+  it('a DETERMINISTIC wire failure escaping uninstrumented is NOT retryable either', async () => {
+    // #151's gate is two conjuncts and this pins the SECOND one: behind
+    // `isWireFailure` the table still decides which HTTP failures are
+    // deterministic, so the answer is not merely "did it touch the wire".
+    // Dropping `&& isRetryable(...)` from the gate passed all 156 suites until
+    // this test existed — nothing else reaches that arm.
+    //
+    // Same seam as the test above, opposite answer: the scope lock's
+    // `GET /widgets/{board}` runs outside `dispatch`'s try, so this escapes the
+    // table uninstrumented and the engine classifies it — and `403` is
+    // `favro-error`'s fail-closed permission arm, so the identical run is
+    // refused identically. Keyed on the board's own path, not a call count.
+    const stand = await startServer({
+      fail: (r) =>
+        r.path === `/widgets/${OTHER_BOARD}`
+          ? { status: 403, message: 'Access denied' }
+          : undefined,
+    });
+
+    const result = await runSkill(
+      skill(
+        { command: 'create', args: { name: 'first', board: BOARD } },
+        { command: 'create', args: { name: 'second', board: OTHER_BOARD } },
+      ),
+      opts(stand, { config: { scopeCollectionId: 'coll-a' } }),
+    );
+
+    expect(result.steps[1].error).toContain('403');
+    expect(result.status).toBe('failed');
+    expect(result.rollback?.outcome).toBe('rolled-back');
+    expect(result.rollback?.retryable).toBe(false);
+    // And the transaction still unwound: step 1's card is gone from the wire.
+    expect(stand.cards.size).toBe(0);
+  });
+
+  it('a step naming no intent at all undoes step 1 and is NOT retryable', async () => {
+    // The other side of #151's gate, and a different error family from the
+    // interpolation typo `skill-capture-wire.ts` pins: an unknown command is a
+    // typo in the YAML's `command:`, thrown by the engine before `dispatch` is
+    // reached, so it is neither a `RefusalError` nor anything off the wire. It
+    // used to answer `retryable: true` on the strength of being unclassifiable.
+    const stand = await startServer();
+
+    const result = await runSkill(
+      skill(
+        { command: 'create', args: { name: 'first', board: BOARD } },
+        { command: 'claim-it-all' },
+      ),
+      opts(stand),
+    );
+
+    expect(result.steps[1].error).toContain('Unknown skill command');
+    expect(result.rollback?.outcome).toBe('rolled-back');
+    expect(result.rollback?.retryable).toBe(false);
+    expect(stand.cards.size).toBe(0);
   });
 
   it('continueOnError cannot span a pending write — the run stops and unwinds', async () => {

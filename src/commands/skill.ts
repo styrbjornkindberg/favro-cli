@@ -151,10 +151,13 @@ export function registerSkillCommands(program: Command): void {
           const completed = r.steps.filter(s => s.status === 'success').length;
           console.log(`\n${r.status === 'completed' ? '✓' : '✗'} Skill "${r.skill}" ${r.status} (${completed}/${r.steps.length} steps)`);
           // The run is one transaction: report the whole-run unwind, not per step.
-          // The advice reads `retryable`, the table's one derivation — a clean
-          // unwind around a deterministic refusal is undone AND not worth
+          // The advice reads `retryable` — the table's one derivation, behind
+          // the wire gate on the engine's end-of-run path (#151) — because a
+          // clean unwind around a deterministic failure is undone AND not worth
           // repeating, and re-deriving it from the outcome here said the
-          // opposite (#66).
+          // opposite (#66). Both branches below say the whole run was undone;
+          // only the first adds the retry, and that is the only half `retryable`
+          // is allowed to move.
           // Gated on the outcome too: only `rolled-back` means a clean unwind,
           // so only it may print "the whole run was undone".
           if (r.rollback?.outcome === 'rolled-back' && r.rollback.retryable) {

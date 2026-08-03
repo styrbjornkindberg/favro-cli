@@ -91,11 +91,12 @@ describe('assertScope', () => {
    * through to the transient arm. Retrying a scope violation cannot change the
    * answer, so that was advice to loop forever.
    *
-   * That skill-engine call is still the one that depends on the TYPE: it asks
-   * the table directly, so `false` there needs the refusal to be named one.
-   * The runner's error boundary no longer asks the identical question — since
-   * #134 it gates on `isWireFailure` first (ADR-0002, "Two populations"), so a
-   * `ScopeError` answers `false` there for a second, independent reason.
+   * NEITHER wide-population reader depends on the TYPE any more: the runner's
+   * error boundary gates on `isWireFailure` first since #134 and the skill
+   * engine's end-of-run unwind since #151 (ADR-0002, "Two populations"), so a
+   * `ScopeError` answers `false` at both for a second, independent reason — it
+   * never touched the wire. This assertion is the derivation on its own, which
+   * is what `checkScope` still branches on, so it keeps earning its keep.
    */
   it('is not retryable — a scope refusal is a deterministic decline', () => {
     const refusal = new ScopeError('Scope violation: nope', 'board-1', 'col-1');

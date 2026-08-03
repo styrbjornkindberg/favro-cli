@@ -52,20 +52,20 @@ export async function confirmAction(message: string, flags?: { yes?: boolean }):
  * and a `ScopeError` is neither, so it fell through to the transient arm and
  * came back TRUE — advice to retry a refusal only `favro scope set` can change.
  *
- * Reachable on ONE path today, latent on a second. `dispatch` calls
- * `assertScope` outside its own try, so the throw escapes the table
- * uninstrumented; the skill engine catches it as `abortCause` and, if an
- * earlier step already wrote, asks `isRetryable(outcome, abortCause)` at the
- * end-of-run unwind. That is live, and measured: a two-step skill whose second
- * step straddles the lock reported `retryable: true` before this change and
- * `false` after, with nothing else touched. That path is the reason this type
- * still earns its keep: the skill engine asks the table directly, so `false`
- * there depends on the refusal being NAMED one.
+ * `dispatch` calls `assertScope` outside its own try, so the throw escapes the
+ * table uninstrumented; the skill engine catches it as `abortCause` and, if an
+ * earlier step already wrote, derives `rollback.retryable` from it at the
+ * end-of-run unwind. That was measured when this type was introduced: a
+ * two-step skill whose second step straddles the lock reported `retryable:
+ * true` before and `false` after, with nothing else touched.
  *
- * The runner's error boundary no longer asks the identical question. Since #134
- * it gates on `isWireFailure` first (ADR-0002, "Two populations"), so a
- * `ScopeError` answers `false` there for a second, independent reason — it
- * never touched the wire — whether or not it extends `RefusalError`.
+ * NEITHER wide-population reader still rests on the type alone. The runner's
+ * error boundary has gated on `isWireFailure` since #134, and the skill
+ * engine's end-of-run unwind since #151 (ADR-0002, "Two populations"), so a
+ * `ScopeError` answers `false` at both for a second, independent reason — it
+ * never touched the wire — whether or not it extends `RefusalError`. What the
+ * type still buys is the NAMING: `checkScope` below branches on it, and a
+ * decline that says what it is beats one inferred from where it came from.
  */
 export class ScopeError extends RefusalError {
   constructor(

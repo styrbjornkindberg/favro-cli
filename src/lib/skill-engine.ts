@@ -22,6 +22,7 @@ import { createFavroClient } from './client-factory';
 import { confirmAction } from './safety';
 import { readConfig, FavroConfig } from './config';
 import { dispatch, getIntent, intentNames, isRetryable, DispatchResult } from './dispatch';
+import { isWireFailure } from './favro-error';
 import { CompensationLog, Orphan, TxOutcome } from './tx-cards';
 import ContextAPI from '../api/context';
 import { StandupAPI } from '../api/standup';
@@ -45,9 +46,17 @@ export interface SkillRunResult {
   /**
    * Present only when the run's one transaction had to be unwound.
    *
+   * The presence of this object is the "the world is unchanged" claim; read
+   * `outcome` for how completely. `retryable` answers a DIFFERENT question —
+   * "could running this again succeed?" — and only that one. A YAML typo is
+   * fully undone and still cannot ever succeed, so it is `false` (#151).
+   *
    * `retryable` is the table's own derivation (`isRetryable`), carried rather
    * than re-derived: `outcome === 'rolled-back'` is not the same question, and
-   * asking it here instead was one of the three drifted sites in #66.
+   * asking it here instead was one of the three drifted sites in #66. On the
+   * end-of-run unwind the table's derivation runs behind the same
+   * `isWireFailure` gate the CLI boundary uses, because that path sees the
+   * boundary's wide population (ADR-0002, "Two populations").
    */
   rollback?: { outcome: TxOutcome; retryable: boolean; orphans: Orphan[] };
 }
@@ -416,7 +425,19 @@ export async function runSkill(
   // nothing here to do.
   if (aborted && log.depth > 0) {
     const unwound = await log.unwind();
-    rollback = { ...unwound, retryable: isRetryable(unwound.outcome, abortCause) };
+    // The wire is the gate and the table runs behind it (#151, the same shape
+    // #134 gave the CLI boundary). `abortCause` here is whatever a step threw
+    // OUTSIDE the table's instrumentation — an interpolation typo, an unknown
+    // intent, a `ParseError`, a `TypeError` of ours — which is the boundary's
+    // wide population, not the narrow one `isRetryable` reads unclassifiable
+    // errors as wire hiccups for. Behind the gate the table still decides which
+    // HTTP failures are deterministic, so the two cannot drift (#66). The
+    // rollback OBJECT already says the world is unchanged; `retryable` only
+    // ever answers whether running it again could succeed, and a typo cannot.
+    rollback = {
+      ...unwound,
+      retryable: isWireFailure(abortCause) && isRetryable(unwound.outcome, abortCause),
+    };
   }
 
   const allCompleted = results.length === skill.steps.length;
