@@ -113,26 +113,45 @@ bare. `truncated` means `--limit` cut a complete fetch; `unreachable` means a co
 read could not reach part of its input, so an empty `rows` with no `unreachable`
 unambiguously means true-empty. `src/lib/read-shape.ts`.
 
-**`--limit`** — one parser for every cap, `parseLimit`, and three outcomes, no fourth:
-whole digits of 1 or more are the cap; an **absent** flag is `undefined`, which each
-caller reads as its own thing (no cap when printing, the command's declared default when
-fetching); and a **supplied value that does not parse** is a *refusal* naming the value —
-`1e9`, `5,000`, `1_000`, `2.7`, `-1`, `0`, `banana` all decline and exit 1. It used to
-mean "no cap" on the print path and "the default" on the fetch path, which is a plausible
-answer built from input we could not read. `0` is refused by decision, not omission: it
-parses, and `capRows` read it as *everything*. **A behaviour change** — anything scripted
-against the old silent-ignore now exits 1 (#142/#143). The same parser and the same
-wording serve `sprint-plan --budget` on both its spellings — the CLI flag and the skill
-step — with the flag name substituted; the skill step kept a `parseInt` through #143 and
-planned a one-point sprint for `budget: 1e9`. A `--limit` arriving as a JSON **number**
-rather than a flag string — only the dispatch surface can do that — is range-checked at
-`dispatch.ts` instead, because there is no string to parse; it declines in the same words.
-A ratchet (`limit-fail-closed-coverage.test.ts`) walks the compiled surface and follows the
-value one declaration hop, so a local, a destructure or a `Number.parseInt` cannot
-reintroduce a second parser. Note what this does **not** claim: on the fetch commands the
-cap itself is inert — `ContextAPI.getSnapshot` and `AggregateAPI.getMultiBoardSnapshot`
-accept `cardLimit` and never read it, measured — so what #142/#143 fixed is the *number*
-each command computes, not the size of the read.
+**`--limit`** — a **print** cap and only a print cap, with one parser, `parseLimit`, and
+three outcomes, no fourth: whole digits of 1 or more are the cap; an **absent** flag is
+`undefined`, which every remaining caller reads as *no cap*; and a **supplied value that
+does not parse** is a *refusal* naming the value — `1e9`, `5,000`, `1_000`, `2.7`, `-1`,
+`0`, `banana` all decline and exit 1. It used to mean "no cap" on the print path and "the
+command's declared default" on the fetch path, which is a plausible answer built from input
+we could not read. `0` is refused by decision, not omission: it parses, and `capRows` read
+it as *everything*. **A behaviour change** — anything scripted against the old
+silent-ignore now exits 1 (#142/#143). The same parser and the same wording serve
+`sprint-plan --budget` on both its spellings — the CLI flag and the skill step — with the
+flag name substituted; the skill step kept a `parseInt` through #143 and planned a
+one-point sprint for `budget: 1e9`. A `--limit` arriving as a JSON **number** rather than a
+flag string — only the dispatch surface can do that — is range-checked at `dispatch.ts`
+instead, because there is no string to parse; it declines in the same words. A ratchet
+(`limit-fail-closed-coverage.test.ts`) walks the compiled surface and follows the value one
+declaration hop, so a local, a destructure or a `Number.parseInt` cannot reintroduce a
+second parser.
+
+There is **no fetch cap anywhere**, and that is the second half of the story. Reviewing
+#142/#143 measured six `cardLimit` parameters with **zero** reads between them:
+`ContextAPI.getSnapshot` and `AggregateAPI.getMultiBoardSnapshot` declared one and never
+touched it, and `QueryAPI.execute`, `SprintPlanAPI.getSuggestions`, `StandupAPI.getStandup`
+and `getCollectionSnapshot` existed to pass it down. Fourteen commands computed a correct
+number for a signature that discarded it. All six parameters and all fourteen flags are
+**deleted** — `context`, `standup`, `sprint-plan`, `query`, `board`, `diff`, `health`,
+`my-cards`, `my-standup`, `next`, `overview`, `stale`, `team`, `workload` — so passing
+`--limit` to one of them exits 1 with `unknown option '--limit'` rather than being accepted
+and ignored. Deleted rather than wired, on two measurements: `getMultiBoardSnapshot` sweeps
+collections through `mapConcurrent(…, 3, …)` and each worker appends to the shared card
+list as its call lands, so a global cut point is decided by wire arrival order (the same
+command answering differently run to run), while a per-collection cap would make
+`--limit 50` mean 50 × N collections; and `buildStats` turns whatever survives into the
+`by_status` / `by_owner` proportions that `health`, `workload`, `team` and `overview` print
+as measured, so a subsampled sweep is a fabricated ratio — the conversion of unread data
+into a plausible answer that ADR-0002 forbids, and one a "results are partial" line does
+not repair. **The read is unbounded and stays unbounded**: a 422-board workspace measured
+at 10 601 cards is paged in full (#132). An honest cap is still available as a later
+ticket, and it has a price of admission — a `capped` marker on the snapshot that every one
+of the fourteen renders on the human path *and* in `--json`.
 
 **refusal** — a deterministic decline: nothing was written, and the same call declines
 again for the same reason. That is the whole distinction the dispatch table needs, and

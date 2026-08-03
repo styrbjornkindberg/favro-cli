@@ -114,10 +114,10 @@ describe('my-cards — scope and filters', () => {
     (config.readConfig as jest.Mock).mockResolvedValue({ scopeCollectionId: 'coll-1' });
 
     await runCli(['my-cards']);
-    expect(MockAggregate.prototype.getMultiBoardSnapshot).toHaveBeenCalledWith({ collectionIds: ['coll-1'] }, 1000);
+    expect(MockAggregate.prototype.getMultiBoardSnapshot).toHaveBeenCalledWith({ collectionIds: ['coll-1'] });
 
-    await runCli(['my-cards', '--collection', 'Other', '--limit', '10']);
-    expect(MockAggregate.prototype.getCollectionSnapshot).toHaveBeenCalledWith('Other', 10);
+    await runCli(['my-cards', '--collection', 'Other']);
+    expect(MockAggregate.prototype.getCollectionSnapshot).toHaveBeenCalledWith('Other');
   });
 
   test('--status filters by workflow stage, case-insensitively', async () => {

@@ -71,7 +71,7 @@ describe('favro standup', () => {
   it('calls getStandup with correct board name', async () => {
     await runCli(['standup', '--board', 'Sprint 42']);
 
-    expect(MockStandupAPI.prototype.getStandup).toHaveBeenCalledWith('Sprint 42', 500);
+    expect(MockStandupAPI.prototype.getStandup).toHaveBeenCalledWith('Sprint 42');
   });
 
   it('outputs compact JSON by default; --pretty is the only way to widen it', async () => {
@@ -155,18 +155,12 @@ describe('favro standup', () => {
     const getStandup = jest.fn().mockResolvedValue(SAMPLE_RESULT);
     const result = await standupHandler(
       { api: { standup: { getStandup } } } as never,
-      { board: 'Sprint 42', limit: '250' },
+      { board: 'Sprint 42' },
     );
 
-    expect(getStandup).toHaveBeenCalledWith('Sprint 42', 250);
+    expect(getStandup).toHaveBeenCalledWith('Sprint 42');
     expect(result.item).toBe(SAMPLE_RESULT);
     expect(typeof result.human).toBe('function');
-  });
-
-  it('passes custom limit to getStandup', async () => {
-    await runCli(['standup', '--board', 'Sprint 42', '--limit', '100']);
-
-    expect(MockStandupAPI.prototype.getStandup).toHaveBeenCalledWith('Sprint 42', 100);
   });
 
   it('shows (none) when group is empty', async () => {

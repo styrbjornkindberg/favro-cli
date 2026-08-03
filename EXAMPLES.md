@@ -869,11 +869,14 @@ Error: Request timeout (408). Retrying...
 ```
 ⚠ Board context took 2.3s — consider filtering for a smaller board
 ```
-**Fix:**
+**Fix:** there is no cap to pass. `context` reads the board to completion, and
+always did — the `--limit` it used to accept was discarded downstream, so it
+never made a snapshot faster. It is removed rather than left there looking
+useful; passing it now exits 1 with `unknown option '--limit'`.
 ```bash
-# Cap how many cards the snapshot walks
-favro context <board-id> --limit 50
-# Or use a simpler board with fewer cards
+# Ask for less board, since you cannot ask for less of a board
+favro context <board-id> | jq '.stats'    # the summary, not the cards
+favro cards list <board-id> --limit 50    # a real cap — on what is PRINTED
 ```
 
 ---

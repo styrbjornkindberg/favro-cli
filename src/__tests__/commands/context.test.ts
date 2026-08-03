@@ -101,42 +101,30 @@ describe('favro context <board>', () => {
   it('calls getSnapshot with board name and outputs JSON', async () => {
     await runCli(['context', 'Sprint 42']);
 
-    expect(MockContextAPI.prototype.getSnapshot).toHaveBeenCalledWith('Sprint 42', 1000);
+    expect(MockContextAPI.prototype.getSnapshot).toHaveBeenCalledWith('Sprint 42');
     expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify(SAMPLE_SNAPSHOT));
   });
 
   it('accepts board ID as positional argument', async () => {
     await runCli(['context', 'boards-1234']);
 
-    expect(MockContextAPI.prototype.getSnapshot).toHaveBeenCalledWith('boards-1234', 1000);
+    expect(MockContextAPI.prototype.getSnapshot).toHaveBeenCalledWith('boards-1234');
   });
 
-  it('respects --limit option', async () => {
-    await runCli(['context', 'boards-1234', '--limit', '500']);
-
-    expect(MockContextAPI.prototype.getSnapshot).toHaveBeenCalledWith('boards-1234', 500);
-  });
-
-  it('uses default limit of 1000 when --limit not specified', async () => {
+  // `--limit` had two arms here — one for a good value, one for the declared
+  // default — and both asserted a number `getSnapshot` discarded. The flag is
+  // deleted; `limit-fail-closed-coverage.test.ts` proves it now declines by name
+  // rather than being accepted and ignored.
+  it('reads the board whole — there is no cap to pass', async () => {
     await runCli(['context', 'boards-1234']);
 
-    expect(MockContextAPI.prototype.getSnapshot).toHaveBeenCalledWith('boards-1234', 1000);
+    expect(MockContextAPI.prototype.getSnapshot).toHaveBeenCalledWith('boards-1234');
   });
 
   it('outputs pretty JSON with --pretty flag', async () => {
     await runCli(['context', 'boards-1234', '--pretty']);
 
     expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify(SAMPLE_SNAPSHOT, null, 2));
-  });
-
-  it('refuses an invalid --limit rather than clamping it to 1000', async () => {
-    // Clamping to the default is a fetch cap invented from a value we could not
-    // read, and the caller cannot tell it happened (#142/#143).
-    await runCli(['context', 'boards-1234', '--limit', 'abc']);
-
-    expect(MockContextAPI.prototype.getSnapshot).not.toHaveBeenCalled();
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('abc'));
-    expect(process.exitCode).toBe(1);
   });
 
   it('fails with an error envelope on stdout when the API key is missing', async () => {
@@ -190,10 +178,9 @@ describe('favro context <board>', () => {
     const result = await contextHandler(
       { api: { context: { getSnapshot } } } as never,
       'Sprint 42',
-      { limit: '250' },
     );
 
-    expect(getSnapshot).toHaveBeenCalledWith('Sprint 42', 250);
+    expect(getSnapshot).toHaveBeenCalledWith('Sprint 42');
     expect(result.item).toBe(SAMPLE_SNAPSHOT);
   });
 

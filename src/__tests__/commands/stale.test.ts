@@ -79,7 +79,7 @@ describe('stale — which snapshot it asks for', () => {
   test('no flags and no lock: everything', async () => {
     await runCli(['stale']);
 
-    expect(MockAggregate.prototype.getMultiBoardSnapshot).toHaveBeenCalledWith({}, 1000);
+    expect(MockAggregate.prototype.getMultiBoardSnapshot).toHaveBeenCalledWith({});
     expect(json().scope).toBe('all collections');
   });
 
@@ -91,7 +91,7 @@ describe('stale — which snapshot it asks for', () => {
 
     await runCli(['stale']);
 
-    expect(MockAggregate.prototype.getMultiBoardSnapshot).toHaveBeenCalledWith({ collectionIds: ['coll-1'] }, 1000);
+    expect(MockAggregate.prototype.getMultiBoardSnapshot).toHaveBeenCalledWith({ collectionIds: ['coll-1'] });
     expect(json().scope).toBe('Platform');
   });
 
@@ -100,7 +100,7 @@ describe('stale — which snapshot it asks for', () => {
 
     await runCli(['stale', '--collection', 'Other']);
 
-    expect(MockAggregate.prototype.getCollectionSnapshot).toHaveBeenCalledWith('Other', 1000);
+    expect(MockAggregate.prototype.getCollectionSnapshot).toHaveBeenCalledWith('Other');
     expect(MockAggregate.prototype.getMultiBoardSnapshot).not.toHaveBeenCalled();
     expect(json().scope).toBe('Other');
   });
@@ -111,9 +111,9 @@ describe('stale — which snapshot it asks for', () => {
       cards: [card({ id: 'c-1', assignees: ['alice'] })],
     });
 
-    await runCli(['stale', '--board', 'Platform', '--limit', '25']);
+    await runCli(['stale', '--board', 'Platform']);
 
-    expect(MockContext.prototype.getSnapshot).toHaveBeenCalledWith('Platform', 25);
+    expect(MockContext.prototype.getSnapshot).toHaveBeenCalledWith('Platform');
     expect(json().scope).toBe('Platform');
     expect(json().assignedStale[0].board).toBe('Platform');
   });

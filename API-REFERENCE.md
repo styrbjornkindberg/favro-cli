@@ -546,7 +546,7 @@ favro cards list [--board <id>] [--status <status>] [--assignee <user>] [--tag <
 | `--assignee <user>` | — | Filter by assignee (substring match, legacy) |
 | `--tag <tag>` | — | Filter by tag (substring match, legacy) |
 | `--filter <expression>` | — | Enhanced query filter (repeatable); overrides legacy flags |
-| `--limit <number>` | `50` | Maximum cards to return |
+| `--limit <number>` | `25` | Cap how many cards are **printed**; sets `truncated`. The board is always fetched to completion. Whole digits of 1 or more — anything else is refused, exit 1 |
 | `--json` | — | Output as JSON |
 | `--csv` | — | Output as CSV |
 

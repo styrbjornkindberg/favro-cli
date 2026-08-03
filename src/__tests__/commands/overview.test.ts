@@ -175,9 +175,7 @@ describe('overviewHandler returns a Result', () => {
     }) as unknown as Ctx;
 
   it('comes back as a bare item with a human formatter attached', async () => {
-    const result = await overviewHandler(ctxWith([card({ id: 'id-1', boardName: 'Board A' })]), {
-      limit: '1000',
-    });
+    const result = await overviewHandler(ctxWith([card({ id: 'id-1', boardName: 'Board A' })]), {});
 
     expect(result.item.scope).toBe('all collections');
     expect(result.item.totalCards).toBe(1);
@@ -188,9 +186,7 @@ describe('overviewHandler returns a Result', () => {
   });
 
   it('omits `unreachable` entirely when nothing was out of reach', async () => {
-    const result = await overviewHandler(ctxWith([card({ id: 'id-1', commonId: '1' })]), {
-      limit: '1000',
-    });
+    const result = await overviewHandler(ctxWith([card({ id: 'id-1', commonId: '1' })]), {});
 
     expect(result.item.topBlockers).toEqual([]);
     expect('unreachable' in result.item).toBe(false);
@@ -199,7 +195,7 @@ describe('overviewHandler returns a Result', () => {
   it('carries every hole through when there were some', async () => {
     const result = await overviewHandler(
       ctxWith([card({ id: 'id-1', commonId: '1', blockedBy: ['off-board'] })]),
-      { limit: '1000' },
+      {},
     );
 
     expect(result.item.unreachable).toHaveLength(1);

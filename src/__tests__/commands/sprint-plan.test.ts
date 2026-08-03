@@ -69,13 +69,13 @@ describe('favro sprint-plan', () => {
   it('calls getSuggestions with correct board name and default budget', async () => {
     await runCli(['sprint-plan', '--board', 'Sprint 42']);
 
-    expect(MockSprintPlanAPI.prototype.getSuggestions).toHaveBeenCalledWith('Sprint 42', 40, 500);
+    expect(MockSprintPlanAPI.prototype.getSuggestions).toHaveBeenCalledWith('Sprint 42', 40);
   });
 
   it('passes custom budget to getSuggestions', async () => {
     await runCli(['sprint-plan', '--board', 'Sprint 42', '--budget', '20']);
 
-    expect(MockSprintPlanAPI.prototype.getSuggestions).toHaveBeenCalledWith('Sprint 42', 20, 500);
+    expect(MockSprintPlanAPI.prototype.getSuggestions).toHaveBeenCalledWith('Sprint 42', 20);
   });
 
   it('outputs compact JSON by default; --pretty is the only way to widen it', async () => {
@@ -164,18 +164,12 @@ describe('favro sprint-plan', () => {
     const getSuggestions = jest.fn().mockResolvedValue(SAMPLE_RESULT);
     const result = await sprintPlanHandler(
       { api: { sprintPlan: { getSuggestions } } } as never,
-      { board: 'Sprint 42', budget: '20', limit: '200' },
+      { board: 'Sprint 42', budget: '20' },
     );
 
-    expect(getSuggestions).toHaveBeenCalledWith('Sprint 42', 20, 200);
+    expect(getSuggestions).toHaveBeenCalledWith('Sprint 42', 20);
     expect(result.item).toBe(SAMPLE_RESULT);
     expect(typeof result.human).toBe('function');
-  });
-
-  it('passes custom limit to getSuggestions', async () => {
-    await runCli(['sprint-plan', '--board', 'Sprint 42', '--limit', '200']);
-
-    expect(MockSprintPlanAPI.prototype.getSuggestions).toHaveBeenCalledWith('Sprint 42', 40, 200);
   });
 
   it('shows (no backlog cards found) when both lists are empty', async () => {

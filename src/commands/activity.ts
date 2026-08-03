@@ -47,8 +47,9 @@ export async function activityHandler(ctx: Ctx, cardId: string, options: Activit
   const until = parseWindow(options.until, '--until');
 
   // `parseLimit`, not a local `parseInt`: the prefix parse read `--limit 1e9`
-  // as 1 and printed one entry marked `truncated` (#99). The `?? 200` keeps the
-  // declared default when the value is unparseable.
+  // as 1 and printed one entry marked `truncated` (#99). The `?? 200` covers
+  // ABSENT only — an unparseable value never reaches it, because `parseLimit`
+  // refuses rather than returning `undefined` (#142).
   const limit = parseLimit(options.limit) ?? 200;
 
   // No `limit` on the fetch. It is one call that returns everything Favro has

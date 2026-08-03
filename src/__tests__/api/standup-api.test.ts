@@ -292,12 +292,14 @@ describe('StandupAPI', () => {
     expect(result.total).toBe(4);
   });
 
-  it('passes cardLimit to getSnapshot', async () => {
-    const client = {} as any;
-    const api = new StandupAPI(client);
-    await api.getStandup('Sprint 42', 200);
+  // Was `passes cardLimit to getSnapshot`, asserting a pass-through into a
+  // parameter `getSnapshot` never read. The board is the WHOLE argument now, and
+  // this goes red if a cap is threaded back in.
+  it('asks getSnapshot for the board and nothing else — there is no cap', async () => {
+    const api = new StandupAPI({} as any);
+    await api.getStandup('Sprint 42');
 
-    expect(mockGetSnapshot).toHaveBeenCalledWith('Sprint 42', 200);
+    expect(mockGetSnapshot).toHaveBeenCalledWith('Sprint 42');
   });
 
   it('includes due-soon cards', async () => {

@@ -302,12 +302,13 @@ describe('SprintPlanAPI', () => {
     expect(result.budget).toBe(40);
   });
 
-  it('passes cardLimit to getSnapshot', async () => {
-    const client = {} as any;
-    const api = new SprintPlanAPI(client);
-    await api.getSuggestions('Sprint 42', 40, 300);
+  // Was `passes cardLimit to getSnapshot`, asserting a pass-through into a
+  // parameter `getSnapshot` never read. `--budget` is untouched and still real.
+  it('asks getSnapshot for the board and nothing else — there is no cap', async () => {
+    const api = new SprintPlanAPI({} as any);
+    await api.getSuggestions('Sprint 42', 40);
 
-    expect(mockGetSnapshot).toHaveBeenCalledWith('Sprint 42', 300);
+    expect(mockGetSnapshot).toHaveBeenCalledWith('Sprint 42');
   });
 
   it('includes board info in result', async () => {

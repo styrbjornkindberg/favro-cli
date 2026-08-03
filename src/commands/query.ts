@@ -48,16 +48,14 @@ function formatHuman(result: QueryResult): string {
   return lines.join('\n');
 }
 
-interface QueryOptions {
-}
-
-/** Exported for a test that reads the `Result` back off a fake `Ctx`. */
-export async function queryHandler(
-  ctx: Ctx,
-  board: string,
-  queryParts: string[],
-  options: QueryOptions,
-) {
+/**
+ * Exported for a test that reads the `Result` back off a fake `Ctx`.
+ *
+ * No options left to take. `--limit` was the only one and it was inert: it rode
+ * `QueryAPI.execute` into `getSnapshot`'s `cardLimit`, which nothing read — so
+ * the query always ran over the whole board (#143 close comment).
+ */
+export async function queryHandler(ctx: Ctx, board: string, queryParts: string[]) {
   const result = await ctx.api.query.execute(board, queryParts.join(' '));
 
   // A single read: the query result IS the entity, matches and all. Returning

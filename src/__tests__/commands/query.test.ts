@@ -3,7 +3,7 @@
  *
  * The parser and the matcher are covered under `__tests__/api/query.test.ts`.
  * What was not: the command layer — that a multi-word query survives commander's
- * variadic argument as ONE string, that `--limit` reaches the fetch, and that a
+ * variadic argument as ONE string, and that a
  * zero-match run prints the explanation rather than nothing at all.
  */
 import { Command } from 'commander';
@@ -77,10 +77,10 @@ afterEach(() => {
 });
 
 describe('query', () => {
-  test('rejoins the variadic query into one string, defaulting the fetch limit to 1000', async () => {
+  test('rejoins the variadic query into one string, and searches the whole board', async () => {
     await runCli(['query', 'Sprint 42', 'high', 'priority', 'status:In', 'Progress']);
 
-    expect(MockQueryAPI.prototype.execute).toHaveBeenCalledWith('Sprint 42', 'high priority status:In Progress', 1000);
+    expect(MockQueryAPI.prototype.execute).toHaveBeenCalledWith('Sprint 42', 'high priority status:In Progress');
   });
 
   test('renders the summary, then one line per match with its reason', async () => {
@@ -113,19 +113,12 @@ describe('query', () => {
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
-  test('--limit reaches the fetch, and a non-numeric one refuses rather than defaulting', async () => {
-    await runCli(['query', 'Sprint 42', 'x', '--limit', '50']);
-    expect(MockQueryAPI.prototype.execute).toHaveBeenCalledWith('Sprint 42', 'x', 50);
-
-    // Falling back to 1000 was a fetch cap invented from garbage (#142/#143).
-    MockQueryAPI.prototype.execute = jest.fn();
-    await runCli(['query', 'Sprint 42', 'x', '--limit', 'lots']);
-    expect(MockQueryAPI.prototype.execute).not.toHaveBeenCalled();
-    // Not `JSON.parse(output())`: the first run above already wrote a result
-    // line, so the spy holds two payloads.
-    expect(output()).toContain('--limit takes a whole number of 1 or more');
-    expect(output()).toContain('lots');
-    expect(process.exitCode).toBe(1);
+  // `--limit` is gone: it rode `execute` into `getSnapshot`'s `cardLimit`, which
+  // nothing read, so the query always searched the whole board. It now declines
+  // by name — proved in `limit-fail-closed-coverage.test.ts`.
+  test('a query with no cap spends no second argument on one', async () => {
+    await runCli(['query', 'Sprint 42', 'x']);
+    expect(MockQueryAPI.prototype.execute).toHaveBeenCalledWith('Sprint 42', 'x');
   });
 
   test('JSON is the default: the whole result, no human rendering', async () => {

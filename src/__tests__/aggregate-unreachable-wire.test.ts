@@ -183,7 +183,8 @@ afterEach(async () => {
   await fs.rm(tmpDir, { recursive: true, force: true });
 });
 
-const LIMIT = { limit: '1000' };
+/** No options: `--limit` is gone from these commands, so scope is all there is. */
+const NO_OPTS = {};
 
 describe('a 500 on one board\'s columns is recorded, not swallowed (#148)', () => {
   it('the snapshot names the dark board and leaves the good one whole', async () => {
@@ -220,7 +221,7 @@ describe('a 500 on one board\'s columns is recorded, not swallowed (#148)', () =
 describe('health does not report a red board off a read that failed (#148)', () => {
   it('omits the dark board, names the hole, and refuses exit 0', async () => {
     const client = await startServer({ failColumnsFor: [DARK] });
-    const result = await healthHandler(ctxFor(client), LIMIT);
+    const result = await healthHandler(ctxFor(client), NO_OPTS);
 
     // THE regression, in the ticket's own words: no board is reported red on
     // no information. Before the fix `boards[]` carried
@@ -246,7 +247,7 @@ describe('health does not report a red board off a read that failed (#148)', () 
    */
   it('500s (retries exhausted) — still no red board on no information', async () => {
     const client = await startServer({ failColumnsFor: [DARK], status: 500 });
-    const result = await healthHandler(ctxFor(client), LIMIT);
+    const result = await healthHandler(ctxFor(client), NO_OPTS);
 
     expect(result.item.boards.some(b => b.signal === 'red')).toBe(false);
     expect(result.item.boards.map(b => b.name)).toEqual([GOOD]);
@@ -259,7 +260,7 @@ describe('health does not report a red board off a read that failed (#148)', () 
 
     // An empty `boards[]` rolls up to 100/green, so omission alone would print
     // "we read nothing" as "all clear".
-    await expect(healthHandler(ctxFor(client), LIMIT))
+    await expect(healthHandler(ctxFor(client), NO_OPTS))
       .rejects.toThrow(/every board that holds cards went dark/);
   });
 
@@ -271,7 +272,7 @@ describe('health does not report a red board off a read that failed (#148)', () 
     // statement the members case above already guards against.
     const client = await startServer({ failColumnsFor: [DARK], cardsOnlyFor: [DARK] });
 
-    await expect(healthHandler(ctxFor(client), LIMIT))
+    await expect(healthHandler(ctxFor(client), NO_OPTS))
       .rejects.toThrow(/every board that holds cards went dark/);
   });
 
@@ -282,7 +283,7 @@ describe('health does not report a red board off a read that failed (#148)', () 
     // being non-empty. A members hole drops no board, so "no board in scope
     // could be read" would be a false statement about a scope that read fine
     // and holds nothing.
-    const result = await healthHandler(ctxFor(client), LIMIT);
+    const result = await healthHandler(ctxFor(client), NO_OPTS);
     expect(result.item.boards).toEqual([]);
     expect(result.item.unreachable?.map(h => h.id)).toEqual([`members:${COLL}`]);
     // And no exit code either. `health` never reads `snapshot.members`, so this
@@ -298,10 +299,10 @@ describe('health does not report a red board off a read that failed (#148)', () 
     // The pair, side by side — an exit code that fires on both carries no
     // information, which is what #117 measured on `risks` before it shipped.
     const costly = await startServer({ failColumnsFor: [DARK] });
-    expect((await healthHandler(ctxFor(costly), LIMIT)).exitCode).toBe(1);
+    expect((await healthHandler(ctxFor(costly), NO_OPTS)).exitCode).toBe(1);
 
     const free = await startServer({ failMembers: true });
-    const harmless = await healthHandler(ctxFor(free), LIMIT);
+    const harmless = await healthHandler(ctxFor(free), NO_OPTS);
     expect('exitCode' in harmless).toBe(false);
     // Still scored, and scored off complete data — that is why it costs nothing.
     expect(harmless.item.boards.map(b => b.name).sort()).toEqual([DARK, GOOD]);
@@ -310,7 +311,7 @@ describe('health does not report a red board off a read that failed (#148)', () 
 
   it('a clean read scores every board, emits no unreachable key, and exits 0', async () => {
     const client = await startServer();
-    const result = await healthHandler(ctxFor(client), LIMIT);
+    const result = await healthHandler(ctxFor(client), NO_OPTS);
 
     expect(result.item.boards.map(b => b.name).sort()).toEqual([DARK, GOOD]);
     expect('unreachable' in result.item).toBe(false);
@@ -324,7 +325,7 @@ describe('health does not report a red board off a read that failed (#148)', () 
 describe('the other three snapshot consumers state what they do with a hole (#148)', () => {
   it('workload drops the dark board\'s cards and names the hole, without claiming an exit code', async () => {
     const client = await startServer({ failColumnsFor: [DARK] });
-    const result = await workloadHandler(ctxFor(client), LIMIT);
+    const result = await workloadHandler(ctxFor(client), NO_OPTS);
 
     // 13 cards on each board; only the readable board's are counted, and the
     // three that are actually in progress are the three reported active.
@@ -340,7 +341,7 @@ describe('the other three snapshot consumers state what they do with a hole (#14
 
   it('team drops them too, so nobody is reported at a fabricated zero WIP', async () => {
     const client = await startServer({ failColumnsFor: [DARK] });
-    const result = await teamHandler(ctxFor(client), LIMIT);
+    const result = await teamHandler(ctxFor(client), NO_OPTS);
 
     expect(result.item.members[0].totalCards).toBe(13);
     expect(result.item.members[0].wipCount).toBe(3);
@@ -353,7 +354,7 @@ describe('the other three snapshot consumers state what they do with a hole (#14
     const client = await startServer({ failColumnsFor: [DARK] });
     // `--days 0` makes every card old enough, so the only thing keeping a card
     // out of the list is the done-stage guard the missing columns disabled.
-    const result = await staleHandler(ctxFor(client), { days: '0', limit: '1000' });
+    const result = await staleHandler(ctxFor(client), { days: '0' });
 
     const listed = [...result.item.assignedStale, ...result.item.unassignedStale];
     // The dark board's ten finished cards are the ones that used to leak
@@ -368,8 +369,8 @@ describe('the other three snapshot consumers state what they do with a hole (#14
     const client = await startServer();
     const ctx = ctxFor(client);
 
-    expect('unreachable' in (await workloadHandler(ctx, LIMIT)).item).toBe(false);
-    expect('unreachable' in (await teamHandler(ctx, LIMIT)).item).toBe(false);
-    expect('unreachable' in (await staleHandler(ctx, { days: '0', limit: '1000' })).item).toBe(false);
+    expect('unreachable' in (await workloadHandler(ctx, NO_OPTS)).item).toBe(false);
+    expect('unreachable' in (await teamHandler(ctx, NO_OPTS)).item).toBe(false);
+    expect('unreachable' in (await staleHandler(ctx, { days: '0' })).item).toBe(false);
   });
 });

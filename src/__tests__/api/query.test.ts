@@ -548,13 +548,15 @@ describe('QueryAPI.execute', () => {
     expect(result.filter.rawQuery).toBe('status:done');
   });
 
-  it('passes cardLimit to getSnapshot', async () => {
+  // Was `passes cardLimit to getSnapshot`, asserting a pass-through into a
+  // parameter `getSnapshot` never read.
+  it('asks getSnapshot for the board and nothing else — there is no cap', async () => {
     mockGetSnapshot.mockResolvedValue(makeSnapshot([]));
 
     const api = new QueryAPI({} as any);
-    await api.execute('board-1', 'status:done', 500);
+    await api.execute('board-1', 'status:done');
 
-    expect(mockGetSnapshot).toHaveBeenCalledWith('board-1', 500);
+    expect(mockGetSnapshot).toHaveBeenCalledWith('board-1');
   });
 
   it('explains no-results for label', async () => {

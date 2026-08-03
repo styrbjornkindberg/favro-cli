@@ -18,6 +18,12 @@
  * read. `parseLimit` now REFUSES instead, so absent and unreadable stop being
  * the same value, and one guard covers every caller.
  *
+ * Then the fetch path went away entirely. Reviewing #143 measured six
+ * `cardLimit` parameters with zero reads between them, so every one of those
+ * fourteen commands computed a correct number and handed it to a signature that
+ * dropped it. The number is not the bug once nothing reads it; the FLAG is. It
+ * is deleted — see arm three for why a real cap is not honestly reachable here.
+ *
  * THE ARMS
  *
  *   - THE TABLE drives `parseLimit` and `capRows` over every malformed spelling
@@ -26,9 +32,9 @@
  *     builds — against a real HTTP server. It asserts the refusal exits 1, puts
  *     nothing on stdout that could be read as a result, and never pages the
  *     board: the whole point of parsing before the fetch.
- *   - THE FETCH CAPS drive three of the sixteen handlers against a recording
- *     `Ctx` and assert what reaches the API: the parsed number for a good
- *     value, the declared default when absent, and NO CALL AT ALL for garbage.
+ *   - THE REMOVED FETCH CAPS assert the fourteen declare no `--limit` on the
+ *     real commander tree and that supplying one now DECLINES by name rather
+ *     than being silently ignored, with both negative controls.
  *   - THE RATCHET walks the real compiled surface for a `--limit` still going
  *     through a numeric conversion of its own, with the usual four arms.
  */
@@ -40,15 +46,13 @@ import path from 'path';
 import { AddressInfo } from 'net';
 import * as ts from 'typescript';
 
+import { CommanderError, type Command } from 'commander';
+
 import { capRows, parseLimit } from '../lib/read-shape';
 import { RefusalError } from '../lib/refusal';
 import FavroHttpClient from '../lib/http-client';
 import * as clientFactory from '../lib/client-factory';
 import { buildProgram } from '../cli';
-import { contextHandler } from '../commands/context';
-import { standupHandler } from '../commands/standup';
-import { healthHandler } from '../commands/health';
-import type { Ctx } from '../lib/run';
 
 // ─── arm one: the table ──────────────────────────────────────────────────────
 
@@ -228,67 +232,144 @@ describe('the live cards list refuses a --limit it cannot read', () => {
   });
 });
 
-// ─── arm three: the fetch caps ───────────────────────────────────────────────
+// ─── arm three: the fetch caps are GONE, and say so out loud ─────────────────
 
 /**
- * Three of the sixteen fetch caps #143 names, each with a different declared
- * default, driven against a `Ctx` that records the cap it was handed.
+ * There is no fetch cap left to test, and that is the assertion.
  *
- * The assertion is on the ARGUMENT, not on rows, and that is deliberate: the
- * cap these commands pass is threaded down to `ContextAPI.getSnapshot` /
- * `AggregateAPI.getMultiBoardSnapshot`, which — measured, not assumed — accept
- * `cardLimit` and never read it. So "`--limit 1e9` fetches one card" was never
- * observable in the fetched ROWS for this family; what is observable, and what
- * was wrong, is the number the command computed. Raised on #143.
+ * This arm used to drive three of the fetch commands against a recording `Ctx`
+ * and check the NUMBER each one computed — deliberately not the rows, because
+ * `ContextAPI.getSnapshot` and `AggregateAPI.getMultiBoardSnapshot` accepted
+ * `cardLimit` and never read it, so the cap was unobservable in the fetch. Six
+ * such parameters, zero reads, measured through the checker. The close comment
+ * on #143 took the decision: absent means no cap, an explicit value means a real
+ * cap — and a real cap here is not reachable honestly. `getMultiBoardSnapshot`
+ * sweeps collections through `mapConcurrent(…, 3, …)` and each worker appends as
+ * its call lands, so a global cut point is decided by wire arrival order; and
+ * `buildStats` turns whatever survives into the `by_status` / `by_owner`
+ * proportions that `health`, `workload`, `team` and `overview` print as
+ * measured. A subsampled ratio is a plausible answer built from data we chose
+ * not to read, which is the one conversion this codebase does not make — and
+ * "results are partial" does not repair a wrong percentage. So the parameter is
+ * deleted and the flag with it.
+ *
+ * WHAT THIS ARM GUARDS: the flag went away LOUDLY. Commander answers an
+ * unrecognised option with `commander.unknownOption` and exit 1, so
+ * `favro workload --limit 50` now declines and names the flag instead of
+ * accepting it and quietly ignoring it — which is what it did for its whole
+ * life. Two independent signals, because either alone can pass for the wrong
+ * reason:
+ *
+ *   - THE SURFACE: the real commander tree has no `--limit` on any of the
+ *     fourteen. A missing command name fails too, so a rename cannot empty this
+ *     list quietly.
+ *   - THE PARSE: the real program, given `--limit 50`, raises
+ *     `commander.unknownOption` naming `--limit`, asks for exit 1, and never
+ *     reaches the action — so it costs no wire call. That is precisely what the
+ *     user gets: `.exitOverride()` (ADR-0002) turns commander's own exit into a
+ *     `CommanderError`, and `cli.ts`'s `.catch` sets `process.exitCode` from it
+ *     after commander has already written the message.
+ *
+ * The NEGATIVE controls are both real and both necessary. `cards list` still
+ * carries a `--limit` (a print cap, `capRows`), so the surface probe must SEE
+ * one somewhere or "no `--limit` on the fourteen" is just a broken probe. And
+ * `--nonesuch` must be reported as `--nonesuch` and NOT as `--limit`, or the
+ * fourteen rows above would pass on any unknown flag at all rather than on the
+ * one that was removed. Arm two covers the third direction end to end:
+ * `cards list --limit 2` still parses, fetches and caps.
+ *
+ * If a future ticket wires a cap that DISCLOSES — a `capped` field on the
+ * snapshot that every one of these commands renders on the human path and in
+ * `--json` — this arm is the one to rewrite, and rewriting it is the point: the
+ * disclosure arms have to be written down before the flag comes back.
  */
-function recordingCtx(recorder: jest.Mock): Ctx {
-  return {
-    client: {} as never,
-    config: {},
-    verbose: false,
-    api: {
-      context: { getSnapshot: recorder },
-      standup: { getStandup: recorder },
-      aggregate: { getMultiBoardSnapshot: recorder, getCollectionSnapshot: recorder },
-    },
-  } as unknown as Ctx;
-}
-
-/** label → [declared default, a call with the given `--limit` value]. */
-const FETCH_CAPS: Array<[string, number, (ctx: Ctx, limit?: string) => Promise<unknown>]> = [
-  ['context', 1000, (ctx, limit) => contextHandler(ctx, BOARD, { limit })],
-  ['standup', 500, (ctx, limit) => standupHandler(ctx, { board: BOARD, limit })],
-  ['health', 1000, (ctx, limit) => healthHandler(ctx, { limit: limit as string })],
+const LIMIT_REMOVED: Array<[string, string[]]> = [
+  ['context', ['context', BOARD]],
+  ['standup', ['standup', '--board', BOARD]],
+  ['sprint-plan', ['sprint-plan', '--board', BOARD]],
+  ['query', ['query', BOARD, 'status:done']],
+  ['board', ['board', BOARD]],
+  ['diff', ['diff', BOARD, '--since', '1d']],
+  ['health', ['health']],
+  ['my-cards', ['my-cards']],
+  ['my-standup', ['my-standup']],
+  ['next', ['next']],
+  ['overview', ['overview']],
+  ['stale', ['stale']],
+  ['team', ['team']],
+  ['workload', ['workload']],
 ];
 
-describe('a fetch cap is parsed, defaulted or refused — never invented', () => {
-  it.each(FETCH_CAPS)('%s: --limit 1e9 refuses instead of fetching one item', async (_l, _d, call) => {
-    const recorder = jest.fn(async () => ({ allCards: [], cards: [], board: { name: BOARD } }));
-    // `parseInt('1e9', 10)` is 1. Every one of these fetched a single card and
-    // reported it as the answer to "give me effectively everything".
-    await expect(call(recordingCtx(recorder), '1e9')).rejects.toThrow(RefusalError);
-    // A refusal spends nothing: the API is never reached at all.
-    expect(recorder).not.toHaveBeenCalled();
+/**
+ * The `--limit` options of one command in the real tree, addressed by the same
+ * name path the user types (`['cards', 'list']`).
+ *
+ * Not `?.` on the lookup — a renamed or unregistered command must FAIL here, not
+ * report "no --limit" because it found nothing to look at.
+ */
+function limitOptionsOf(...namePath: string[]): string[] {
+  let node: Command = buildProgram();
+  for (const name of namePath) {
+    const child = node.commands.find((c) => c.name() === name);
+    if (!child) throw new Error(`no such command: ${namePath.join(' ')}`);
+    node = child;
+  }
+  return node.options.map((o) => o.long ?? o.short ?? '').filter((l) => l === '--limit');
+}
+
+/**
+ * Parse one argv through the real program and hand back the `CommanderError` it
+ * declined with — plus whatever reached stdout, which must be nothing.
+ *
+ * A parse error never enters an action, so this needs no server and no client:
+ * `createFavroClient` is never called, which is also the claim that a typo'd
+ * flag costs no wire call.
+ */
+async function parseError(argv: string[]) {
+  const out = jest.spyOn(console, 'log').mockImplementation(() => {});
+  const write = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+  let thrown: unknown;
+  try {
+    await buildProgram().parseAsync(['node', 'favro', ...argv]);
+  } catch (error) {
+    thrown = error;
+  }
+  const stdout = out.mock.calls.map((c) => String(c[0])).join('\n');
+  out.mockRestore();
+  write.mockRestore();
+  return { thrown, stdout };
+}
+
+describe('the inert fetch cap is gone, and its flag refuses out loud', () => {
+  it.each(LIMIT_REMOVED)('%s declares no --limit in the real commander tree', (name) => {
+    expect(limitOptionsOf(name)).toEqual([]);
   });
 
-  it.each(FETCH_CAPS)('%s: a large --limit reaches the API whole', async (_l, _d, call) => {
-    const recorder = jest.fn(async () => ({ allCards: [], cards: [], board: { name: BOARD } }));
-    await call(recordingCtx(recorder), '1000000');
-    expect(recorder.mock.calls[0]).toContain(1000000);
+  it.each(LIMIT_REMOVED)('%s declines --limit 50 by name, and writes no result', async (_n, argv) => {
+    const { thrown, stdout } = await parseError([...argv, '--limit', '50']);
+
+    expect((thrown as CommanderError)?.code).toBe('commander.unknownOption');
+    expect((thrown as Error)?.message).toContain("unknown option '--limit'");
+    // `cli.ts` reads this straight into `process.exitCode`.
+    expect((thrown as CommanderError)?.exitCode).toBe(1);
+    // Accepting it and quietly ignoring it is exactly what this change deletes,
+    // so an exit 0 with a well-formed report is the regression.
+    expect(stdout).toBe('');
   });
 
-  it.each(FETCH_CAPS)('%s: an absent --limit is the declared default', async (_l, dflt, call) => {
-    const recorder = jest.fn(async () => ({ allCards: [], cards: [], board: { name: BOARD } }));
-    await call(recordingCtx(recorder), undefined);
-    // Absent must NOT refuse, and must NOT become an uncapped org-wide sweep:
-    // for a fetch, "no cap" is a much larger cost than for a print (#143).
-    expect(recorder.mock.calls[0]).toContain(dflt);
+  it('the surface probe can still SEE a --limit where one really exists', () => {
+    // `cards list` keeps a real one — a print cap. If this ever came back empty
+    // the fourteen rows above would be proving nothing.
+    expect(limitOptionsOf('cards', 'list')).toEqual(['--limit']);
   });
 
-  it.each(FETCH_CAPS)('%s: a comma-grouped --limit refuses rather than reading 5', async (_l, _d, call) => {
-    const recorder = jest.fn(async () => ({ allCards: [], cards: [], board: { name: BOARD } }));
-    await expect(call(recordingCtx(recorder), '5,000')).rejects.toThrow(RefusalError);
-    expect(recorder).not.toHaveBeenCalled();
+  it('an unknown flag is named as ITSELF, not as --limit', async () => {
+    // The discriminator. Without it, the fourteen rows above would pass on any
+    // unknown option whatsoever rather than on the one that was removed.
+    const { thrown } = await parseError(['health', '--nonesuch', '50']);
+    expect((thrown as CommanderError)?.code).toBe('commander.unknownOption');
+    expect((thrown as Error)?.message).toContain("'--nonesuch'");
+    expect((thrown as Error)?.message).not.toContain('--limit');
   });
 });
 

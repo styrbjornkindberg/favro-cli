@@ -86,12 +86,13 @@ describe('diff command', () => {
 
   // ─── registration ──────────────────────────────────────────────────────────
 
-  it('registers with --since required and --limit optional, and no --json', () => {
+  it('registers with --since required, no --limit and no --json', () => {
     const diff = buildProgram().commands.find((c) => c.name() === 'diff')!;
     const longs = diff.options.map((o) => o.long);
 
     expect(longs).toContain('--since');
-    expect(longs).toContain('--limit');
+    // `--limit` was inert here — `getSnapshot` discarded it — and is deleted.
+    expect(longs).not.toContain('--limit');
     expect(longs).not.toContain('--json');
     expect(diff.registeredArguments.map((a) => a.name())).toEqual(['boardRef']);
   });
@@ -201,20 +202,11 @@ describe('diff command', () => {
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
-  // ─── --limit ───────────────────────────────────────────────────────────────
+  // ─── no cap ────────────────────────────────────────────────────────────────
 
-  it('takes whole digits for --limit and nothing else', async () => {
-    await runCli(['diff', 'board-1', '--since', '1d', '--limit', '250']);
-    expect(MockContextAPI.prototype.getSnapshot).toHaveBeenCalledWith('board-1', 250);
-
-    // `parseInt` stopped at the first non-digit, so `1e9` meant ONE card (#143).
-    // `parseLimit` rejected it, which made it the DEFAULT 1000 — still a number
-    // invented from a value we could not read. It refuses now (#142), and the
-    // snapshot is never fetched.
-    MockContextAPI.prototype.getSnapshot = jest.fn();
-    await runCli(['diff', 'board-1', '--since', '1d', '--limit', '1e9']);
-    expect(MockContextAPI.prototype.getSnapshot).not.toHaveBeenCalled();
-    expect(process.exitCode).toBe(1);
+  it('scans the board whole — there is no cap to pass', async () => {
+    await runCli(['diff', 'board-1', '--since', '1d']);
+    expect(MockContextAPI.prototype.getSnapshot).toHaveBeenCalledWith('board-1');
   });
 
   it('the handler returns the report, the formatter and the exit code', async () => {
@@ -228,7 +220,7 @@ describe('diff command', () => {
       { since: '1d' },
     );
 
-    expect(getSnapshot).toHaveBeenCalledWith('board-1', 1000);
+    expect(getSnapshot).toHaveBeenCalledWith('board-1');
     expect(result.item.changes).toHaveLength(1);
     expect(result.exitCode).toBe(1);
     expect(typeof result.human).toBe('function');

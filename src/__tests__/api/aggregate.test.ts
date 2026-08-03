@@ -65,7 +65,7 @@ describe('AggregateAPI', () => {
       '/collections': { entities: [] },
     });
     const api = new AggregateAPI(client as any);
-    const snapshot = await api.getMultiBoardSnapshot({}, 100);
+    const snapshot = await api.getMultiBoardSnapshot({});
 
     expect(snapshot.allCards).toEqual([]);
     expect(snapshot.collections).toEqual([]);
@@ -90,7 +90,7 @@ describe('AggregateAPI', () => {
     });
 
     const api = new AggregateAPI(client as any);
-    const snapshot = await api.getMultiBoardSnapshot({ collectionIds: ['col-1'] }, 100);
+    const snapshot = await api.getMultiBoardSnapshot({ collectionIds: ['col-1'] });
 
     expect(snapshot.allCards.length).toBe(1);
     expect(snapshot.allCards[0].title).toBe('Task A');
@@ -124,7 +124,7 @@ describe('AggregateAPI', () => {
     });
 
     const api = new AggregateAPI(client as any);
-    const snapshot = await api.getMultiBoardSnapshot({ collectionIds: ['col-1'] }, 100);
+    const snapshot = await api.getMultiBoardSnapshot({ collectionIds: ['col-1'] });
 
     const stages = snapshot.allCards.map(c => c.stage);
     expect(stages).toContain('done');
@@ -149,7 +149,7 @@ describe('AggregateAPI', () => {
     });
 
     const api = new AggregateAPI(client as any);
-    const snapshot = await api.getMultiBoardSnapshot({ collectionIds: ['col-1'] }, 500);
+    const snapshot = await api.getMultiBoardSnapshot({ collectionIds: ['col-1'] });
     expect(snapshot.stats.total).toBe(3);
     expect(snapshot.stats.by_board['Board A']).toBe(3);
   });

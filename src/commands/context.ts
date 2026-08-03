@@ -4,7 +4,6 @@
  *
  * Usage:
  *   favro context <board-name|board-id>
- *   favro context <board-name|board-id>
  *   favro context <board-name|board-id> --pretty
  *
  * Returns a single JSON object with complete board state for AI workflows:
@@ -19,18 +18,16 @@
 import { Command } from 'commander';
 import { Ctx, run } from '../lib/run';
 
-interface ContextOptions {
-}
-
 /**
  * Exported for a test that calls it with a fake `Ctx` and reads the `Result`
  * back — no stdout capture, no client mock.
+ *
+ * No options left to take. `--limit` was the only one, and it was inert:
+ * `getSnapshot` declared `cardLimit` and never read it, so the flag advertised a
+ * fetch cap the fetch never applied (#143 close comment). The board is read to
+ * completion, as it always in fact was.
  */
-export async function contextHandler(ctx: Ctx, board: string, options: ContextOptions) {
-  // A FETCH cap, so an absent flag falls back to the declared default and a
-  // malformed one refuses (#143) — never the default, which would be a whole
-  // paginated board read answering a question nobody asked.
-
+export async function contextHandler(ctx: Ctx, board: string) {
   // A single read, so it stays bare (`read-shape.ts` rule 1) — the snapshot IS
   // the entity. Its own `unreachable` rides inside it, where the composite
   // fetch that produced the holes put it.

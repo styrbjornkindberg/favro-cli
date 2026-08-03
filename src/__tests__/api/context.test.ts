@@ -266,7 +266,7 @@ describe('ContextAPI.getSnapshot()', () => {
   // the snapshot was assembled from a partial board and reported as the board.
   it('reads the whole board, with no limit on the fetch', async () => {
     const api = buildAPI();
-    await api.getSnapshot('boards-1234', 500);
+    await api.getSnapshot('boards-1234');
     expect(MockCardsAPI.prototype.listCards).toHaveBeenCalledWith('boards-1234');
   });
 
@@ -364,7 +364,7 @@ describe('ContextAPI performance', () => {
 
     const api = buildAPI();
     const start = Date.now();
-    const snapshot = await api.getSnapshot('boards-1234', 500);
+    const snapshot = await api.getSnapshot('boards-1234');
     const elapsed = Date.now() - start;
 
     expect(snapshot.cards).toHaveLength(500);

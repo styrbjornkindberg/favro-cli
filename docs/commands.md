@@ -54,10 +54,23 @@ Every list read takes `--limit` now, not just `cards list` — `columns`, `tags`
 `boards list`, `collections list` and `cards dependencies` / `blocking` /
 `blocked-by`. Uncapped by default, so a read with no `--limit` prints
 everything; pass one and the cut is marked `truncated` in JSON and printed as
-`(truncated to N of M …)` in human output. `--limit` takes whole digits and
-nothing else: `1e9`, `2.7`, `5,000` and `banana` are all unparseable, and an
-unparseable `--limit` is no cap — never an empty list, and never a cap read off
-the leading digits (`--limit 1e9` printing one row).
+`(truncated to N of M …)` in human output. `--limit` takes whole digits of 1 or
+more and nothing else: `1e9`, `2.7`, `5,000`, `-1`, `0` and `banana` are all
+unparseable, and an unparseable one is a **refusal** naming the value that exits
+1 — never no cap, never an empty list, and never a cap read off the leading
+digits (`--limit 1e9` printing one row).
+
+The fourteen board- and collection-wide reads have **no `--limit` at all**:
+`context`, `standup`, `sprint-plan`, `query`, `board`, `diff`, `health`,
+`my-cards`, `my-standup`, `next`, `overview`, `stale`, `team`, `workload`. They
+each used to accept one and thread it into `ContextAPI.getSnapshot` /
+`AggregateAPI.getMultiBoardSnapshot`, which declared the parameter and never read
+it — so the flag advertised a fetch cap that no fetch ever applied. It is
+removed rather than wired: the collection sweep runs three fetches concurrently,
+so any global cut point would depend on wire arrival order, and these commands
+report `by_status` / `by_owner` proportions that a subsampled read would make
+plainly wrong. Passing `--limit` to one of them now exits 1 with
+`unknown option '--limit'` instead of being silently ignored.
 
 ### Card bodies and custom fields are omitted from list output
 
@@ -530,7 +543,11 @@ These commands work across boards via `--collection <name>` or the scoped collec
 | `health` | CTO | Per-board health scores 0-100 |
 | `team` | CTO | Team utilization + bottleneck analysis |
 
-Common flags: `--collection <name>`, `--limit <n>`, `--human` (formatted output), `--json` (default)
+Common flags: `--collection <name>`, `--human` (formatted output), `--json` (default)
+
+No `--limit` on any of them, and none of them ever had a working one — see
+[`--limit` caps output, not the fetch](#--limit-caps-output-not-the-fetch). The
+sweep reads every card in scope.
 
 ---
 
