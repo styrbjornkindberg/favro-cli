@@ -30,8 +30,41 @@ import { AnonymousCtx, run } from '../lib/run';
 /**
  * Prompt user for input interactively.
  * Exported for testing.
+ *
+ * FAIL CLOSED FIRST (#147). `readline` on a pipe never resolves — measured: this
+ * function outlived a 5-second SIGKILL with stdin piped, which under `favro_run`
+ * is the whole 60s budget spent for no answer. The list in
+ * `lib/interactive-commands.ts` keeps `favro auth login` from being spawned at
+ * all, but it lets the FLAGGED form through on purpose (`--email` + `--api-key`
+ * is the only way an agent can authenticate), and that form still lands here:
+ *
+ *   - an account with more than one organization reaches the picker below
+ *     (`Select organization [1-n]`), which no flag skips;
+ *   - `--email ""` leaves the value falsy and the caller prompts for what it did
+ *     not get. Measured before this guard: `favro_run` returned after 60022ms
+ *     with a bare "Command failed".
+ *
+ * A list of command PATHS cannot see either case — it has no idea how many
+ * organizations an account has. So the guard goes where all three call sites
+ * route through, exactly as `confirmAction` (`lib/safety.ts`) already does for
+ * the write confirmations.
+ *
+ * `!isTTY`, not `isTTY === false`: node leaves the property UNDEFINED on a pipe
+ * rather than setting it false (measured), so the equality form does not fire
+ * where it matters most.
  */
 export async function promptInput(question: string, masked: boolean = false): Promise<string> {
+  if (!process.stdin.isTTY) {
+    // A `RefusalError`: no terminal is configuration, so the identical call
+    // declines identically and `retryable: false` is the honest answer.
+    throw new RefusalError(
+      `Cannot prompt for "${question.trim()}" without a terminal.\n` +
+      '  Run `favro auth login` directly in a terminal, or set FAVRO_API_KEY, ' +
+      'FAVRO_EMAIL and FAVRO_ORGANIZATION_ID in the environment instead — ' +
+      '`resolveAuth` reads all three without any prompt.',
+    );
+  }
+
   return new Promise((resolve) => {
     const rl = readline.createInterface({
       input: process.stdin,
