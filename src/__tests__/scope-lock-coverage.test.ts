@@ -113,7 +113,9 @@ const ALLOWLIST: Record<string, string> = {};
  * nothing guards these paths.
  */
 const OUT_OF_REMIT: Record<string, string> = {
-  'src/commands/tags.ts tags create': '#104 — org-scoped; additive, and an unknown name refuses client-side',
+  // NOT "an unknown name refuses client-side" (#125's body says that, and it is
+  // about `getTag` on a CARD write, not about `createTag`, which refuses nothing).
+  'src/commands/tags.ts tags create': '#104 — org-scoped; additive, undone by a delete',
   'src/commands/tags.ts tags update': '#104 — org-scoped; reversible by another update',
   'src/commands/tags.ts tags delete': '#104 — org-scoped; contained by assertOrgScope (#125)',
   'src/commands/users.ts groups create': '#104 — org-scoped; additive',

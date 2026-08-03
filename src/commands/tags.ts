@@ -87,10 +87,18 @@ export function registerTagsCommands(program: Command): void {
   // #125 built that separate guard, and it covers exactly one of the three:
   // `assertOrgScope` on `tags delete`, because `tags delete` strips the tag from
   // every card in the organization and cannot be undone — a wider blast radius
-  // than anything the collection lock guards. `create` is additive and an unknown
-  // tag name is already refused client-side (`tags-api.ts`); `update` renames
-  // org-wide but another rename puts it back. Irreversibility is the line. On
-  // those two the guard remains `confirmAction`, which `-y` waives.
+  // than anything the collection lock guards. `create` is additive and a stray
+  // one is undone by a delete; `update` renames org-wide but another rename puts
+  // it back. Irreversibility is the line. On those two the guard remains
+  // `confirmAction`, which `-y` waives.
+  //
+  // Not the reason, though #125's own body offers it: "an unknown tag name is
+  // already refused client-side". `createTag` refuses nothing — it posts the name
+  // it is given, which is the whole point of a create. The refusal is
+  // `TagLookupError` in `getTag`, and what it closes is the ACCIDENTAL-creation
+  // path on a CARD write (`cards update --tags "typo"` refuses instead of
+  // inventing a tag). That is true and it matters; it says nothing about this
+  // command, so it is not what exempts it.
   tagsCommand
     .command('create')
     .description('Create a new global tag')
