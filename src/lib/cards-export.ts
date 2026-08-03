@@ -9,7 +9,7 @@
  */
 import { Card } from './cards-api';
 import { filterCards, queryNames, ParseError } from './query-parser';
-import { resolveQuery, ValueContext } from './query-values';
+import { resolveQuery, refuseEmpty, ValueContext } from './query-values';
 
 export type ExportFormat = 'json' | 'csv';
 
@@ -34,6 +34,12 @@ export async function applyFilter(
   filterExpression: string,
   ctx: ValueContext,
 ): Promise<Card[]> {
+  // An EMPTY expression is not an absent one. `--filter "$SPRINT"` with the
+  // variable unset used to parse to a null AST and match EVERY card — on
+  // `cards export` a whole board in the file, and since #138 routed the bulk
+  // writers through here, `batch move --filter "" --yes` moved the whole board
+  // and exited 0. `cards list` refused it all along; this is that same refusal.
+  refuseEmpty('filter', filterExpression);
   const query = await resolveQuery(filterExpression, ctx);
 
   // `unblocked` is refused here rather than answered wrong (#47). Judging whether
@@ -64,8 +70,18 @@ export async function applyFilters(
   ctx: ValueContext,
 ): Promise<Card[]> {
   if (filterExpressions.length === 0) return cards;
+  // Per expression, before composing: `["", "tag:bug"]` would otherwise become
+  // `() AND (tag:bug)` and refuse with a parser position instead of the reason.
+  for (const expression of filterExpressions) refuseEmpty('filter', expression);
 
-  // Combine multiple filter expressions with AND operator
-  const combinedFilter = filterExpressions.join(' AND ');
+  // Combine multiple filter expressions with AND — each PARENTHESISED, because
+  // AND binds tighter than OR. A bare join turned
+  // `--filter "a OR b" --filter "c"` into `a OR b AND c`, which parses as
+  // `a OR (b AND c)` — a strictly WIDER set than the user asked for. `cards
+  // export` wrote the extra rows to a file; since #138 `batch move`/`batch
+  // assign` reach the same call, and would have WRITTEN to them.
+  // `resolveCardFilter` parenthesises on composition for this exact reason.
+  const combinedFilter =
+    filterExpressions.length === 1 ? filterExpressions[0] : filterExpressions.map((f) => `(${f})`).join(' AND ');
   return applyFilter(cards, combinedFilter, ctx);
 }

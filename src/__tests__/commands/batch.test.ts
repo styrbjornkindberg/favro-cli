@@ -4,8 +4,6 @@
  */
 import { Command } from 'commander';
 import {
-  parseFilterExpression,
-  buildFilterFn,
   registerBatchCommand,
   registerBatchUpdateCommand,
   registerBatchMoveCommand,
@@ -16,6 +14,29 @@ import CardsAPI from '../../lib/cards-api';
 import FavroHttpClient from '../../lib/http-client';
 import * as config from '../../lib/config';
 import * as fsPromises from 'fs/promises';
+import { STUB_BOARD, stubVocabularyClient } from '../../test-support/filter-vocabulary';
+
+/**
+ * `--filter` on `batch move`/`batch assign` is no longer a grammar of its own
+ * (#138): it goes through the same `resolveQuery` `cards list` and `cards
+ * export` run, so every `status:`/`tag:`/`assignee:` value is settled against
+ * the org's real vocabulary. The stub org below is what these tests settle
+ * against, so the fixtures speak its column names.
+ */
+jest.mock('../../lib/client-factory', () => {
+  // Required inside the factory, not closed over: `jest.mock` is hoisted above
+  // the imports, so a top-level binding is not initialised when it runs. The
+  // key check is kept, because two tests below are about a missing one.
+  const stub = async () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    if (!(await require('../../lib/config').resolveApiKey())) {
+      throw new Error('API key not configured. Run `favro auth login`.');
+    }
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    return require('../../test-support/filter-vocabulary').stubVocabularyClient();
+  };
+  return { __esModule: true, createFavroClient: jest.fn(stub), default: jest.fn(stub) };
+});
 
 /**
  * `--to` is resolved to a `userId` before any card is touched — that resolution
@@ -47,7 +68,7 @@ function makeCard(overrides: Partial<Card> = {}): Card {
   return {
     cardId: 'card-default',
     name: 'Default Card',
-    status: 'Backlog',
+    status: 'todo',
     assignees: [],
     tags: [],
     createdAt: new Date().toISOString(),
@@ -55,67 +76,13 @@ function makeCard(overrides: Partial<Card> = {}): Card {
   };
 }
 
-// ---------------------------------------------------------------------------
-// Filter tests
-// ---------------------------------------------------------------------------
-
-describe('parseFilterExpression', () => {
-  it('matches cards by status (exact, case-insensitive)', () => {
-    const fn = parseFilterExpression('status:Done');
-    expect(fn(makeCard({ status: 'Done' }))).toBe(true);
-    expect(fn(makeCard({ status: 'done' }))).toBe(true);
-    expect(fn(makeCard({ status: 'Backlog' }))).toBe(false);
-    // Exact match: "Done" should NOT match "Undone" (important regression)
-    expect(fn(makeCard({ status: 'Undone' }))).toBe(false);
-  });
-
-  it('matches cards by assignee (substring)', () => {
-    const fn = parseFilterExpression('assignee:alice');
-    expect(fn(makeCard({ assignees: ['alice'] }))).toBe(true);
-    expect(fn(makeCard({ assignees: ['alice', 'bob'] }))).toBe(true);
-    expect(fn(makeCard({ assignees: ['bob'] }))).toBe(false);
-    expect(fn(makeCard({ assignees: [] }))).toBe(false);
-  });
-
-  it('matches cards by owner (alias for assignee)', () => {
-    const fn = parseFilterExpression('owner:alice');
-    expect(fn(makeCard({ assignees: ['alice'] }))).toBe(true);
-    expect(fn(makeCard({ assignees: ['bob'] }))).toBe(false);
-  });
-
-  it('matches cards by tag', () => {
-    const fn = parseFilterExpression('tag:bug');
-    expect(fn(makeCard({ tags: ['bug'] }))).toBe(true);
-    expect(fn(makeCard({ tags: ['bug', 'urgent'] }))).toBe(true);
-    expect(fn(makeCard({ tags: ['feature'] }))).toBe(false);
-  });
-
-  it('unknown filter key matches nothing (safe default)', () => {
-    const fn = parseFilterExpression('unknownfield:value');
-    expect(fn(makeCard())).toBe(false);
-  });
-
-  it('handles status with colon in value', () => {
-    const fn = parseFilterExpression('status:In Progress');
-    expect(fn(makeCard({ status: 'In Progress' }))).toBe(true);
-    expect(fn(makeCard({ status: 'in progress' }))).toBe(true);
-  });
-});
-
-describe('buildFilterFn', () => {
-  it('returns true for all cards when no filters', () => {
-    const fn = buildFilterFn([]);
-    expect(fn(makeCard())).toBe(true);
-    expect(fn(makeCard({ status: 'anything' }))).toBe(true);
-  });
-
-  it('ANDs multiple filters together', () => {
-    const fn = buildFilterFn(['status:Backlog', 'assignee:alice']);
-    expect(fn(makeCard({ status: 'Backlog', assignees: ['alice'] }))).toBe(true);
-    expect(fn(makeCard({ status: 'Backlog', assignees: ['bob'] }))).toBe(false);
-    expect(fn(makeCard({ status: 'Done', assignees: ['alice'] }))).toBe(false);
-  });
-});
+// `parseFilterExpression` and `buildFilterFn` no longer live here. They were a
+// third `--filter` grammar on a WRITE command whose unknown-field branch was
+// `() => false`, so a typo'd field moved or assigned nothing and reported
+// success (#138). `--filter` now runs the one protocol every read runs; its
+// refusals are pinned against `cards list`'s and `cards export`'s, and the
+// no-write guarantee against a real wire, in
+// `src/__tests__/batch-filter-fail-closed-wire.test.ts`.
 
 // `resolveAssignee` no longer lives here. It was a placeholder that echoed the
 // flag text back, which is what made the dedupe below compare a display name
@@ -238,7 +205,7 @@ describe('batch update command', () => {
   it('fetches card previousState before updating (for atomic rollback, BLOCKER 4)', async () => {
     const csv = 'card_id,status\ncard-1,Done';
     mockFsReadFile.mockResolvedValue(csv as any);
-    mockApi.getCard.mockResolvedValue(makeCard({ cardId: 'card-1', status: 'Backlog', dueDate: '2026-01-01', boardId: 'board-x' }));
+    mockApi.getCard.mockResolvedValue(makeCard({ cardId: 'card-1', status: 'todo', dueDate: '2026-01-01', boardId: 'board-x' }));
     mockApi.updateCard.mockResolvedValue(makeCard({ cardId: 'card-1', status: 'Done' }));
 
     await program.parseAsync(['node', 'favro', 'batch', 'update', '--from-csv', 'cards.csv']);
@@ -288,22 +255,22 @@ describe('batch move command', () => {
   });
 
   it('requires --to-board or --status', async () => {
-    await program.parseAsync(['node', 'favro', 'batch', 'move', '--board', 'board-1']);
+    await program.parseAsync(['node', 'favro', 'batch', 'move', '--board', STUB_BOARD]);
     expect(processExitSpy).toHaveBeenCalledWith(1);
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('--to-board'));
   });
 
   it('dry-run shows preview without updating cards', async () => {
     mockApi.listCards.mockResolvedValue([
-      makeCard({ cardId: 'card-1', status: 'Completed' }),
-      makeCard({ cardId: 'card-2', status: 'Backlog' }),
+      makeCard({ cardId: 'card-1', status: 'done' }),
+      makeCard({ cardId: 'card-2', status: 'todo' }),
     ]);
 
     await program.parseAsync([
       'node', 'favro', 'batch', 'move',
-      '--board', 'board-1',
+      '--board', STUB_BOARD,
       '--status', 'Archive',
-      '--filter', 'status:Completed',
+      '--filter', 'status:done',
       '--dry-run',
     ]);
 
@@ -315,17 +282,17 @@ describe('batch move command', () => {
 
   it('filters cards and moves only matching ones', async () => {
     mockApi.listCards.mockResolvedValue([
-      makeCard({ cardId: 'card-1', status: 'Completed' }),
-      makeCard({ cardId: 'card-2', status: 'Backlog' }),
-      makeCard({ cardId: 'card-3', status: 'Completed' }),
+      makeCard({ cardId: 'card-1', status: 'done' }),
+      makeCard({ cardId: 'card-2', status: 'todo' }),
+      makeCard({ cardId: 'card-3', status: 'done' }),
     ]);
     mockApi.updateCard.mockResolvedValue(makeCard());
 
     await program.parseAsync([
       'node', 'favro', 'batch', 'move',
-      '--board', 'board-1',
+      '--board', STUB_BOARD,
       '--status', 'Archive',
-      '--filter', 'status:Completed',
+      '--filter', 'status:done',
     ]);
 
     // Should update card-1 and card-3 (Completed), not card-2 (Backlog)
@@ -337,14 +304,14 @@ describe('batch move command', () => {
 
   it('reports no matching cards gracefully', async () => {
     mockApi.listCards.mockResolvedValue([
-      makeCard({ cardId: 'card-1', status: 'Backlog' }),
+      makeCard({ cardId: 'card-1', status: 'todo' }),
     ]);
 
     await program.parseAsync([
       'node', 'favro', 'batch', 'move',
-      '--board', 'board-1',
+      '--board', STUB_BOARD,
       '--status', 'Done',
-      '--filter', 'status:Completed',
+      '--filter', 'status:done',
     ]);
 
     expect(mockApi.updateCard).not.toHaveBeenCalled();
@@ -369,15 +336,15 @@ describe('batch move command', () => {
 
   it('outputs JSON when --json flag used', async () => {
     mockApi.listCards.mockResolvedValue([
-      makeCard({ cardId: 'card-1', status: 'Completed' }),
+      makeCard({ cardId: 'card-1', status: 'done' }),
     ]);
     mockApi.updateCard.mockResolvedValue(makeCard({ cardId: 'card-1', status: 'Archive' }));
 
     await program.parseAsync([
       'node', 'favro', 'batch', 'move',
-      '--board', 'board-1',
+      '--board', STUB_BOARD,
       '--status', 'Archive',
-      '--filter', 'status:Completed',
+      '--filter', 'status:done',
       '--json',
     ]);
 
@@ -392,15 +359,15 @@ describe('batch move command', () => {
 
   it('--json: first stdout call is parseable JSON with no progress messages (BLOCKER 3)', async () => {
     mockApi.listCards.mockResolvedValue([
-      makeCard({ cardId: 'card-1', status: 'Completed' }),
+      makeCard({ cardId: 'card-1', status: 'done' }),
     ]);
     mockApi.updateCard.mockResolvedValue(makeCard({ cardId: 'card-1', status: 'Archive' }));
 
     await program.parseAsync([
       'node', 'favro', 'batch', 'move',
-      '--board', 'board-1',
+      '--board', STUB_BOARD,
       '--status', 'Archive',
-      '--filter', 'status:Completed',
+      '--filter', 'status:done',
       '--json',
     ]);
 
@@ -412,15 +379,15 @@ describe('batch move command', () => {
 
   it('sends boardId field when --to-board is specified (BLOCKER 1)', async () => {
     mockApi.listCards.mockResolvedValue([
-      makeCard({ cardId: 'card-1', status: 'Completed', boardId: 'board-src' }),
+      makeCard({ cardId: 'card-1', status: 'done', boardId: 'board-src' }),
     ]);
     mockApi.updateCard.mockResolvedValue(makeCard({ cardId: 'card-1', boardId: 'board-dst' }));
 
     await program.parseAsync([
       'node', 'favro', 'batch', 'move',
-      '--board', 'board-src',
+      '--board', STUB_BOARD,
       '--to-board', 'board-dst',
-      '--filter', 'status:Completed',
+      '--filter', 'status:done',
     ]);
 
     expect(mockApi.updateCard).toHaveBeenCalledWith(
@@ -432,8 +399,8 @@ describe('batch move command', () => {
   it('captures boardId in previousState for move rollback (BLOCKER 5)', async () => {
     // card-1 succeeds, card-2 fails → rollback card-1 with boardId restored
     mockApi.listCards.mockResolvedValue([
-      makeCard({ cardId: 'card-1', status: 'Completed', boardId: 'board-src' }),
-      makeCard({ cardId: 'card-2', status: 'Completed', boardId: 'board-src' }),
+      makeCard({ cardId: 'card-1', status: 'done', boardId: 'board-src' }),
+      makeCard({ cardId: 'card-2', status: 'done', boardId: 'board-src' }),
     ]);
     mockApi.updateCard
       .mockResolvedValueOnce(makeCard({ cardId: 'card-1', boardId: 'board-dst' })) // card-1 succeeds
@@ -442,9 +409,9 @@ describe('batch move command', () => {
 
     await program.parseAsync([
       'node', 'favro', 'batch', 'move',
-      '--board', 'board-src',
+      '--board', STUB_BOARD,
       '--to-board', 'board-dst',
-      '--filter', 'status:Completed',
+      '--filter', 'status:done',
     ]);
 
     // Rollback should restore boardId: board-src
@@ -494,13 +461,13 @@ describe('batch assign command', () => {
 
   it('dry-run shows preview without assigning', async () => {
     mockApi.listCards.mockResolvedValue([
-      makeCard({ cardId: 'card-1', status: 'Backlog', assignees: [] }),
+      makeCard({ cardId: 'card-1', status: 'todo', assignees: [] }),
     ]);
 
     await program.parseAsync([
       'node', 'favro', 'batch', 'assign',
-      '--board', 'board-1',
-      '--filter', 'status:Backlog',
+      '--board', STUB_BOARD,
+      '--filter', 'status:todo',
       '--to', 'alice',
       '--dry-run',
     ]);
@@ -513,15 +480,15 @@ describe('batch assign command', () => {
 
   it('assigns matching cards to specified user', async () => {
     mockApi.listCards.mockResolvedValue([
-      makeCard({ cardId: 'card-1', status: 'Backlog', assignees: [] }),
+      makeCard({ cardId: 'card-1', status: 'todo', assignees: [] }),
       makeCard({ cardId: 'card-2', status: 'Done', assignees: [] }),
     ]);
     mockApi.updateCard.mockResolvedValue(makeCard());
 
     await program.parseAsync([
       'node', 'favro', 'batch', 'assign',
-      '--board', 'board-1',
-      '--filter', 'status:Backlog',
+      '--board', STUB_BOARD,
+      '--filter', 'status:todo',
       '--to', 'alice',
     ]);
 
@@ -532,15 +499,15 @@ describe('batch assign command', () => {
 
   it('skips cards already assigned to the target user', async () => {
     mockApi.listCards.mockResolvedValue([
-      makeCard({ cardId: 'card-1', status: 'Backlog', assignees: [ALICE] }),
-      makeCard({ cardId: 'card-2', status: 'Backlog', assignees: [] }),
+      makeCard({ cardId: 'card-1', status: 'todo', assignees: [ALICE] }),
+      makeCard({ cardId: 'card-2', status: 'todo', assignees: [] }),
     ]);
     mockApi.updateCard.mockResolvedValue(makeCard());
 
     await program.parseAsync([
       'node', 'favro', 'batch', 'assign',
-      '--board', 'board-1',
-      '--filter', 'status:Backlog',
+      '--board', STUB_BOARD,
+      '--filter', 'status:todo',
       '--to', 'alice',
     ]);
 
@@ -552,14 +519,14 @@ describe('batch assign command', () => {
 
   it('preserves existing assignees when assigning new user', async () => {
     mockApi.listCards.mockResolvedValue([
-      makeCard({ cardId: 'card-1', status: 'Backlog', assignees: [BOB] }),
+      makeCard({ cardId: 'card-1', status: 'todo', assignees: [BOB] }),
     ]);
     mockApi.updateCard.mockResolvedValue(makeCard());
 
     await program.parseAsync([
       'node', 'favro', 'batch', 'assign',
-      '--board', 'board-1',
-      '--filter', 'status:Backlog',
+      '--board', STUB_BOARD,
+      '--filter', 'status:todo',
       '--to', 'alice',
     ]);
 
@@ -577,8 +544,8 @@ describe('batch assign command', () => {
 
     await program.parseAsync([
       'node', 'favro', 'batch', 'assign',
-      '--board', 'board-1',
-      '--filter', 'status:Backlog',
+      '--board', STUB_BOARD,
+      '--filter', 'status:todo',
       '--to', 'alice',
     ]);
 
@@ -589,8 +556,8 @@ describe('batch assign command', () => {
 
   it('rolls back on failure and exits with code 1', async () => {
     mockApi.listCards.mockResolvedValue([
-      makeCard({ cardId: 'card-1', status: 'Backlog', assignees: [] }),
-      makeCard({ cardId: 'card-2', status: 'Backlog', assignees: [] }),
+      makeCard({ cardId: 'card-1', status: 'todo', assignees: [] }),
+      makeCard({ cardId: 'card-2', status: 'todo', assignees: [] }),
     ]);
     mockApi.updateCard
       .mockResolvedValueOnce(makeCard())
@@ -599,8 +566,8 @@ describe('batch assign command', () => {
 
     await program.parseAsync([
       'node', 'favro', 'batch', 'assign',
-      '--board', 'board-1',
-      '--filter', 'status:Backlog',
+      '--board', STUB_BOARD,
+      '--filter', 'status:todo',
       '--to', 'alice',
     ]);
 
@@ -614,7 +581,7 @@ describe('batch assign command', () => {
 
     await program.parseAsync([
       'node', 'favro', 'batch', 'assign',
-      '--board', 'board-1',
+      '--board', STUB_BOARD,
       '--to', 'alice',
     ]);
 
@@ -623,14 +590,14 @@ describe('batch assign command', () => {
 
   it('--json: first stdout call is parseable JSON with no progress messages (BLOCKER 3)', async () => {
     mockApi.listCards.mockResolvedValue([
-      makeCard({ cardId: 'card-1', status: 'Backlog', assignees: [] }),
+      makeCard({ cardId: 'card-1', status: 'todo', assignees: [] }),
     ]);
     mockApi.updateCard.mockResolvedValue(makeCard());
 
     await program.parseAsync([
       'node', 'favro', 'batch', 'assign',
-      '--board', 'board-1',
-      '--filter', 'status:Backlog',
+      '--board', STUB_BOARD,
+      '--filter', 'status:todo',
       '--to', 'alice',
       '--json',
     ]);
