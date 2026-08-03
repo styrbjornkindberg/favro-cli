@@ -157,8 +157,10 @@ export class FavroHttpClient {
   private assertBoundedTarget(method: string, url: string): void {
     const [pathOnly] = String(url ?? '').split(/[?#]/);
     const wire = this.wirePath(pathOnly);
+    // An empty url needs no arm of its own: it resolves to `/`, which the
+    // equality test already rejects. Measured, and pinned in the wire test.
     const unbounded =
-      !pathOnly || wire !== pathOnly || wire.split('/').some((segment, i) => i > 0 && segment === '');
+      wire !== pathOnly || wire.split('/').some((segment, i) => i > 0 && segment === '');
     if (!unbounded) return;
     throw new RefusalError(
       `Refusing to ${method} "${url}": the target does not name one bounded resource — as sent it would ` +

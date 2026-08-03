@@ -165,6 +165,16 @@ describe('a write whose target has an empty path segment never reaches the wire'
     await expect(new TagsAPI(client).deleteTag(' ')).rejects.toThrow(RefusalError);
     await expect(new TagsAPI(client).deleteTag('../boards/b-1')).rejects.toThrow(RefusalError);
     await expect(new UsersAPI(client).deleteGroup('..')).rejects.toThrow(RefusalError);
+    // An empty url resolves to `/` — the whole API root — and refuses on the
+    // same test, which is why it has no arm of its own in the guard.
+    await expect(client.delete('')).rejects.toThrow(RefusalError);
+    // `//…` is protocol-relative: it resolves to a path on a DIFFERENT HOST,
+    // so `/x` is what would be sent and the target moved off Favro entirely.
+    await expect(client.delete('//evil.example/x')).rejects.toThrow(RefusalError);
+    // And `//` alone makes `new URL` throw ERR_INVALID_URL, which is why the
+    // resolution is wrapped: an unparseable target has to arrive as a REFUSAL,
+    // not as a raw TypeError that the boundary reads as a retryable failure.
+    await expect(client.delete('//')).rejects.toThrow(RefusalError);
 
     expect(served).toEqual([]);
   });
