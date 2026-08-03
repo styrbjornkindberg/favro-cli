@@ -330,15 +330,92 @@ describe('the error boundary', () => {
     const { root, leaf } = program();
     leaf.action(
       run(async () => {
-        throw new Error('wire down');
+        throw new Error('something went wrong');
       }),
     );
 
     await parse(root, ['thing']);
 
-    expect(JSON.parse(stdout()[0])).toEqual({ error: { message: 'wire down', retryable: true } });
+    // `retryable: false`, and this line used to assert the opposite (#134). A
+    // bare `Error` thrown inside a handler never touched the wire, so nothing
+    // here can say the next attempt would go differently.
+    expect(JSON.parse(stdout()[0])).toEqual({
+      error: { message: 'something went wrong', retryable: false },
+    });
     expect(stderr()).toEqual([]);
     expect(process.exitCode).toBe(1);
+  });
+
+  it('will not tell an agent to retry a failure it cannot place as a wire failure', async () => {
+    // #134. The boundary sees a population the dispatch table never does —
+    // argument validation, missing config, file I/O, our own bugs — and
+    // `isRetryable`'s "unclassifiable means transient" reading is wrong for all
+    // of it. Unknown is deterministic-until-proven-otherwise here: the cost of
+    // a wrong `false` is one honest failure, the cost of a wrong `true` is an
+    // agent looping on a typo forever.
+    const deterministic: ReadonlyArray<readonly [string, () => never]> = [
+      [
+        'a bad flag',
+        () => {
+          throw new Error('Invalid --include values: bogus. Valid options: stats, velocity');
+        },
+      ],
+      [
+        'ENOENT',
+        () => {
+          fs.readFileSync(path.join(tmpConfigDir, 'definitely-absent.csv'), 'utf8');
+          throw new Error('unreachable');
+        },
+      ],
+      [
+        'a TypeError of our own',
+        () => {
+          (undefined as unknown as { boom: string }).boom;
+          throw new Error('unreachable');
+        },
+      ],
+    ];
+
+    for (const [label, thrower] of deterministic) {
+      out.mockClear();
+      const { root, leaf } = program();
+      leaf.action(run(async () => thrower()));
+
+      await parse(root, ['thing']);
+
+      expect([label, JSON.parse(stdout()[0]).error.retryable]).toEqual([label, false]);
+    }
+  });
+
+  it('keeps the wire table\'s answer for a failure that DID come off the wire', async () => {
+    // The other half of #134: narrowing the boundary must not swallow the
+    // transient family. `boundary-retryable-wire.test.ts` proves this over a
+    // real socket; this pins both arms of the discriminator, which a socket
+    // cannot reach — axios stamps every error it raises, so nothing served over
+    // HTTP produces the second shape.
+    const wire: ReadonlyArray<readonly [string, object]> = [
+      // A transport failure: axios raised it, and there is no response to
+      // classify. That is the transient family, not a bug of ours.
+      ['a transport failure', { isAxiosError: true, code: 'ECONNRESET' }],
+      // An HTTP response is wire evidence whoever assembled the object — the
+      // shape `classifyThrownError` already keys on, and the shape this repo's
+      // own fixtures build.
+      ['an unstamped response', { response: { status: 503, data: {} } }],
+    ];
+
+    for (const [label, shape] of wire) {
+      out.mockClear();
+      const { root, leaf } = program();
+      leaf.action(
+        run(async () => {
+          throw Object.assign(new Error('socket hang up'), shape);
+        }),
+      );
+
+      await parse(root, ['thing']);
+
+      expect([label, JSON.parse(stdout()[0]).error.retryable]).toEqual([label, true]);
+    }
   });
 
   it('calls a refusal what it is — never retryable', async () => {

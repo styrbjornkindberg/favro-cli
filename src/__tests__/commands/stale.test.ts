@@ -382,24 +382,28 @@ describe('stale — how the survivors are split and ordered', () => {
 
 describe('stale — failures', () => {
   test('a failed snapshot exits 1 rather than reporting an empty board', async () => {
-    MockAggregate.prototype.getMultiBoardSnapshot = jest.fn().mockRejectedValue(new Error('502 upstream'));
+    // A bare `Error`, and it used to be spelled "502 upstream" — which it was
+    // not. It carries no HTTP response, so the boundary cannot see a wire
+    // failure in it and must not claim one (#134). A genuine 502 through a real
+    // socket is `boundary-retryable-wire.test.ts`.
+    MockAggregate.prototype.getMultiBoardSnapshot = jest.fn().mockRejectedValue(new Error('the snapshot read failed'));
 
     await runCli(['stale']);
 
     // Never an empty report: JSON is the default, so the failure is the error
     // envelope on stdout rather than a `total: 0` a caller would believe.
-    expect(json()).toEqual({ error: { message: '502 upstream', retryable: true } });
+    expect(json()).toEqual({ error: { message: 'the snapshot read failed', retryable: false } });
     expect(errorSpy).not.toHaveBeenCalled();
     expect(process.exitCode).toBe(1);
   });
 
   test('in --human mode the failure stays on stderr, and stdout says nothing', async () => {
-    MockAggregate.prototype.getMultiBoardSnapshot = jest.fn().mockRejectedValue(new Error('502 upstream'));
+    MockAggregate.prototype.getMultiBoardSnapshot = jest.fn().mockRejectedValue(new Error('the snapshot read failed'));
 
     await runCli(['stale', '--human']);
 
     expect(written()).toBe('');
-    expect(errorSpy.mock.calls.map((c) => String(c[0])).join('\n')).toContain('502 upstream');
+    expect(errorSpy.mock.calls.map((c) => String(c[0])).join('\n')).toContain('the snapshot read failed');
     expect(process.exitCode).toBe(1);
   });
 });
