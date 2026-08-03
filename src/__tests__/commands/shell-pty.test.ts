@@ -44,7 +44,7 @@
  * timeout is asserted on explicitly rather than left to jest.
  */
 import { spawnSync } from 'child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, existsSync } from 'fs';
+import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, existsSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
@@ -59,10 +59,17 @@ const SUPPORTED = process.platform === 'darwin' || process.platform === 'linux';
  *   Linux: script -qec "<cmd …>" /dev/null
  * The driver therefore takes ZERO arguments and reads its inputs from the
  * environment, so there is nothing to quote and one code path covers both.
+ *
+ * `process.execPath`, not `node`: `script` resolves its command against PATH, and
+ * the interpreter on PATH is not necessarily the one running jest — on this
+ * machine the ambient `node` is v10 and cannot load ts-node at all.
  */
 const PTY_ARGV = (driver: string): readonly string[] =>
-  process.platform === 'darwin' ? ['-q', '/dev/null', 'node', driver] : ['-qec', `node ${driver}`, '/dev/null'];
+  process.platform === 'darwin'
+    ? ['-q', '/dev/null', process.execPath, driver]
+    : ['-qec', `"${process.execPath}" "${driver}"`, '/dev/null'];
 
+let root: string;
 let binDir: string;
 let driver: string;
 /** One marker path per run, so a stale file cannot answer for a later run. */
@@ -70,7 +77,7 @@ let runCount = 0;
 
 beforeAll(() => {
   if (!SUPPORTED) return;
-  const root = mkdtempSync(join(tmpdir(), 'favro-pty-'));
+  root = mkdtempSync(join(tmpdir(), 'favro-pty-'));
   binDir = join(root, 'bin');
   driver = join(root, 'driver.js');
   mkdirSync(binDir);
@@ -115,9 +122,12 @@ beforeAll(() => {
   );
 });
 
+afterAll(() => {
+  if (root) rmSync(root, { recursive: true, force: true });
+});
+
 interface PtyRun {
   readonly out: string;
-  readonly ms: number;
   readonly timedOut: boolean;
   /** Whether a child `favro` actually ran — observed on disk, not in the output. */
   readonly spawned: boolean;
@@ -126,7 +136,6 @@ interface PtyRun {
 /** Run `runFavro(cmd)` in a fresh node process whose three fds are a real pty. */
 function underPty(cmd: string): PtyRun {
   const marker = join(binDir, `spawned-${runCount++}`);
-  const started = Date.now();
   const result = spawnSync('script', PTY_ARGV(driver) as string[], {
     encoding: 'utf-8',
     timeout: PTY_TIMEOUT_MS,
@@ -152,7 +161,6 @@ function underPty(cmd: string): PtyRun {
   return {
     // `script` echoes CRs and a stray ^D; strip both plus any ANSI that leaks.
     out: `${result.stdout ?? ''}${result.stderr ?? ''}`.replace(/\r/g, '').replace(/\x1b\[[0-9;]*m/g, ''),
-    ms: Date.now() - started,
     timedOut: result.signal === 'SIGKILL',
     spawned: existsSync(marker),
   };
