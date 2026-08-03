@@ -475,18 +475,32 @@ describe('cards update --board --label treats the label as a value, not grammar'
  * exited 0, and without `--dry-run` it printed the same plan, then failed card by
  * card at the wire and rolled back. A dry run that plans a write which cannot
  * land is #150's lie wearing the other flag.
+ *
+ * WHY THESE ARMS DO NOT ASSERT ONLY "no PUT". `updateCard` settles the status
+ * itself, so the per-card refusal ALSO reached no PUT and ALSO exited 1 and ALSO
+ * named the token — deleting the guard below left every one of those assertions
+ * green (verified by mutation). What separates the two is how far the command
+ * got: the late refusal read the board and announced the move first. So these
+ * arms assert the board was never read.
  */
 describe('batch move refuses a target --status it cannot settle', () => {
-  test('and writes nothing', async () => {
+  const fetchedCards = (received: Received[]) =>
+    received.filter((r) => r.method === 'GET' && r.path.startsWith('/cards'));
+
+  test('and writes nothing, having never read the board', async () => {
     const stand = await startServer();
 
     const code = await exitCodeOf('move', '--board', BOARD, '--status', 'Frobnicated', '--yes');
 
     expect(mutations(stand.received)).toEqual([]);
+    expect(fetchedCards(stand.received)).toEqual([]);
     expect(code).toBe(1);
     expect(said()).toContain('Frobnicated');
     expect(said()).toContain('To Do');
     expect(said()).not.toContain('No cards match');
+    // Not the per-card failure the wire used to answer, after the announcement.
+    expect(said()).not.toContain('rolled back');
+    expect(said()).not.toContain('Moving');
   });
 
   test('under --dry-run too, where it used to print a full plan and exit 0', async () => {
@@ -512,8 +526,22 @@ describe('batch move refuses a target --status it cannot settle', () => {
     );
 
     expect(mutations(stand.received)).toEqual([]);
+    expect(fetchedCards(stand.received)).toEqual([]);
     expect(code).toBe(1);
     expect(said()).toContain('Done');
+    expect(said()).not.toContain('rolled back');
+    expect(said()).not.toContain('Moving');
+  });
+
+  test('and a --status the DESTINATION does have still goes through', async () => {
+    const stand = await startServer();
+
+    // The control for the arm above: `board-b` having no columns is what makes
+    // that refusal, not `--to-board` refusing everything it is handed.
+    await run('move', '--board', BOARD, '--status', 'Done', '--filter', 'tag:bug', '--yes');
+
+    expect(mutations(stand.received).map((r) => r.path)).toEqual(['/cards/card-1']);
+    expect(stand.cards.get('card-1')!.columnId).toBe(DONE);
   });
 });
 
