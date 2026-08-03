@@ -140,6 +140,11 @@ it is why a refusal is never reported as retryable. `RefusalError`
 (`src/lib/refusal.ts`) is a leaf class every refusal extends; anything raising a bare
 `Error` is treated as a failure and unwinds, which is the safe default.
 
+`TransientError`, beside it in the same leaf module, is the mirror and the rarer type: a
+failure the raising site **measured** transient, so retry advice may survive the wire gate
+for it. Exactly one site raises it (`TxCards.setArchived`'s read-back), and reaching for it
+without an observation behind it re-opens the retry loop for that path.
+
 **interactive command** — a command that cannot work without a terminal: it prompts, it
 draws an arrow-key picker, it hands a child this process's tty, or it repaints until
 Ctrl+C. `favro` is not always the top-level process — `favro shell` and `favro_run` both
@@ -226,9 +231,11 @@ owns that field). The two stay distinct because they are different problems.
 - `rollback-incomplete` — the unwind left orphans behind. Never retryable.
 
 A pre-write refusal is deliberately *not* an outcome: it throws, so there is nothing to
-roll back. And the outcome does not settle retry — `DispatchResult.retryable` is the one
-derivation, and a clean `rolled-back` is still not retryable when the wire named the
-failure.
+roll back. And the outcome does not settle retry — `retryAdvice` (`src/lib/dispatch.ts`) is
+the one derivation, read from `DispatchResult.retryable`. A clean `rolled-back` is still not
+retryable when the wire named the failure, nor when the failure never reached the wire at
+all: unknown means deterministic-until-proven-otherwise at all three of its callers, and
+`TransientError` is the one exemption.
 
 ---
 
