@@ -49,7 +49,19 @@ describe('auth login command', () => {
   let consoleLogSpy: jest.SpyInstance;
   let consoleErrorSpy: jest.SpyInstance;
   let exitSpy: jest.SpyInstance;
-  const realIsTTY = process.stdin.isTTY;
+
+  // `isTTY` is typed `boolean`, but node leaves it ABSENT on a pipe rather than
+  // setting it false — measured, inside jest too. So the pipe case is modelled by
+  // DELETING the property, not by assigning `false`, and that distinction is the
+  // whole test: rewriting the guard to `process.stdin.isTTY === false` passes
+  // against `false` and does nothing on a real pipe, where the comparison is
+  // `undefined === false`. Assigning `false` here let that rewrite through the
+  // suite once already.
+  const stdin = process.stdin as { isTTY?: boolean };
+  const realIsTTY = stdin.isTTY;
+  const pretendPipe = (): void => {
+    delete stdin.isTTY;
+  };
 
   beforeEach(() => {
     // `promptInput` refuses without a terminal (#147), and jest's stdin is a
@@ -57,7 +69,7 @@ describe('auth login command', () => {
     // being exempted by a `NODE_ENV === 'test'` back door — which would have
     // left the guard untested in the only place it can be tested. The pipe half
     // is the first two tests below.
-    process.stdin.isTTY = true;
+    stdin.isTTY = true;
     jest.resetAllMocks();  // Clears queued mock return values to prevent cross-test leakage
     consoleLogSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
     consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
@@ -91,7 +103,7 @@ describe('auth login command', () => {
   });
 
   afterEach(() => {
-    process.stdin.isTTY = realIsTTY;
+    stdin.isTTY = realIsTTY;
     process.exitCode = undefined;
     consoleLogSpy.mockRestore();
     consoleErrorSpy.mockRestore();
@@ -104,7 +116,7 @@ describe('auth login command', () => {
     // The interactive-command list cannot cover it: the list lets `--email` +
     // `--api-key` through on purpose, and that form still prompts when the
     // account has several organizations, or when either value is empty.
-    process.stdin.isTTY = false;
+    pretendPipe();
 
     await expect(promptInput('Select organization [1-2]: ')).rejects.toThrow(/without a terminal/);
     // The load-bearing half: it refused instead of opening the interface it
@@ -115,7 +127,7 @@ describe('auth login command', () => {
   test('a flagged auth login still refuses rather than hanging on the organization picker', async () => {
     // The flagged form is the one an agent uses and the one the list waves
     // through. Two organizations is all it takes to reach a prompt no flag skips.
-    process.stdin.isTTY = false;
+    pretendPipe();
     MockedFavroHttpClient.prototype.get = jest.fn().mockImplementation((url: string) =>
       url === '/organizations'
         ? Promise.resolve({
