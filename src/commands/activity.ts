@@ -84,10 +84,12 @@ export async function activityHandler(ctx: Ctx, cardId: string, options: Activit
         console.log();
       }
 
-      // Just the count. The CUT is the runner's line to write — a `human` is
-      // handed rows, never the envelope, so `noteTruncation` says it once for
-      // every migrated list read rather than each of them re-deriving it (#99).
-      console.log(`Total: ${entries.length} entry/entries shown.`);
+      // No trailing count, and its absence is the fix (#137). A `human` is
+      // handed the CAPPED rows, never the envelope, so every count it can reach
+      // is a count of what was shown — `Total: 200` on a 300-entry feed was a
+      // plausible wrong answer. The header above says how many printed; whether
+      // that was a cut is the runner's line, written once by `noteTruncation`
+      // for every migrated list read (#99). Same shape as `comments` (#136).
     },
   };
 }
