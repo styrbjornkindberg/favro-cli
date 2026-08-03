@@ -1,5 +1,6 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
 import { rateLimitMessage } from './error-handler';
+import { RefusalError } from './refusal';
 
 /**
  * The shape every Favro list endpoint answers with. One declaration, here,
@@ -105,23 +106,64 @@ export class FavroHttpClient {
     return !status || status === 408 || status === 429 || (status >= 500);
   }
 
+  /**
+   * Refuse a mutating request whose target has an empty path segment (#125).
+   *
+   * Every single-resource write in this codebase is `/<resource>/${id}` —
+   * `/tags/${tagId}`, `/usergroups/${groupId}`, `/cards/${cardId}`,
+   * `/collections/${id}/boards/${id}` and eleven more. An empty id does not
+   * produce a malformed request that fails safely; it produces a well-formed one
+   * addressed at the COLLECTION. `deleteTag('')` sends `DELETE /tags/` — the
+   * organization's whole tag set instead of one tag — and `favro tags delete
+   * "$TAG" --yes` with `TAG` unset is the way in. #138 is the same shape: an
+   * empty filter read as "every card" rather than "no cards", and moved a board.
+   *
+   * Fail closed: an unbounded target refuses, it never widens. This is the
+   * chokepoint every resource module routes through, so it is one guard rather
+   * than fourteen for the fifteenth module to forget.
+   *
+   * READS are deliberately not guarded — `GET /tags/` is the list endpoint, and
+   * a widened read costs nothing.
+   *
+   * Measured, not assumed: no mutating URL in `src/` carries an empty segment
+   * when its ids are present. Every collection write is `'/tags'`, `'/cards'`,
+   * `'/widgets'`… with no trailing slash, and the single collection-level delete
+   * (`DELETE /cards/:id/dependencies`) has none either.
+   */
+  private assertBoundedTarget(method: string, url: string): void {
+    const [pathOnly] = String(url ?? '').split(/[?#]/);
+    const unbounded = !pathOnly || pathOnly.split('/').some((segment, i) => i > 0 && segment === '');
+    if (!unbounded) return;
+    throw new RefusalError(
+      `Refusing to ${method} "${url}": the target has an empty path segment, so this request addresses a ` +
+        `COLLECTION rather than one resource — a write with no bounded target.\n` +
+        `  An unset or empty id is the usual cause, e.g. 'favro tags delete "$TAG"' with TAG unset, which ` +
+        `would send DELETE /tags/ and name every tag in the organization.\n` +
+        `  Pass the id explicitly. Run 'favro tags list' (or the matching list command) to find it.`
+    );
+  }
+
   async get<T = any>(url: string, config?: any): Promise<T> {
     return (await this.client.get<T>(url, config)).data;
   }
 
   async post<T = any>(url: string, data?: any, config?: any): Promise<T> {
+    this.assertBoundedTarget('POST', url);
     return (await this.client.post<T>(url, data, config)).data;
   }
 
   async patch<T = any>(url: string, data?: any, config?: any): Promise<T> {
+    this.assertBoundedTarget('PATCH', url);
     return (await this.client.patch<T>(url, data, config)).data;
   }
 
   async put<T = any>(url: string, data?: any, config?: any): Promise<T> {
+    this.assertBoundedTarget('PUT', url);
     return (await this.client.put<T>(url, data, config)).data;
   }
 
   async delete<T = any>(url: string, config?: any): Promise<T> {
+    this.assertBoundedTarget('DELETE', url);
     return (await this.client.delete<T>(url, config)).data;
   }
 

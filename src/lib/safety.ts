@@ -254,6 +254,71 @@ export async function checkScope(
 }
 
 /**
+ * Refuse an ORG-WIDE destructive write while a collection lock is configured (#125).
+ *
+ * The gap #104 named and left open. Nine writes land on no board — tags, user
+ * groups, webhooks, `collections create` — so `assertScope` has nothing to
+ * resolve and is structurally the wrong guard for them; that decision stands.
+ * But three of the nine are irreversible org-wide DELETES, and `tags delete`
+ * strips the tag from every card in the organization: a wider blast radius than
+ * anything the collection lock guards. Their only guard until now was
+ * `confirmAction`, which `-y` waives and `NODE_ENV=test` skips outright.
+ *
+ * What this keys on is the LOCK, not the target — and that is the whole idea,
+ * not a shortcut. A configured lock is the user stating "my writes stay inside
+ * this collection". An org-wide delete provably does not stay inside it, and no
+ * amount of resolution will make it, so the presence of a lock is sufficient
+ * grounds to refuse. #125 weighed a `scopeOrganizationId` in config against
+ * this and it loses: the CLI is already single-org per API key, so an org id
+ * would compare a value to itself.
+ *
+ * Consequences, stated rather than discovered later:
+ *   - NO LOCK, NO CHANGE. Returns before doing anything, and makes no request
+ *     either way — the #102/#104 criterion ("no behaviour change when no lock is
+ *     configured, and no extra requests on that path") holds by construction,
+ *     since the only input is a local config read.
+ *   - `--force` IS the escape hatch, spelled the same as everywhere else, and it
+ *     warns rather than passing quietly. Unlike the empty-board arm of
+ *     `assertScope`, force is meaningful here: the user knows exactly what
+ *     org-wide means, which is why they are being asked.
+ *   - It guards the DELETES only. `tags update` renames org-wide and is
+ *     reversible with another rename; `create` is additive. Irreversibility is
+ *     the line, and `scope-lock-coverage.test.ts` derives the set from which
+ *     commands reach `client.delete` rather than from their names.
+ *
+ * A `ScopeError`, not a seventh refusal class: it is a scope refusal, it must be
+ * `retryable: false` for the same reason (#120), and nothing reads `.boardId` —
+ * so `''` here means "org-wide, no board to name", the same absence
+ * `assertScope` already reports it with.
+ */
+export async function assertOrgScope(what: string, force: boolean = false): Promise<void> {
+  const { readConfig } = await import('./config');
+  const config = await readConfig();
+  if (!config?.scopeCollectionId) return;
+
+  const locked = config.scopeCollectionName ?? config.scopeCollectionId;
+
+  if (force) {
+    console.warn(
+      `${c.warn('⚠')} ${c.warn('Warning:')} ${what} is organization-wide and reaches every board, ` +
+        `including boards outside your locked scope (${locked}), but proceeding because --force was used.`
+    );
+    return;
+  }
+
+  throw new ScopeError(
+    `Scope violation: ${what} is an ORGANIZATION-WIDE write — it reaches every board in the\n` +
+      `  organization, including every board outside your locked collection ("${locked}").\n` +
+      `  The collection lock cannot narrow this one: the write names no board, so there is nothing\n` +
+      `  to resolve against the lock. It is refused rather than widened.\n` +
+      `  Run 'favro scope show' to see your current lock.\n` +
+      `  Run 'favro scope clear' to unlock, or pass --force to allow this single write.`,
+    '',
+    config.scopeCollectionId,
+  );
+}
+
+/**
  * Checks if the collection matches the currently locked scope collection.
  */
 export function checkCollectionScope(

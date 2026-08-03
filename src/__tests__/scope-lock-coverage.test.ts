@@ -93,19 +93,27 @@ const ALLOWLIST: Record<string, string> = {};
  * The same reasoning is written at the head of each command's own source (#104),
  * because a reader hunting the missing check reads the command, not this file.
  *
- * The cost is named rather than hidden: `tags delete` strips the tag from every
- * card in the organization — a wider blast radius than anything the collection
- * lock guards. That is a real gap. It is not this lock's gap.
+ * THIS LIST IS NO LONGER A GAP AWAITING A FIX (#125). It used to close with "that
+ * is a real gap; it is not this lock's gap", and reading it that way was correct
+ * but incomplete — `tags delete` strips the tag from every card in the
+ * organization, and "the collection lock cannot govern it" is not the same
+ * statement as "it is contained". #125 built the second guardrail these writes
+ * needed, `assertOrgScope`, and the arm further down asserts it covers every
+ * irreversible one. Each entry below now says which guard it has instead.
+ *
+ * Every entry is still genuinely outside the COLLECTION lock's remit, so the list
+ * stays exactly as long as it was; what changed is that it no longer implies
+ * nothing guards these paths.
  */
 const OUT_OF_REMIT: Record<string, string> = {
-  'src/commands/tags.ts tags create': '#104 — org-scoped; no board to resolve',
-  'src/commands/tags.ts tags update': '#104 — org-scoped; no board to resolve',
-  'src/commands/tags.ts tags delete': '#104 — org-scoped; no board to resolve',
-  'src/commands/users.ts groups create': '#104 — org-scoped; no board to resolve',
-  'src/commands/users.ts groups update': '#104 — org-scoped; no board to resolve',
-  'src/commands/users.ts groups delete': '#104 — org-scoped; no board to resolve',
-  'src/commands/webhooks.ts webhooks create': '#104 — org-scoped; no board to resolve',
-  'src/commands/webhooks.ts webhooks delete': '#104 — org-scoped; no board to resolve',
+  'src/commands/tags.ts tags create': '#104 — org-scoped; additive, and an unknown name refuses client-side',
+  'src/commands/tags.ts tags update': '#104 — org-scoped; reversible by another update',
+  'src/commands/tags.ts tags delete': '#104 — org-scoped; contained by assertOrgScope (#125)',
+  'src/commands/users.ts groups create': '#104 — org-scoped; additive',
+  'src/commands/users.ts groups update': '#104 — org-scoped; reversible by another update',
+  'src/commands/users.ts groups delete': '#104 — org-scoped; contained by assertOrgScope (#125)',
+  'src/commands/webhooks.ts webhooks create': '#104 — org-scoped; additive, undone by a delete',
+  'src/commands/webhooks.ts webhooks delete': '#104 — org-scoped; contained by assertOrgScope (#125)',
   // The sharpest case, and the reason this list exists rather than a silence:
   // `collections update`/`delete` DO call `checkCollectionScope`, so the group
   // is asymmetric on purpose. `create` cannot check — the collection does not
@@ -115,6 +123,17 @@ const OUT_OF_REMIT: Record<string, string> = {
 
 /** Exempt either way: debt and decision are both non-failing, for different reasons. */
 const EXEMPT = { ...ALLOWLIST, ...OUT_OF_REMIT };
+
+/**
+ * DEBT, for the OTHER guardrail: org-level writes that issue an HTTP DELETE and
+ * do not yet take `assertOrgScope` (#125).
+ *
+ * Empty, and for the same reason `ALLOWLIST` is: three org-level deletes exist
+ * and all three are guarded. Adding a key here is admitting an irreversible
+ * org-wide delete ships uncontained — argue it on an issue, do not slip it in to
+ * green a build. Staleness-checked below, so a key that becomes guarded fails.
+ */
+const ORG_ALLOWLIST: Record<string, string> = {};
 
 // ─── the program ─────────────────────────────────────────────────────────────
 
@@ -221,15 +240,21 @@ function declarationsIn(file: string, names: string[]): ts.Node[] {
 
 const HTTP_VERBS = ['post', 'put', 'delete', 'patch'];
 
-/** Functions issuing a mutating request straight at an http client instance. */
+/**
+ * Functions issuing a mutating request straight at an http client instance,
+ * indexed by verb so the DELETE-only set below can be built the same way.
+ */
 const rawClientWriters: ts.Node[] = [];
+const rawClientDeleters: ts.Node[] = [];
 for (const sf of sourceFiles) {
   walk(sf, (n) => {
     if (!ts.isCallExpression(n) || !ts.isPropertyAccessExpression(n.expression)) return;
     if (!HTTP_VERBS.includes(n.expression.name.text)) return;
     if (!/client$/i.test(n.expression.expression.getText())) return;
     const host = enclosingFunction(n);
-    if (host) rawClientWriters.push(host);
+    if (!host) return;
+    rawClientWriters.push(host);
+    if (n.expression.name.text === 'delete') rawClientDeleters.push(host);
   });
 }
 
@@ -237,12 +262,30 @@ const MUTATES = callers([
   ...declarationsIn(path.join('src', 'lib', 'http-client.ts'), HTTP_VERBS),
   ...rawClientWriters,
 ]);
+/**
+ * The DELETE subset of `MUTATES`, resolved the same way — by which http verb the
+ * request actually uses, never by the command's name. `Map.delete` and
+ * `Set.delete` do not enter it: `calleeDeclaration` resolves through the
+ * checker, so only calls landing on `FavroHttpClient.delete` count.
+ */
+const DELETES = callers([
+  ...declarationsIn(path.join('src', 'lib', 'http-client.ts'), ['delete']),
+  ...rawClientDeleters,
+]);
 const SCOPE_CHECKS = declarationsIn(path.join('src', 'lib', 'safety.ts'), [
   'assertScope',
   'checkScope',
   'checkCollectionScope',
 ]);
 const GUARDED = callers(SCOPE_CHECKS);
+/**
+ * The org-level guard (#125) — deliberately NOT folded into `SCOPE_CHECKS`.
+ * Folding it in would make `tags delete` read as collection-lock-guarded, which
+ * it is not and cannot be; the two guards answer different questions and the
+ * ratchet has to keep asking both.
+ */
+const ORG_GUARD = declarationsIn(path.join('src', 'lib', 'safety.ts'), ['assertOrgScope']);
+const ORG_GUARDED = callers(ORG_GUARD);
 const DISPATCH = declarationsIn(path.join('src', 'lib', 'dispatch.ts'), ['dispatch']);
 const ROUTED = callers(DISPATCH);
 
@@ -373,6 +416,10 @@ interface ActionInfo {
   writes: boolean;
   guarded: boolean;
   routed: boolean;
+  /** Issues an HTTP DELETE somewhere in its closure — irreversible by shape. */
+  deletes: boolean;
+  /** Takes the org-level guard (#125). */
+  orgGuarded: boolean;
 }
 
 const actions: ActionInfo[] = [];
@@ -389,6 +436,8 @@ for (const sf of sourceFiles) {
       writes: reaches(body, MUTATES),
       guarded: reaches(body, GUARDED),
       routed: reaches(body, ROUTED),
+      deletes: reaches(body, DELETES),
+      orgGuarded: reaches(body, ORG_GUARDED),
     });
   });
 }
@@ -398,6 +447,31 @@ const unguarded = actions
   .filter((a) => a.writes && !a.guarded && !a.routed)
   .map((a) => a.key)
   .sort();
+
+/**
+ * The ORG-LEVEL writes, derived rather than listed: a write the collection lock
+ * never checks is, by the argument in `OUT_OF_REMIT`, a write that lands on no
+ * board. So this is the same set `unguarded` names, read as a population instead
+ * of as a list of violations.
+ *
+ * Deriving it is the point. `OUT_OF_REMIT` is nine hand-written keys, and #82's
+ * fix enumerated nine entry points by hand and missed a tenth (`widgets add`,
+ * which printed `✓ Widget added to board` for a write that never landed). A
+ * tenth org-level write added tomorrow enters this set with nothing to remember.
+ */
+const orgLevel = actions.filter((a) => a.writes && !a.guarded && !a.routed);
+
+/**
+ * The subset that must take the org guard: the irreversible ones.
+ *
+ * Irreversibility is read off the HTTP VERB, not the command's name — `DELETES`
+ * is the call closure of `FavroHttpClient.delete`. A name-based rule would be
+ * the exact mistake this file's header warns about, and it would also be wrong
+ * in both directions here: an org-level command called `purge` or `retire` would
+ * escape it, and `collections-create.ts create` would not be caught by it even
+ * though a rename could make it look like one.
+ */
+const orgDestructive = orgLevel.filter((a) => a.deletes);
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -431,6 +505,65 @@ describe('the scope lock covers every write command', () => {
     // the code.
     const live = new Set(unguarded);
     expect(Object.keys(EXEMPT).filter((key) => !live.has(key)).sort()).toEqual([]);
+  });
+});
+
+/**
+ * The second guardrail (#125), because the first structurally cannot cover these.
+ *
+ * `OUT_OF_REMIT` above is right that the collection lock has nothing to say about
+ * an org-scoped write — and #125 is right that saying so is not the same as
+ * containing it. `tags delete` strips a tag from every card in the organization
+ * and its only guard was `confirmAction`, which `-y` waives and `NODE_ENV=test`
+ * skips entirely. `assertOrgScope` is the containment: a configured collection
+ * lock refuses an org-wide DELETE unless `--force`.
+ *
+ * This arm exists rather than a nine-line list because the failure mode here is
+ * the one this whole file was built against — a HALF-GUARDED GROUP. `tags
+ * delete` guarded and `groups delete` not would read identically at a glance.
+ */
+describe('the org-level guard covers every irreversible org-level write', () => {
+  it('finds the org-level writes it is meant to be reading', () => {
+    // Floors, not counts. A resolver that found nothing would report zero
+    // unguarded org deletes and pass forever — the vacuous pass that made three
+    // ratchets in this repo blind to the thing they were built to catch.
+    expect(orgLevel.length).toBeGreaterThanOrEqual(9);
+    expect(orgDestructive.length).toBeGreaterThanOrEqual(3);
+    // And the DELETE resolver itself resolves: most deleting commands in this
+    // CLI are board-level and collection-locked, so a `DELETES` set that only
+    // held the three org ones would mean the closure walk had collapsed.
+    expect(actions.filter((a) => a.deletes).length).toBeGreaterThan(10);
+  });
+
+  it('every org-level DELETE takes the org guard', () => {
+    // A new name here is an irreversible org-wide write with nothing between it
+    // and `-y`. Add `assertOrgScope` to the command; do not add it to the list.
+    expect(
+      orgDestructive
+        .filter((a) => !a.orgGuarded && !(a.key in ORG_ALLOWLIST))
+        .map((a) => a.key)
+        .sort(),
+    ).toEqual([]);
+  });
+
+  it('the org debt list is empty and stays that way', () => {
+    expect(Object.keys(ORG_ALLOWLIST)).toEqual([]);
+  });
+
+  it('no org-allowlist entry is stale — a guarded command must be removed', () => {
+    const live = new Set(orgDestructive.filter((a) => !a.orgGuarded).map((a) => a.key));
+    expect(Object.keys(ORG_ALLOWLIST).filter((key) => !live.has(key)).sort()).toEqual([]);
+  });
+
+  it('the guard is a real function that reads the lock, not a stub', () => {
+    // The whole arm above rests on `assertOrgScope` existing and being reachable.
+    // If it were deleted, `ORG_GUARDED` would be empty and every assertion above
+    // would fail loudly — but if it were emptied to `return;` they would all pass,
+    // so its behaviour is asserted for real in
+    // `org-write-containment-wire.test.ts` against a socket. This is the seam
+    // check: exactly one declaration, and something reaches it.
+    expect(ORG_GUARD).toHaveLength(1);
+    expect(orgDestructive.filter((a) => a.orgGuarded).length).toBeGreaterThanOrEqual(3);
   });
 });
 
