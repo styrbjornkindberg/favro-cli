@@ -3,7 +3,7 @@
  * tests must NOT stub out.
  *
  * Those tests `jest.mock('../../lib/safety')` wholesale, which is right for
- * `checkScope` — it calls `process.exit` and reaches the wire — but wrong for
+ * `checkScope` — it reaches the wire — but wrong for
  * `boardOfCard` and `checkResolvedScope`. Those two ARE the behaviour under
  * test: one decides what board a write lands on, the other decides whether to
  * pay for that answer at all. Auto-mocked they return `undefined`, and every

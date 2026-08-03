@@ -47,6 +47,34 @@ export function isVerbose(): boolean {
 }
 
 /**
+ * A scope refusal says `Scope violation:`, not `Error:` (#133).
+ *
+ * `safety.ts`'s two `check*` helpers printed that heading themselves and then
+ * called `process.exit(1)`, which is what kept the JSON envelope off stdout. The
+ * exit had to go; the WORDING did not, and it lands here rather than in the
+ * runner because this is the one funnel every reporting path shares — the
+ * runner's human arm and the legacy `catch { logError(…); process.exit(1) }`
+ * blocks still left in `cli.ts` alike. It also unifies `assertOrgScope`, which
+ * has said `✗ Error: Scope violation: …` since #125.
+ *
+ * Matched on `.name`, not `instanceof ScopeError`: `safety.ts` imports THIS
+ * module, so importing the class back would be a cycle (`check:cycles` is a
+ * gate). `.name` is set explicitly by every refusal in the codebase for exactly
+ * this kind of read, and the string is also the message's own prefix, so a
+ * rename that missed one of the two would show up in the assertion below.
+ */
+const SCOPE_HEADING = 'Scope violation:';
+
+const headingFor = (error: Error): string =>
+  error.name === 'ScopeError' ? SCOPE_HEADING : 'Error:';
+
+/** The heading is printed once, so a message that repeats it is de-duplicated. */
+const bodyFor = (error: Error, message: string): string =>
+  error.name === 'ScopeError' && message.startsWith(SCOPE_HEADING)
+    ? message.slice(SCOPE_HEADING.length).trimStart()
+    : message;
+
+/**
  * Format an error for display. The stack trace is printed when the run asked
  * for one, and only then.
  *
@@ -62,7 +90,7 @@ export function logError(error: unknown, verbose = false): void {
   if (error instanceof Error) {
     const classified = classifyThrownError(error);
     const message = classified?.isFailure ? classified.message : error.message;
-    console.error(`${c.fail} ${c.error('Error:')} ${message}`);
+    console.error(`${c.fail} ${c.error(headingFor(error))} ${bodyFor(error, message)}`);
     if ((verbose || verboseRun) && error.stack) {
       console.error(c.muted('\nStack trace:'));
       console.error(c.muted(error.stack));

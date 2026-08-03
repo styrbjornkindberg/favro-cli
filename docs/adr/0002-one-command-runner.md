@@ -65,8 +65,9 @@ it and drops `client` from the type, so touching it is a compile error. Four com
 it — `auth`, `issue-tracker-help`, `shell`, `skill`. Four declarations instead of 114.
 
 Scope is **not** on `ctx`. `assertScope` already takes `(boardId, client, config, force)`, and
-#92 kept `checkScope` as the CLI skin for non-card writes. A scope helper on `ctx` would be a
-fourth public spelling of the check that #92 just collapsed to two. `confirmAction` likewise
+#92 kept `checkScope` as the wrapper for non-card writes — a CLI skin that printed and exited
+until #133 made it throw like everything else (amendment below). A scope helper on `ctx` would
+be a fourth public spelling of the check that #92 just collapsed to two. `confirmAction` likewise
 stays a free function: 48 sites, no dependencies, nothing to inject.
 
 ### The runner owns output
@@ -130,6 +131,38 @@ In JSON mode an error is an envelope on **stdout**: `{ error: { message, retryab
 mode keeps `logError` on stderr unchanged. The reason it goes to stdout is the product's own
 honest-failure thesis: MCP hands an agent stdout first and stderr as an appended blob, so a
 failed command currently yields `(no output)` plus a decorated `✗` line, which is unparseable.
+
+### Amendment (#133): the ban on hard exits reaches `src/lib/`, not just the commands
+
+The 292 sites above were counted in `src/cli.ts` and `src/commands/`, and the ratchet that holds
+them scans only those two. `src/lib/safety.ts` was invisible to it, and its two scope guards —
+`checkScope`, `checkCollectionScope` — printed a decorated `✗ Scope violation:` line and called
+a hard exit from four call depths down. Measured on the built CLI with a lock configured:
+
+```
+$ favro collections delete coll-other --yes
+exit=1   stdout: (empty)   stderr: ✗ Scope violation: target collection "coll-other" …
+```
+
+That is the exact shape rule 3 was written against, surviving on the one failure a write
+guardrail exists to produce — and it was reachable only through those two helpers.
+`assertScope` and `assertOrgScope`, one function over, already threw and already reached stdout
+as an envelope. So the guards now throw `ScopeError` too, and the boundary renders it.
+
+Two things the fix holds that a smaller one would have dropped:
+
+- **Exit 1 stays.** A refusal is a negative finding, and stdout carrying the envelope is not a
+  reason to claim success. Both are required: parseable stdout *and* a non-zero code.
+- **The human line is unchanged.** `error-handler.ts` heads a `ScopeError` with
+  `Scope violation:` rather than `Error:`, keyed on `.name` because `safety.ts` imports that
+  module and the class cannot be imported back without a cycle. The refusal MESSAGE is now
+  plain where three of its lines were coloured: JSON is the default even at a TTY, so a
+  coloured message would put escape codes inside the value an agent parses. Byte-identical on
+  a pipe; a TTY loses the colour on `'favro scope show'` and `--force`.
+
+The ban is now scanned over `src/lib/` as well, for `process.exit(` alone — the other four
+preamble spellings are command-shaped and a library has no `run()` to adopt. One exception is
+argued rather than assumed: `ErrorFormatter.fatal`, whose exit is its declared `never`.
 
 ### Amendment (#134): two populations of error, one derivation behind a gate
 

@@ -15,11 +15,14 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { Command } from 'commander';
-import { run, apiNamespace, Ctx } from '../lib/run';
+import { run, apiNamespace, AnyResult, Ctx } from '../lib/run';
 import FavroHttpClient from '../lib/http-client';
 import { RefusalError } from '../lib/refusal';
 import { DispatchResult } from '../lib/dispatch';
 import { latchVerbose } from '../lib/error-handler';
+import { checkScope, checkCollectionScope } from '../lib/safety';
+import { FavroConfig } from '../lib/config';
+import { stripAnsi } from '../lib/theme';
 
 /** Every class `ctx.api` can build, as `[module, export]`. The laziness proof reads this. */
 const API_MODULES: ReadonlyArray<readonly [string, string]> = [
@@ -455,6 +458,119 @@ describe('the error boundary', () => {
     // MCP.
     const source = fs.readFileSync(path.join(__dirname, '..', 'lib', 'run.ts'), 'utf-8');
     expect(source).not.toMatch(/process\.exit\(/);
+  });
+});
+
+// ─── the scope refusal ───────────────────────────────────────────────────────
+
+/**
+ * A scope violation is the one failure a write guardrail exists to produce, and
+ * until #133 it was the one failure with no machine answer: `checkScope` and
+ * `checkCollectionScope` printed to stderr and called `process.exit(1)`, so the
+ * boundary above never ran and stdout came back EMPTY under the JSON default.
+ *
+ * The real `safety.ts`, unmocked, for the reason the file header gives: a stubbed
+ * refusal proves the runner can serialise a `ScopeError` somebody hand-built,
+ * not that the lock produces one. `LOCKED` is passed as an argument rather than
+ * written to the temp config, so neither helper reads `readConfig` and neither
+ * reaches the wire — `checkCollectionScope` compares two strings, and
+ * `assertScope`'s boardless arm refuses before its `/widgets/` GET.
+ */
+const LOCKED = { scopeCollectionId: 'coll-locked', scopeCollectionName: 'Locked' } as FavroConfig;
+
+const COLLECTION_REFUSAL =
+  'Scope violation: target collection "coll-other" is not the locked collection "Locked".\n' +
+  "  Run 'favro scope show' to see your current lock.\n" +
+  "  Run 'favro scope set <collectionId>' to change it, or pass --force to override.";
+
+describe('a scope refusal reaches the caller', () => {
+  it('writes the envelope to stdout and nothing to stderr, exit 1', async () => {
+    const { root, leaf } = program();
+    leaf.action(run(async () => checkCollectionScope('coll-other', LOCKED)));
+
+    await parse(root, ['thing']);
+
+    expect(JSON.parse(stdout()[0]).error).toEqual({
+      message: COLLECTION_REFUSAL,
+      // The lock is configuration: the identical call refuses identically until
+      // someone runs `favro scope set`. #120's reason, still measured here.
+      retryable: false,
+    });
+    expect(stderr()).toEqual([]);
+    expect(process.exitCode).toBe(1);
+  });
+
+  it('writes the envelope for the BOARD helper too — one defect, two callers', async () => {
+    const { root, leaf } = program();
+    leaf.action(run(async (ctx: Ctx) => checkScope('', ctx.client, LOCKED)));
+
+    await parse(root, ['thing']);
+
+    const { error } = JSON.parse(stdout()[0]);
+    expect([error.message.split('\n')[0], error.retryable]).toEqual([
+      'Scope violation: this write names no board, so the scope lock ("Locked") cannot be checked.',
+      false,
+    ]);
+    expect(process.exitCode).toBe(1);
+  });
+
+  it('does not serialise a refusal the way it serialises an empty result', async () => {
+    // THE DISCRIMINATING ARM. "Nothing matched" and "I refused to look" are
+    // different answers, and before #133 the refusal's shape was a third thing
+    // — no stdout at all — which reads to an agent as neither. An empty result
+    // is a positive claim about the world, so it keeps its envelope and exit 0;
+    // a refusal makes no claim, so it carries `error` and exit 1. A fix that
+    // collapsed the two would pass the test above and fail this one.
+    const shapeOf = async (action: () => Promise<AnyResult>) => {
+      out.mockClear();
+      process.exitCode = undefined;
+      const { root, leaf } = program();
+      leaf.action(run(action));
+      await parse(root, ['thing']);
+      return { stdout: stdout(), code: process.exitCode };
+    };
+
+    const empty = await shapeOf(async () => ({ rows: [] }));
+    const refused = await shapeOf(async () => checkCollectionScope('coll-other', LOCKED));
+
+    expect(empty).toEqual({ stdout: ['{"rows":[]}'], code: undefined });
+    expect(Object.keys(JSON.parse(refused.stdout[0]))).toEqual(['error']);
+    expect(refused.code).toBe(1);
+  });
+
+  it('says nothing at all when no lock is configured', async () => {
+    // The omit arm. The guard keys on `scopeCollectionId`, so a config without
+    // one must leave the command untouched — otherwise the two tests above
+    // would also pass against a `checkCollectionScope` that refuses everything.
+    const { root, leaf } = program();
+    leaf.action(
+      run(async () => {
+        checkCollectionScope('coll-other', {} as FavroConfig);
+        return { item: { ok: true } };
+      }),
+    );
+
+    await parse(root, ['thing']);
+
+    expect(stdout()).toEqual(['{"ok":true}']);
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it('keeps the human line the lock has always printed', async () => {
+    // #133's other acceptance criterion: only the JSON path gains anything.
+    // `✗ Scope violation:` — NOT `✗ Error:` — is what `checkCollectionScope`
+    // printed for itself before the exit was removed, and `logError` prints it
+    // now. Asserted on the joined stream because the heading moved from three
+    // `console.error` calls to one, which is the same bytes and a different
+    // call count.
+    const { root, leaf } = program();
+    leaf.action(run(async () => checkCollectionScope('coll-other', LOCKED)));
+
+    await parse(root, ['thing', '--human']);
+
+    expect(stripAnsi(stderr().join('\n'))).toBe(`✗ ${COLLECTION_REFUSAL}`);
+    expect(stdout()).toEqual([]);
+    expect(process.exitCode).toBe(1);
   });
 });
 

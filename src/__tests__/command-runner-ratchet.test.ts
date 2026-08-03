@@ -193,3 +193,62 @@ describe('the command-runner ratchet', () => {
     expect(stale).toEqual([]);
   });
 });
+
+// ─── the hard-exit ban, widened to src/lib (#133) ────────────────────────────
+
+/**
+ * WHY THIS IS A SECOND SCAN AND NOT A SIXTH PATTERN
+ * The five bans above are the command PREAMBLE, and `src/lib/` has no preamble
+ * to lose: `safety.ts` legitimately writes `new CardsAPI(`, and no library
+ * module has a `run()` to adopt, so widening the scan above would need both
+ * allowlists re-argued for files the runner will never govern.
+ *
+ * One of the five DOES belong everywhere. `process.exit(` in a library is worse
+ * than in a command, which is exactly what #133 was: `safety.ts`'s scope guards
+ * exited the process from four call depths down, so the runner's error boundary
+ * never ran and a scope violation under the JSON default wrote NOTHING to
+ * stdout. `src/lib/` was invisible to the scan above, so the spelling was not
+ * banned anywhere and nothing caught it for six migration steps.
+ *
+ * The ban is text-literal, same as above, so a match in a comment counts —
+ * which is why `safety.ts`'s prose now says `process.exit` without the call
+ * parens where it used to spell the whole thing out. That is the cost, and it is
+ * the cheap side: a scanner that has to parse before it bans can be wrong.
+ */
+const LIB_EXIT_ALLOWED: readonly string[] = [
+  // `ErrorFormatter.fatal` — declared `never`, so the exit IS its contract. It
+  // has no production caller left (only its own test), and deleting a module
+  // export from a published package is a semver call, not a ratchet's.
+  'src/lib/error-handler.ts',
+];
+
+function libFiles(): string[] {
+  const walk = (dir: string): string[] =>
+    fs.readdirSync(path.join(REPO_ROOT, dir), { withFileTypes: true }).flatMap((entry) => {
+      if (entry.isDirectory()) return walk(`${dir}/${entry.name}`);
+      return entry.name.endsWith('.ts') ? [`${dir}/${entry.name}`] : [];
+    });
+  return walk('src/lib').sort();
+}
+
+describe('no library module exits the process', () => {
+  const lib = libFiles();
+  const exiting = lib.filter((file) => /process\.exit\(/.test(sourceOf(file)));
+
+  it('finds the files it is meant to be reading', () => {
+    // A floor, not a count to keep updated. A scanner resolving nothing would
+    // report zero violations and pass forever.
+    expect(lib.length).toBeGreaterThan(30);
+    expect(lib).toContain('src/lib/safety.ts');
+  });
+
+  it('bans the spelling everywhere it is not argued for', () => {
+    expect(exiting.filter((file) => !LIB_EXIT_ALLOWED.includes(file))).toEqual([]);
+  });
+
+  it('has no stale entry on the short list of exceptions', () => {
+    // Both directions, same as the allowlist above: an entry that has gone
+    // clean, or been renamed away, must be struck off rather than left as cover.
+    expect(LIB_EXIT_ALLOWED.filter((file) => !exiting.includes(file))).toEqual([]);
+  });
+});

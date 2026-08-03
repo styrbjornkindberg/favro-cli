@@ -1,7 +1,6 @@
 import * as readline from 'readline';
 import { FavroConfig } from './config';
 import FavroHttpClient from './http-client';
-import { logError } from './error-handler';
 import { RefusalError } from './refusal';
 import { c } from './theme';
 
@@ -39,7 +38,7 @@ export async function confirmAction(message: string, flags?: { yes?: boolean }):
  *
  * The lock is the real write guardrail (`--dry-run` is only a preview), so it has
  * to hold for every caller — the CLI, the shared dispatch table, the skill engine
- * and the MCP passthrough alike. A `process.exit(1)` cannot: it turns one
+ * and the MCP passthrough alike. A `process.exit` cannot: it turns one
  * guardrail into a CLI-only one and kills a skill run mid-transaction with the
  * compensation log unread. So the check throws, and the CLI is the only place
  * that turns the throw into an exit code.
@@ -64,8 +63,9 @@ export async function confirmAction(message: string, flags?: { yes?: boolean }):
  * engine's end-of-run unwind since #151, the dispatch table as of #151's
  * carried-forward half (ADR-0002, "Two populations") — so a `ScopeError` answers
  * `false` everywhere for a second, independent reason: it never touched the wire.
- * What the type still buys is the NAMING: `checkScope` below branches on it, and
- * a decline that says what it is beats one inferred from where it came from.
+ * What the type still buys is the NAMING: `error-handler.ts` reads `.name` to
+ * head the human line `Scope violation:` rather than `Error:` (#133), and a
+ * decline that says what it is beats one inferred from where it came from.
  */
 export class ScopeError extends RefusalError {
   constructor(
@@ -221,12 +221,26 @@ export async function assertScope(
 }
 
 /**
- * Checks if the board belongs to the currently locked scope collection.
- * If scope checking is not enabled, or the board belongs to the collection, returns true.
- * Otherwise, logs an error and exits the process (unless force is true).
+ * `assertScope`, plus the one rewording a bare 404 needs. Refuses by THROWING.
  *
- * The CLI presentation of `assertScope` — one check, two presentations, so the
- * lock cannot say different things to different callers.
+ * It printed the refusal and called `process.exit` until #133, and both
+ * halves were wrong for the same reason: the runner's error boundary owns the
+ * presentation and the exit code (ADR-0002), and a hard exit beat it to both. In
+ * machine mode — the default, and the mode an agent gets — that meant the
+ * `{"error":{message,retryable}}` envelope was never written: stdout came back
+ * EMPTY on the one failure a write guardrail exists to produce, which reads to a
+ * caller as "the command produced no result" rather than "I refused to look".
+ * `assertOrgScope` next door already threw, and its refusal reached stdout; this
+ * one did not, and the difference was only which function you happened to call.
+ *
+ * What survives is the 404 rewording: `assertScope` GETs `/widgets/{boardId}`,
+ * and "Not Found" off the wire does not say which board or that the lock was
+ * what asked. Deterministic (the id is wrong or the board is gone), so a bare
+ * `Error` is the right shape — `retryAdvice` answers `false` for it, since the
+ * rethrow no longer carries the axios response.
+ *
+ * The human wording is unchanged: `logError` renders a `ScopeError` under the
+ * `Scope violation:` heading this function used to print itself.
  */
 export async function checkScope(
   boardId: string,
@@ -237,19 +251,10 @@ export async function checkScope(
   try {
     await assertScope(boardId, client, config, force);
   } catch (error: any) {
-    if (error instanceof ScopeError) {
-      const [head, ...rest] = error.message.split('\n');
-      console.error(`${c.fail} ${c.error('Scope violation:')}${head.replace('Scope violation:', '')}`);
-      rest.forEach((line) => console.error(line));
-      process.exit(1);
-      return;
-    }
     if (error?.response?.status === 404) {
-      console.error(`${c.fail} Scope check failed: Board ${boardId} not found.`);
-      process.exit(1);
+      throw new Error(`Scope check failed: Board ${boardId} not found.`);
     }
-    logError(error, false);
-    process.exit(1);
+    throw error;
   }
 }
 
@@ -319,7 +324,23 @@ export async function assertOrgScope(what: string, force: boolean = false): Prom
 }
 
 /**
- * Checks if the collection matches the currently locked scope collection.
+ * Refuse a write whose target COLLECTION is not the locked one. Throws
+ * `ScopeError`; a no-op with no lock, a warning-only pass-through under `force`.
+ *
+ * Threw nothing and exited the process until #133 — see `checkScope` above for
+ * why that made a scope refusal unreadable to every machine caller. Same fix,
+ * same reason; this is the half the ticket reproduced.
+ *
+ * `boardId: ''` for the same reason `assertOrgScope` passes `''`: the target is a
+ * collection, so there is no board to name. Nothing reads the field.
+ *
+ * The message is PLAIN, where the three `console.error` lines it replaces were
+ * coloured. It has to be: in machine mode it goes into the JSON envelope, and
+ * JSON is the default even at a TTY, so a coloured message would put escape
+ * codes inside the value an agent parses. `assertScope`'s messages were already
+ * plain for this reason. Cost, stated rather than discovered: a human at a TTY
+ * loses the colour on `'favro scope show'` and `--force`. On a pipe — which is
+ * every script and the whole MCP surface — the bytes are unchanged.
  */
 export function checkCollectionScope(
   collectionId: string,
@@ -329,18 +350,24 @@ export function checkCollectionScope(
   if (!config || !config.scopeCollectionId) {
     return;
   }
-
-  if (collectionId !== config.scopeCollectionId) {
-    if (force) {
-      console.warn(`${c.warn('⚠')} ${c.warn('Warning:')} Target collection ${collectionId} is outside your locked scope (${config.scopeCollectionName ?? config.scopeCollectionId}), but proceeding because --force was used.`);
-      return;
-    }
-
-    console.error(`${c.fail} ${c.error('Scope violation:')} target collection "${collectionId}" is not the locked collection "${config.scopeCollectionName ?? config.scopeCollectionId}".`);
-    console.error(`  Run ${c.info("'favro scope show'")} to see your current lock.`);
-    console.error(`  Run ${c.info("'favro scope set <collectionId>'")} to change it, or pass ${c.bold('--force')} to override.`);
-    process.exit(1);
+  if (collectionId === config.scopeCollectionId) {
+    return;
   }
+
+  const locked = config.scopeCollectionName ?? config.scopeCollectionId;
+
+  if (force) {
+    console.warn(`${c.warn('⚠')} ${c.warn('Warning:')} Target collection ${collectionId} is outside your locked scope (${locked}), but proceeding because --force was used.`);
+    return;
+  }
+
+  throw new ScopeError(
+    `Scope violation: target collection "${collectionId}" is not the locked collection "${locked}".\n` +
+      `  Run 'favro scope show' to see your current lock.\n` +
+      `  Run 'favro scope set <collectionId>' to change it, or pass --force to override.`,
+    '',
+    config.scopeCollectionId,
+  );
 }
 
 /**
