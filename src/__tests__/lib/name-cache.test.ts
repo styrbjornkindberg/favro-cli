@@ -82,6 +82,49 @@ describe('the parsed file is memoized', () => {
     expect(await readCache('org-a', 'tags')).toBeUndefined();
   });
 
+  // `readFile` memoizes the two outcomes DIFFERENTLY, on purpose, and neither
+  // half had a test: memoizing the absent case passed all 3062 tests. Both arms
+  // are asserted together so the test cannot pass by never memoizing OR by
+  // always memoizing — only by the split the module actually declares.
+  //
+  // Each arm writes the file DIRECTLY rather than through `writeCache`, so
+  // `writeFile`'s memo clear is not what makes it pass.
+  test('an absent read is NOT memoized — a file that appears later is seen', async () => {
+    // Pinning "no cache" for the life of the process over one failed open is a
+    // bad trade: nothing has written through this module, so nothing would ever
+    // clear it. For a long-lived favro-mcp-http the tenant dir being provisioned
+    // a moment after first read would go unseen until the process wrote.
+    expect(await readCache('org-a', 'tags')).toBeUndefined();
+
+    await fs.writeFile(
+      cacheFilePath(),
+      JSON.stringify({ 'org-a': { tags: { fetchedAt: Date.now(), entries: [{ tagId: 'appeared' }] } } })
+    );
+
+    expect(await readCache('org-a', 'tags')).toEqual([{ tagId: 'appeared' }]);
+  });
+
+  test('a corrupt read IS memoized — the same bad bytes are not re-parsed', async () => {
+    await fs.writeFile(cacheFilePath(), '{ not json');
+    expect(await readCache('org-a', 'tags')).toBeUndefined();
+
+    // Repairing the file from outside is NOT picked up, because the corrupt
+    // parse was memoized. Measured, and the cost is real: the next write is
+    // computed off that empty parse, so it DISCARDS the repaired content rather
+    // than merging with it. Already the declared posture — "corrupt reads as no
+    // cache" plus a last-writer-wins whole-file rewrite — and TTL-bounded
+    // nowhere, so pinned here rather than left for someone to rediscover.
+    await fs.writeFile(
+      cacheFilePath(),
+      JSON.stringify({ 'org-a': { tags: { fetchedAt: Date.now(), entries: [{ tagId: 'repaired' }] } } })
+    );
+    expect(await readCache('org-a', 'tags')).toBeUndefined();
+
+    await writeCache('org-a', 'users', [{ userId: 'u1' }]);
+    expect(await readCache('org-a', 'tags')).toBeUndefined();
+    expect(await readCache('org-a', 'users')).toEqual([{ userId: 'u1' }]);
+  });
+
   // FAVRO_CONFIG_DIR is re-read per call so favro-mcp-http can give each tenant
   // its own file. A memo keyed on anything but the resolved path would serve one
   // tenant's cache to another.

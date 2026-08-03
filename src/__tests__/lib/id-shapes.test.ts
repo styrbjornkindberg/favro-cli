@@ -18,6 +18,7 @@ import {
   HEX_24,
   ID_SHAPES,
   IdShape,
+  ShapeRow,
   ShapedResource,
   hasIdShape,
   isTagId,
@@ -62,6 +63,37 @@ describe('the declared shape table', () => {
     const row = ID_SHAPES[resource];
     expect(row.mode === 'decides' || row.mode === 'hints').toBe(true);
     expect(row.measurement.length).toBeGreaterThan(0);
+  });
+
+  test("mode 'decides' is incoherent without a declared shape", () => {
+    // Not a restatement of the table — a contradiction inside a row. Shape
+    // cannot settle the answer for a resource whose ids have no declared shape,
+    // so `shapes: []` beside `mode: 'decides'` is wrong whichever half was
+    // mis-typed. This is what catches a `hints` row being promoted.
+    for (const resource of resources) {
+      const row: ShapeRow = ID_SHAPES[resource];
+      if (row.mode !== 'decides') continue;
+      expect({ resource, hasShape: row.shapes.length > 0 }).toEqual({ resource, hasShape: true });
+    }
+  });
+
+  // A PIN, and named as one: `mode` has no runtime reader, so no behavioural
+  // test can reach it and nothing but an explicit expectation catches a row
+  // being mis-copied — which ADR-0003 calls "the fact most likely to be got
+  // wrong next". Measured: flipping `userId` to 'hints', or `boardId` to
+  // 'decides', passed all 3062 tests before this existed.
+  //
+  // Whole-map `toEqual` on purpose: a NEW row added without a considered mode
+  // fails here too, which a per-row assertion would not do.
+  test('every row pins the mode it was measured into', () => {
+    expect(Object.fromEntries(resources.map((r) => [r, ID_SHAPES[r].mode]))).toEqual({
+      userId: 'decides',
+      tagId: 'decides',
+      cardId: 'hints',
+      cardCommonId: 'hints',
+      boardId: 'hints',
+      collectionId: 'hints',
+    });
   });
 
   test('a resource with no declared shape never matches anything', () => {
