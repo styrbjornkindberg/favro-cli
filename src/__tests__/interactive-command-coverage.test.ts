@@ -30,16 +30,21 @@
  *   COMMANDS: every `.action(…)` in `src/cli.ts` and `src/commands/`, keyed by
  *     the command path read off the commander chain, unwrapped through `run()`.
  *
- * THE ONE BARRIER, AND WHY IT IS NOT AN ALLOWLIST OF FORTY
- * `safety.ts:confirmAction` calls `readline.createInterface`, and about forty
- * write commands call `confirmAction`. Left alone, the closure would swallow
- * every write in the CLI and the allowlist would be longer than the codebase.
- * It is cut instead, because it is measurably safe on a pipe: it throws on
- * `!process.stdin.isTTY` before creating the interface, so it refuses fast
- * rather than blocking, and `-y` is the non-interactive path every caller
- * already carries. That is one named decision rather than forty exemptions —
- * and `confirmAction` itself stays under the primitive check, so if the TTY
- * guard is ever deleted the barrier's justification goes with it.
+ * THE ONE BARRIER, AND WHY IT IS NOT AN ALLOWLIST OF FORTY-EIGHT
+ * `safety.ts:confirmAction` calls `readline.createInterface`, and 48 call sites
+ * across 26 files call `confirmAction` (measured). Left alone, the closure would
+ * swallow every write in the CLI and the allowlist would be longer than the
+ * codebase. It is cut instead, because it is measurably safe on a pipe: it throws
+ * on `!process.stdin.isTTY` before creating the interface, so it refuses fast
+ * rather than blocking, and `-y` is the non-interactive path every caller already
+ * carries. That is one named decision rather than 48 exemptions — and the arm
+ * below EVALUATES the guard's real condition against the fds a pipe hands over,
+ * so neither deleting it nor rewriting it into something that no longer fires
+ * can leave the justification standing.
+ *
+ * `promptInput` (`commands/auth.ts`) is NOT cut, and does not need to be: it
+ * carries the same guard now, but only three call sites reach it and all three
+ * are inside `auth login`, which is on the list either way.
  *
  * TO DISCHARGE AN ALLOWLIST ENTRY: add the command to `INTERACTIVE_COMMANDS`,
  * then delete its line. Deleting the line is not optional — the staleness arm
@@ -397,6 +402,25 @@ describe('every interactive command is on the list both parents read', () => {
     expect([...detected].sort()).toEqual(expect.arrayContaining(['auth login', 'browse', 'shell', 'skill edit']));
   });
 
+  it('every .action() resolved to a command path, so a tracer miss cannot pass as the menu', () => {
+    // THE BYPASS THIS CLOSES. `commandPath` returns '' two ways: the chain walk
+    // succeeded and found no `.command(…)`, or the walk BROKE. And '' is a listed
+    // path — the bare main menu — so a broken walk lands on the one key that is
+    // always exempt, and the command it belongs to is dropped from `unlisted`
+    // without a word. A tracer FAILURE reading as a pass is the shape #127's
+    // phantom-command ratchet was bypassed through.
+    //
+    // Constructed and measured: an `.action(…)` attached inside a helper that
+    // takes the `Command` as a parameter —
+    //
+    //   function attach(cmd: Command) { cmd.action(async () => { await ask(); }); }
+    //
+    // is detected as interactive, computes '', and the suite stayed GREEN. No
+    // real registration has that shape today, which is exactly when to nail it
+    // down. `run()`-wrapped, factory and inline actions all resolve fine.
+    expect(actions.filter((a) => a.commandPath === '').map((a) => a.key)).toEqual([]);
+  });
+
   it('no interactive command is missing from INTERACTIVE_COMMANDS', () => {
     // A new name here is a command that HANGS under favro_run and inside favro
     // shell. Add it to `lib/interactive-commands.ts`; do not add it here.
@@ -434,30 +458,63 @@ describe('the confirmAction barrier is founded', () => {
     expect(BARRIERS.size).toBe(1);
   });
 
-  it('confirmAction still throws on stdin.isTTY before it creates an interface', () => {
-    // Every write command in the CLI is exempted on the strength of this guard.
-    // If it goes, they all block on a prompt that never answers and the barrier
-    // is hiding forty hangs. Read off the AST of the real function, so the
-    // justification cannot rot away from the code.
+  it('confirmAction throws on a non-terminal stdin before it creates an interface', () => {
+    // Forty-eight call sites across twenty-six files are exempted on the strength
+    // of this guard. If it goes, they all block on a prompt that never answers
+    // and the barrier is hiding forty-eight hangs. Read off the AST of the real
+    // function, so the justification cannot rot away from the code.
     //
-    // Asserted as "reads isTTY, and throws before the readline call", by
-    // POSITION — not as a particular condition shape. `!process.stdin.isTTY`
-    // and `process.stdin.isTTY === false` are the same guard, and a ratchet that
-    // reddens on the rewrite is a ratchet people route around.
+    // NOT "reads isTTY somewhere, and throws somewhere before the readline call".
+    // That version was measured toothless: replacing the whole guard with
+    //
+    //   if (!message) throw new Error('confirmAction needs a message.');
+    //   const onATerminal = process.stdin.isTTY;
+    //
+    // keeps an isTTY read and puts a throw before the interface, so it passed —
+    // while every write command blocked on a pipe. So the throw is tied to the
+    // if-statement that reads isTTY, and the condition is EVALUATED rather than
+    // pattern-matched: any rewrite that still fires on a pipe passes, and one
+    // that does not, fails, whatever it is spelled like.
+    //
+    // Evaluating it is also what catches the rewrite that looks equivalent and
+    // is not. Node leaves `isTTY` UNDEFINED on a pipe rather than setting it
+    // false (measured), so `process.stdin.isTTY === false` never fires where it
+    // matters — a real regression, not a cosmetic one. `undefined` is therefore
+    // the case under test.
     const [confirmAction] = [...BARRIERS];
-    let readsTty = false;
-    let firstThrow = Infinity;
+
+    let guard: ts.IfStatement | undefined;
     let interfaceAt = Infinity;
     walk(confirmAction, (n) => {
-      if (ts.isPropertyAccessExpression(n) && n.name.text === 'isTTY') readsTty = true;
-      if (ts.isThrowStatement(n)) firstThrow = Math.min(firstThrow, n.getStart());
+      if (ts.isIfStatement(n) && !guard) {
+        let readsTty = false;
+        walk(n.expression, (e) => {
+          if (ts.isPropertyAccessExpression(e) && e.name.text === 'isTTY') readsTty = true;
+        });
+        if (readsTty) guard = n;
+      }
       if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && n.expression.name.text === 'createInterface') {
         interfaceAt = Math.min(interfaceAt, n.getStart());
       }
     });
-    expect(readsTty).toBe(true);
+
     expect(interfaceAt).toBeLessThan(Infinity);
-    expect(firstThrow).toBeLessThan(interfaceAt);
+    // There IS an `if` reading isTTY, it throws, and it runs first.
+    expect(guard).toBeDefined();
+    expect(guard!.getStart()).toBeLessThan(interfaceAt);
+    let guardThrows = false;
+    walk(guard!.thenStatement, (n) => {
+      if (ts.isThrowStatement(n)) guardThrows = true;
+    });
+    expect(guardThrows).toBe(true);
+
+    // And it fires on the fds a pipe actually hands over. `process` is the only
+    // free name the real condition uses; anything else throws here, loudly.
+    const condition = guard!.expression.getText();
+    // eslint-disable-next-line @typescript-eslint/no-implied-eval
+    const fires = new Function('process', `return Boolean(${condition});`) as (p: unknown) => boolean;
+    expect({ condition, firesOnAPipe: fires({ stdin: {} }) }).toEqual({ condition, firesOnAPipe: true });
+    expect({ condition, firesOnATerminal: fires({ stdin: { isTTY: true } }) }).toEqual({ condition, firesOnATerminal: false });
   });
 
   it('something still routes through it, so the cut is doing real work', () => {

@@ -46,7 +46,10 @@ export interface InteractiveCommand {
 export const INTERACTIVE_COMMANDS: readonly InteractiveCommand[] = [
   {
     path: '',
-    reason: 'favro with no subcommand opens the interactive main menu',
+    // No subject: `interactiveRefusal` prefixes the name, and "favro with no
+    // subcommand needs a terminal — favro with no subcommand opens the …" is
+    // what the earlier wording read out as.
+    reason: 'it opens the interactive main menu',
   },
   {
     path: 'shell',

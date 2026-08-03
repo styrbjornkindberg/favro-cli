@@ -130,8 +130,19 @@ what a blanket `stdio: 'inherit'` would have cost.
 `src/__tests__/interactive-command-coverage.test.ts` is the ratchet: it walks the real
 commander surface through the TypeScript checker and fails when a registered command can
 reach a prompt without being listed. `confirmAction` is the one barrier cut out of that
-walk — it refuses on `!isTTY` before it prompts, so its forty callers are safe on a pipe
-already.
+walk — it refuses on `!isTTY` before it prompts, so its 48 call sites across 26 files are
+safe on a pipe already.
+
+The list is the *outer* guard and it is not the only one, because it cannot be. It keys on
+command PATHS, so it cannot see a prompt that depends on a value or on what the wire
+answers — `auth login --email … --api-key …` is deliberately allowed through and still
+reaches the organization picker whenever an account has more than one org. Every prompt is
+therefore fail-closed at the prompt as well: `confirmAction` (`lib/safety.ts`) and
+`promptInput` (`commands/auth.ts`) both throw on a non-terminal stdin before they open a
+readline interface. Write the guard as `!isTTY`, never `isTTY === false` — node leaves the
+property *undefined* on a pipe, measured, so the equality form does not fire on the only
+input that matters. The ratchet evaluates the real condition against that input rather than
+matching its shape.
 
 **scope lock** — the mandatory guardrail on every write that *lands on a board*. Such a
 write resolves its board and checks it against the locked collection before anything

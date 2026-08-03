@@ -140,15 +140,44 @@ describe('favro_run', () => {
     // Refusing them would be the fix breaking more than it fixed.
     for (const command of [
       'auth login --email a@b.c --api-key k',
+      // `--flag=value` is the same invocation, and the matcher normalises on
+      // `split('=')[0]` to see it. Dropping that normalisation left every `=`
+      // form unrecognised and this loop still green.
+      'auth login --email=a@b.c --api-key=k',
       'board b1',
       'board b1 --watch --json',
+      'board b1 --watch --json=true',
       'boards list',
       'skill list',
+      // BOTH FLAGS PRESENT, NEITHER CARRYING A VALUE — and it spawns, because a
+      // list of command PATHS cannot see values. `splitCommand` drops the empty
+      // token, so this reaches commander as `--email --api-key`; commander binds
+      // `--api-key` as the email and leaves the token unset, and the handler
+      // prompts for what it did not get. That hung for 60022ms, measured, until
+      // `promptInput` was made fail-closed — see
+      // `auth-commands.test.ts: refuses to prompt when stdin is not a terminal`.
+      // The matcher is deliberately NOT taught to inspect values: the guard at
+      // the prompt covers every way of arriving there, including the multi-org
+      // picker, which no flag can predict.
+      'auth login --email "" --api-key ""',
     ]) {
       const result = await favroRun(command);
       expect(result.isError).toBeUndefined();
     }
-    expect(mockExecFile).toHaveBeenCalledTimes(5);
+    expect(mockExecFile).toHaveBeenCalledTimes(8);
+  });
+
+  test('a PARTIALLY flagged auth login is refused, not waved through to the prompt', async () => {
+    // `notWith` fires only when EVERY listed flag is present, and that `every`
+    // is the whole guard: relaxed to `some`, `auth login --email a@b.c` spawns,
+    // prompts for the API token it was not given, and hangs for the full 60s.
+    // The mutation survived the suite before this test existed.
+    for (const command of ['auth login --email a@b.c', 'auth login --api-key k']) {
+      const result = await favroRun(command);
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain('favro auth login');
+    }
+    expect(mockExecFile).not.toHaveBeenCalled();
   });
 
   test('an interactive command NAME appearing as an option value is not a match', async () => {
