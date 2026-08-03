@@ -790,6 +790,12 @@ Move matching cards between boards/statuses.
 | `-y, --yes` | Skip confirmation |
 | `--force` | Bypass scope check |
 
+`--status` must name a column on the **destination** board (`--to-board` when
+given, else `--board`). It is settled before anything is read or written, like
+`status:` in `--filter`: a value naming no column refuses and lists that board's
+columns, under `--dry-run` and `--yes` alike, rather than previewing a plan that
+fails card by card at the wire.
+
 ### `batch assign` ⚠️ WRITE — HIGH BLAST RADIUS
 Assign matching cards to a user.
 
@@ -855,11 +861,19 @@ Natural language batch operations.
 | `--force` | Bypass scope check |
 | `--json` | Output raw JSON |
 
+`<board>` is a board id or an exact board name.
+
 Supported goal patterns:
 - `move all <filter> cards to <status>`
 - `assign all <filter> cards [with no owner] to <user>`
 - `close all <filter> cards`
 - `unassign all <filter> cards`
+
+Filter words: `overdue`, `blocked`, `unassigned`, `assigned`, `all` — or a COLUMN
+name on that board. A word that is neither refuses, naming the word and listing
+the board's columns, and writes nothing; it never selects zero cards silently.
+The refusal fires under `--dry-run` and `--yes` alike. A goal that resolves and
+matches nothing is different: it reports zero and exits 0.
 
 ### `risks <board>` 📖 READ
 Board risk analysis — surfaces overdue, blocked, unassigned, and incomplete cards.

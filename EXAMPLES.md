@@ -815,11 +815,13 @@ Cannot parse goal: "add urgent tag to all backlog cards"
 
 Supported patterns:
   move all <filter> cards to <status>
-  assign all <filter> cards to <user>
+  assign all <filter> cards [with no owner] to <user>
   close all <filter> cards
   unassign all <filter> cards
 
-Filter keywords: overdue, blocked, unassigned, <status-name>
+Filter keywords: overdue, blocked, unassigned, assigned, or a COLUMN name on
+that board (e.g. "Backlog", "In Progress"). Anything else refuses, naming the
+word and listing the board's columns.
 ```
 **Fix:** Use a supported goal pattern:
 ```bash

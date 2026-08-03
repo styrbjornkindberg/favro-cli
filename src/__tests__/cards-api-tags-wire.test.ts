@@ -38,8 +38,26 @@ const ORG = 'org-tags-wire';
 
 // The cache is a file that outlives a test. Every case below starts from an
 // empty one, so a hit is only ever the one the case itself planted.
-beforeEach(() => {
-  fs.rmSync(CACHE_FILE, { force: true });
+//
+// `invalidateCache()`, NOT `fs.rmSync` of the file. `name-cache` memoises the
+// parsed file in a module global that only its own `writeFile` clears, and this
+// suite keeps ONE `FAVRO_CONFIG_DIR` for every case — so the memo path matches
+// and unlinking the file left the previous case's records being served from
+// memory. Measured before this change: 8 of the 14 cases below began with a
+// `tags` record they never planted, and the comment above was false for all of
+// them. `invalidateCache()` truncates through `writeFile`, which is what drops
+// the memo.
+//
+// The claim is asserted right here, per case, rather than in a test of its own:
+// WHICH cases the old cleanup left dirty depends entirely on ordering, so a
+// standalone test passes or fails on where it happens to land — one placed last
+// in this file stayed green, because the case before it invalidates. Measured
+// both ways: `fs.rmSync` here fails 12 of the 14 cases, `invalidateCache()`
+// passes all 14.
+beforeEach(async () => {
+  const { invalidateCache, readCacheRecord } = await import('../lib/name-cache');
+  await invalidateCache();
+  expect(await readCacheRecord(ORG, 'tags')).toBeUndefined();
 });
 
 interface Received {

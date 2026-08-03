@@ -348,6 +348,21 @@ export function registerBatchMoveCommand(batch: Command): void {
         // preview, before the board read. `--dry-run` gets the same refusal: a
         // dry run that plans zero cards is the same lie one step earlier.
         await settleFilter([], options.filter, client, boardId);
+        // And the TARGET `--status`, which was the one thing here still unsettled
+        // at preview time. Measured against the built CLI: `--status Frobnicated
+        // --dry-run` printed a plan for all three cards and exited 0, and without
+        // `--dry-run` it promised the write, then failed card by card at the wire
+        // and rolled back. #150's sibling — a `move` target is a COLUMN, and the
+        // board it belongs to is the destination when this move changes boards,
+        // which is the board `updateCard` resolves it against.
+        if (options.status) {
+          const { default: ColumnDirectory } = await import('../lib/column-directory');
+          const target = options.toBoard ? boardIdOnce(client, options.toBoard) : boardId;
+          await new ColumnDirectory(client, client.organizationId).resolveColumnId(
+            options.status,
+            await target(),
+          );
+        }
 
         if (!options.dryRun) {
           if (!(await confirmAction(`Apply batch move to cards from board ${options.board}?`, { yes: options.yes }))) {

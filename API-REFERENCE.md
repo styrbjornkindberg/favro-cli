@@ -1750,6 +1750,12 @@ favro batch move --board <id> [--to-board <id>] [--status <value>]
 
 **Notes:** At least one of `--to-board` or `--status` must be specified.
 
+`--status` names a **column on the destination board** — `--to-board` when one is
+given, otherwise `--board` — and is settled against that board's real columns
+before anything is read or written, exactly like `status:` in `--filter`. A value
+that names no column refuses, listing that board's columns, under `--dry-run` and
+`--yes` alike; it does not preview a plan it cannot apply.
+
 **Filter syntax:**
 
 | Expression | Matches |
@@ -1768,6 +1774,7 @@ favro batch move --board board-001 --to-board archive-board --status Archived
 **Error cases:**
 - No `--to-board` or `--status` → `✗ Specify --to-board and/or --status to set the target state`
 - Board not found → `✗ Board not found: "<id>"`
+- `--status` naming no column on the destination board → refuses, listing that board's columns, exit 1
 - No matching cards → Shows count and exits 0
 
 ---
@@ -1816,7 +1823,7 @@ favro batch-smart <board> --goal "<goal>" [--dry-run] [--yes] [--json]
 
 | Argument | Required | Description |
 |---|---|---|
-| `<board>` | ✓ | Board ID |
+| `<board>` | ✓ | Board ID **or** exact board name |
 
 **Options:**
 
@@ -1825,6 +1832,7 @@ favro batch-smart <board> --goal "<goal>" [--dry-run] [--yes] [--json]
 | `--goal <goal>` | ✓ | Plain-English goal string |
 | `--dry-run` | — | Preview without applying |
 | `--yes` | — | Skip confirmation prompt |
+| `--force` | — | Bypass the scope check |
 | `--json` | — | Output result as JSON |
 
 **Supported goal patterns:**
@@ -1843,10 +1851,28 @@ favro batch-smart <board> --goal "<goal>" [--dry-run] [--yes] [--json]
 | `overdue` | Cards where `dueDate` is in the past |
 | `blocked` | Cards with `blocked` in tags or status |
 | `unassigned` | Cards with no assignees |
-| `<status-name>` | Cards matching the status (case-insensitive) |
+| `assigned` | Cards with at least one assignee |
+| `<column-name>` | Cards in that column, by name, case-insensitive |
 | `all` | All cards |
 
 Filters can be combined: `"overdue and unassigned"`, `"Backlog and blocked"`.
+
+**A word that is neither a keyword nor a column refuses.** The column names in a
+goal — filter words and the `move` target alike — are settled against the board's
+real columns before anything is read or written, by the same resolution
+`cards list --filter "status:…"` uses. So `--goal "move all frobnicated cards to
+Done"` names the word and lists the board's columns, and exits 1; it does not
+report "no cards matched", which is what it did before #150. The refusal fires
+under `--dry-run` and under `--yes` too: nothing reaches the wire.
+
+A goal that resolves but genuinely matches nothing is the other outcome and stays
+one — `"move all overdue cards to Done"` on a board with no overdue cards prints
+"No cards match the goal" and exits 0.
+
+The column's **own** spelling is what a `move` writes and what every preview
+line shows: `--goal "move all cards to qa"` on a board whose column is `QA` says
+`→ status: QA`. `close` settles the same way, so a board with no column named
+`Done` refuses instead of promising the write and failing card by card.
 
 **Atomic execution:** Operations run sequentially. If any operation fails, all previously completed operations are rolled back. The confirmation prompt is shown unless `--yes` is passed.
 

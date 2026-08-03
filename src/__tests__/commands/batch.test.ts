@@ -269,7 +269,11 @@ describe('batch move command', () => {
     await program.parseAsync([
       'node', 'favro', 'batch', 'move',
       '--board', STUB_BOARD,
-      '--status', 'Archive',
+      // A real column on the stub board. The TARGET `--status` is settled against
+      // the board's columns now, like the filter's `status:` beside it, so
+      // `Archive` — which this board does not have — refuses here rather than
+      // previewing a plan that could never be applied.
+      '--status', 'in-progress',
       '--filter', 'status:done',
       '--dry-run',
     ]);
@@ -291,14 +295,14 @@ describe('batch move command', () => {
     await program.parseAsync([
       'node', 'favro', 'batch', 'move',
       '--board', STUB_BOARD,
-      '--status', 'Archive',
+      '--status', 'in-progress',
       '--filter', 'status:done',
     ]);
 
     // Should update card-1 and card-3 (Completed), not card-2 (Backlog)
     expect(mockApi.updateCard).toHaveBeenCalledTimes(2);
-    expect(mockApi.updateCard).toHaveBeenCalledWith('card-1', expect.objectContaining({ status: 'Archive' }));
-    expect(mockApi.updateCard).toHaveBeenCalledWith('card-3', expect.objectContaining({ status: 'Archive' }));
+    expect(mockApi.updateCard).toHaveBeenCalledWith('card-1', expect.objectContaining({ status: 'in-progress' }));
+    expect(mockApi.updateCard).toHaveBeenCalledWith('card-3', expect.objectContaining({ status: 'in-progress' }));
     expect(mockApi.updateCard).not.toHaveBeenCalledWith('card-2', expect.anything());
   });
 
@@ -326,7 +330,10 @@ describe('batch move command', () => {
 
     await program.parseAsync([
       'node', 'favro', 'batch', 'move',
-      '--board', 'bad-board',
+      // A resolvable board: this test is about the 404 the CARD FETCH answers,
+      // and an unresolvable `--board` now refuses one step earlier, at the target
+      // status's board lookup, which would make it pass for the wrong reason.
+      '--board', STUB_BOARD,
       '--status', 'Done',
     ]);
 
@@ -338,12 +345,12 @@ describe('batch move command', () => {
     mockApi.listCards.mockResolvedValue([
       makeCard({ cardId: 'card-1', status: 'done' }),
     ]);
-    mockApi.updateCard.mockResolvedValue(makeCard({ cardId: 'card-1', status: 'Archive' }));
+    mockApi.updateCard.mockResolvedValue(makeCard({ cardId: 'card-1', status: 'in-progress' }));
 
     await program.parseAsync([
       'node', 'favro', 'batch', 'move',
       '--board', STUB_BOARD,
-      '--status', 'Archive',
+      '--status', 'in-progress',
       '--filter', 'status:done',
       '--json',
     ]);
@@ -361,12 +368,12 @@ describe('batch move command', () => {
     mockApi.listCards.mockResolvedValue([
       makeCard({ cardId: 'card-1', status: 'done' }),
     ]);
-    mockApi.updateCard.mockResolvedValue(makeCard({ cardId: 'card-1', status: 'Archive' }));
+    mockApi.updateCard.mockResolvedValue(makeCard({ cardId: 'card-1', status: 'in-progress' }));
 
     await program.parseAsync([
       'node', 'favro', 'batch', 'move',
       '--board', STUB_BOARD,
-      '--status', 'Archive',
+      '--status', 'in-progress',
       '--filter', 'status:done',
       '--json',
     ]);
