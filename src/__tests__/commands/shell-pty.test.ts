@@ -35,21 +35,45 @@
  * where the table above comes from), it touches a marker file so "a child ran"
  * is observable even while it blocks, and for `skill edit` it BLOCKS — so a
  * removed guard hangs and this suite fails on its own timeout instead of going
- * green. Verified by doing exactly that: with the `skill edit` entry stripped
- * from `interactive-commands.ts`, `refuses … without spawning` was SIGKILLed at
- * the 4s bound and left its marker behind, against 0.6s and no marker green.
+ * green. Verified two independent ways, both by stripping the guard and running:
+ * removing the `skill edit` entry from `INTERACTIVE_COMMANDS`, and making
+ * `findInteractiveCommand` return `undefined` unconditionally. Each one put
+ * `refuses … without spawning` at the SIGKILL bound with its marker on disk,
+ * against 0.44s and no marker green — and `spawned` alone carries the failure,
+ * confirmed by deleting the `timedOut` assertion and watching it still go red.
  *
- * NOTHING HERE CAN HANG THE SUITE. Every pty run is a `spawnSync` with a hard
- * `timeout` well under the per-test budget and `killSignal: 'SIGKILL'`, and a
- * timeout is asserted on explicitly rather than left to jest.
+ * NOTHING HERE CAN HANG THE SUITE, AND JEST IS NOT WHAT STOPS IT. Measured: a
+ * synchronous test body runs past jest's per-test timeout without being
+ * preempted — a 6s `spawnSync` still reported its assertion, not a jest timeout,
+ * because the timer cannot fire while the body holds the thread. So `spawnSync`'s
+ * own `timeout` plus `killSignal: 'SIGKILL'` is the ONLY bound on a blocked run,
+ * `timedOut` is asserted on explicitly, and the SIGKILL on `script` closes the
+ * pty, which SIGHUPs the blocked shim rather than orphaning it (checked with
+ * `ps` after a red run: no surviving `sleep`).
  */
 import { spawnSync } from 'child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, existsSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
-/** Hard bound on one pty run. Measured ~0.4s, so this is ~10x headroom. */
-const PTY_TIMEOUT_MS = 4000;
+/**
+ * Hard bound on one pty run.
+ *
+ * MEASURE IT IN THE CONDITION IT RUNS IN, NOT IN ISOLATION (ADR-0003). Alone
+ * this file's slowest green run is ~0.5s; inside the full 161-suite parallel run
+ * — which is how it actually executes — the slowest is ~1.5s, three times that,
+ * because the pty child spawns its own node and ts-node-transpiles `shell.ts`
+ * and everything it imports. CI is slower again: a 2-vCPU `ubuntu-latest` runner
+ * doing `npx jest --coverage` on two node versions. So the bound is set from the
+ * ~1.5s figure with room for a runner several times slower, not from the ~0.5s
+ * one. Overshooting only costs time on a genuine hang, which is rare;
+ * undershooting turns a green run red for no reason.
+ *
+ * Not a hang risk either way: jest's own per-test timeout never preempts a
+ * synchronous body, so `spawnSync`'s `timeout` is the only thing that ends a
+ * blocked run, and `timedOut` is asserted on rather than left implicit.
+ */
+const PTY_TIMEOUT_MS = 10_000;
 
 const SUPPORTED = process.platform === 'darwin' || process.platform === 'linux';
 
@@ -59,6 +83,15 @@ const SUPPORTED = process.platform === 'darwin' || process.platform === 'linux';
  *   Linux: script -qec "<cmd …>" /dev/null
  * The driver therefore takes ZERO arguments and reads its inputs from the
  * environment, so there is nothing to quote and one code path covers both.
+ *
+ * ponytail: the macOS row is measured on this machine; the LINUX ROW IS NOT —
+ * it is util-linux's documented shape, not an observed one, and ADR-0003 says
+ * to label that rather than assert it. It is kept anyway because CI is where it
+ * runs: `.github/workflows/ci.yml` is `ubuntu-latest` on node 18.x and 20.x, so
+ * skipping Linux would mean the only pty test in the repo never executes in CI
+ * — strictly worse than a branch CI itself verifies on the first push. If it is
+ * wrong, CI goes red loudly and the fix is one argv. Upgrade path: once it has
+ * gone green on ubuntu once, delete this note.
  *
  * `process.execPath`, not `node`: `script` resolves its command against PATH, and
  * the interpreter on PATH is not necessarily the one running jest — on this
@@ -135,7 +168,9 @@ interface PtyRun {
 
 /** Run `runFavro(cmd)` in a fresh node process whose three fds are a real pty. */
 function underPty(cmd: string): PtyRun {
-  const marker = join(binDir, `spawned-${runCount++}`);
+  // `root`, not `binDir`: `binDir` is prepended to the child's PATH, and test
+  // scratch state does not belong in a PATH directory.
+  const marker = join(root, `spawned-${runCount++}`);
   const result = spawnSync('script', PTY_ARGV(driver) as string[], {
     encoding: 'utf-8',
     timeout: PTY_TIMEOUT_MS,
@@ -160,7 +195,11 @@ function underPty(cmd: string): PtyRun {
 
   return {
     // `script` echoes CRs and a stray ^D; strip both plus any ANSI that leaks.
-    out: `${result.stdout ?? ''}${result.stderr ?? ''}`.replace(/\r/g, '').replace(/\x1b\[[0-9;]*m/g, ''),
+    // `result.error` is folded in because a missing or different `script` gives
+    // empty stdout, and "expected PARENT-FDS…, received ''" does not say ENOENT.
+    out: `${result.stdout ?? ''}${result.stderr ?? ''}${result.error ? `\nspawnSync script: ${result.error.message}` : ''}`
+      .replace(/\r/g, '')
+      .replace(/\x1b\[[0-9;]*m/g, ''),
     timedOut: result.signal === 'SIGKILL',
     spawned: existsSync(marker),
   };
