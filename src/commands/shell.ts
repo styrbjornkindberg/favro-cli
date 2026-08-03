@@ -16,6 +16,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execSync } from 'child_process';
 import { c, box } from '../lib/theme';
+import { run } from '../lib/run';
 
 // ─── History ──────────────────────────────────────────────────────────────────
 
@@ -126,7 +127,17 @@ function printBanner(): void {
   console.log('');
 }
 
-async function runShell(initialBoard?: string): Promise<void> {
+/**
+ * ON THE `void` ARM AND ANONYMOUS (ADR-0002, #118). The REPL owns its stdout,
+ * and it shells out to `favro` for every real command — so it needs no client
+ * of its own, and `{ anonymous: true }` is what makes that a compile error
+ * rather than a convention.
+ *
+ * It AWAITS the readline close. The old shape resolved as soon as the listeners
+ * were attached and relied on a hard `process.exit` in the close handler to end the
+ * run, which terminates before a pending stdout write flushes.
+ */
+export async function runShell(initialBoard?: string): Promise<void> {
   const state: ShellState = { board: initialBoard };
   const history = loadHistory();
 
@@ -225,9 +236,11 @@ async function runShell(initialBoard?: string): Promise<void> {
     rl.prompt();
   });
 
-  rl.on('close', () => {
-    saveHistory(history);
-    process.exit(0);
+  await new Promise<void>((resolve) => {
+    rl.on('close', () => {
+      saveHistory(history);
+      resolve();
+    });
   });
 }
 
@@ -238,7 +251,5 @@ export function registerShellCommand(program: Command): void {
     .command('shell')
     .description('Interactive Favro shell with tab completion and history')
     .option('--board <boardId>', 'Pre-select a board context')
-    .action(async (options) => {
-      await runShell(options.board);
-    });
+    .action(run({ anonymous: true }, (_ctx, options: { board?: string }) => runShell(options.board)));
 }
