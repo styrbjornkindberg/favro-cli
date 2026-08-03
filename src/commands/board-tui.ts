@@ -47,6 +47,14 @@ export async function boardTuiHandler(ctx: Ctx, boardRef: string, options: Board
         board: snapshot.board,
         columns: snapshotToColumns(snapshot),
         stats: snapshot.stats,
+        // `getSnapshot` reports the facets it could not read (#116), and this
+        // arm picked three keys and dropped that one — so a failed `columns`
+        // read reached an agent as a board with no columns and stats that look
+        // measured. Every other `getSnapshot` caller (`diff`, `standup`,
+        // `sprint-plan`, `risks`) carries the key; `board` was the sibling left
+        // behind. Spread in only when non-empty — absent must stay
+        // distinguishable from empty (`read-shape.ts` rule 3).
+        ...(snapshot.unreachable?.length ? { unreachable: snapshot.unreachable } : {}),
       },
     };
   }
@@ -72,6 +80,13 @@ export async function boardTuiHandler(ctx: Ctx, boardRef: string, options: Board
     const statusBar = renderStatusBar(snapshot.stats.by_status, snapshot.stats.total);
     console.log(`  ${statusBar}`);
     console.log(`  ${c.muted(`${snapshot.stats.total} cards total · ${snapshot.columns.length} columns · ${new Date().toLocaleTimeString()}`)}`);
+
+    // Same hole, said to a human. A board rendered from a partial read must not
+    // look like a complete one; the wording matches `standup` and `sprint-plan`.
+    if (snapshot.unreachable?.length) {
+      console.log(`\n  ${c.error(`⚠️  Incomplete — ${snapshot.unreachable.length} part(s) of this board could not be read:`)}`);
+      for (const hole of snapshot.unreachable) console.log(`    ${c.muted(`${hole.id} — ${hole.reason}`)}`);
+    }
 
     if (options.watch) {
       console.log(`  ${c.muted(`Auto-refresh every ${watchSeconds(options.watch)}s — press Ctrl+C to exit`)}`);

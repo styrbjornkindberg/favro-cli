@@ -23,7 +23,7 @@ import { Command } from 'commander';
 import * as readline from 'readline';
 import { ContextAPI } from '../../api/context';
 import { registerShellCommand } from '../../commands/shell';
-import { registerBoardTuiCommand } from '../../commands/board-tui';
+import { boardTuiHandler, registerBoardTuiCommand } from '../../commands/board-tui';
 
 jest.mock('fs');
 jest.mock('readline');
@@ -147,6 +147,45 @@ describe('board-tui command', () => {
     expect(optNames).toContain('--watch');
     expect(optNames).toContain('--ids');
     expect(optNames).toContain('--json');
+  });
+
+  test('--json carries the snapshot holes, and omits the key when there are none', async () => {
+    // `getSnapshot` reports what it could not read. This arm builds its own
+    // three-key object, so a dropped `unreachable` reaches an agent as a
+    // complete board — the defect `read-shape.ts` exists to prevent. Driven
+    // through the handler rather than the process, so the assertion is on the
+    // `Result` and not on stdout.
+    const holes = [{ id: 'columns', reason: '403 Forbidden' }];
+    const ctx = {
+      api: { context: { getSnapshot: jest.fn().mockResolvedValue({ ...snapshot, unreachable: holes }) } },
+    } as any;
+
+    const withHole = await boardTuiHandler(ctx, 'b1', { json: true });
+    expect(withHole!.item.unreachable).toEqual(holes);
+
+    // Absent must stay distinguishable from empty: a clean read carries no key.
+    ctx.api.context.getSnapshot.mockResolvedValue(snapshot);
+    const clean = await boardTuiHandler(ctx, 'b1', { json: true });
+    expect(clean!.item).not.toHaveProperty('unreachable');
+  });
+
+  test('the human render names the holes rather than drawing a complete board', async () => {
+    const ctx = {
+      api: {
+        context: {
+          getSnapshot: jest.fn().mockResolvedValue({
+            ...snapshot,
+            unreachable: [{ id: 'columns', reason: '403 Forbidden' }],
+          }),
+        },
+      },
+    } as any;
+
+    await boardTuiHandler(ctx, 'b1', {});
+
+    const printed = (console.log as jest.Mock).mock.calls.map((call) => String(call[0])).join('\n');
+    expect(printed).toContain('Incomplete');
+    expect(printed).toContain('columns — 403 Forbidden');
   });
 
   test('--watch stops on Ctrl+C and returns, rather than exiting the process', async () => {
