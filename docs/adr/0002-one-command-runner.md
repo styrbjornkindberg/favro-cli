@@ -162,18 +162,34 @@ The rule now: **the wire is the gate, the table runs behind it.**
 The discriminator is structural, not a string match on the message: it asks where the error came
 from, not what it says.
 
-**The gate is on the boundary, not on `isRetryable`, and one other caller is still ungated.**
-`skill-engine.ts` derives `rollback.retryable` as `isRetryable(unwound.outcome, abortCause)` at
-the end-of-run unwind, where `abortCause` is whatever a step threw outside the table's own
-instrumentation — an interpolation typo, an unknown intent, a `ParseError`. That is the boundary's
-wide population, read by the table's narrow rule, and there a decline answers `false` only
-because someone remembered to raise a `RefusalError` — the cost the paragraph above declines to
-pay at the boundary is still being paid at that one site (`safety.ts` traces and measures it). So
-a skill that writes in step 1 and mistypes `{{made.nope}}` in step 2 still reports
-`retryable: true` on stdout and prints "safe to retry"; `skill-capture-wire.test.ts` and
-`skill-dispatch-wire.test.ts` both pin that answer as intended. #134 scoped itself to the CLI
-boundary and left it standing. It is the same defect and wants its own issue, not a silent
-widening of this one.
+**The gate is on the wide population, wherever it is read — two sites, not one (#151).**
+The rule is not "the CLI boundary is special"; it is that `isRetryable`'s unclassifiable-is-
+transient arm is only sound for errors raised inside a write the table instrumented. Any caller
+holding a wider population must gate. There are exactly three callers, and each now obeys:
+
+- `dispatch.ts` — the table itself, on its own narrow population. **Ungated, correctly.**
+- `run.ts` (`retryableFrom`) — the CLI error boundary, everything 128 commands can throw. Gated.
+- `skill-engine.ts` — `rollback.retryable` at the **end-of-run unwind**, where `abortCause` is
+  whatever a step threw *outside* the table's instrumentation: an interpolation typo, an unknown
+  intent, a `ParseError`, a `TypeError` of ours. Gated as of #151. A skill that writes in step 1
+  and mistypes `{{made.nope}}` in step 2 answered `retryable: true` on stdout and printed "safe to
+  retry" until then; `skill-capture-wire.test.ts` pinned that answer as intended and now pins the
+  opposite, with the reversal recorded on the assertion.
+
+`skill-engine.ts`'s **other** rollback path — a `StepDispatchFailure`, where the table caught the
+error, unwound and derived `retryable` itself — is carried verbatim and stays ungated, because it
+is the table's own narrow population by construction. `skill-dispatch-wire.test.ts` is that path,
+not this one; #151's issue text named it as pinning the same defect and it does not.
+
+Where the amendment above says a decline is `false` only where someone remembered to raise a
+`RefusalError`, that cost is no longer paid anywhere: the gate answers first at both wide sites.
+`RefusalError` still earns its keep as the type that *names* a decline, and `safety.ts` traces
+what it was load-bearing for.
+
+**`retryable` is not "the world is unchanged".** A rollback conveys that by existing, and
+`outcome` says how completely. `retryable` answers only "could running this again succeed" — the
+two came apart the moment a fully-undone run met a failure that can never succeed. No second field
+was added to carry the first claim: the object's presence already does.
 
 ## Consequences
 

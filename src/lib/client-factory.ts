@@ -28,9 +28,10 @@ export interface ClientFlags {
  * them refusals was what closed it.
  *
  * Since #134 the boundary also defaults an unclassifiable error to
- * `retryable: false` (ADR-0002, "Two populations"), so this no longer rests on
- * the type alone — but `skill-engine.ts` still asks the table ungated, and the
- * type is what answers there.
+ * `retryable: false`, and since #151 so does the skill engine's end-of-run
+ * unwind (ADR-0002, "Two populations"), so this no longer rests on the type
+ * alone anywhere. It is kept because a named decline reads better than an
+ * inferred one, not because anything now depends on it.
  */
 export async function createFavroClient(flags?: ClientFlags): Promise<FavroHttpClient> {
   const token = await resolveApiKey(flags?.apiKey);
