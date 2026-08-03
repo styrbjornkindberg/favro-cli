@@ -804,29 +804,37 @@ export class CardsAPI {
   /**
    * Move a card to a different board.
    *
-   * The result is NOT read back, and callers must not report the requested board
-   * as the reached one. Whether this PUT's response echoes `widgetCommonId` is
-   * **unmeasured** — it is measured on every GET row
+   * Callers must not report the REQUESTED board as the reached one — but they do
+   * have an observation to report instead. This is `PUT /cards/:cardId
+   * {widgetCommonId}`, the same call and the same field as
+   * `WidgetsAPI.addWidgetToBoard`, so whatever that endpoint echoes is available
+   * here too: present → report it, absent → report the write unconfirmed. The
+   * two commands must not disagree about whether the same echo is observable.
+   *
+   * The response goes through `normalizeCard` like `getCard`/`updateCard`, which
+   * is what puts the echo in `Card.boardId` — `normalizeCard` derives `boardId`
+   * from `widgetCommonId`. Returning the PUT body raw made `boardId` `undefined`
+   * whatever the server sent, so a caller reading it could not tell an echo from
+   * a silence, and `cards move --json` was the one card-returning path that
+   * emitted `widgetCommonId` and never `boardId`.
+   *
+   * What is still **unmeasured** is whether Favro echoes `widgetCommonId` on
+   * this PUT at all — it is measured on every GET row
    * (`docs/research/tracker-contract-favro-carriers.md` §1.3), and a read-side
    * row is not a write-side echo, the same gap `UpdateCardRequest.columnId`
-   * records for itself (#101, blocked on #105).
-   *
-   * Two things would have to change together before a read-back here could work,
-   * which is why this is a comment and not a guard. First the echo needs a live
-   * probe. Second, the response is returned RAW — no `normalizeCard`, unlike
-   * `getCard`/`updateCard` — so `Card.boardId`, which `normalizeCard` derives
-   * from `widgetCommonId`, is `undefined` on this path whatever the server sent.
-   * A guard written against `moved.boardId` today would therefore throw on every
-   * single move, and it would look like it was catching something.
+   * records for itself (#101, blocked on #105). So an absent echo is reported
+   * unconfirmed and is never thrown on: throwing on an unmeasured echo would
+   * take out every move to defend a hazard with no observed instance.
    */
   async moveCard(cardRef: string, req: MoveCardRequest): Promise<Card> {
     const boardId = await this.boardIdOf(req.toBoardId);
     const cardId = await this.references.toCardId(cardRef);
     // Favro uses PUT /cards/:cardId with widgetCommonId to move cards
-    return this.client.put<Card>(`/cards/${cardId}`, {
+    const raw = await this.client.put<RawCard>(`/cards/${cardId}`, {
       widgetCommonId: boardId,
       position: req.position,
     });
+    return normalizeCard(raw);
   }
 
   /**

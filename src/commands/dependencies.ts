@@ -79,11 +79,38 @@ export function registerDependenciesCommands(program: Command): void {
 
         const link = await api.linkCard(sourceId, { toCardId: targetId, isBefore: linkTypeToIsBefore(options.type) });
 
+        // The fourth site of the same family as `widgets add` / `custom-fields
+        // set` / `cards move`: this printed `✓ Dependency added: src -> target
+        // (type)` built entirely from ARGUMENTS, while `linkCard` returns the
+        // server's own `dependencies` array — the observation — and it was thrown
+        // away. `linkCard` also does `res.dependencies ?? []`, so an omitted key
+        // arrived as "no edges" and the ✓ printed anyway.
+        //
+        // The edge set is only compared for EMPTINESS, not for the target's id:
+        // the command holds `targetId` as the caller typed it (a ref), while the
+        // response speaks resolved `cardId`s, so a strict comparison here would be
+        // between two different vocabularies. Non-empty is what is honestly
+        // available — and it is the whole difference between an observation and an
+        // argument.
+        //
+        // ponytail: emptiness only; upgrade to a per-edge id comparison if the
+        // command ever resolves `targetId` for another reason.
         if (options.json) {
           console.log(JSON.stringify(link, null, 2));
-        } else {
+        } else if (link.length > 0) {
           console.log(`✓ Dependency added: ${sourceId} -> ${targetId} (${options.type})`);
+        } else {
+          console.log(
+            `Dependency ${sourceId} -> ${targetId} (${options.type}) was accepted (200) but is UNCONFIRMED: ` +
+            `the response carried no dependencies, so nothing here observed the edge.\n` +
+            `Whether this POST echoes the edge set is unmeasured — the documented example does\n` +
+            `(docs/research/dependencies-and-parent-child-semantics.md §1.4), but documented is not probed,\n` +
+            `so an absent echo is not by itself a failure.\n` +
+            `Verify with: favro dependencies list ${sourceId}`
+          );
         }
+        // A hole forbids a clean exit code (#148). Same rule as the other three.
+        if (link.length === 0) process.exit(1);
       } catch (error: any) {
         logError(error, verbose);
         process.exit(1);

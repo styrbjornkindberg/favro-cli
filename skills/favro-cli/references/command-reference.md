@@ -62,6 +62,20 @@ Controls write-safety scope locking. **READ THIS BEFORE ANY WRITES.**
 
 When scope is set, every write command checks the target board's parent collection. If it doesn't match, the command **exits with an error** before any API mutation.
 
+### Unconfirmed writes
+
+Four writes read their own result back out of the PUT/POST response: `cards move`,
+`widgets add`, `custom-fields set`, `dependencies add`. When the response carries the
+field, they print `✓` naming the **observed** value and exit 0. When it does not, they
+print `UNCONFIRMED`, name what was sent, point at a command that can check, and **exit
+1** — the write was accepted with a 200, and nothing observed its effect.
+
+Exit 1 here reports a finding, not a failure: the report (including `--json`) is still
+on stdout, and the API error path is what raises an actual error. So
+`favro custom-fields set … && next-step` will correctly **not** proceed on a write
+nothing confirmed. Re-run or verify with the named command; do not treat an
+`UNCONFIRMED` line plus a non-zero code as a crash.
+
 ---
 
 ## Collections

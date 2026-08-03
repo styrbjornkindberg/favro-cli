@@ -10,16 +10,23 @@
  *   2. `custom-fields-api.ts` — a read-back that FAILED OPEN, degrading
  *      `displayValue` to the value the caller passed in.
  *   3. `cards-link.ts` — `✓ Card … moved to board ${options.toBoard}`, a pure
- *      argument echo with no observation behind it at all.
+ *      argument echo, while the same PUT's echo went unread because `moveCard`
+ *      returned its body raw and `Card.boardId` is `normalizeCard`'s derivation
+ *      from `widgetCommonId`.
  *
- * None of the three grew a read-back, and deliberately. A read-back is only
- * legitimate against a **measured write-response echo**. The one this repo has is
+ * None of the three grew a THROW, and deliberately. A throw is only legitimate
+ * against a **measured write-response echo**. The one this repo has is
  * `archived`, from #75's live probe (recorded on `UpdateCardRequest.archive`), and
  * it is what earns `TxCards.setArchived` its throw. `widgetCommonId`, `columnId`
  * and `customFields` are measured on **GET rows**
  * (`docs/research/tracker-contract-favro-carriers.md` §1.3/§3) — a read-side row
  * is not a write-side echo, and inferring one from the other is the step ADR-0003
  * refuses and the reason #101 was declined.
+ *
+ * What all three DO is report the echo when it is there and report a hole when it
+ * is not. Sites 1 and 3 are the same call on the same field, so they read the
+ * same echo; nothing about that requires a new measurement, only that an absent
+ * echo never becomes a ✓ and never exits 0.
  *
  * ── Why a real server, and why the OMIT arm is the only one that matters ──
  *
@@ -40,6 +47,15 @@
  *                 Pins that what is reported is the OBSERVATION, not the request;
  *                 `omit` alone cannot catch a fix that echoes the argument
  *                 whenever the server happens to send something.
+ *   `blank`     — the response carries the field with `null` / `''`. Present but
+ *                 empty is neither `full` nor `omit`, and it must not launder
+ *                 into a confirmation.
+ *   `foreign`   — the response carries a `customFields` entry for a DIFFERENT
+ *                 field id, alongside ours. Without this arm the `customFieldId`
+ *                 match is untested: a one-element array containing exactly the
+ *                 field under test passes whether the code filters on the id or
+ *                 just takes `[0]`, which would confirm this write with another
+ *                 field's value.
  */
 import * as http from 'http';
 import * as os from 'os';
@@ -58,9 +74,10 @@ const OTHER_BOARD_ID = 'w-elsewhere-9999';
 const CARD_ID = 'aaaaaaaaaaaaaaaaaaaaaaaa';
 const CARD_COMMON_ID = 'bbbbbbbbbbbbbbbbbbbbbbbb';
 const FIELD_ID = 'cf-text-0001';
+const OTHER_FIELD_ID = 'cf-text-9999';
 
 /** How the stand answers a `PUT /cards/:cardId`. */
-type Echo = 'full' | 'omit' | 'different';
+type Echo = 'full' | 'omit' | 'different' | 'blank' | 'foreign';
 
 interface Received {
   method: string;
@@ -119,6 +136,27 @@ function startServer(echo: Echo): Promise<{ client: FavroHttpClient; received: R
             ...base,
             widgetCommonId: OTHER_BOARD_ID,
             customFields: [{ customFieldId: FIELD_ID, value: 'something-else' }],
+          });
+          return;
+        }
+        if (echo === 'blank') {
+          // Present, and empty. `null` for the board, `null` for the value: the
+          // server said the field exists and holds nothing, which is not the
+          // same statement as "the card is on the board you asked for".
+          send({
+            ...base,
+            widgetCommonId: null,
+            customFields: [{ customFieldId: FIELD_ID, value: null }],
+          });
+          return;
+        }
+        if (echo === 'foreign') {
+          // A real card's `customFields` carries EVERY field on the card. Ours is
+          // absent from this response; another one is not.
+          send({
+            ...base,
+            widgetCommonId: BOARD_ID,
+            customFields: [{ customFieldId: OTHER_FIELD_ID, value: 'someone-elses-value' }],
           });
           return;
         }
@@ -190,11 +228,27 @@ describe('the stand itself', () => {
     ['full', true],
     ['omit', false],
     ['different', true],
+    ['blank', true],
+    ['foreign', true],
   ] as Array<[Echo, boolean]>)('PUT under echo=%s carries widgetCommonId: %s', async (echo, present) => {
     const { client } = await startServer(echo);
     const put = await client.put<Record<string, unknown>>(`/cards/${CARD_ID}`, {});
     expect('widgetCommonId' in put).toBe(present);
     expect('customFields' in put).toBe(present);
+  });
+
+  /** `blank` and `foreign` are PRESENT-but-useless, which is the point of them. */
+  it('blank carries the keys with empty values', async () => {
+    const { client } = await startServer('blank');
+    const put = await client.put<any>(`/cards/${CARD_ID}`, {});
+    expect(put.widgetCommonId).toBeNull();
+    expect(put.customFields[0].value).toBeNull();
+  });
+
+  it('foreign carries a customFields entry for a different field', async () => {
+    const { client } = await startServer('foreign');
+    const put = await client.put<any>(`/cards/${CARD_ID}`, {});
+    expect(put.customFields.map((f: any) => f.customFieldId)).not.toContain(FIELD_ID);
   });
 });
 
@@ -224,6 +278,14 @@ describe('addWidgetToBoard reports the board it OBSERVED (#82)', () => {
     const { client } = await startServer('different');
     const committed = await new WidgetsAPI(client).addWidgetToBoard(BOARD_ID, CARD_COMMON_ID);
     expect(committed.widgetCommonId).toBe(OTHER_BOARD_ID);
+  });
+
+  /** A `null` echo is not an observation, and must not become the ✓ either. */
+  it('a blank echo is falsy, so the caller cannot spend a ✓ on it', async () => {
+    const { client } = await startServer('blank');
+    const committed = await new WidgetsAPI(client).addWidgetToBoard(BOARD_ID, CARD_COMMON_ID);
+    expect(committed.widgetCommonId).toBeFalsy();
+    expect(committed.widgetCommonId).not.toBe(BOARD_ID);
   });
 
   /**
@@ -274,6 +336,34 @@ describe('setFieldValue does not fail open onto its own argument', () => {
   });
 
   /**
+   * The arm that pins the `customFieldId` match. A real `customFields` array
+   * carries every field on the card, so "the response contained a value" and
+   * "the response contained OUR field's value" are different claims. Without
+   * this, dropping the id filter and taking `[0]` passes the whole suite — and
+   * confirms this write with another field's value.
+   */
+  it('a foreign field echoed → unconfirmed, never that field\'s value', async () => {
+    const { client } = await startServer('foreign');
+    const result = await new CustomFieldsAPI(client).setFieldValue(CARD_ID, FIELD_ID, 'sent-value');
+    expect(result.confirmed).toBe(false);
+    expect(result.value).toBeNull();
+    expect(result.displayValue).toBeUndefined();
+  });
+
+  /**
+   * Present-but-`null` is reported unconfirmed. It errs toward the safe side —
+   * the write may well have landed as a cleared value — but nothing here measured
+   * whether Favro spells a cleared field `null`, an empty string, or an omission,
+   * so it stays a hole rather than becoming a confirmation.
+   */
+  it('a blank echo is a hole, not a confirmation', async () => {
+    const { client } = await startServer('blank');
+    const result = await new CustomFieldsAPI(client).setFieldValue(CARD_ID, FIELD_ID, 'sent-value');
+    expect(result.confirmed).toBe(false);
+    expect(result.value).toBeNull();
+  });
+
+  /**
    * It must NOT throw. Throwing on an unmeasured echo is #101's regression: it
    * takes out a working command to defend a hazard with no observed instance.
    * `setArchived` may throw because #75 measured that echo; nothing measured this
@@ -289,27 +379,44 @@ describe('setFieldValue does not fail open onto its own argument', () => {
 
 // ── Site 3: cards move ──────────────────────────────────────────────────────
 
-describe('moveCard has no observation to report, and does not invent one', () => {
+describe('moveCard reports the board it OBSERVED', () => {
   /**
-   * Documents why the Site 3 fix is to the MESSAGE and not to a read-back, with
-   * the reason a guard here would be doubly wrong: `moveCard` returns the PUT
-   * body RAW, with no `normalizeCard`, and `Card.boardId` is `normalizeCard`'s
-   * derivation from `widgetCommonId`. So `moved.boardId` is `undefined` even on
-   * the arm where the server DID echo the board — a guard written against it
-   * would throw on every move while looking like it had caught something.
+   * Same endpoint and same field as Site 1 — `PUT /cards/:cardId
+   * {widgetCommonId}` — so the same echo is available, and the two commands must
+   * not disagree about whether it counts as an observation.
+   *
+   * `boardId` is the field a `Card` consumer reads, and it only carries the echo
+   * because the PUT body now goes through `normalizeCard`. Returned raw, as it
+   * was, `boardId` was `undefined` on the arm where the server DID echo the
+   * board: an echo and a silence were indistinguishable, and the command had
+   * nothing to spend a ✓ on.
    */
-  it('boardId is undefined even when the server echoes widgetCommonId', async () => {
+  it('an echoed board reaches boardId, not just widgetCommonId', async () => {
     const { client } = await startServer('full');
     const moved = await new CardsAPI(client).moveCard(CARD_ID, { toBoardId: BOARD_ID });
     expect(moved.widgetCommonId).toBe(BOARD_ID);
-    expect(moved.boardId).toBeUndefined();
+    expect(moved.boardId).toBe(BOARD_ID);
   });
 
-  it('and undefined when it echoes nothing — the two are indistinguishable here', async () => {
+  /** THE arm with teeth: nothing echoed, nothing claimed, argument nowhere. */
+  it('omitted → boardId is absent, never backfilled from the argument', async () => {
     const { client } = await startServer('omit');
     const moved = await new CardsAPI(client).moveCard(CARD_ID, { toBoardId: BOARD_ID });
     expect(moved.widgetCommonId).toBeUndefined();
     expect(moved.boardId).toBeUndefined();
+  });
+
+  it('a different board echoed → the SERVER wins, not the request', async () => {
+    const { client } = await startServer('different');
+    const moved = await new CardsAPI(client).moveCard(CARD_ID, { toBoardId: BOARD_ID });
+    expect(moved.boardId).toBe(OTHER_BOARD_ID);
+  });
+
+  it('a blank echo is falsy, so the caller cannot spend a ✓ on it', async () => {
+    const { client } = await startServer('blank');
+    const moved = await new CardsAPI(client).moveCard(CARD_ID, { toBoardId: BOARD_ID });
+    expect(moved.boardId).toBeFalsy();
+    expect(moved.boardId).not.toBe(BOARD_ID);
   });
 
   /** The write still goes out correctly — the honesty fix changed no request. */

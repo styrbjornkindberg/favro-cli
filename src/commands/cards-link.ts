@@ -242,17 +242,31 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
           position: options.position?.toLowerCase() as 'top' | 'bottom' | undefined,
         });
 
-        // Says what was SENT and accepted, not that the card arrived. The old
-        // line — `✓ Card … moved to board ${options.toBoard}` — echoed the
-        // argument as an outcome: it printed the board the user typed, so it read
-        // identically whether the move landed or Favro 200'd and wrote nothing.
-        // There is no observation available to upgrade this to a ✓ (see
-        // `CardsAPI.moveCard`), so the message stops overclaiming instead.
-        console.log(`Move of card ${cardId} to board ${options.toBoard} was accepted (200).`);
-        console.log(`  Not read back — this reports the request, not the card's current board.`);
+        // The ✓ is spent only on an OBSERVED board. The old line — `✓ Card …
+        // moved to board ${options.toBoard}` — echoed the argument as an outcome:
+        // it printed the board the user typed, so it read identically whether the
+        // move landed or Favro 200'd and wrote nothing.
+        //
+        // `card.boardId` is the echoed `widgetCommonId` (see `CardsAPI.moveCard`)
+        // — the same field `widgets add` spends its ✓ on, because it is the same
+        // PUT. Absent, the write is reported unconfirmed and the command exits
+        // non-zero: `favro cards move … && next-step` must not proceed on a board
+        // nothing observed. Unconfirmed is a hole, and a hole forbids a clean exit
+        // code (#148, and `diff.ts` gates exit 1 on `holes.length`).
+        if (card.boardId) {
+          console.log(`✓ Card ${cardId} moved to board (${card.boardId})`);
+        } else {
+          console.log(
+            `Move of card ${cardId} to board ${options.toBoard} was accepted (200) but is UNCONFIRMED: ` +
+            `the response carried no widgetCommonId, so nothing here observed the card's board.\n` +
+            `Whether this PUT echoes widgetCommonId is unmeasured, so an absent echo is not by itself a failure.\n` +
+            `Verify with: favro cards get ${cardId}`
+          );
+        }
         if (options.json) {
           console.log(JSON.stringify(card, null, 2));
         }
+        if (!card.boardId) process.exit(1);
       } catch (error: any) {
         if (String(error?.message).startsWith('process.exit')) throw error;
         if (error?.response?.status === 404) {

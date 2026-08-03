@@ -18,14 +18,15 @@ export interface Widget {
  * What `addWidgetToBoard` can honestly report back.
  *
  * `widgetCommonId` is **optional here and required on `Widget`**, and that
- * asymmetry is the whole point. A GET row always carries `widgetCommonId` —
+ * asymmetry is the whole point. A GET row carries `widgetCommonId` — probe-
  * measured on every row of `GET /cards`
- * (`docs/research/tracker-contract-favro-carriers.md` §1.3, full key set) and on
- * every `GET /widgets` row (`docs/research/name-id-resolution.md:82`). Whether
- * the **commit PUT's response** echoes it back is **unmeasured**, and a
- * read-side row is not a write-side echo — the distinction
- * `UpdateCardRequest.columnId` records for itself (#101), and the step ADR-0003
- * refuses.
+ * (`docs/research/tracker-contract-favro-carriers.md` §1.3, full key set), and
+ * documented (not probed) on a `GET /widgets` row
+ * (`docs/research/name-id-resolution.md:82`, quoting Favro's "Get all widgets"
+ * response fields). Whether the **commit PUT's response** echoes it back is
+ * **unmeasured** either way, and a read-side row is not a write-side echo — the
+ * distinction `UpdateCardRequest.columnId` records for itself (#101), and the
+ * step ADR-0003 refuses.
  *
  * So the field is absent when the response did not carry it, and the caller
  * reports the write UNCONFIRMED rather than substituting the board it asked

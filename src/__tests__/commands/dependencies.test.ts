@@ -1,5 +1,5 @@
 /**
- * Unit tests — dependencies delete/delete-all CLI commands
+ * Unit tests — dependencies add/delete/delete-all CLI commands
  */
 import { Command } from 'commander';
 import { registerDependenciesCommands } from '../../commands/dependencies';
@@ -34,6 +34,56 @@ beforeEach(() => {
   (safety.checkScope as jest.Mock).mockResolvedValue(undefined);
   (safety.confirmAction as jest.Mock).mockResolvedValue(true);
   MockCardsAPI.prototype.getCard = jest.fn().mockResolvedValue({ cardId: 'card-1', boardId: 'board-1' });
+});
+
+/**
+ * The fourth site of the argument-echo family (`widgets add`, `custom-fields
+ * set`, `cards move` are the other three). `✓ Dependency added: A -> B (blocks)`
+ * was built from the three ARGUMENTS while `linkCard`'s returned edge set — the
+ * server's own answer — was discarded, and `linkCard` itself does
+ * `res.dependencies ?? []`, so an omitted key arrived as "no edges" and the ✓
+ * printed anyway.
+ */
+describe('favro dependencies add', () => {
+  let consoleSpy: jest.SpyInstance;
+  let exitSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    jest.spyOn(console, 'error').mockImplementation(() => {});
+    exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {}) as any);
+  });
+
+  afterEach(() => { jest.restoreAllMocks(); });
+
+  it('spends the ✓ on an observed edge set', async () => {
+    MockCardsAPI.prototype.linkCard = jest.fn().mockResolvedValue([{ cardId: 'card-2', isBefore: true }]);
+
+    await runCli(['dependencies', 'add', 'card-1', 'card-2', '--type', 'blocks', '--yes']);
+
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('✓ Dependency added'));
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it('an empty edge set is UNCONFIRMED, not a ✓, and exits 1', async () => {
+    MockCardsAPI.prototype.linkCard = jest.fn().mockResolvedValue([]);
+
+    await runCli(['dependencies', 'add', 'card-1', 'card-2', '--type', 'blocks', '--yes']);
+
+    const printed = consoleSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(printed).not.toContain('✓');
+    expect(printed).toContain('UNCONFIRMED');
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it('--json gets the same exit code, payload intact', async () => {
+    MockCardsAPI.prototype.linkCard = jest.fn().mockResolvedValue([]);
+
+    await runCli(['dependencies', 'add', 'card-1', 'card-2', '--type', 'blocks', '--yes', '--json']);
+
+    expect(JSON.parse(consoleSpy.mock.calls.map((c) => String(c[0])).join('\n'))).toEqual([]);
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
 });
 
 describe('favro dependencies delete', () => {

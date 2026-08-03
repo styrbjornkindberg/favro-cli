@@ -97,6 +97,13 @@ export function registerWidgetsCommands(program: Command): void {
             `Verify with: favro widgets list --card ${cardCommonId}`
           );
         }
+        // An unconfirmed write is a HOLE, and a hole forbids a clean exit code —
+        // exit 0 is a positive claim (#148; `diff.ts` gates exit 1 on
+        // `holes.length`). Without this, the human line says UNCONFIRMED and the
+        // exit code says confirmed, and `favro widgets add … && next-step`
+        // believes the exit code. Non-zero here reports a finding, not a failure:
+        // the write result is still on stdout, `--json` included (#117).
+        if (!widget.widgetCommonId) process.exit(1);
       } catch (error: any) {
         logError(error, verbose);
         process.exit(1);
