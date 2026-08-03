@@ -285,7 +285,27 @@ describe('health does not report a red board off a read that failed (#148)', () 
     const result = await healthHandler(ctxFor(client), LIMIT);
     expect(result.item.boards).toEqual([]);
     expect(result.item.unreachable?.map(h => h.id)).toEqual([`members:${COLL}`]);
-    expect(result.exitCode).toBe(1);
+    // And no exit code either. `health` never reads `snapshot.members`, so this
+    // report covers its scope exactly — the hole is worth PRINTING and worth
+    // nothing else. The first cut exited 1 here, which is the same defect as
+    // the false refusal reason two tests up: one condition ("something was
+    // unreadable") standing in for a narrower one ("something this command
+    // needed was unreadable").
+    expect('exitCode' in result).toBe(false);
+  });
+
+  it('exits 1 for a columns hole that costs a board, and not for a members hole that costs nothing', async () => {
+    // The pair, side by side — an exit code that fires on both carries no
+    // information, which is what #117 measured on `risks` before it shipped.
+    const costly = await startServer({ failColumnsFor: [DARK] });
+    expect((await healthHandler(ctxFor(costly), LIMIT)).exitCode).toBe(1);
+
+    const free = await startServer({ failMembers: true });
+    const harmless = await healthHandler(ctxFor(free), LIMIT);
+    expect('exitCode' in harmless).toBe(false);
+    // Still scored, and scored off complete data — that is why it costs nothing.
+    expect(harmless.item.boards.map(b => b.name).sort()).toEqual([DARK, GOOD]);
+    expect(harmless.item.unreachable?.map(h => h.id)).toEqual([`members:${COLL}`]);
   });
 
   it('a clean read scores every board, emits no unreachable key, and exits 0', async () => {

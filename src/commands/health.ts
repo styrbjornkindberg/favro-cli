@@ -215,6 +215,10 @@ export async function healthHandler(ctx: Ctx, options: HealthOptions) {
   // to 100/green, and "we read nothing" must never print as "all clear".
   const { cards, unreachable } = excludeUnreadableBoards(snapshot);
 
+  // The one measure of "this report skipped something it should have covered".
+  // Both the refusal below and the exit code read it, so the two cannot drift.
+  const boardsWereDropped = cards.length < snapshot.allCards.length;
+
   // Group cards by board
   const boardCardMap = new Map<string, AggregateCard[]>();
   for (const card of cards) {
@@ -235,7 +239,7 @@ export async function healthHandler(ctx: Ctx, options: HealthOptions) {
   // that phrasing was false in exactly the sibling case the paragraph above
   // fixed for members. Refusing is still right — there is nothing to score —
   // but the reason has to be the true one.
-  if (cards.length < snapshot.allCards.length && boardCardMap.size === 0) {
+  if (boardsWereDropped && boardCardMap.size === 0) {
     throw new RefusalError(
       `Cannot score health for ${scope}: every board that holds cards went dark.\n` +
       unreachable.map(h => `  ${h.id} — ${h.reason}`).join('\n'),
@@ -272,7 +276,16 @@ export async function healthHandler(ctx: Ctx, options: HealthOptions) {
     // This does NOT settle the red-vs-yellow cut #115 left open: the code still
     // says nothing about the verdict, only about whether the report covers what
     // was asked for. When #115 lands, the two conditions OR together.
-    ...(unreachable.length > 0 ? { exitCode: 1 } : {}),
+    //
+    // Keyed on boards actually dropped, for the same reason the refusal above
+    // is — and this is the half #148 first got wrong. `health` never reads
+    // `snapshot.members`, so a failed members read costs this report nothing:
+    // every board still scores off complete data. Gating on `unreachable` being
+    // non-empty exited 1 on a report that covered its scope exactly, which is
+    // the failure #117 measured on `risks` — a code that fires on something the
+    // answer does not depend on is noise, and what users do about noise is
+    // write `|| true`, which kills the signal for the columns case that matters.
+    ...(boardsWereDropped ? { exitCode: 1 } : {}),
   };
 }
 
