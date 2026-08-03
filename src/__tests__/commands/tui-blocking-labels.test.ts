@@ -142,7 +142,11 @@ function menuSnapshot(cards: any[]) {
 async function runMenu(menuIndex: string, cards: any[]): Promise<string> {
   MockAggregateAPI.prototype.getMultiBoardSnapshot.mockResolvedValue(menuSnapshot(cards) as any);
   answers = [menuIndex, '5']; // the screen under test, then Exit
-  await runMainMenu('0.0.0-test', () => {});
+  // The menu takes the root `Command` now (#118) — the runner resolves the
+  // format off it, and 'Help' calls `outputHelp()` on it.
+  const program = new Command();
+  program.exitOverride();
+  await runMainMenu('0.0.0-test', program);
   return output();
 }
 

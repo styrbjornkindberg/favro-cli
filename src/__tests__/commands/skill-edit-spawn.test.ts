@@ -29,12 +29,6 @@ import { registerSkillCommands } from '../../commands/skill';
 const SKILL_YAML = 'name: e2e\ndescription: round trip\nsteps: []\n';
 const EDITED = '# edited by the fake editor\n';
 
-class ExitCalled extends Error {
-  constructor(readonly code: number) {
-    super(`process.exit(${code})`);
-  }
-}
-
 let tmpDir: string;
 let editorPath: string;
 let skillPath: string;
@@ -47,15 +41,18 @@ const savedEnv = {
   VISUAL: process.env.VISUAL,
 };
 
+/**
+ * `--human` puts the failure message on stderr through `logError`; without it
+ * the runner's default is JSON and the same message arrives on stdout as
+ * `{error:{message, retryable}}` (#118). The assertions below read stderr, so
+ * they ask for the human mode.
+ */
 async function runEdit(name: string): Promise<void> {
   const program = new Command();
-  program.option('--verbose', 'Show stack traces');
+  program.option('--human').option('--pretty').option('--verbose', 'Show stack traces');
   registerSkillCommands(program);
   program.exitOverride();
-  await program.parseAsync(['node', 'favro', 'skill', 'edit', name]).catch((e) => {
-    // Only the stubbed exit is swallowed; anything else is a real failure.
-    if (!(e instanceof ExitCalled)) throw e;
-  });
+  await program.parseAsync(['node', 'favro', '--human', 'skill', 'edit', name]);
 }
 
 beforeEach(() => {
@@ -75,12 +72,15 @@ beforeEach(() => {
 
   logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
   errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-  exitSpy = jest.spyOn(process, 'exit').mockImplementation(((code?: number) => {
-    throw new ExitCalled(code ?? 0);
+  // The runner sets `process.exitCode` and never hard-exits (#118).
+  process.exitCode = undefined;
+  exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {
+    throw new Error('process.exit must not be called under run()');
   }) as never);
 });
 
 afterEach(() => {
+  process.exitCode = undefined;
   jest.restoreAllMocks();
   fs.rmSync(tmpDir, { recursive: true, force: true });
   for (const [key, value] of Object.entries(savedEnv)) {
@@ -122,7 +122,7 @@ test('a non-zero editor exit fails the command and leaves the file untouched by 
 
   expect(fs.readFileSync(skillPath, 'utf-8')).toBe(SKILL_YAML);
   expect(errorSpy.mock.calls.map((c) => String(c[0])).join('\n')).toContain('exited with code 4');
-  expect(exitSpy).toHaveBeenCalledWith(1);
+  expect(process.exitCode).toBe(1);
 });
 
 test('an editor binary that does not exist is reported rather than hanging', async () => {
@@ -131,7 +131,7 @@ test('an editor binary that does not exist is reported rather than hanging', asy
   await runEdit('e2e');
 
   expect(errorSpy.mock.calls.map((c) => String(c[0])).join('\n')).toContain('not-an-editor');
-  expect(exitSpy).toHaveBeenCalledWith(1);
+  expect(process.exitCode).toBe(1);
 });
 
 test('no editor configured refuses without spawning anything', async () => {
@@ -144,5 +144,5 @@ test('no editor configured refuses without spawning anything', async () => {
   const errs = errorSpy.mock.calls.map((c) => String(c[0])).join('\n');
   expect(errs).toContain('EDITOR');
   expect(errs).toContain('VISUAL');
-  expect(exitSpy).toHaveBeenCalledWith(1);
+  expect(process.exitCode).toBe(1);
 });

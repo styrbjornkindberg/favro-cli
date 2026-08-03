@@ -34,25 +34,27 @@ const MockCollections = CollectionsAPI as jest.MockedClass<typeof CollectionsAPI
 const MockFields = CustomFieldsAPI as jest.MockedClass<typeof CustomFieldsAPI>;
 const MockMembers = FavroApiClient as jest.MockedClass<typeof FavroApiClient>;
 
-class ExitCalled extends Error {
-  constructor(readonly code: number) {
-    super(`process.exit(${code})`);
-  }
-}
-
 let errorSpy: jest.SpyInstance;
+let logSpy: jest.SpyInstance;
 let stdoutSpy: jest.SpyInstance;
 let exitSpy: jest.SpyInstance;
 let clientGet: jest.Mock;
 
 async function runCli(args: string[]): Promise<void> {
   const program = new Command();
-  program.option('--verbose', 'Show stack traces');
+  program.option('--human').option('--pretty').option('--verbose', 'Show stack traces');
   registerInitCommand(program);
   program.exitOverride();
-  await program.parseAsync(['node', 'favro', ...args]).catch((e) => {
-    if (!(e instanceof ExitCalled)) throw e;
-  });
+  await program.parseAsync(['node', 'favro', '--human', ...args]);
+}
+
+/** The same run without `--human`: the machine path, which is the default. */
+async function runJson(args: string[]): Promise<void> {
+  const program = new Command();
+  program.option('--human').option('--pretty').option('--verbose');
+  registerInitCommand(program);
+  program.exitOverride();
+  await program.parseAsync(['node', 'favro', ...args]);
 }
 
 /** The context.json the command actually wrote. */
@@ -65,11 +67,12 @@ const errors = () => errorSpy.mock.calls.map((c) => String(c[0])).join('\n');
 
 beforeEach(() => {
   jest.clearAllMocks();
-  jest.spyOn(console, 'log').mockImplementation(() => {}); // progress chatter — silenced, not asserted
+  logSpy = jest.spyOn(console, 'log').mockImplementation(() => {}); // progress chatter — silenced, mostly not asserted
   errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
   stdoutSpy = jest.spyOn(process.stdout, 'write').mockImplementation(() => true);
-  exitSpy = jest.spyOn(process, 'exit').mockImplementation(((code?: number) => {
-    throw new ExitCalled(code ?? 0);
+  process.exitCode = undefined;
+  exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {
+    throw new Error('process.exit must not be called under run()');
   }) as never);
   jest.spyOn(process, 'cwd').mockReturnValue('/repo');
 
@@ -99,6 +102,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  process.exitCode = undefined;
   jest.restoreAllMocks();
 });
 
@@ -123,7 +127,7 @@ describe('init — resolving the collection', () => {
 
     expect(mockFs.writeFile).not.toHaveBeenCalled();
     expect(errors()).toContain('favro scope set');
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   test('an unreadable collection falls back to the stored name rather than failing', async () => {
@@ -220,7 +224,7 @@ describe('init — the file it writes', () => {
       expect.any(String),
       'utf-8',
     );
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   test('a custom-field FETCH that fails still degrades to no fields, as before', async () => {
@@ -326,7 +330,7 @@ describe('init — the guards around the write', () => {
 
     expect(mockFs.writeFile).not.toHaveBeenCalled();
     expect(errors()).toContain('already exists');
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   test('--refresh overwrites it deliberately', async () => {
@@ -365,11 +369,16 @@ describe('init — the guards around the write', () => {
   test('--json prints the context and touches no file at all', async () => {
     mockFs.access.mockResolvedValue(undefined);
 
-    await runCli(['init', '--json']);
+    // The one arm of `init` that is not `void`: the context is returned as an
+    // `item` and the RUNNER writes it, so it lands on `console.log` rather than
+    // the bare `process.stdout.write` this command used to do for itself (#118).
+    await runJson(['init', '--json']);
 
     expect(mockFs.writeFile).not.toHaveBeenCalled();
     expect(mockFs.mkdir).not.toHaveBeenCalled();
-    const printed = JSON.parse(stdoutSpy.mock.calls.map((c) => String(c[0])).join(''));
+    const printed = JSON.parse(
+      logSpy.mock.calls.map((c) => String(c[0])).find((l) => l.trimStart().startsWith('{'))!,
+    );
     expect(printed.scope.collectionId).toBe('coll-1');
   });
 
@@ -380,6 +389,6 @@ describe('init — the guards around the write', () => {
 
     expect(mockFs.writeFile).not.toHaveBeenCalled();
     expect(errors()).toContain('502 upstream');
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 });

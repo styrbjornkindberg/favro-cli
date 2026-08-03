@@ -867,14 +867,15 @@ This command takes no flags of its own.
 Skills are YAML-defined multi-step workflows that chain CLI commands together. Stored in `~/.favro/skills/` (user) and shipped built-in.
 
 ### `skill list` 📖 READ
-List all available skills (builtin + user).
+List all available skills (builtin + user). JSON is the default; `--human` opts out.
 
 | Flag | Description |
 |------|-------------|
-| `--json` | Output as JSON |
+| `--limit <n>` | Cap how many rows are printed; sets `truncated` |
 
 ### `skill run <name>` ⚠️ WRITE (may execute write steps)
-Execute a skill by name.
+Execute a skill by name. JSON is the default and carries the whole run result;
+`--human` gets the per-step trail and the tally instead.
 
 | Flag | Description |
 |------|-------------|
@@ -882,7 +883,7 @@ Execute a skill by name.
 | `--dry-run` | Preview steps without executing |
 | `-y, --yes` | Skip confirmation prompts |
 | `--var <key=value...>` | Set skill variables |
-| `--json` | Output results as JSON |
+| `--force` | Bypass the scope lock on write steps |
 
 ### `skill create <name>` 🔧 CONFIG
 Create a new skill from a starter template.

@@ -7,6 +7,7 @@
 import FavroHttpClient from './http-client';
 import { resolveApiKey, readConfig } from './config';
 import { missingApiKeyError } from './error-handler';
+import { RefusalError } from './refusal';
 
 export interface ClientFlags {
   apiKey?: string;
@@ -16,7 +17,15 @@ export interface ClientFlags {
 
 /**
  * Resolve credentials and return a ready-to-use FavroHttpClient.
- * Exits the process with a helpful error message if no API key is configured.
+ *
+ * Both absences are `RefusalError`s, which is what makes them report
+ * `retryable: false`. An unset key stays unset and an unset email stays unset,
+ * so the same call declines identically — `isRetryable` reads an UNCLASSIFIABLE
+ * error as retryable (`dispatch.ts`, and the ceiling `run.ts` names), and these
+ * two have no HTTP response to classify. #118 made that visible: the runner
+ * builds the client before the handler, so a credential-less `favro`,
+ * `favro board` or `favro browse` now meets this error at the error boundary
+ * and used to be told `retryable: true` — "try again", for a key nobody has set.
  */
 export async function createFavroClient(flags?: ClientFlags): Promise<FavroHttpClient> {
   const token = await resolveApiKey(flags?.apiKey);
@@ -26,11 +35,11 @@ export async function createFavroClient(flags?: ClientFlags): Promise<FavroHttpC
   const auth = { token, email, organizationId };
 
   if (!auth.token) {
-    throw new Error(missingApiKeyError());
+    throw new RefusalError(missingApiKeyError());
   }
 
   if (!auth.email) {
-    throw new Error(
+    throw new RefusalError(
       'Email address not configured.\n' +
       '  Run `favro auth login` to set up your credentials.\n' +
       '  Or set the FAVRO_EMAIL environment variable.'

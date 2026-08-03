@@ -6,11 +6,20 @@
  * - User:      ~/.favro/skills/               (user-created)
  *
  * Each skill is a single YAML file named <skillName>.yaml.
+ *
+ * EVERY DECLINE HERE IS A `RefusalError` (#118). A name nothing matches, a file
+ * that will not parse, a step with no command, a name that is really a path —
+ * all deterministic: the same call reads the same bytes and declines the same
+ * way. As bare `Error`s they had no HTTP response for `classifyThrownError` to
+ * name, so `isRetryable` read them as transient and the CLI told an agent to
+ * repeat `favro skill run <typo>`. Visible since #118, when the skill commands
+ * adopted the runner and its error envelope.
  */
 import fs from 'fs';
 import path from 'path';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { configDir } from './config';
+import { RefusalError } from './refusal';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -138,7 +147,7 @@ export function loadSkill(name: string): SkillDefinition {
     return loadSkillFromFile(builtinPath);
   }
 
-  throw new Error(`Skill not found: "${name}"\n  Run \`favro skill list\` to see available skills.`);
+  throw new RefusalError(`Skill not found: "${name}"\n  Run \`favro skill list\` to see available skills.`);
 }
 
 /**
@@ -149,19 +158,19 @@ export function loadSkillFromFile(filePath: string): SkillDefinition {
   const parsed = parseYaml(content);
 
   if (!parsed || typeof parsed !== 'object') {
-    throw new Error(`Invalid skill file: ${filePath}`);
+    throw new RefusalError(`Invalid skill file: ${filePath}`);
   }
   if (!parsed.name || typeof parsed.name !== 'string') {
-    throw new Error(`Skill missing "name" field: ${filePath}`);
+    throw new RefusalError(`Skill missing "name" field: ${filePath}`);
   }
   if (!parsed.steps || !Array.isArray(parsed.steps) || parsed.steps.length === 0) {
-    throw new Error(`Skill missing "steps" array: ${filePath}`);
+    throw new RefusalError(`Skill missing "steps" array: ${filePath}`);
   }
 
   for (let i = 0; i < parsed.steps.length; i++) {
     const step = parsed.steps[i];
     if (!step.command || typeof step.command !== 'string') {
-      throw new Error(`Step ${i + 1} missing "command" in skill "${parsed.name}"`);
+      throw new RefusalError(`Step ${i + 1} missing "command" in skill "${parsed.name}"`);
     }
   }
 
@@ -211,7 +220,7 @@ export function saveSkill(skill: SkillDefinition): string {
 export function deleteSkill(name: string): void {
   const userPath = path.join(userSkillsDir(), `${name}.yaml`);
   if (!fs.existsSync(userPath)) {
-    throw new Error(`User skill not found: "${name}". Only user skills can be deleted.`);
+    throw new RefusalError(`User skill not found: "${name}". Only user skills can be deleted.`);
   }
   fs.unlinkSync(userPath);
 }
@@ -230,7 +239,7 @@ export function exportSkill(name: string): string {
 export function importSkill(yamlContent: string): SkillDefinition {
   const parsed = parseYaml(yamlContent);
   if (!parsed?.name || !parsed?.steps?.length) {
-    throw new Error('Invalid skill YAML: missing "name" or "steps".');
+    throw new RefusalError('Invalid skill YAML: missing "name" or "steps".');
   }
 
   const skill: SkillDefinition = {
@@ -268,7 +277,7 @@ export function getSkillPath(name: string): string {
   // and reachable from `favro_run` where the name comes from model output.
   // Refuse the whole shape rather than doing path math on it.
   if (name.includes('/') || name.includes('\\') || name === '..') {
-    throw new Error(`Invalid skill name: "${name}". A skill name is a filename, not a path.`);
+    throw new RefusalError(`Invalid skill name: "${name}". A skill name is a filename, not a path.`);
   }
   const userPath = path.join(userSkillsDir(), `${name}.yaml`);
   if (fs.existsSync(userPath)) return userPath;
@@ -276,5 +285,5 @@ export function getSkillPath(name: string): string {
   const builtinPath = path.join(getBuiltinSkillsDir(), `${name}.yaml`);
   if (fs.existsSync(builtinPath)) return builtinPath;
 
-  throw new Error(`Skill not found: "${name}"`);
+  throw new RefusalError(`Skill not found: "${name}"`);
 }

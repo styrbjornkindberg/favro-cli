@@ -5,36 +5,55 @@
  * favro board <boardId> --compact     — One line per card
  * favro board <boardId> --watch       — Auto-refresh (default 30s)
  * favro board <boardId> --ids         — Show card IDs
- * favro board <boardId> --json        — Output structured JSON instead
+ * favro board <boardId> --json        — Hand the snapshot to the runner instead
+ *
+ * ON THE `void` ARM (ADR-0002, #118). The render IS the answer here, so this
+ * command owns its stdout and says so by returning nothing. `--json` is the
+ * inverse opt-in the root `--human` cannot express: for a TUI the default is
+ * already the human view, so the machine shape is what has to be asked for.
  */
 import { Command } from 'commander';
-import { logError } from '../lib/error-handler';
-import { createFavroClient } from '../lib/client-factory';
-import { ContextAPI } from '../api/context';
+import { Ctx, run } from '../lib/run';
 import { renderBoard, renderStatusBar, snapshotToColumns } from '../lib/board-renderer';
 import { c } from '../lib/theme';
 
-// ─── Command ──────────────────────────────────────────────────────────────────
-
-async function renderBoardView(boardRef: string, options: {
+interface BoardTuiOptions {
   compact?: boolean;
   watch?: boolean | string;
   ids?: boolean;
   json?: boolean;
   limit?: string;
-}): Promise<void> {
-  const client = await createFavroClient();
-  const ctx = new ContextAPI(client);
+}
+
+const DEFAULT_WATCH_SECONDS = 30;
+
+const watchSeconds = (watch: boolean | string | undefined): number =>
+  typeof watch === 'string' ? parseInt(watch, 10) : DEFAULT_WATCH_SECONDS;
+
+/**
+ * Exported so a test can hand it a fake `Ctx` and read the `Result` back — no
+ * stdout capture, no client mock.
+ */
+export async function boardTuiHandler(ctx: Ctx, boardRef: string, options: BoardTuiOptions) {
   const limit = parseInt(options.limit ?? '500', 10);
 
-  async function fetchAndRender(): Promise<void> {
-    const snapshot = await ctx.getSnapshot(boardRef, limit);
-    const columns = snapshotToColumns(snapshot);
+  // One shot, and the runner writes it. `--watch --json` used to concatenate a
+  // fresh pretty-printed object onto stdout every interval, which no parser can
+  // read; it is now a single snapshot.
+  if (options.json) {
+    const snapshot = await ctx.api.context.getSnapshot(boardRef, limit);
+    return {
+      item: {
+        board: snapshot.board,
+        columns: snapshotToColumns(snapshot),
+        stats: snapshot.stats,
+      },
+    };
+  }
 
-    if (options.json) {
-      console.log(JSON.stringify({ board: snapshot.board, columns, stats: snapshot.stats }, null, 2));
-      return;
-    }
+  async function fetchAndRender(): Promise<void> {
+    const snapshot = await ctx.api.context.getSnapshot(boardRef, limit);
+    const columns = snapshotToColumns(snapshot);
 
     // Clear screen for watch mode
     if (options.watch) {
@@ -55,33 +74,31 @@ async function renderBoardView(boardRef: string, options: {
     console.log(`  ${c.muted(`${snapshot.stats.total} cards total · ${snapshot.columns.length} columns · ${new Date().toLocaleTimeString()}`)}`);
 
     if (options.watch) {
-      const interval = typeof options.watch === 'string' ? parseInt(options.watch, 10) : 30;
-      console.log(`  ${c.muted(`Auto-refresh every ${interval}s — press Ctrl+C to exit`)}`);
+      console.log(`  ${c.muted(`Auto-refresh every ${watchSeconds(options.watch)}s — press Ctrl+C to exit`)}`);
     }
   }
 
   await fetchAndRender();
 
-  if (options.watch) {
-    const interval = typeof options.watch === 'string' ? parseInt(options.watch, 10) : 30;
-    const timer = setInterval(async () => {
-      try {
-        await fetchAndRender();
-      } catch (err) {
-        console.error(c.error('Refresh failed, retrying...'));
-      }
-    }, interval * 1000);
+  if (!options.watch) return;
 
-    // Keep process alive
-    process.on('SIGINT', () => {
+  // Ctrl+C RESOLVES rather than exiting: a hard `process.exit` here terminated
+  // before a pending stdout write flushed, and stdout is a pipe under MCP
+  // (ADR-0002 rule 2). Clearing the interval empties the event loop, so node
+  // leaves on its own with the runner's exit code.
+  await new Promise<void>((resolve) => {
+    const timer = setInterval(() => {
+      fetchAndRender().catch(() => {
+        console.error(c.error('Refresh failed, retrying...'));
+      });
+    }, watchSeconds(options.watch) * 1000);
+
+    process.once('SIGINT', () => {
       clearInterval(timer);
       console.log(`\n${c.muted('Stopped watching.')}`);
-      process.exit(0);
+      resolve();
     });
-
-    // Prevent Node from exiting
-    await new Promise(() => {});
-  }
+  });
 }
 
 // ─── Registration ─────────────────────────────────────────────────────────────
@@ -94,13 +111,6 @@ export function registerBoardTuiCommand(program: Command): void {
     .option('--watch [seconds]', 'Auto-refresh interval (default: 30s)')
     .option('--ids', 'Show card IDs')
     .option('--limit <n>', 'Max cards to fetch (default: 500)')
-    .option('--json', 'Output as JSON instead of rendered view')
-    .action(async (boardRef, options) => {
-      try {
-        await renderBoardView(boardRef, options);
-      } catch (err) {
-        logError(err, program.opts().verbose);
-        process.exit(1);
-      }
-    });
+    .option('--json', 'Emit the snapshot as JSON instead of rendering it (--pretty to indent)')
+    .action(run(boardTuiHandler));
 }

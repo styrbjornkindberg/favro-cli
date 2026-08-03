@@ -325,15 +325,27 @@ function actionBody(arg: ts.Expression | undefined): ts.Node | undefined {
  * Every call to the command runner in a command module, with the handler it
  * wraps.
  *
- * Resolved by DECLARATION, not by the name `run` — `cards-tracker.ts` has a
+ * Resolved by DECLARATION, not by the CALL-SITE name — `cards-tracker.ts` has a
  * local `run<T>()` helper of its own, and matching on the spelling would report
  * its three call sites as untyped handlers.
+ *
+ * The declaration must be `run` ITSELF, not merely something `run.ts` exports.
+ * `run.ts` also exports `apiNamespace` and `resolveFormat`, and both are called
+ * from command modules — #118 is where the first ones landed (`tracker-init`
+ * builds a namespace for its reusable half, `skill run` reads the format
+ * because its per-step chatter cannot be deferred into `human`). Under the
+ * file-only test each of those read as a `run()` call with no handler and
+ * failed the two assertions below, which would have pushed an author to stop
+ * importing the helper rather than to fix the detector.
  */
 function runCalls(): Array<{ where: string; handler: ts.Node | undefined }> {
   const found: Array<{ where: string; handler: ts.Node | undefined }> = [];
   const isTheRunner = (callee: ts.Expression): boolean =>
-    (unalias(checker.getSymbolAtLocation(callee))?.declarations ?? []).some((d) =>
-      d.getSourceFile().fileName.endsWith(path.join('src', 'lib', 'run.ts')),
+    (unalias(checker.getSymbolAtLocation(callee))?.declarations ?? []).some(
+      (d) =>
+        d.getSourceFile().fileName.endsWith(path.join('src', 'lib', 'run.ts')) &&
+        ts.isFunctionDeclaration(d) &&
+        d.name?.text === 'run',
     );
   for (const sf of sourceFiles) {
     const rel = path.relative(REPO_ROOT, sf.fileName).split(path.sep).join('/');

@@ -16,14 +16,11 @@
  */
 import { Command } from 'commander';
 import FavroHttpClient from '../lib/http-client';
-import BoardsAPI from '../lib/boards-api';
-import CollectionsAPI from '../lib/collections-api';
-import ColumnsAPI from '../lib/columns-api';
 import ColumnDirectory from '../lib/column-directory';
-import TagsAPI, { TagLookupError } from '../lib/tags-api';
-import { createFavroClient } from '../lib/client-factory';
+import type TagsAPI from '../lib/tags-api';
+import { TagLookupError } from '../lib/tags-api';
+import { ApiNamespace, apiNamespace, Ctx, run } from '../lib/run';
 import { foldName } from '../lib/fold-name';
-import { logError } from '../lib/error-handler';
 import { detectStage, proposeColumnMapping, WorkflowStage } from '../lib/workflow-stage';
 import { classifyThrownError } from '../lib/favro-error';
 import { invalidateCache } from '../lib/name-cache';
@@ -108,8 +105,7 @@ async function findTags(
  * "the admin has not added it" from "we have not looked since" — which is also
  * what made a second `init` inside the TTL re-attempt every creation.
  */
-async function provisionTags(client: FavroHttpClient): Promise<InitTrackerResult['tags']> {
-  const api = new TagsAPI(client);
+async function provisionTags(client: FavroHttpClient, api: TagsAPI): Promise<InitTrackerResult['tags']> {
   const tags: InitTrackerResult['tags'] = { existing: [], created: [], ambiguous: [] };
 
   let missing = await findTags(api, TRIAGE_TAGS, tags);
@@ -148,13 +144,24 @@ async function provisionTags(client: FavroHttpClient): Promise<InitTrackerResult
   return tags;
 }
 
+/**
+ * Still takes a bare client, not a `Ctx`: `initTracker` is the reusable half —
+ * the wire test drives it directly and any non-CLI caller would too. It builds
+ * its own namespace from the client rather than the eighteen bare API
+ * constructions the runner replaced (ADR-0002, #118).
+ *
+ * ponytail: an `apiNamespace` per call, not the runner's memoised one. The
+ * getters are lazy so an unused one costs nothing; pass `ctx.api` in as an
+ * optional second argument if a caller ever runs this in a loop.
+ */
 export async function initTracker(
   client: FavroHttpClient,
-  options: InitTrackerOptions
+  options: InitTrackerOptions,
+  api: ApiNamespace = apiNamespace(client)
 ): Promise<InitTrackerResult> {
   const { collectionId } = options;
-  const boardsApi = new BoardsAPI(client);
-  const columnsApi = new ColumnsAPI(client);
+  const boardsApi = api.boards;
+  const columnsApi = api.columns;
 
   const boards = await boardsApi.listBoardsByCollection(collectionId);
   const wanted = options.board?.trim();
@@ -190,7 +197,7 @@ export async function initTracker(
   // seven already exist, so this costs nothing in the normal case — but a key
   // with board rights (collection-level) and no tag rights (org-level) would
   // otherwise leave a board and its columns behind on its way to the refusal.
-  const tags = await provisionTags(client);
+  const tags = await provisionTags(client, api.tags);
 
   if (chosen) {
     boardId = chosen.boardId;
@@ -260,6 +267,71 @@ export async function initTracker(
   };
 }
 
+/**
+ * ON THE `void` ARM (ADR-0002, #118), except under `--json`.
+ *
+ * The default output is a paste-ready block — a document for a human to move
+ * into the repo doc, not a view of an entity. `--json` hands the mapping to the
+ * runner instead.
+ *
+ * Exported so a test can hand it a fake `Ctx` and read the `Result` back.
+ */
+export async function trackerInitHandler(
+  ctx: Ctx,
+  options: {
+    collection: string;
+    board?: string;
+    active?: string;
+    done?: string;
+    save?: boolean;
+    json?: boolean;
+    force?: boolean;
+  },
+) {
+  const collectionId = await ctx.api.collections.resolveCollectionId(
+    options.collection,
+    'favro tracker init --collection <collectionId>'
+  );
+
+  const { writeConfig } = await import('../lib/config');
+  const { checkCollectionScope } = await import('../lib/safety');
+  checkCollectionScope(collectionId, ctx.config, options.force);
+
+  const result = await initTracker(
+    ctx.client,
+    {
+      collectionId,
+      board: options.board,
+      active: options.active,
+      done: options.done,
+    },
+    ctx.api,
+  );
+
+  if (options.save) {
+    await writeConfig({ ...ctx.config, tracker: result.mapping });
+  }
+
+  if (options.json) return { item: { ...result, saved: Boolean(options.save) } };
+
+  console.log(
+    result.scaffolded
+      ? `✓ Collection had no board — scaffolded "${result.boardName}" (${result.mapping.boardId}) with ${SCAFFOLD_COLUMNS.join(' / ')}`
+      : `✓ Adopted board "${result.boardName}" (${result.mapping.boardId})`
+  );
+  console.log(`  open   → ${result.activeColumnName} (${result.mapping.columns.active})`);
+  console.log(`  closed → ${result.doneColumnName} (${result.mapping.columns.done})`);
+  if (result.tags.created.length > 0) console.log(`  tags created: ${result.tags.created.join(', ')}`);
+  if (result.tags.existing.length > 0) console.log(`  tags already there: ${result.tags.existing.join(', ')}`);
+  if (result.tags.ambiguous.length > 0) {
+    console.log(`  ⚠ ambiguous tag names, left alone: ${result.tags.ambiguous.join(', ')}`);
+  }
+  if (options.save) console.log('  saved to ~/.favro/config.json');
+
+  console.log(`\nPaste this into ${trackerDocPath()} — this command does not write it for you:\n`);
+  console.log(result.block);
+}
+
 export function registerTrackerInitCommand(trackerParent: Command): void {
   trackerParent
     .command('init')
@@ -271,61 +343,11 @@ export function registerTrackerInitCommand(trackerParent: Command): void {
     .option('--save', 'Also store the mapping in ~/.favro/config.json (the repo-less fallback)')
     .option('--json', 'Output the mapping and the block as JSON')
     .option('--force', 'Bypass scope check')
-    .action(async (options) => {
-      const verbose = trackerParent.parent?.opts()?.verbose ?? false;
-      try {
-        const client = await createFavroClient();
-        const collectionId = await new CollectionsAPI(client).resolveCollectionId(
-          options.collection,
-          'favro tracker init --collection <collectionId>'
-        );
-
-        const { readConfig, writeConfig } = await import('../lib/config');
-        const { checkCollectionScope } = await import('../lib/safety');
-        const config = await readConfig();
-        checkCollectionScope(collectionId, config, options.force);
-
-        const result = await initTracker(client, {
-          collectionId,
-          board: options.board,
-          active: options.active,
-          done: options.done,
-        });
-
-        if (options.save) {
-          await writeConfig({ ...config, tracker: result.mapping });
-        }
-
-        if (options.json) {
-          console.log(JSON.stringify({ ...result, saved: Boolean(options.save) }, null, 2));
-          return;
-        }
-
-        console.log(
-          result.scaffolded
-            ? `✓ Collection had no board — scaffolded "${result.boardName}" (${result.mapping.boardId}) with ${SCAFFOLD_COLUMNS.join(' / ')}`
-            : `✓ Adopted board "${result.boardName}" (${result.mapping.boardId})`
-        );
-        console.log(`  open   → ${result.activeColumnName} (${result.mapping.columns.active})`);
-        console.log(`  closed → ${result.doneColumnName} (${result.mapping.columns.done})`);
-        if (result.tags.created.length > 0) console.log(`  tags created: ${result.tags.created.join(', ')}`);
-        if (result.tags.existing.length > 0) console.log(`  tags already there: ${result.tags.existing.join(', ')}`);
-        if (result.tags.ambiguous.length > 0) {
-          console.log(`  ⚠ ambiguous tag names, left alone: ${result.tags.ambiguous.join(', ')}`);
-        }
-        if (options.save) console.log('  saved to ~/.favro/config.json');
-
-        console.log(`\nPaste this into ${trackerDocPath()} — this command does not write it for you:\n`);
-        console.log(result.block);
-      } catch (error: any) {
-        if (error instanceof TrackerConfigError) {
-          console.error(`✗ ${error.message}`);
-          process.exit(1);
-        }
-        logError(error, verbose);
-        process.exit(1);
-      }
-    });
+    // No local `TrackerConfigError` arm any more: it extends `RefusalError`, so
+    // the runner already renders it as `✗ Error: …` on stderr in human mode and
+    // as `{error:{message, retryable:false}}` in JSON. One boundary, one
+    // wording, and the machine mode now says a refusal is not worth retrying.
+    .action(run(trackerInitHandler));
 }
 
 export default registerTrackerInitCommand;
