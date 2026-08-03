@@ -507,7 +507,9 @@ All batch commands support: `--dry-run`, `--yes`, `--force`, `--json`, `--verbos
 Filter syntax: the same grammar as `cards list --filter` — `status:<value>`,
 `assignee:<user>`, `tag:<tag>`, combined with `AND`/`OR`/parentheses. An unknown
 field, tag, assignee or status **refuses**, naming the token and listing the
-valid candidates; it never silently selects zero cards. The refusal fires under
+valid candidates; it never silently selects zero cards. An **empty** `--filter`
+(an unset shell variable) refuses too, rather than selecting every card on the
+board. The refusal fires under
 `--dry-run` and ahead of `--yes`, so no bulk write proceeds on a filter that did
 not fully resolve (#138).
 

@@ -130,8 +130,12 @@ export async function resolveCardFilter(
 /**
  * A flag passed with an empty value narrows nothing, and treating it as an
  * absent flag answers the whole board — the fail-open direction. Refuse.
+ *
+ * Exported because `applyFilters` needs the SAME refusal, in the same words:
+ * `cards list --filter ""` refused here while `batch move --filter "" --yes`
+ * moved the whole board, which is the #138 fail-open in its widest direction.
  */
-function refuseEmpty(field: string, value: string | undefined): void {
+export function refuseEmpty(field: string, value: string | undefined): void {
   if (value === undefined || value.trim() !== '') return;
   throw new ParseError(
     `--${field} was passed with an empty value — it narrows nothing, and ignoring ` +

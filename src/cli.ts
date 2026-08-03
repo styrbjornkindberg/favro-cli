@@ -875,20 +875,27 @@ cards
         // Build filter expressions from options.
         // --label filters which cards to operate on (by tag).
         // --status and --assignee are TARGET values to SET (not filter conditions).
-        const filterExprs: string[] = [];
-        if (options.label) filterExprs.push(`tag:${options.label}`);
-
         // The same settle every read runs (#138). This used to go through
         // `buildFilterFn`, which substring-matched: in an org holding both `bug`
         // and `debug`, `--label bug` WROTE to the `debug` cards too, and a
-        // mistyped label wrote to nothing while reporting success. `applyFilters`
-        // refuses an unresolvable label before any card is written.
-        const matchingCards = filterExprs.length
-          ? await applyFilters(allCards, filterExprs, {
-              client: client!,
-              boardId: await new BoardsAPI(client!).resolveBoardId(options.board),
-            })
-          : allCards;
+        // mistyped label wrote to nothing while reporting success.
+        //
+        // `--label` becomes an AST NODE, never `tag:${label}` spliced into a
+        // filter string. A Favro tag may hold a space or a colon, and
+        // `tag:needs review` is a parse error rather than that tag; `--label
+        // "bug OR tag:secret"` is worse — it becomes grammar and WIDENS the
+        // write set. `resolveCardFilter` is the call `cards list --tag` already
+        // makes, for exactly this reason (#84).
+        let matchingCards = allCards;
+        if (options.label) {
+          const { resolveCardFilter } = await import('./lib/query-values');
+          const { filterCards } = await import('./lib/query-parser');
+          const query = await resolveCardFilter(
+            { tag: options.label },
+            { client: client!, boardId: await new BoardsAPI(client!).resolveBoardId(options.board) },
+          );
+          if (query) matchingCards = filterCards(query, allCards);
+        }
 
         if (matchingCards.length === 0) {
           if (!options.json) {

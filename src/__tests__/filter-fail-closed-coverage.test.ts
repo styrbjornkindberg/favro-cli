@@ -472,8 +472,10 @@ const SUBSTRING_DEBT: Record<string, string> = {
   [path.join('api', 'query.ts')]:
     '#95 — the second, regex-based grammar behind `favro query`; re-pointed or deleted there',
   // `commands/batch.ts` was here until #138. `parseFilterExpression` is deleted,
-  // not repaired: `batch move`, `batch assign` and the `cards update --board`
-  // path in `cli.ts` that shared its `buildFilterFn` all run `applyFilters` now.
+  // not repaired: `batch move` and `batch assign` run `applyFilters`, and the
+  // `cards update --board --label` path in `cli.ts` that shared its
+  // `buildFilterFn` runs `resolveCardFilter` — an AST node, so a tag holding a
+  // space or a colon stays a value instead of becoming grammar.
   // That closed the worse half too — in an org holding both `bug` and `debug`,
   // `cards update --board <b> --label bug` used to WRITE to the `debug` cards.
 };

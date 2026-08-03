@@ -70,10 +70,16 @@ const BOARDS = [
   },
 ];
 
-/** `bug` and `debug` both exist on purpose — see the substring control (#84). */
+/**
+ * `bug` and `debug` both exist on purpose — see the substring control (#84).
+ * `needs review` holds a SPACE, which real Favro tags routinely do: it is what
+ * makes `tag:${label}` string-splicing observable, since `tag:needs review` is
+ * a parse error rather than that tag.
+ */
 const TAGS = [
   { tagId: 'tag-bug', name: 'bug' },
   { tagId: 'tag-debug', name: 'debug' },
+  { tagId: 'tag-review', name: 'needs review' },
 ];
 
 const USERS = [{ userId: ALICE, name: 'alice', email: 'alice@example.com' }];
@@ -119,6 +125,7 @@ function startServer(): Promise<Stand> {
     ['card-1', card('card-1')],
     // Tagged `debug`, not `bug`. A substring grammar writes to this one too.
     ['card-2', card('card-2', { tags: ['tag-debug'] })],
+    ['card-3', card('card-3', { tags: ['tag-review'] })],
   ]);
 
   const server = http.createServer((req, res) => {
@@ -339,6 +346,110 @@ describe('a refusal names candidates, so the user can act on it', () => {
 
     expect(said()).toContain('Known fields');
     expect(said()).toContain('assignee');
+  });
+});
+
+// ─── an EMPTY filter is the same fail-open, pointing the other way ───────────
+
+/**
+ * `--filter ""` is the widest possible blast radius, and #138 opened it.
+ *
+ * The deleted `parseFilterExpression("")` read the empty key as an unknown
+ * field and matched NOTHING. Routing these commands through `applyFilters`
+ * inverted that: an empty expression parses to a null AST, which matches EVERY
+ * card. `favro batch move --board B --status Done --filter "$SPRINT" --yes`
+ * with `SPRINT` unset moved the entire board and exited 0.
+ *
+ * `cards list` refused this all along — `resolveCardFilter` calls `refuseEmpty`
+ * — so the fix is that same refusal in `applyFilters`, not a second one here.
+ */
+describe('an empty --filter refuses rather than selecting the whole board', () => {
+  const EMPTY: Array<[label: string, filter: string]> = [
+    ['an unset shell variable', ''],
+    ['whitespace only', '   '],
+  ];
+
+  test.each(EMPTY)('batch move refuses %s', async (_label, filter) => {
+    const stand = await startServer();
+
+    const code = await exitCodeOf('move', '--board', BOARD, '--status', 'Done', '--filter', filter, '--yes');
+
+    expect(mutations(stand.received)).toEqual([]);
+    expect(code).toBe(1);
+    expect(said()).toContain('empty value');
+    expect(said()).not.toContain('No cards match');
+  });
+
+  test.each(EMPTY)('batch assign refuses %s', async (_label, filter) => {
+    const stand = await startServer();
+
+    const code = await exitCodeOf('assign', '--board', BOARD, '--to', 'alice', '--filter', filter, '--yes');
+
+    expect(mutations(stand.received)).toEqual([]);
+    expect(code).toBe(1);
+    expect(said()).toContain('empty value');
+  });
+
+  test('and under --dry-run, where the preview would have listed every card', async () => {
+    const stand = await startServer();
+
+    const code = await exitCodeOf('move', '--board', BOARD, '--status', 'Done', '--filter', '', '--dry-run');
+
+    expect(mutations(stand.received)).toEqual([]);
+    expect(code).toBe(1);
+    expect(said()).not.toContain('Dry-run preview');
+  });
+});
+
+// ─── `cards update --board --label` shares the seam, and must not splice ─────
+
+/**
+ * The third caller of the deleted `buildFilterFn`, and the one the #84 ratchet
+ * called the WORSE one: `cards update --board <b> --label bug --status done`.
+ *
+ * `--label` is a tag NAME typed by a user, and a Favro tag routinely holds a
+ * space or a colon. Spliced into a filter string as `tag:${label}` it stops
+ * being a value and becomes grammar — `tag:needs review` is a parse error, and
+ * `--label "bug OR tag:debug"` selects a WIDER set than the one label asked
+ * for, on a command that writes. `resolveCardFilter` takes it as an AST node
+ * for this exact reason (#84); this pins that it keeps doing so.
+ */
+describe('cards update --board --label treats the label as a value, not grammar', () => {
+  const update = (...argv: string[]) =>
+    buildProgram().parseAsync(['node', 'favro', 'cards', 'update', ...argv]);
+
+  test('a tag whose name contains a space still matches its card', async () => {
+    const stand = await startServer();
+
+    await update('--board', BOARD, '--label', 'needs review', '--status', 'Done', '--yes');
+
+    expect(mutations(stand.received).map((r) => r.path)).toEqual(['/cards/card-3']);
+    expect(stand.cards.get('card-3')!.columnId).toBe(DONE);
+  });
+
+  test('an exact label writes only its own card, never the containing one', async () => {
+    const stand = await startServer();
+
+    await update('--board', BOARD, '--label', 'bug', '--status', 'Done', '--yes');
+
+    expect(mutations(stand.received).map((r) => r.path)).toEqual(['/cards/card-1']);
+    expect(stand.cards.get('card-2')!.columnId).toBe(TODO);
+  });
+
+  test('a label carrying query grammar refuses, and widens nothing', async () => {
+    const stand = await startServer();
+
+    let code: number | undefined;
+    try {
+      await update('--board', BOARD, '--label', 'bug OR tag:debug', '--status', 'Done', '--yes');
+    } catch (err) {
+      const m = /^process\.exit\((\d+)\)$/.exec((err as Error).message);
+      if (!m) throw err;
+      code = Number(m[1]);
+    }
+
+    expect(mutations(stand.received)).toEqual([]);
+    expect(code).toBe(1);
   });
 });
 
