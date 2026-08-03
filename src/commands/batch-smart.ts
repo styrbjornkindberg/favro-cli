@@ -12,6 +12,9 @@
  */
 import { Command } from 'commander';
 import CardsAPI, { Card, UpdateCardRequest } from '../lib/cards-api';
+import BoardsAPI from '../lib/boards-api';
+import FavroHttpClient from '../lib/http-client';
+import ColumnDirectory from '../lib/column-directory';
 import { logError } from '../lib/error-handler';
 import { createFavroClient } from '../lib/client-factory';
 import { isOverdue, isBlocked } from '../lib/card-predicates';
@@ -60,7 +63,29 @@ export interface ParsedGoal {
    * `card.assignees`, which only ever holds `userId`s, and can never match.
    */
   targetAssignee?: string;
+  /**
+   * Every COLUMN name the goal used — the filter tokens that are not keywords,
+   * plus the target status a `move`/`close` writes.
+   *
+   * Same contract as `targetAssignee` above and for the same reason: settling a
+   * column needs the board and a network, `parseGoal` is synchronous and
+   * board-unaware, so the caller settles these and parses again with the
+   * answers. Until it does, every one of them is an UNVALIDATED
+   * `card.status === token` — which is #150: `--goal "move all frobnicated
+   * cards to Done"` matched nothing and reported success.
+   */
+  columnNames: string[];
 }
+
+/**
+ * A settled column vocabulary: lowercased typed token → the column's OWN name.
+ *
+ * The value is the canonical spelling, not the typed one, because that is what
+ * cards carry under `status`. A columnId, or a name differing in case or unicode
+ * composition (#141), resolves against the board and would then match no card at
+ * all — the same plausible zero this refuses, one layer down.
+ */
+export type ColumnNames = ReadonlyMap<string, string>;
 
 export interface BatchSummary {
   total: number;
@@ -86,14 +111,27 @@ export interface BatchSummary {
  *
  * Filters (composable):
  *   overdue        — dueDate is in the past
- *   <status>       — card.status matches (e.g. "Backlog", "In Progress")
+ *   <status>       — card.status matches a COLUMN on the board (e.g. "Backlog")
  *   with no owner  — no assignees
  *   unassigned     — no assignees
+ *   assigned       — has at least one assignee
  *   blocked        — has "blocked" tag or status
  *
+ * Anything that is not a keyword is a column name, reported on
+ * `ParsedGoal.columnNames` for the caller to settle — see `columnNames`. This
+ * function never refuses a column: it cannot, having no board and no network.
+ *
+ * @param resolvedAssignee The `userId` behind an `assign` goal's name, once the
+ *   caller has settled it (#59).
+ * @param columns The settled column vocabulary, once the caller has it (#150).
+ *   Absent on the first pass, whose only job is to report what needs settling.
  * @throws Error with a helpful message if the goal cannot be parsed
  */
-export function parseGoal(goal: string, resolvedAssignee?: string): ParsedGoal {
+export function parseGoal(
+  goal: string,
+  resolvedAssignee?: string,
+  columns?: ColumnNames,
+): ParsedGoal {
   const normalized = goal.trim().toLowerCase();
 
   // ── move all [filter] cards to <status> ──
@@ -101,10 +139,15 @@ export function parseGoal(goal: string, resolvedAssignee?: string): ParsedGoal {
   const moveMatch = normalized.match(/^move\s+all\s+(.+?\s+)?cards?\s+to\s+(.+)$/);
   if (moveMatch) {
     const filterStr = (moveMatch[1] ?? '').trim() || 'all';
-    const targetStatus = toTitleCase(moveMatch[2].trim());
-    const filter = buildCardFilter(filterStr);
+    const typedTarget = moveMatch[2].trim();
+    // The column's own spelling once settled; `toTitleCase` is the pre-settle
+    // GUESS the caller throws away — it was never more than a guess, and a board
+    // whose column is "in progress" got a write to "In Progress".
+    const targetStatus = columns?.get(typedTarget) ?? toTitleCase(typedTarget);
+    const filter = buildCardFilter(filterStr, columns);
     return {
       description: `Move ${filterStr} cards to "${targetStatus}"`,
+      columnNames: [...filterColumnNames(filterStr), typedTarget],
       baseCardFilter: filter,
       cardFilter: (card) => {
         // Skip cards already in the target state
@@ -142,9 +185,10 @@ export function parseGoal(goal: string, resolvedAssignee?: string): ParsedGoal {
     // exists only to surface `targetAssignee` to the caller, which resolves it
     // and parses again.
     const targetUser = resolvedAssignee ?? typedUser;
-    const filter = buildCardFilter(cleanFilterStr);
+    const filter = buildCardFilter(cleanFilterStr, columns);
     return {
       description: `Assign ${filterStr} cards to "${typedUser}"`,
+      columnNames: filterColumnNames(cleanFilterStr),
       baseCardFilter: filter,
       cardFilter: (card) => {
         // FIX BLOCKER #1: correctly check requireNoOwner — cards with owners must be skipped
@@ -170,22 +214,27 @@ export function parseGoal(goal: string, resolvedAssignee?: string): ParsedGoal {
   const closeMatch = normalized.match(/^close\s+all\s+(.+?\s+)?cards?$/);
   if (closeMatch) {
     const filterStr = (closeMatch[1] ?? '').trim() || 'all';
-    const filter = buildCardFilter(filterStr);
+    const filter = buildCardFilter(filterStr, columns);
+    // "Closed" is this board's Done COLUMN, so it settles like any other — a
+    // board with no such column refuses here rather than at the wire, per card,
+    // after the preview has already promised the write.
+    const targetStatus = columns?.get('done') ?? 'Done';
     return {
       description: `Close (mark done) ${filterStr} cards`,
+      columnNames: [...filterColumnNames(filterStr), 'done'],
       baseCardFilter: filter,
       cardFilter: (card) => {
-        if (card.status?.toLowerCase() === 'done') return false;
+        if (card.status?.toLowerCase() === targetStatus.toLowerCase()) return false;
         return filter(card);
       },
       buildOperation: (card): CardOperation => ({
         type: 'close',
         cardId: card.cardId,
         cardName: card.name,
-        targetStatus: 'Done',
+        targetStatus,
         previousState: { status: card.status },
       }),
-      actionSummary: `→ status: Done (closed)`,
+      actionSummary: `→ status: ${targetStatus} (closed)`,
     };
   }
 
@@ -194,9 +243,10 @@ export function parseGoal(goal: string, resolvedAssignee?: string): ParsedGoal {
   const unassignMatch = normalized.match(/^unassign\s+all\s+(.+?\s+)?cards?$/);
   if (unassignMatch) {
     const filterStr = (unassignMatch[1] ?? '').trim() || 'all';
-    const filter = buildCardFilter(filterStr);
+    const filter = buildCardFilter(filterStr, columns);
     return {
       description: `Unassign all assignees from ${filterStr} cards`,
+      columnNames: filterColumnNames(filterStr),
       baseCardFilter: filter,
       cardFilter: (card) => {
         if ((card.assignees ?? []).length === 0) return false;
@@ -220,7 +270,9 @@ export function parseGoal(goal: string, resolvedAssignee?: string): ParsedGoal {
     `  assign all <filter> cards [with no owner] to <user>\n` +
     `  close all <filter> cards\n` +
     `  unassign all <filter> cards\n\n` +
-    `Filter keywords: overdue, blocked, unassigned, <status-name> (e.g. "Backlog", "In Progress")\n\n` +
+    `Filter keywords: overdue, blocked, unassigned, assigned, or a COLUMN name on\n` +
+    `that board (e.g. "Backlog", "In Progress"). Anything else refuses, naming the\n` +
+    `word and listing the board's columns.\n\n` +
     `Examples:\n` +
     `  --goal "move all overdue cards to Review"\n` +
     `  --goal "assign all Backlog cards with no owner to alice"\n` +
@@ -228,33 +280,72 @@ export function parseGoal(goal: string, resolvedAssignee?: string): ParsedGoal {
   );
 }
 
+const hasNoOwner = (card: Card) => (card.assignees ?? []).length === 0;
+const hasOwner = (card: Card) => (card.assignees ?? []).length > 0;
+
+/**
+ * The closed set of filter KEYWORDS. Everything else a goal names is a column.
+ *
+ * A `Map`, not an object literal: a token is user input, and `'constructor' in
+ * {}` is true, so an object lookup hands `Object` back where a predicate was
+ * expected.
+ */
+const KEYWORD_FILTERS = new Map<string, (card: Card) => boolean>([
+  ['overdue', isOverdue],
+  ['blocked', isBlocked],
+  ['unassigned', hasNoOwner],
+  ['no owner', hasNoOwner],
+  ['with no owner', hasNoOwner],
+  ['assigned', hasOwner],
+]);
+
+/** Tokens that narrow nothing, and so name neither a keyword nor a column. */
+const NON_FILTERS = new Set(['all', 'the']);
+
+/** Split a filter fragment into its narrowing tokens, lowercased and trimmed. */
+function filterTokens(filterStr: string): string[] {
+  return filterStr
+    .toLowerCase()
+    .split(/\s+and\s+/)
+    .map((part) => part.trim())
+    .filter((token) => !NON_FILTERS.has(token));
+}
+
+/**
+ * The COLUMN names a filter fragment uses — every token that is not a keyword.
+ *
+ * ONE classification, shared with `buildCardFilter` below, and that sharing is
+ * the fix rather than an economy: a token this function fails to report is a
+ * token that goes straight back to being an unvalidated
+ * `card.status === token`, which is #150. Adding a keyword to
+ * `KEYWORD_FILTERS` is the only way to change either answer, so the two cannot
+ * drift apart.
+ */
+export function filterColumnNames(filterStr: string): string[] {
+  return filterTokens(filterStr).filter((token) => !KEYWORD_FILTERS.has(token));
+}
+
 /**
  * Build a card filter function from a filter string fragment.
- * Handles: overdue, blocked, unassigned, status names, "all"
+ *
+ * Handles the keywords in `KEYWORD_FILTERS`, "all", and column names. A column
+ * name is compared against `card.status` — so pass the settled `columns` map,
+ * or the comparison runs against the raw token and a word that names no column
+ * at all silently matches nothing (#150). `filterColumnNames` names exactly the
+ * tokens that map has to cover.
  */
-export function buildCardFilter(filterStr: string): (card: Card) => boolean {
-  const parts = filterStr.toLowerCase().split(/\s+and\s+/);
-  const filters: Array<(card: Card) => boolean> = [];
-
-  for (const part of parts) {
-    const trimmed = part.trim();
-    if (trimmed === 'all' || trimmed === 'the') {
-      // No filter — match everything
-      continue;
-    } else if (trimmed === 'overdue') {
-      filters.push(isOverdue);
-    } else if (trimmed === 'blocked') {
-      filters.push(isBlocked);
-    } else if (trimmed === 'unassigned' || trimmed === 'no owner' || trimmed === 'with no owner') {
-      filters.push(card => (card.assignees ?? []).length === 0);
-    } else if (trimmed === 'assigned') {
-      filters.push(card => (card.assignees ?? []).length > 0);
-    } else {
-      // Treat as status filter (case-insensitive)
-      const statusFilter = trimmed;
-      filters.push(card => card.status?.toLowerCase() === statusFilter);
-    }
-  }
+export function buildCardFilter(
+  filterStr: string,
+  columns?: ColumnNames,
+): (card: Card) => boolean {
+  const filters = filterTokens(filterStr).map((token) => {
+    const keyword = KEYWORD_FILTERS.get(token);
+    if (keyword) return keyword;
+    // The column's OWN spelling when the caller has settled it; the typed token
+    // otherwise, which is the throwaway first pass.
+    const wanted = (columns?.get(token) ?? token).toLowerCase();
+    return (card: Card) => card.status?.toLowerCase() === wanted;
+  });
 
   if (filters.length === 0) {
     // "all" with no specific filter
@@ -262,6 +353,42 @@ export function buildCardFilter(filterStr: string): (card: Card) => boolean {
   }
 
   return (card) => filters.every(f => f(card));
+}
+
+/**
+ * Settle every column name a goal used against the board's real columns.
+ *
+ * This is the #150 fix. `buildCardFilter` read any non-keyword word as
+ * `card.status === word`, so `--goal "move all frobnicated cards to Done" --yes`
+ * printed "No cards match the goal" and exited 0 — a typo indistinguishable from
+ * an empty result, on a bulk write with a skippable confirm. An unrecognised
+ * word and a recognised one that matched nothing are two different outcomes;
+ * this makes them two.
+ *
+ * The vocabulary is deliberately open — an arbitrary column name IS legitimate
+ * input to an English goal — so the closed set it settles against is the board's
+ * own columns, resolved by the SAME `ColumnDirectory` that settles
+ * `cards list --filter "status:…"` and `batch move`. The refusal is therefore
+ * identical in wording and in structured `detail` without a string being copied:
+ * four commands refusing four ways is the next version of this bug (#138).
+ *
+ * @throws ColumnResolutionError (a `RefusalError`) — reaches `logError`, exit 1.
+ */
+async function settleColumns(
+  names: readonly string[],
+  client: FavroHttpClient,
+  boardId: () => Promise<string>,
+): Promise<ColumnNames> {
+  if (names.length === 0) return new Map();
+  const directory = new ColumnDirectory(client, client.organizationId);
+  const board = await boardId();
+  const settled = new Map<string, string>();
+  for (const name of names) {
+    if (settled.has(name.toLowerCase())) continue;
+    const columnId = await directory.resolveColumnId(name, board);
+    settled.set(name.toLowerCase(), (await directory.nameOf(columnId)) ?? name);
+  }
+  return settled;
 }
 
 // ---------------------------------------------------------------------------
@@ -411,7 +538,10 @@ export function registerBatchSmartCommand(program: Command): void {
       '  assign all <filter> cards [with no owner] to <user>\n' +
       '  close all <filter> cards\n' +
       '  unassign all <filter> cards\n\n' +
-      'Filter keywords: overdue, blocked, unassigned, <status-name> (e.g. "Backlog")\n\n' +
+      'Filter keywords: overdue, blocked, unassigned, assigned — or a COLUMN name on\n' +
+      'that board (e.g. "Backlog"). A word that is neither refuses, naming the word\n' +
+      'and listing the board\'s columns; it never silently selects zero cards.\n\n' +
+      '<board> may be a board id or an exact board name.\n\n' +
       'Flags:\n' +
       '  --dry-run    Preview changes without applying them\n' +
       '  --yes        Skip confirmation prompt\n' +
@@ -446,22 +576,37 @@ export function registerBatchSmartCommand(program: Command): void {
         // 3. Fetch cards from board
         const client = await createFavroClient();
 
-        // An `assign` goal names a human; `card.assignees` are userIds. Settle
-        // the name once, here, then re-parse so both the already-assigned skip
-        // and the write are in userIds (#59). An unknown name refuses before a
-        // single card is read, let alone written.
-        if (parsedGoal.targetAssignee) {
-          const { resolveAssignee } = await import('../lib/assignee');
-          parsedGoal = parseGoal(
-            options.goal,
-            await resolveAssignee(client, parsedGoal.targetAssignee),
-          );
-        }
+        // `<board>` may be a NAME — `listCards` resolves one, so the command has
+        // always accepted it. The scope lock GETs `/widgets/<id>`, and handed the
+        // raw argument it 404s into "Scope check failed: Board Board A not
+        // found" — a refusal naming the wrong problem (#82/#150). Settle it
+        // first, at most once, and only if something asks: the thunk is what
+        // keeps an unlocked user with a keyword-only goal off the network
+        // entirely (#102/#104). Twin of `boardIdOnce` in `batch.ts`; inlined
+        // rather than shared because #110 deletes this file.
+        let pendingBoardId: Promise<string> | undefined;
+        const boardId = () => (pendingBoardId ??= new BoardsAPI(client).resolveBoardId(board));
 
-        const { readConfig } = await import('../lib/config');
-        const { checkScope } = await import('../lib/safety');
-        await checkScope(board, client, await readConfig(), options.force);
-        
+        const { checkResolvedScope } = await import('../lib/safety');
+        await checkResolvedScope(client, boardId, options.force);
+
+        // Settle EVERYTHING the goal names against its closed vocabulary here,
+        // before the preview, before the prompt and before the board read — a
+        // bulk write must never get as far as asking about a set it could not
+        // resolve, and `--dry-run` gets the same refusal because a dry run that
+        // plans zero cards is the same lie one step earlier.
+        //
+        // Both are async and `parseGoal` is not, so it runs once more with the
+        // answers: an `assign` goal names a human where `card.assignees` hold
+        // userIds (#59), and a filter or target status names a column where the
+        // board owns the spelling (#150).
+        const { resolveAssignee } = await import('../lib/assignee');
+        const settledAssignee = parsedGoal.targetAssignee
+          ? await resolveAssignee(client, parsedGoal.targetAssignee)
+          : undefined;
+        const settledColumns = await settleColumns(parsedGoal.columnNames, client, boardId);
+        parsedGoal = parseGoal(options.goal, settledAssignee, settledColumns);
+
         const api = new CardsAPI(client);
 
         let allCards: Card[];
