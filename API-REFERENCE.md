@@ -863,7 +863,7 @@ Export all cards from a board to JSON or CSV, with optional filtering and progre
 
 **Syntax:**
 ```
-favro cards export <board> [--format json|csv] [--out <file>] [--filter <expression>] [--limit <n>]
+favro cards export <board> [--format json|csv] [--out <file>] [--filter <expression>]
 ```
 
 **Arguments:**
@@ -879,7 +879,11 @@ favro cards export <board> [--format json|csv] [--out <file>] [--filter <express
 | `--format <format>` | `json` | Export format: `json` or `csv` |
 | `--out <file>` | stdout | Output file path (must be within current directory) |
 | `--filter <expression>` | — | Filter expression (repeatable, AND logic) |
-| `--limit <number>` | `10000` | Maximum cards to fetch |
+
+There is no `--limit`. It was removed in #44 because it capped the **fetch**, so an
+export could silently be a partial export of a board — the same defect as the old
+`cards list --limit`. Passing it exits 1 with `unknown option '--limit'`. Narrow with
+`--filter` instead.
 
 **Filter expression format:**
 
@@ -1955,7 +1959,9 @@ Favro enforces rate limits on the API. When hit:
 - For bulk operations, use `--dry-run` first to estimate the number of API calls
 
 **Prevention:**
-- Use `--limit` flags to reduce request sizes
+- Narrow the *scope*, not the output: `--board`, `--collection`, `--since`/`--until`.
+  `--limit` will not help — it caps what is **printed** and every fetch runs to
+  completion regardless
 - Use `favro batch` commands instead of individual API calls in loops
 - Avoid running multiple CLI instances in parallel against the same organization
 
@@ -2071,7 +2077,7 @@ favro --verbose cards get card-abc123
 `--since`/`--until` window; there is no offset, so narrow the window rather than
 paging.
 
-**Cards export with large datasets:** For boards with thousands of cards, `favro cards export` handles pagination automatically. The default `--limit 10000` covers most boards. For very large boards, pipe to stdout rather than file to avoid memory issues:
+**Cards export with large datasets:** For boards with thousands of cards, `favro cards export` handles pagination automatically and has no cap — `--limit` was removed in #44 precisely so an export cannot be a silent partial. For very large boards, pipe to stdout rather than file to avoid memory issues:
 
 ```bash
 favro cards export big-board --format json | jq '. | length'
@@ -2091,13 +2097,15 @@ favro cards export board-001 --filter "status:Done" --format json
 favro cards export board-001 --format json | jq '.[] | select(.status == "Done")'
 ```
 
-**Use `--limit` appropriately:** `cards list` defaults to 50 for quick results. Increase only when needed:
+**Use `--limit` appropriately:** `cards list` prints 25 rows by default. It caps the
+**print**, never the fetch — the board is paged to completion either way — so raising it
+costs nothing on the wire and lowering it saves nothing:
 
 ```bash
-# Quick check (default 50)
+# Quick check (25 rows printed, whole board fetched)
 favro cards list --board board-001
 
-# Full board (up to 500)
+# Every row, marked `truncated` if you cap it below the total
 favro cards list --board board-001 --limit 500
 ```
 
@@ -2402,7 +2410,10 @@ DEBUG=favro:* favro context <board-id> 2>&1 | grep -E "^favro|ms$"
 
 **Solutions:**
 - Reduce board size (archive old cards)
-- Use `--limit <n>` to cap how many cards the snapshot walks
+- Ask for less of the answer, not less of the board: `favro context <board> | jq '.stats'`.
+  There is no cap to pass — the snapshot reads the board to completion and always
+  did, and the `--limit` this used to suggest was discarded downstream. It is
+  removed; passing it exits 1 with `unknown option '--limit'`
 - Split into smaller queries
 
 ---
