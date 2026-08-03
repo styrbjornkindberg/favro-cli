@@ -157,10 +157,23 @@ The rule now: **the wire is the gate, the table runs behind it.**
   and not built: it would classify correctly only at the sites that remembered to raise it, while
   the default already covers every site that does not. `RefusalError` remains the type to reach
   for when a decline wants to be *named* — it is what made the missing API key honest (#118) —
-  but nothing depends on it being reached for.
+  and **at this boundary** nothing depends on it being reached for.
 
 The discriminator is structural, not a string match on the message: it asks where the error came
 from, not what it says.
+
+**The gate is on the boundary, not on `isRetryable`, and one other caller is still ungated.**
+`skill-engine.ts` derives `rollback.retryable` as `isRetryable(unwound.outcome, abortCause)` at
+the end-of-run unwind, where `abortCause` is whatever a step threw outside the table's own
+instrumentation — an interpolation typo, an unknown intent, a `ParseError`. That is the boundary's
+wide population, read by the table's narrow rule, and there a decline answers `false` only
+because someone remembered to raise a `RefusalError` — the cost the paragraph above declines to
+pay at the boundary is still being paid at that one site (`safety.ts` traces and measures it). So
+a skill that writes in step 1 and mistypes `{{made.nope}}` in step 2 still reports
+`retryable: true` on stdout and prints "safe to retry"; `skill-capture-wire.test.ts` and
+`skill-dispatch-wire.test.ts` both pin that answer as intended. #134 scoped itself to the CLI
+boundary and left it standing. It is the same defect and wants its own issue, not a silent
+widening of this one.
 
 ## Consequences
 
