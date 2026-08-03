@@ -13,7 +13,6 @@ import { Command } from 'commander';
 import { resolveUserId } from '../lib/config';
 import { AggregateCard } from '../api/aggregate';
 import { extractEffort } from '../api/context';
-import { parseLimit } from '../lib/read-shape';
 import { Ctx, run } from '../lib/run';
 
 const CANDIDATE_STAGES = ['queued', 'backlog', 'active'];
@@ -122,7 +121,6 @@ function formatHuman(data: NextResult): string {
 interface NextOptions {
   collection?: string;
   count: string;
-  limit: string;
 }
 
 export async function nextHandler(ctx: Ctx, options: NextOptions) {
@@ -132,15 +130,14 @@ export async function nextHandler(ctx: Ctx, options: NextOptions) {
   }
 
   const count = parseInt(options.count, 10) || 5;
-  const cardLimit = parseLimit(options.limit) ?? 1000;
 
   let snapshot;
   if (options.collection) {
-    snapshot = await ctx.api.aggregate.getCollectionSnapshot(options.collection, cardLimit);
+    snapshot = await ctx.api.aggregate.getCollectionSnapshot(options.collection);
   } else if (ctx.config.scopeCollectionId) {
-    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({ collectionIds: [ctx.config.scopeCollectionId] }, cardLimit);
+    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({ collectionIds: [ctx.config.scopeCollectionId] });
   } else {
-    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({}, cardLimit);
+    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({});
   }
 
   // Filter to my cards in candidate stages
@@ -185,7 +182,6 @@ export function registerNextCommand(program: Command): void {
     .description('"What should I work on next?" — AI-ranked suggestions (LLM-first JSON)')
     .option('--collection <name>', 'Filter to a specific collection')
     .option('--count <n>', 'Number of suggestions', '5')
-    .option('--limit <n>', 'Max cards per collection', '1000')
     .action(run(nextHandler));
 }
 

@@ -13,7 +13,6 @@
  * already the human view, so the machine shape is what has to be asked for.
  */
 import { Command } from 'commander';
-import { parseLimit } from '../lib/read-shape';
 import { Ctx, run } from '../lib/run';
 import { renderBoard, renderStatusBar, snapshotToColumns } from '../lib/board-renderer';
 import { c } from '../lib/theme';
@@ -23,7 +22,6 @@ interface BoardTuiOptions {
   watch?: boolean | string;
   ids?: boolean;
   json?: boolean;
-  limit?: string;
 }
 
 const DEFAULT_WATCH_SECONDS = 30;
@@ -36,13 +34,11 @@ const watchSeconds = (watch: boolean | string | undefined): number =>
  * stdout capture, no client mock.
  */
 export async function boardTuiHandler(ctx: Ctx, boardRef: string, options: BoardTuiOptions) {
-  const limit = parseLimit(options.limit) ?? 500;
-
   // One shot, and the runner writes it. `--watch --json` used to concatenate a
   // fresh pretty-printed object onto stdout every interval, which no parser can
   // read; it is now a single snapshot.
   if (options.json) {
-    const snapshot = await ctx.api.context.getSnapshot(boardRef, limit);
+    const snapshot = await ctx.api.context.getSnapshot(boardRef);
     return {
       item: {
         board: snapshot.board,
@@ -61,7 +57,7 @@ export async function boardTuiHandler(ctx: Ctx, boardRef: string, options: Board
   }
 
   async function fetchAndRender(): Promise<void> {
-    const snapshot = await ctx.api.context.getSnapshot(boardRef, limit);
+    const snapshot = await ctx.api.context.getSnapshot(boardRef);
     const columns = snapshotToColumns(snapshot);
 
     // Clear screen for watch mode
@@ -126,7 +122,6 @@ export function registerBoardTuiCommand(program: Command): void {
     .option('--compact', 'One line per card (default: expanded)')
     .option('--watch [seconds]', 'Auto-refresh interval (default: 30s)')
     .option('--ids', 'Show card IDs')
-    .option('--limit <n>', 'Max cards to fetch (default: 500)')
     .option('--json', 'Emit the snapshot as JSON instead of rendering it (--pretty to indent)')
     .action(run(boardTuiHandler));
 }

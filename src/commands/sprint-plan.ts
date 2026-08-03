@@ -85,7 +85,6 @@ function formatHuman(result: SprintPlanResult): void {
 interface SprintPlanOptions {
   board?: string;
   budget?: string;
-  limit?: string;
 }
 
 /** Exported for a test that reads the `Result` back off a fake `Ctx`. */
@@ -108,8 +107,7 @@ export async function sprintPlanHandler(ctx: Ctx, options: SprintPlanOptions) {
   // given, so a second wording here would be two spellings of one decline.
   const budget = parseLimit(options.budget, '--budget') ?? 40;
 
-  const cardLimit = parseLimit(options.limit) ?? 500;
-  const result = await ctx.api.sprintPlan.getSuggestions(options.board, budget, cardLimit);
+  const result = await ctx.api.sprintPlan.getSuggestions(options.board, budget);
 
   return { item: result, human: formatHuman };
 }
@@ -130,6 +128,5 @@ export function registerSprintPlanCommand(program: Command): void {
     )
     .option('--board <name>', 'Board name or ID (required)')
     .option('--budget <points>', 'Sprint point budget (default 40)', '40')
-    .option('--limit <number>', 'Maximum cards to fetch (default 500)', '500')
     .action(run(sprintPlanHandler));
 }

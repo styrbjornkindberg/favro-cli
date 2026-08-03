@@ -5,7 +5,7 @@
 import { Command } from 'commander';
 import { AggregateCard } from '../api/aggregate';
 import { extractEffort } from '../api/context';
-import { excludeUnreadableBoards, parseLimit, Unreachable } from '../lib/read-shape';
+import { excludeUnreadableBoards, Unreachable } from '../lib/read-shape';
 import { Ctx, run } from '../lib/run';
 
 const ACTIVE_STAGES = ['active', 'review', 'testing'];
@@ -130,11 +130,9 @@ function formatHuman(data: WorkloadResult): string {
 interface WorkloadOptions {
   board?: string;
   collection?: string;
-  limit: string;
 }
 
 export async function workloadHandler(ctx: Ctx, options: WorkloadOptions) {
-  const cardLimit = parseLimit(options.limit) ?? 1000;
 
   // Annotated rather than inferred: the four arms produce four different object
   // types, and a union of them trips the excess-property check at the
@@ -150,7 +148,7 @@ export async function workloadHandler(ctx: Ctx, options: WorkloadOptions) {
     // `ctx.api.context` replaces the dynamic `await import` + `new ContextAPI`
     // this arm used to do; the namespace getter is lazy, so the board arm is
     // still the only path that constructs it.
-    const boardSnapshot = await ctx.api.context.getSnapshot(options.board, cardLimit);
+    const boardSnapshot = await ctx.api.context.getSnapshot(options.board);
     // Convert to aggregate format
     snapshot = {
       allCards: boardSnapshot.cards.map(c => ({
@@ -166,13 +164,13 @@ export async function workloadHandler(ctx: Ctx, options: WorkloadOptions) {
     };
     scope = boardSnapshot.board.name;
   } else if (options.collection) {
-    snapshot = await ctx.api.aggregate.getCollectionSnapshot(options.collection, cardLimit);
+    snapshot = await ctx.api.aggregate.getCollectionSnapshot(options.collection);
     scope = options.collection;
   } else if (ctx.config.scopeCollectionId) {
-    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({ collectionIds: [ctx.config.scopeCollectionId] }, cardLimit);
+    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({ collectionIds: [ctx.config.scopeCollectionId] });
     scope = ctx.config.scopeCollectionName ?? ctx.config.scopeCollectionId;
   } else {
-    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({}, cardLimit);
+    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({});
     scope = 'all collections';
   }
 
@@ -208,7 +206,6 @@ export function registerWorkloadCommand(program: Command): void {
     .description('Per-member card distribution and workload analysis (LLM-first JSON)')
     .option('--board <name>', 'Filter to a specific board')
     .option('--collection <name>', 'Filter to a specific collection')
-    .option('--limit <n>', 'Max cards', '1000')
     .action(run(workloadHandler));
 }
 

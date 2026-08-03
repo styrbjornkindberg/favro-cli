@@ -4,7 +4,7 @@
  */
 import { Command } from 'commander';
 import { AggregateCard } from '../api/aggregate';
-import { parseLimit, Unreachable } from '../lib/read-shape';
+import { Unreachable } from '../lib/read-shape';
 import { Ctx, run } from '../lib/run';
 
 interface BoardSummary {
@@ -185,22 +185,20 @@ export function formatHuman(data: OverviewResult): string {
 
 interface OverviewOptions {
   collection?: string;
-  limit: string;
 }
 
 export async function overviewHandler(ctx: Ctx, options: OverviewOptions) {
-  const cardLimit = parseLimit(options.limit) ?? 1000;
 
   let snapshot;
   let scope: string;
   if (options.collection) {
-    snapshot = await ctx.api.aggregate.getCollectionSnapshot(options.collection, cardLimit);
+    snapshot = await ctx.api.aggregate.getCollectionSnapshot(options.collection);
     scope = options.collection;
   } else if (ctx.config.scopeCollectionId) {
-    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({ collectionIds: [ctx.config.scopeCollectionId] }, cardLimit);
+    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({ collectionIds: [ctx.config.scopeCollectionId] });
     scope = ctx.config.scopeCollectionName ?? ctx.config.scopeCollectionId;
   } else {
-    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({}, cardLimit);
+    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({});
     scope = 'all collections';
   }
 
@@ -250,7 +248,6 @@ export function registerOverviewCommand(program: Command): void {
     .command('overview')
     .description('Collection-level dashboard with stage distribution (LLM-first JSON)')
     .option('--collection <name>', 'Filter to a specific collection')
-    .option('--limit <n>', 'Max cards', '1000')
     .action(run(overviewHandler));
 }
 

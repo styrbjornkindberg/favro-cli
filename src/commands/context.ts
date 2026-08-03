@@ -4,7 +4,7 @@
  *
  * Usage:
  *   favro context <board-name|board-id>
- *   favro context <board-name|board-id> --limit 500
+ *   favro context <board-name|board-id>
  *   favro context <board-name|board-id> --pretty
  *
  * Returns a single JSON object with complete board state for AI workflows:
@@ -17,11 +17,9 @@
  *   - `unreachable`, when a sub-fetch could not be read (#116)
  */
 import { Command } from 'commander';
-import { parseLimit } from '../lib/read-shape';
 import { Ctx, run } from '../lib/run';
 
 interface ContextOptions {
-  limit?: string;
 }
 
 /**
@@ -32,12 +30,11 @@ export async function contextHandler(ctx: Ctx, board: string, options: ContextOp
   // A FETCH cap, so an absent flag falls back to the declared default and a
   // malformed one refuses (#143) — never the default, which would be a whole
   // paginated board read answering a question nobody asked.
-  const cardLimit = parseLimit(options.limit) ?? 1000;
 
   // A single read, so it stays bare (`read-shape.ts` rule 1) — the snapshot IS
   // the entity. Its own `unreachable` rides inside it, where the composite
   // fetch that produced the holes put it.
-  return { item: await ctx.api.context.getSnapshot(board, cardLimit) };
+  return { item: await ctx.api.context.getSnapshot(board) };
 }
 
 export function registerContextCommand(program: Command): void {
@@ -57,12 +54,10 @@ export function registerContextCommand(program: Command): void {
       'Examples:\n' +
       '  favro context boards-1234\n' +
       '  favro context "Sprint 42"\n' +
-      '  favro context "My Board" --limit 200\n' +
       '  favro context boards-1234 | jq \'.stats\'\n\n' +
       'Performance: < 1s for 500-card boards (parallel data fetching).\n' +
       'Use: favro boards list to find board IDs.'
     )
-    .option('--limit <number>', 'Maximum number of cards to fetch (default: 1000)', '1000')
     // `--pretty` is a ROOT flag now (ADR-0002, #113/#114). Re-declaring it here
     // would be a leaf shadowing an ancestor, which commander resolves at the
     // root anyway — the #115 trap.

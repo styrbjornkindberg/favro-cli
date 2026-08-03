@@ -16,7 +16,6 @@
  */
 import { Command } from 'commander';
 import type { QueryResult } from '../types/query';
-import { parseLimit } from '../lib/read-shape';
 import { Ctx, run } from '../lib/run';
 
 /** The result, as it reads to a person. Byte-identical to the pre-#116 render. */
@@ -50,7 +49,6 @@ function formatHuman(result: QueryResult): string {
 }
 
 interface QueryOptions {
-  limit?: string;
 }
 
 /** Exported for a test that reads the `Result` back off a fake `Ctx`. */
@@ -60,8 +58,7 @@ export async function queryHandler(
   queryParts: string[],
   options: QueryOptions,
 ) {
-  const cardLimit = parseLimit(options.limit) ?? 1000;
-  const result = await ctx.api.query.execute(board, queryParts.join(' '), cardLimit);
+  const result = await ctx.api.query.execute(board, queryParts.join(' '));
 
   // A single read: the query result IS the entity, matches and all. Returning
   // `{ rows: matches }` would drop `summary`, `total` and `unreachable`.
@@ -90,6 +87,5 @@ export function registerQueryCommand(program: Command): void {
       'If no results are found, an explanation is provided.\n' +
       'Use --human for the summary view; JSON is the default.'
     )
-    .option('--limit <number>', 'Maximum number of cards to search (default 1000)', '1000')
     .action(run(queryHandler));
 }

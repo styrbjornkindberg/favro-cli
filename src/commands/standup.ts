@@ -17,7 +17,6 @@
 
 import { Command } from 'commander';
 import { RefusalError } from '../lib/refusal';
-import { parseLimit } from '../lib/read-shape';
 import { Ctx, run } from '../lib/run';
 import type { StandupCard, StandupResult } from '../api/standup';
 
@@ -70,7 +69,6 @@ function formatHuman(result: StandupResult): void {
 
 interface StandupOptions {
   board?: string;
-  limit?: string;
 }
 
 /** Exported for a test that reads the `Result` back off a fake `Ctx`. */
@@ -83,8 +81,7 @@ export async function standupHandler(ctx: Ctx, options: StandupOptions) {
     );
   }
 
-  const cardLimit = parseLimit(options.limit) ?? 500;
-  const result = await ctx.api.standup.getStandup(options.board, cardLimit);
+  const result = await ctx.api.standup.getStandup(options.board);
 
   return { item: result, human: formatHuman };
 }
@@ -107,6 +104,5 @@ export function registerStandupCommand(program: Command): void {
       '  favro standup --board boards-1234 --human'
     )
     .option('--board <name>', 'Board name or ID (uses default if omitted)')
-    .option('--limit <number>', 'Maximum cards to fetch (default 500)', '500')
     .action(run(standupHandler));
 }

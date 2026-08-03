@@ -180,11 +180,22 @@ export class AggregateAPI {
    * Fetch a multi-board snapshot across collections.
    * Uses collectionId-based card queries for efficiency.
    * Concurrent collection fetches capped at 3 to respect rate limits.
+   *
+   * No card cap, and no parameter for one. This declared `cardLimit = 1000` and
+   * never read it; the parameter is deleted rather than wired, and the reason is
+   * this method's own shape, not laziness. Collections are swept by
+   * `mapConcurrent(collections, 3, …)` and each worker pushes into the shared
+   * `allCards` as its wire call lands, so a GLOBAL cap would cut at a point
+   * decided by arrival order — the same command over the same board answering
+   * differently run to run. A PER-COLLECTION cap makes `--limit 50` mean
+   * "50 × however many collections", which no help string said. And `buildStats`
+   * below turns whatever survives into `by_status` / `by_owner` ratios that
+   * `health`, `workload`, `team` and `overview` print as measured, so a
+   * subsampled sweep is a fabricated proportion — which is the conversion of
+   * absent data into a plausible answer that ADR-0002 forbids, and a
+   * "results are partial" line does not repair a wrong ratio.
    */
-  async getMultiBoardSnapshot(
-    scope: AggregateScope,
-    cardLimit: number = 1000,
-  ): Promise<AggregateSnapshot> {
+  async getMultiBoardSnapshot(scope: AggregateScope): Promise<AggregateSnapshot> {
     // Resolve collections to process
     let collections: Collection[];
     if (scope.collectionIds && scope.collectionIds.length > 0) {
@@ -342,9 +353,9 @@ export class AggregateAPI {
    * `useIdWith` through `getCollection` to sharpen the wording is not worth a
    * parameter on the read path.
    */
-  async getCollectionSnapshot(collectionRef: string, cardLimit?: number): Promise<AggregateSnapshot> {
+  async getCollectionSnapshot(collectionRef: string): Promise<AggregateSnapshot> {
     const coll = await this.collectionsApi.getCollection(collectionRef);
-    return this.getMultiBoardSnapshot({ collectionIds: [coll.collectionId] }, cardLimit);
+    return this.getMultiBoardSnapshot({ collectionIds: [coll.collectionId] });
   }
 
   private buildStats(cards: AggregateCard[]): AggregateStats {

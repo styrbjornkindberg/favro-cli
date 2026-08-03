@@ -10,7 +10,7 @@
  */
 import { Command } from 'commander';
 import { AggregateCard } from '../api/aggregate';
-import { excludeUnreadableBoards, parseLimit, Unreachable } from '../lib/read-shape';
+import { excludeUnreadableBoards, Unreachable } from '../lib/read-shape';
 import { RefusalError } from '../lib/refusal';
 import { Ctx, run } from '../lib/run';
 import { daysSince, DEFAULT_STALE_DAYS, isStale } from '../lib/time';
@@ -155,7 +155,6 @@ function formatHuman(data: HealthResult): string {
 
 interface HealthOptions {
   collection?: string;
-  limit: string;
 }
 
 /**
@@ -179,18 +178,17 @@ interface HealthOptions {
  * test.
  */
 export async function healthHandler(ctx: Ctx, options: HealthOptions) {
-  const cardLimit = parseLimit(options.limit) ?? 1000;
 
   let snapshot;
   let scope: string;
   if (options.collection) {
-    snapshot = await ctx.api.aggregate.getCollectionSnapshot(options.collection, cardLimit);
+    snapshot = await ctx.api.aggregate.getCollectionSnapshot(options.collection);
     scope = options.collection;
   } else if (ctx.config.scopeCollectionId) {
-    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({ collectionIds: [ctx.config.scopeCollectionId] }, cardLimit);
+    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({ collectionIds: [ctx.config.scopeCollectionId] });
     scope = ctx.config.scopeCollectionName ?? ctx.config.scopeCollectionId;
   } else {
-    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({}, cardLimit);
+    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({});
     scope = 'all collections';
   }
 
@@ -294,7 +292,6 @@ export function registerHealthCommand(program: Command): void {
     .command('health')
     .description('Per-board health scores with traffic-light indicators (LLM-first JSON)')
     .option('--collection <name>', 'Filter to a specific collection')
-    .option('--limit <n>', 'Max cards', '1000')
     .action(run(healthHandler));
 }
 

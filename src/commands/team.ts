@@ -4,7 +4,7 @@
  */
 import { Command } from 'commander';
 import { extractEffort } from '../api/context';
-import { excludeUnreadableBoards, parseLimit, Unreachable } from '../lib/read-shape';
+import { excludeUnreadableBoards, Unreachable } from '../lib/read-shape';
 import { Ctx, run } from '../lib/run';
 
 const ACTIVE_STAGES = ['active', 'review', 'testing'];
@@ -69,22 +69,20 @@ function formatHuman(data: TeamResult): string {
 
 interface TeamOptions {
   collection?: string;
-  limit: string;
 }
 
 export async function teamHandler(ctx: Ctx, options: TeamOptions) {
-  const cardLimit = parseLimit(options.limit) ?? 1000;
 
   let snapshot;
   let scope: string;
   if (options.collection) {
-    snapshot = await ctx.api.aggregate.getCollectionSnapshot(options.collection, cardLimit);
+    snapshot = await ctx.api.aggregate.getCollectionSnapshot(options.collection);
     scope = options.collection;
   } else if (ctx.config.scopeCollectionId) {
-    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({ collectionIds: [ctx.config.scopeCollectionId] }, cardLimit);
+    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({ collectionIds: [ctx.config.scopeCollectionId] });
     scope = ctx.config.scopeCollectionName ?? ctx.config.scopeCollectionId;
   } else {
-    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({}, cardLimit);
+    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({});
     scope = 'all collections';
   }
 
@@ -170,7 +168,6 @@ export function registerTeamCommand(program: Command): void {
     .command('team')
     .description('Cross-board team utilization and bottleneck analysis (LLM-first JSON)')
     .option('--collection <name>', 'Filter to a specific collection')
-    .option('--limit <n>', 'Max cards', '1000')
     .action(run(teamHandler));
 }
 

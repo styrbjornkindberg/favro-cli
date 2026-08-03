@@ -5,7 +5,6 @@
 import { Command } from 'commander';
 import { resolveUserId } from '../lib/config';
 import { AggregateCard } from '../api/aggregate';
-import { parseLimit } from '../lib/read-shape';
 import { Ctx, run } from '../lib/run';
 import { isBlocked } from '../api/standup';
 
@@ -98,7 +97,6 @@ function formatHuman(data: MyStandupResult): string {
 interface MyStandupOptions {
   collection?: string;
   days: string;
-  limit: string;
 }
 
 export async function myStandupHandler(ctx: Ctx, options: MyStandupOptions) {
@@ -108,15 +106,14 @@ export async function myStandupHandler(ctx: Ctx, options: MyStandupOptions) {
   }
 
   const dueSoonDays = parseInt(options.days, 10) || 3;
-  const cardLimit = parseLimit(options.limit) ?? 1000;
 
   let snapshot;
   if (options.collection) {
-    snapshot = await ctx.api.aggregate.getCollectionSnapshot(options.collection, cardLimit);
+    snapshot = await ctx.api.aggregate.getCollectionSnapshot(options.collection);
   } else if (ctx.config.scopeCollectionId) {
-    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({ collectionIds: [ctx.config.scopeCollectionId] }, cardLimit);
+    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({ collectionIds: [ctx.config.scopeCollectionId] });
   } else {
-    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({}, cardLimit);
+    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({});
   }
 
   // Filter to my cards
@@ -160,7 +157,6 @@ export function registerMyStandupCommand(program: Command): void {
     .description('Personal standup across all boards (LLM-first JSON output)')
     .option('--collection <name>', 'Filter to a specific collection')
     .option('--days <n>', 'Days ahead for due-soon threshold', '3')
-    .option('--limit <n>', 'Max cards per collection', '1000')
     .action(run(myStandupHandler));
 }
 

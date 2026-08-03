@@ -5,7 +5,6 @@
 import { Command } from 'commander';
 import { resolveUserId } from '../lib/config';
 import { AggregateCard } from '../api/aggregate';
-import { parseLimit } from '../lib/read-shape';
 import { Ctx, run } from '../lib/run';
 
 interface MyCardsResult {
@@ -108,7 +107,6 @@ function formatHuman(data: MyCardsResult): string {
 interface MyCardsOptions {
   collection?: string;
   status?: string;
-  limit: string;
 }
 
 export async function myCardsHandler(ctx: Ctx, options: MyCardsOptions) {
@@ -117,15 +115,14 @@ export async function myCardsHandler(ctx: Ctx, options: MyCardsOptions) {
     throw new Error('userId not configured. Run `favro auth login` to resolve your identity.');
   }
 
-  const cardLimit = parseLimit(options.limit) ?? 1000;
 
   let snapshot;
   if (options.collection) {
-    snapshot = await ctx.api.aggregate.getCollectionSnapshot(options.collection, cardLimit);
+    snapshot = await ctx.api.aggregate.getCollectionSnapshot(options.collection);
   } else if (ctx.config.scopeCollectionId) {
-    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({ collectionIds: [ctx.config.scopeCollectionId] }, cardLimit);
+    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({ collectionIds: [ctx.config.scopeCollectionId] });
   } else {
-    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({}, cardLimit);
+    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({});
   }
 
   let myCards = filterMyCards(snapshot.allCards, userId);
@@ -178,7 +175,6 @@ export function registerMyCardsCommand(program: Command): void {
     .description('Show your cards across all boards (LLM-first JSON output)')
     .option('--collection <name>', 'Filter to a specific collection')
     .option('--status <filter>', 'Filter by workflow stage (e.g., active, queued)')
-    .option('--limit <n>', 'Max cards per collection', '1000')
     .action(run(myCardsHandler));
 }
 

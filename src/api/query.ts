@@ -404,17 +404,16 @@ export class QueryAPI {
   /**
    * Execute a natural language query against a board.
    *
+   * No card cap: `getSnapshot` has none to pass one to. The `cardLimit` this
+   * used to take was a pure pass-through into a parameter nothing read, so
+   * `query --limit 50` filtered the whole board and always had (#143 close).
+   *
    * @param boardRef   Board name or ID
    * @param query      Natural language query string
-   * @param cardLimit  Max cards to fetch (default 1000)
    */
-  async execute(
-    boardRef: string,
-    query: string,
-    cardLimit: number = 1000,
-  ): Promise<QueryResult> {
+  async execute(boardRef: string, query: string): Promise<QueryResult> {
     // Fetch board context
-    const context = await this.contextApi.getSnapshot(boardRef, cardLimit);
+    const context = await this.contextApi.getSnapshot(boardRef);
 
     // Parse query into filter
     const filter = parseQueryFilter(query);

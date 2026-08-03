@@ -146,16 +146,16 @@ export class StandupAPI {
   /**
    * Get standup data for a board.
    *
+   * No card cap: `getSnapshot` has none to pass one to. The `cardLimit` this
+   * used to take was a pure pass-through into a parameter nothing read (#143
+   * close). Note `dueSoonDays` is now the SECOND positional — every old
+   * two-argument call was passing a card cap and must be deleted, not shifted.
+   *
    * @param boardRef   Board name or ID
-   * @param cardLimit  Max cards to fetch (default 500)
    * @param dueSoonDays  Days ahead to consider "due soon" (default 3)
    */
-  async getStandup(
-    boardRef: string,
-    cardLimit: number = 500,
-    dueSoonDays: number = 3,
-  ): Promise<StandupResult> {
-    const snapshot: BoardContextSnapshot = await this.contextApi.getSnapshot(boardRef, cardLimit);
+  async getStandup(boardRef: string, dueSoonDays: number = 3): Promise<StandupResult> {
+    const snapshot: BoardContextSnapshot = await this.contextApi.getSnapshot(boardRef);
 
     const completed: StandupCard[] = [];
     const inProgress: StandupCard[] = [];

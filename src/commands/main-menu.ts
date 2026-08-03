@@ -161,7 +161,7 @@ async function showBoardView(ctx: Ctx, boardId: string): Promise<void> {
     console.log(`\n  ${c.muted('Loading board…')}`);
     let snapshot;
     try {
-      snapshot = await context.getSnapshot(boardId, 500);
+      snapshot = await context.getSnapshot(boardId);
     } catch (err: any) {
       console.log(`  ${c.error(err.message ?? 'Failed to load board')}`);
       await pause();
@@ -282,9 +282,9 @@ async function showMyWork(ctx: Ctx): Promise<void> {
 
     let snapshot;
     if (config.scopeCollectionId) {
-      snapshot = await agg.getMultiBoardSnapshot({ collectionIds: [config.scopeCollectionId] }, 500);
+      snapshot = await agg.getMultiBoardSnapshot({ collectionIds: [config.scopeCollectionId] });
     } else {
-      snapshot = await agg.getMultiBoardSnapshot({}, 500);
+      snapshot = await agg.getMultiBoardSnapshot({});
     }
 
     const myCards = snapshot.allCards.filter(
@@ -333,10 +333,10 @@ async function showTeamDashboard(ctx: Ctx): Promise<void> {
     let snapshot;
     let scope: string;
     if (config.scopeCollectionId) {
-      snapshot = await agg.getMultiBoardSnapshot({ collectionIds: [config.scopeCollectionId] }, 500);
+      snapshot = await agg.getMultiBoardSnapshot({ collectionIds: [config.scopeCollectionId] });
       scope = config.scopeCollectionName ?? config.scopeCollectionId;
     } else {
-      snapshot = await agg.getMultiBoardSnapshot({}, 500);
+      snapshot = await agg.getMultiBoardSnapshot({});
       scope = 'all collections';
     }
 

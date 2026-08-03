@@ -134,16 +134,15 @@ export class SprintPlanAPI {
   /**
    * Get sprint plan suggestions for a board.
    *
+   * No card cap: `getSnapshot` has none to pass one to. The `cardLimit` this
+   * used to take was a pure pass-through into a parameter nothing read (#143
+   * close). `--budget` is unaffected and still `parseLimit`'s.
+   *
    * @param boardRef   Board name or ID
    * @param budget     Point budget for the sprint (default 40)
-   * @param cardLimit  Max cards to fetch (default 500)
    */
-  async getSuggestions(
-    boardRef: string,
-    budget: number = 40,
-    cardLimit: number = 500,
-  ): Promise<SprintPlanResult> {
-    const snapshot: BoardContextSnapshot = await this.contextApi.getSnapshot(boardRef, cardLimit);
+  async getSuggestions(boardRef: string, budget: number = 40): Promise<SprintPlanResult> {
+    const snapshot: BoardContextSnapshot = await this.contextApi.getSnapshot(boardRef);
 
     // Filter to backlog cards only
     const backlogCards = snapshot.cards.filter(isBacklogCard);

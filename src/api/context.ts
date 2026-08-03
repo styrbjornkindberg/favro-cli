@@ -248,10 +248,23 @@ export class ContextAPI {
    * Get complete board context snapshot.
    * Fetches board metadata, columns, custom fields, members, and cards in parallel.
    *
+   * There is no card cap, and there is deliberately no parameter for one. This
+   * used to declare `cardLimit: number = 1000` and never read it, so fourteen
+   * commands and a skill step computed a number, threaded it here and had it
+   * discarded — a `--limit` advertising a fetch cap it never applied (#143
+   * close comment).
+   * Deleted rather than wired: `listCards` reads the board to completion, and a
+   * cap that cut it would silently unbalance `stats` below, which every caller
+   * reports as measured.
+   *
+   * ponytail: unbounded read. The ceiling is #132's — a 422-board workspace
+   * measured at 10601 cards pages all of them. The upgrade path is a cap that
+   * DISCLOSES, i.e. a `capped` field on this snapshot that every caller renders,
+   * not a parameter nothing reads.
+   *
    * @param boardRef  Board ID or board name
-   * @param cardLimit  Maximum cards to fetch (default 1000)
    */
-  async getSnapshot(boardRef: string, cardLimit: number = 1000): Promise<BoardContextSnapshot> {
+  async getSnapshot(boardRef: string): Promise<BoardContextSnapshot> {
     // Step 1: Resolve board (required before parallel fetch)
     const board = await this.resolveBoard(boardRef);
     const boardId = board.boardId;

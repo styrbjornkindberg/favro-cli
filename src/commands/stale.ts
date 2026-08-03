@@ -4,7 +4,7 @@
  */
 import { Command } from 'commander';
 import { AggregateCard } from '../api/aggregate';
-import { excludeUnreadableBoards, parseLimit, Unreachable } from '../lib/read-shape';
+import { excludeUnreadableBoards, Unreachable } from '../lib/read-shape';
 import { Ctx, run } from '../lib/run';
 import { daysSince, DEFAULT_STALE_DAYS, isStale, staleWording } from '../lib/time';
 
@@ -104,7 +104,6 @@ interface StaleOptions {
   board?: string;
   collection?: string;
   days: string;
-  limit: string;
 }
 
 export async function staleHandler(ctx: Ctx, options: StaleOptions) {
@@ -113,7 +112,6 @@ export async function staleHandler(ctx: Ctx, options: StaleOptions) {
   // and read `--days 0` as absent. Clamp-to-declared-default, as `context.ts:50`.
   const parsedDays = parseInt(options.days, 10);
   const staleDays = !isNaN(parsedDays) && parsedDays >= 0 ? parsedDays : DEFAULT_STALE_DAYS;
-  const cardLimit = parseLimit(options.limit) ?? 1000;
 
   let snapshot: { allCards: AggregateCard[]; unreachable?: Unreachable[] };
   let scope: string;
@@ -121,7 +119,7 @@ export async function staleHandler(ctx: Ctx, options: StaleOptions) {
     // `ctx.api.context` replaces the dynamic `await import` + `new ContextAPI`
     // this arm used to do; the namespace getter is lazy, so the board arm is
     // still the only path that constructs it.
-    const boardSnapshot = await ctx.api.context.getSnapshot(options.board, cardLimit);
+    const boardSnapshot = await ctx.api.context.getSnapshot(options.board);
     snapshot = {
       allCards: boardSnapshot.cards.map(c => ({
         ...c,
@@ -133,13 +131,13 @@ export async function staleHandler(ctx: Ctx, options: StaleOptions) {
     };
     scope = boardSnapshot.board.name;
   } else if (options.collection) {
-    snapshot = await ctx.api.aggregate.getCollectionSnapshot(options.collection, cardLimit);
+    snapshot = await ctx.api.aggregate.getCollectionSnapshot(options.collection);
     scope = options.collection;
   } else if (ctx.config.scopeCollectionId) {
-    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({ collectionIds: [ctx.config.scopeCollectionId] }, cardLimit);
+    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({ collectionIds: [ctx.config.scopeCollectionId] });
     scope = ctx.config.scopeCollectionName ?? ctx.config.scopeCollectionId;
   } else {
-    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({}, cardLimit);
+    snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({});
     scope = 'all collections';
   }
 
@@ -220,7 +218,6 @@ export function registerStaleCommand(program: Command): void {
     .option('--board <name>', 'Filter to a specific board')
     .option('--collection <name>', 'Filter to a specific collection')
     .option('--days <n>', 'Inactivity threshold in days (inclusive)', String(DEFAULT_STALE_DAYS))
-    .option('--limit <n>', 'Max cards', '1000')
     .action(run(staleHandler));
 }
 

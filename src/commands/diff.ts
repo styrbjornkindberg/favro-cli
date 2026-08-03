@@ -17,7 +17,7 @@
 import { Command } from 'commander';
 import { ContextCard } from '../api/context';
 import { Ctx, run } from '../lib/run';
-import { parseLimit, Unreachable } from '../lib/read-shape';
+import { Unreachable } from '../lib/read-shape';
 import { RefusalError } from '../lib/refusal';
 import { c } from '../lib/theme';
 
@@ -191,7 +191,6 @@ function renderDiff(report: DiffReport): string {
 
 interface DiffOptions {
   since: string;
-  limit?: string;
 }
 
 /**
@@ -200,7 +199,7 @@ interface DiffOptions {
  */
 export async function diffHandler(ctx: Ctx, boardRef: string, options: DiffOptions) {
   const since = parseSinceArg(options.since);
-  const snapshot = await ctx.api.context.getSnapshot(boardRef, parseLimit(options.limit) ?? 1000);
+  const snapshot = await ctx.api.context.getSnapshot(boardRef);
   const changes = analyzeDiff(snapshot.cards, since);
   const holes = snapshot.unreachable ?? [];
 
@@ -240,10 +239,6 @@ export function registerDiffCommand(program: Command): void {
       'wire failure also exits 1 but writes {"error": …} instead of a report.'
     )
     .requiredOption('--since <period>', 'Time range: 1h, 1d, 1w, 1m')
-    // Whole digits only — `parseInt` took a numeric PREFIX, so `--limit 1e9`
-    // read as 1 (#143). Currently unobservable: `getSnapshot` declares
-    // `cardLimit` and never reads it, which is a separate escalation from #116.
-    .option('--limit <n>', 'Max cards to scan (default: 1000)')
     // No `--json`: JSON is the default and `--human` / `--pretty` are root flags
     // the runner owns (ADR-0002, #113).
     .action(run(diffHandler));

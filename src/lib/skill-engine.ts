@@ -224,7 +224,7 @@ async function executeStep(
       const board = args.board ?? vars.board;
       if (!board) throw new Error('Step requires "board" argument');
       const contextApi = new ContextAPI(client);
-      const snapshot = await contextApi.getSnapshot(board, parseLimit(args.limit) ?? 1000);
+      const snapshot = await contextApi.getSnapshot(board);
       return { output: JSON.stringify(snapshot, null, 2), value: snapshot };
     }
 
