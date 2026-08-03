@@ -136,6 +136,37 @@ describe('widgets add', () => {
     expect(output()).toContain('✓ Widget added to board (w-3)');
   });
 
+  /**
+   * The ✓ is spent on an OBSERVED board id and nothing else.
+   *
+   * `addWidgetToBoard` used to answer `updated.widgetCommonId ?? boardId`, so a
+   * response that said nothing still produced `✓ Widget added to board
+   * (board-b)` — the board the user typed, printed back as though Favro had
+   * confirmed it. That is #82's original bug verbatim: the success line for a
+   * write that never landed.
+   */
+  test('an unobserved board id prints no ✓ and does not name it as reached', async () => {
+    MockWidgets.prototype.addWidgetToBoard = jest.fn().mockResolvedValue({ widgetCommonId: undefined });
+
+    await runCli(['widgets', 'add', 'board-b', 'ccid-1', '-y']);
+
+    expect(output()).not.toContain('✓');
+    expect(output()).toContain('UNCONFIRMED');
+    expect(output()).toContain('carried no widgetCommonId');
+    // Accepted-but-unconfirmed is not a known failure, and the echo is
+    // unmeasured — so it reports, it does not exit 1. Throwing on an unmeasured
+    // echo is #101's regression.
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  test('--json is unaffected — it prints the observed shape, holes included', async () => {
+    MockWidgets.prototype.addWidgetToBoard = jest.fn().mockResolvedValue({ widgetCommonId: undefined });
+
+    await runCli(['widgets', 'add', 'board-b', 'ccid-1', '-y', '--json']);
+
+    expect(output()).not.toContain('board-b');
+  });
+
   test('--column places the new instance in a named column', async () => {
     await runCli(['widgets', 'add', 'board-b', 'ccid-1', '-y', '--column', 'col-9']);
 

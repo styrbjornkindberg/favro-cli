@@ -265,7 +265,16 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
     await cardsCmd.parseAsync(['node', 'cards', 'move', 'card-src', '--to-board', 'board-2']);
 
     expect(mockMoveCard).toHaveBeenCalledWith('card-src', { toBoardId: 'board-2', position: undefined });
-    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('✓ Card card-src moved'));
+    // Reports the accepted REQUEST, and says so. The old assertion pinned
+    // `✓ Card card-src moved` — a claim the code never observed, since the only
+    // board id it had was the one the caller typed.
+    expect(consoleSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Move of card card-src to board board-2 was accepted (200).'),
+    );
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Not read back'));
+    const printed = consoleSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(printed).not.toMatch(/✓/);
+    expect(printed).not.toMatch(/moved to board/);
   });
 
   /**

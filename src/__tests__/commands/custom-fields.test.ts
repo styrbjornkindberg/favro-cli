@@ -224,6 +224,31 @@ describe('favro custom-fields set', () => {
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('✓ Custom field updated'));
   });
 
+  /**
+   * `confirmed: false` means the PUT was accepted and NOTHING observed the stored
+   * value. The old code degraded `displayValue` to the caller's argument, so this
+   * case printed `✓ Custom field updated successfully. Value: Some text` — the
+   * value we sent, presented as the value Favro holds.
+   *
+   * No ✓, and no `Value:` line at all: the only value available here is the one
+   * we sent, and printing it under that label is the fabrication.
+   */
+  it('an unconfirmed write prints no ✓ and no Value line', async () => {
+    MockCustomFieldsAPI.prototype.setFieldValue = jest.fn().mockResolvedValue({
+      fieldId: 'field-1',
+      value: null,
+      confirmed: false,
+    });
+
+    await runCli(['custom-fields', 'set', 'card-1', 'field-1', 'Some text']);
+
+    const printed = consoleSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(printed).not.toContain('✓');
+    expect(printed).toContain('UNCONFIRMED');
+    expect(printed).toContain('Sent:  Some text');
+    expect(printed).not.toMatch(/Value:/);
+  });
+
   it('sets a field value as JSON with --json flag', async () => {
     MockCustomFieldsAPI.prototype.setFieldValue = jest.fn().mockResolvedValue(SAMPLE_FIELD_VALUE);
     await runCli(['custom-fields', 'set', 'card-1', 'field-1', 'text', '--json']);

@@ -197,10 +197,22 @@ export function registerCustomFieldsCommands(program: Command): void {
 
         if (options.json) {
           console.log(JSON.stringify(result, null, 2));
+        } else if (result.confirmed === false) {
+          // No ✓, and NO value line: the only value we could print here is the
+          // one we sent. Printing it read exactly like a confirmed write, which
+          // is the fabrication — `Value: High` whether or not the field changed.
+          console.log(`Custom field write was accepted (200) but is UNCONFIRMED.`);
+          console.log(`  Field: ${fieldId}`);
+          console.log(`  Sent:  ${value}`);
+          console.log(
+            `  The response carried no value for this field, so nothing here observed what is stored.\n` +
+            `  Whether this PUT echoes customFields is unmeasured, so an absent echo is not by itself a failure.\n` +
+            `  Check the field on the card in Favro before treating this as done.`
+          );
         } else {
           console.log(`✓ Custom field updated successfully.`);
           console.log(`  Field: ${fieldId}`);
-          console.log(`  Value: ${result.displayValue ?? result.value ?? value}`);
+          console.log(`  Value: ${result.displayValue ?? result.value}`);
         }
       } catch (error) {
         logError(error, verbose);

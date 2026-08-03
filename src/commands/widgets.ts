@@ -83,8 +83,19 @@ export function registerWidgetsCommands(program: Command): void {
 
         if (options.json) {
           console.log(JSON.stringify(widget, null, 2));
-        } else {
+        } else if (widget.widgetCommonId) {
+          // The ✓ is spent only on an OBSERVED board id. It used to print
+          // unconditionally off `updated.widgetCommonId ?? boardId`, so it read
+          // identically whether the commit landed or Favro 200'd and wrote
+          // nothing — #82's original bug, re-opened by the fallback.
           console.log(`✓ Widget added to board (${widget.widgetCommonId})`);
+        } else {
+          console.log(
+            `Commit of card ${cardCommonId} to board ${board} was accepted (200) but is UNCONFIRMED: ` +
+            `the response carried no widgetCommonId, so nothing here observed the card on that board.\n` +
+            `Whether this PUT echoes widgetCommonId is unmeasured, so an absent echo is not by itself a failure.\n` +
+            `Verify with: favro widgets list --card ${cardCommonId}`
+          );
         }
       } catch (error: any) {
         logError(error, verbose);

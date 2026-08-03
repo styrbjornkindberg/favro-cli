@@ -803,6 +803,21 @@ export class CardsAPI {
 
   /**
    * Move a card to a different board.
+   *
+   * The result is NOT read back, and callers must not report the requested board
+   * as the reached one. Whether this PUT's response echoes `widgetCommonId` is
+   * **unmeasured** — it is measured on every GET row
+   * (`docs/research/tracker-contract-favro-carriers.md` §1.3), and a read-side
+   * row is not a write-side echo, the same gap `UpdateCardRequest.columnId`
+   * records for itself (#101, blocked on #105).
+   *
+   * Two things would have to change together before a read-back here could work,
+   * which is why this is a comment and not a guard. First the echo needs a live
+   * probe. Second, the response is returned RAW — no `normalizeCard`, unlike
+   * `getCard`/`updateCard` — so `Card.boardId`, which `normalizeCard` derives
+   * from `widgetCommonId`, is `undefined` on this path whatever the server sent.
+   * A guard written against `moved.boardId` today would therefore throw on every
+   * single move, and it would look like it was catching something.
    */
   async moveCard(cardRef: string, req: MoveCardRequest): Promise<Card> {
     const boardId = await this.boardIdOf(req.toBoardId);

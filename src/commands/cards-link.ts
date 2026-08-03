@@ -242,7 +242,14 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
           position: options.position?.toLowerCase() as 'top' | 'bottom' | undefined,
         });
 
-        console.log(`✓ Card ${cardId} moved to board ${options.toBoard}`);
+        // Says what was SENT and accepted, not that the card arrived. The old
+        // line — `✓ Card … moved to board ${options.toBoard}` — echoed the
+        // argument as an outcome: it printed the board the user typed, so it read
+        // identically whether the move landed or Favro 200'd and wrote nothing.
+        // There is no observation available to upgrade this to a ✓ (see
+        // `CardsAPI.moveCard`), so the message stops overclaiming instead.
+        console.log(`Move of card ${cardId} to board ${options.toBoard} was accepted (200).`);
+        console.log(`  Not read back — this reports the request, not the card's current board.`);
         if (options.json) {
           console.log(JSON.stringify(card, null, 2));
         }
