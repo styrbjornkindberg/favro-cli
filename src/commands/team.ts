@@ -4,6 +4,7 @@
  */
 import { Command } from 'commander';
 import { extractEffort } from '../api/context';
+import { excludeUnreadableBoards, Unreachable } from '../lib/read-shape';
 import { Ctx, run } from '../lib/run';
 
 const ACTIVE_STAGES = ['active', 'review', 'testing'];
@@ -33,6 +34,11 @@ interface TeamResult {
   /** The member carrying the most dependency edges — see `TeamMember.dependencyCount`. */
   bottleneck?: { name: string; dependencyCount: number };
   totalMembers: number;
+  /**
+   * Parts of the read that failed, and therefore cards no member's counts
+   * include (#148). Present only when non-empty.
+   */
+  unreachable?: Unreachable[];
   generatedAt: string;
 }
 
@@ -49,6 +55,13 @@ function formatHuman(data: TeamResult): string {
 
   if (data.bottleneck) {
     lines.push(`\n  Bottleneck: ${data.bottleneck.name} (${data.bottleneck.dependencyCount} cards with dependencies)`);
+  }
+
+  // Off `unreachable` itself — human mode must not go quiet on a hole the JSON
+  // reports (#117).
+  if (data.unreachable?.length) {
+    lines.push(`\n  ⚠️  Not counted — ${data.unreachable.length} part(s) of this scope could not be read:`);
+    for (const hole of data.unreachable) lines.push(`     ${hole.id} — ${hole.reason}`);
   }
 
   return lines.join('\n');
@@ -75,10 +88,21 @@ export async function teamHandler(ctx: Ctx, options: TeamOptions) {
     scope = 'all collections';
   }
 
+  // What a hole does to `team`: same rule as `workload` — the unreadable
+  // board's cards are dropped and the hole is named, no exit code, because
+  // `team` states no verdict either.
+  //
+  // `wipCount`, `doneCount` and `completionRate` all gate on `card.stage`, and
+  // `avgWip`/`bottleneck` are derived from them. A board with no columns would
+  // have contributed cards with no stage, i.e. every one of its members read as
+  // 0 WIP, 0 done, 0% completion — a specific claim about a person's workload,
+  // manufactured from a failed HTTP call.
+  const { cards: readableCards, unreachable } = excludeUnreadableBoards(snapshot);
+
   // Build per-member stats
   const memberMap = new Map<string, TeamMember>();
 
-  for (const card of snapshot.allCards) {
+  for (const card of readableCards) {
     const assignees = card.assignees?.length ? card.assignees : [];
     for (const uid of assignees) {
       if (!memberMap.has(uid)) {
@@ -134,6 +158,7 @@ export async function teamHandler(ctx: Ctx, options: TeamOptions) {
     avgWip,
     bottleneck: bottleneck && bottleneck.dependencyCount > 0 ? bottleneck : undefined,
     totalMembers: members.length,
+    ...(unreachable.length > 0 ? { unreachable } : {}),
     generatedAt: new Date().toISOString(),
   };
 

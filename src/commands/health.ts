@@ -10,6 +10,8 @@
  */
 import { Command } from 'commander';
 import { AggregateCard } from '../api/aggregate';
+import { excludeUnreadableBoards, Unreachable } from '../lib/read-shape';
+import { RefusalError } from '../lib/refusal';
 import { Ctx, run } from '../lib/run';
 import { daysSince, DEFAULT_STALE_DAYS, isStale } from '../lib/time';
 
@@ -42,6 +44,13 @@ interface HealthResult {
   boards: BoardHealth[];
   overallScore: number;
   overallSignal: 'green' | 'yellow' | 'red';
+  /**
+   * Parts of the read that failed, and therefore boards this report does NOT
+   * cover. Present only when non-empty, so absent means every board in scope
+   * was scored (#148). While it is present, `overallScore` is an average over
+   * the boards that were readable and nothing else.
+   */
+  unreachable?: Unreachable[];
   generatedAt: string;
 }
 
@@ -134,6 +143,13 @@ function formatHuman(data: HealthResult): string {
     lines.push(`     Flow: ${b.breakdown.flow}  Stale: ${b.breakdown.stale}  Deps: ${b.breakdown.dependencies}  Overdue: ${b.breakdown.overdue}`);
   }
 
+  // Read off `unreachable` rather than restated, so the human line and the JSON
+  // key cannot drift — the hole `risks --human` used to hide (#117).
+  if (data.unreachable?.length) {
+    lines.push(`\n  ⚠️  Not scored — ${data.unreachable.length} part(s) of this scope could not be read:`);
+    for (const hole of data.unreachable) lines.push(`     ${hole.id} — ${hole.reason}`);
+  }
+
   return lines.join('\n');
 }
 
@@ -143,8 +159,8 @@ interface HealthOptions {
 }
 
 /**
- * No `exitCode` on the `Result`, and `health` is now the only answer-code
- * command without one.
+ * The `exitCode` here answers "does this report cover the scope you asked
+ * about", and NOT "is the scope healthy".
  *
  * ADR-0002 and #115 both describe `health` as exiting 1 on an unhealthy report
  * — it never has. The only hard exit this command carried was the error
@@ -156,8 +172,11 @@ interface HealthOptions {
  * #117 did NOT settle it here, because `health` scores rather than finds: the
  * cut is `red` versus `yellow`, and picking it is a product decision, not the
  * migration this file already went through in #115. That decision is #115's
- * last open acceptance box. When it lands the change is one line —
- * `exitCode: result.overallSignal === 'red' ? 1 : 0` — plus a test.
+ * last open acceptance box, and #148 did not take it either — what #148 added
+ * is the orthogonal half, an incomplete read forbidding a clean code. When
+ * #115 lands the change is one clause —
+ * `unreachable.length > 0 || result.overallSignal === 'red' ? 1 : 0` — plus a
+ * test.
  */
 export async function healthHandler(ctx: Ctx, options: HealthOptions) {
   const cardLimit = parseInt(options.limit, 10) || 1000;
@@ -175,12 +194,45 @@ export async function healthHandler(ctx: Ctx, options: HealthOptions) {
     scope = 'all collections';
   }
 
+  // What a hole does to `health`: the board is OMITTED from scoring and named.
+  //
+  // A board whose columns read failed has no `stage` on any of its cards, and
+  // `scoreBoard` reads a missing stage as "not flowing" — so the board scored
+  // `flow: 0` and came back RED off a read that never happened (#148). The
+  // other three options were weighed:
+  //
+  //  - Score it anyway: that is the bug. A score over cards whose stage is
+  //    unknown is not a score, it is a number shaped like one.
+  //  - Refuse the whole command: throws away the boards that WERE readable,
+  //    which are the majority in the failure this actually models (one board's
+  //    columns 500ing out of twelve).
+  //  - Report it with the hole named but still scored: an agent reading
+  //    `boards[]` would have to know to cross-reference `unreachable` before
+  //    trusting a row. Absence cannot be misread.
+  //
+  // Refusal survives for the one case where omission would answer nothing at
+  // all — every board in scope dark — because an empty `boards` list rolls up
+  // to 100/green, and "we read nothing" must never print as "all clear".
+  const { cards, unreachable } = excludeUnreadableBoards(snapshot);
+
   // Group cards by board
   const boardCardMap = new Map<string, AggregateCard[]>();
-  for (const card of snapshot.allCards) {
+  for (const card of cards) {
     const bName = card.boardName ?? 'Unknown';
     if (!boardCardMap.has(bName)) boardCardMap.set(bName, []);
     boardCardMap.get(bName)!.push(card);
+  }
+
+  // Keyed on boards actually DROPPED, not on `unreachable` being non-empty: a
+  // failed members read is also a hole but costs no board, so gating on the
+  // list itself made an empty scope with an unreadable member list refuse with
+  // "no board in scope could be read" — a false statement about a scope that
+  // read fine and simply holds nothing.
+  if (cards.length < snapshot.allCards.length && boardCardMap.size === 0) {
+    throw new RefusalError(
+      `Cannot score health for ${scope}: no board in scope could be read.\n` +
+      unreachable.map(h => `  ${h.id} — ${h.reason}`).join('\n'),
+    );
   }
 
   const { boards, overallScore, overallSignal } = rollUp(
@@ -192,10 +244,29 @@ export async function healthHandler(ctx: Ctx, options: HealthOptions) {
     boards,
     overallScore,
     overallSignal,
+    // Non-empty only — absent stays distinguishable from empty (#116).
+    ...(unreachable.length > 0 ? { unreachable } : {}),
     generatedAt: new Date().toISOString(),
   };
 
-  return { item: result, human: formatHuman };
+  return {
+    item: result,
+    human: formatHuman,
+    // Exit 0 is a POSITIVE claim — "this is the health of the scope you asked
+    // about" — so a report that skipped part of the scope cannot earn one.
+    //
+    // Spread in rather than `? 1 : 0`, so a complete report leaves
+    // `process.exitCode` untouched instead of pinning it to an explicit 0.
+    // Same observable status either way, but `health` is not an answer-code
+    // command (see above) and must not start behaving like one on the clean
+    // path — `persona-human-flag.test.ts` pins exactly that for all eight
+    // personas.
+    //
+    // This does NOT settle the red-vs-yellow cut #115 left open: the code still
+    // says nothing about the verdict, only about whether the report covers what
+    // was asked for. When #115 lands, the two conditions OR together.
+    ...(unreachable.length > 0 ? { exitCode: 1 } : {}),
+  };
 }
 
 export function registerHealthCommand(program: Command): void {
