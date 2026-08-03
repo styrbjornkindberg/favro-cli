@@ -17,6 +17,8 @@ import * as path from 'path';
 import { execSync } from 'child_process';
 import { c, box } from '../lib/theme';
 import { run } from '../lib/run';
+import { findInteractiveCommand, interactiveRefusal } from '../lib/interactive-commands';
+import { splitCommand } from '../lib/split-command';
 
 // ─── History ──────────────────────────────────────────────────────────────────
 
@@ -128,6 +130,45 @@ function printBanner(): void {
 }
 
 /**
+ * One typed line, run as `favro <cmd>`.
+ *
+ * Exported so the refusal below is testable without driving a REPL — the shell
+ * hardcodes `process.stdin`, and a test that fed it a prompt is exactly the test
+ * that hangs.
+ *
+ * THE REFUSAL (#147). The child's stdout and stderr are PIPES here, because the
+ * `if (output.trim())` line below is the shell's post-processing and capture is
+ * what pays for it. So `skill edit` gets a pipe where vi wants a terminal, prints
+ * "Output is not to a terminal", and hangs — the same #129 symptom through a
+ * different door. Flipping to `stdio: 'inherit'` would fix vi and destroy the
+ * capture for all 128 other commands, so the interactive ones are refused BY NAME
+ * instead and everything else keeps its output. `interactive-commands.ts` is the
+ * one place that decides which is which; `favro_run` reads the same list.
+ */
+export function runFavro(cmd: string): void {
+  const interactive = findInteractiveCommand(splitCommand(cmd));
+  if (interactive) {
+    console.error(c.error(interactiveRefusal(interactive)));
+    return;
+  }
+
+  try {
+    const output = execSync(`favro ${cmd}`, {
+      encoding: 'utf-8',
+      stdio: ['inherit', 'pipe', 'pipe'],
+      timeout: 60000,
+    });
+    if (output.trim()) console.log(output.trimEnd());
+  } catch (err: any) {
+    if (err.stderr) {
+      console.error(c.error(err.stderr.trim()));
+    } else if (err.message) {
+      console.error(c.error(err.message));
+    }
+  }
+}
+
+/**
  * ON THE `void` ARM AND ANONYMOUS (ADR-0002, #118). The REPL owns its stdout,
  * and it shells out to `favro` for every real command — so it needs no client
  * of its own, and `{ anonymous: true }` is what makes that a compile error
@@ -217,20 +258,7 @@ export async function runShell(initialBoard?: string): Promise<void> {
       }
     }
 
-    try {
-      const output = execSync(`favro ${cmd}`, {
-        encoding: 'utf-8',
-        stdio: ['inherit', 'pipe', 'pipe'],
-        timeout: 60000,
-      });
-      if (output.trim()) console.log(output.trimEnd());
-    } catch (err: any) {
-      if (err.stderr) {
-        console.error(c.error(err.stderr.trim()));
-      } else if (err.message) {
-        console.error(c.error(err.message));
-      }
-    }
+    runFavro(cmd);
 
     rl.setPrompt(buildPrompt(state));
     rl.prompt();

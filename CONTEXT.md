@@ -119,6 +119,20 @@ it is why a refusal is never reported as retryable. `RefusalError`
 (`src/lib/refusal.ts`) is a leaf class every refusal extends; anything raising a bare
 `Error` is treated as a failure and unwinds, which is the safe default.
 
+**interactive command** — a command that cannot work without a terminal: it prompts, it
+draws an arrow-key picker, it hands a child this process's tty, or it repaints until
+Ctrl+C. `favro` is not always the top-level process — `favro shell` and `favro_run` both
+run it as a child on pipes — so an interactive command underneath either one *hangs*,
+which for an agent is the worst failure there is: the whole timeout budget for no
+answer. Both readers therefore ask one list, `src/lib/interactive-commands.ts`, and
+refuse before spawning. Non-interactive commands keep their output capture, which is
+what a blanket `stdio: 'inherit'` would have cost.
+`src/__tests__/interactive-command-coverage.test.ts` is the ratchet: it walks the real
+commander surface through the TypeScript checker and fails when a registered command can
+reach a prompt without being listed. `confirmAction` is the one barrier cut out of that
+walk — it refuses on `!isTTY` before it prompts, so its forty callers are safe on a pipe
+already.
+
 **scope lock** — the mandatory guardrail on every write that *lands on a board*. Such a
 write resolves its board and checks it against the locked collection before anything
 happens; a batch that straddles the lock refuses as a whole, and a write that names a
