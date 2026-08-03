@@ -171,8 +171,9 @@ export function classifyThrownError(error: unknown): FavroErrorClassification | 
  * that never got a response, and an `ENOENT`, a `TypeError`, a bad flag. The
  * dispatch table may conflate them — everything it sees was raised inside a
  * write it instrumented, so "unclassifiable" there really does mean "a wire
- * hiccup after a clean unwind". The CLI's error boundary sees the whole
- * population and may not (ADR-0002, "Two populations of error").
+ * hiccup after a clean unwind". A caller that sees the whole population may not:
+ * the CLI's error boundary (#134) and the skill engine's end-of-run unwind
+ * (#151) both ask this first (ADR-0002, "Two populations of error").
  *
  * Structural, not string-matched: axios stamps `isAxiosError` on everything it
  * raises, transport failures included, so the discriminator is a property of

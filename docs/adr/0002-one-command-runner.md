@@ -181,6 +181,16 @@ error, unwound and derived `retryable` itself — is carried verbatim and stays 
 is the table's own narrow population by construction. `skill-dispatch-wire.test.ts` is that path,
 not this one; #151's issue text named it as pinning the same defect and it does not.
 
+**Narrow is not the same as clean, and this is the rule's one named exception.** `intent.run` is
+our code too, so a deterministic throw of ours raised in there — before the intent's first
+instrumented write, or from a plain `Error` like `tx-cards.ts`'s "answered 200 but did not take" —
+is still read as transient by `dispatch.ts`. `skill-dispatch-wire.test.ts`'s `probe-skill-fail`
+is exactly that shape: it writes nothing, throws a bare `Error`, and answers `true`. #151 measured
+the alternative and left it — gating `dispatch.ts` flips the verdict for every caller of the table
+and fails seven tests, one of them `dispatch-tx-wire.test.ts`'s *"a plain in-process failure after
+a write is still retryable"*, which asserts the current reading on purpose. Closing that is a
+decision about what the table's population means, not a typo, and it wants its own issue.
+
 Where the amendment above says a decline is `false` only where someone remembered to raise a
 `RefusalError`, that cost is no longer paid anywhere: the gate answers first at both wide sites.
 `RefusalError` still earns its keep as the type that *names* a decline, and `safety.ts` traces

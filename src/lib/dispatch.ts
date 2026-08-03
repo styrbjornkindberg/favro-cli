@@ -59,9 +59,17 @@ export interface DispatchResult<T = unknown> {
    * one that will recur identically. `rollback-incomplete` fails the first;
    * a deterministic refusal — ours or the wire's — fails the second.
    *
+   * It is NOT "the world is unchanged" — `outcome` answers that, and the two
+   * came apart the moment a fully-undone run met a failure that can never
+   * succeed (#151).
+   *
    * This is the ONE derivation. `reportDispatch`, the skill engine and
    * `skill run` all read it rather than re-deriving it from the outcome, which
-   * is what let three sites drift apart in #66.
+   * is what let three sites drift apart in #66. A reader holding a WIDER
+   * population than this table's asks `isWireFailure` first and only then this
+   * — `run.ts` since #134, the skill engine's end-of-run unwind since #151 —
+   * which narrows the answer without re-deriving it (ADR-0002, "Two
+   * populations").
    */
   retryable: boolean;
   value?: T;
@@ -171,9 +179,10 @@ export { RefusalError };
  * started, and the next attempt may well behave differently.
  *
  * That last reading is only sound for THIS population — errors raised inside a
- * write this table instrumented, where unclassifiable means a wire hiccup. The
- * CLI's error boundary sees a wider one and gates this call behind
- * `isWireFailure` for exactly that reason (#134, ADR-0002 "Two populations").
+ * write this table instrumented, where unclassifiable means a wire hiccup. Every
+ * caller holding a wider one gates this call behind `isWireFailure` for exactly
+ * that reason: the CLI's error boundary since #134, the skill engine's
+ * end-of-run unwind since #151 (ADR-0002 "Two populations").
  */
 export function isRetryable(outcome: TxOutcome, error: unknown): boolean {
   if (outcome !== 'rolled-back') return false;

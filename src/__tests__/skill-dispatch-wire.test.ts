@@ -316,9 +316,16 @@ describe('the run is ONE transaction — one log, threaded through every step', 
     // it, unwinds, derives `retryable` itself and hands the engine a
     // `StepDispatchFailure`; `rollback` is carried from that, and the
     // end-of-run unwind #151 gated never runs (the table emptied the log).
-    // This is the table's own narrow population — an error raised inside a
-    // write it instrumented — where unclassifiable really does mean a wire
-    // hiccup after a clean unwind (ADR-0002, "Two populations").
+    // Forcing that line to `false` leaves this assertion green — measured.
+    //
+    // So this is the table's own population, which #66 and #134 left ungated on
+    // the reading that everything it sees was raised inside a write it
+    // instrumented. `probe-skill-fail` is the case that reading does not cover:
+    // it instruments nothing and throws a bare `Error`, so "unclassifiable"
+    // here is a bug of OURS being called a wire hiccup. #151 stopped at the
+    // wide site and named this as the rule's one exception (ADR-0002, "Two
+    // populations") — gating the table too fails seven tests, one of which
+    // asserts this reading deliberately, so it is a decision, not a typo.
     expect(result.rollback?.retryable).toBe(true);
     // What a caller can see afterwards: the card step 1 made is gone.
     expect(stand.cards.size).toBe(0);
@@ -452,6 +459,41 @@ describe('the run is ONE transaction — one log, threaded through every step', 
     // answers for itself — a 400 nobody can name may behave differently next
     // time, and that advice survives #151.
     expect(result.rollback?.retryable).toBe(true);
+    // And the transaction still unwound: step 1's card is gone from the wire.
+    expect(stand.cards.size).toBe(0);
+  });
+
+  it('a DETERMINISTIC wire failure escaping uninstrumented is NOT retryable either', async () => {
+    // #151's gate is two conjuncts and this pins the SECOND one: behind
+    // `isWireFailure` the table still decides which HTTP failures are
+    // deterministic, so the answer is not merely "did it touch the wire".
+    // Dropping `&& isRetryable(...)` from the gate passed all 156 suites until
+    // this test existed — nothing else reaches that arm.
+    //
+    // Same seam as the test above, opposite answer: the scope lock's
+    // `GET /widgets/{board}` runs outside `dispatch`'s try, so this escapes the
+    // table uninstrumented and the engine classifies it — and `403` is
+    // `favro-error`'s fail-closed permission arm, so the identical run is
+    // refused identically. Keyed on the board's own path, not a call count.
+    const stand = await startServer({
+      fail: (r) =>
+        r.path === `/widgets/${OTHER_BOARD}`
+          ? { status: 403, message: 'Access denied' }
+          : undefined,
+    });
+
+    const result = await runSkill(
+      skill(
+        { command: 'create', args: { name: 'first', board: BOARD } },
+        { command: 'create', args: { name: 'second', board: OTHER_BOARD } },
+      ),
+      opts(stand, { config: { scopeCollectionId: 'coll-a' } }),
+    );
+
+    expect(result.steps[1].error).toContain('403');
+    expect(result.status).toBe('failed');
+    expect(result.rollback?.outcome).toBe('rolled-back');
+    expect(result.rollback?.retryable).toBe(false);
     // And the transaction still unwound: step 1's card is gone from the wire.
     expect(stand.cards.size).toBe(0);
   });
