@@ -1396,9 +1396,13 @@ favro activity <card> [--since <time>] [--until <time>] [--limit <n>]
 
   [CREATED] by bob — 2026-03-28 09:30
     Sprint 42 / Backlog
-
-Total: 2 entry/entries shown.
 ```
+
+The header count is what was **printed**. When `--limit` cut the list, a
+`(truncated to N of M — raise --limit to see the rest)` line closes the output,
+and the default JSON carries the same fact as `truncated: true` on the envelope.
+There is no `--json` flag on this command — JSON is the default and `--human` is
+the only way out (#116). Passing one is `error: unknown option '--json'`.
 
 **Scope note:** Favro has no board-level activity feed, so there is no board form of this command. The feed is also scoped to what the API-key user follows or has news for, so it is card history for humans — never a source of truth for a card's state.
 

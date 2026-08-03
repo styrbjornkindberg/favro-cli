@@ -95,6 +95,87 @@ export function unreachableReason(error: unknown): string {
 }
 
 /**
+ * Hole collection for a parallel fan-out — the one implementation.
+ *
+ * `boundedSweep` cannot serve one: a fan-out is N DIFFERENT calls with N
+ * different return types and no shared `ids` list, and routing it through a
+ * sweep would serialise it. `ContextAPI.getSnapshot` (#116) built this inline
+ * and `AggregateAPI.getMultiBoardSnapshot` (#148) needs the identical thing, so
+ * it lives here once rather than twice.
+ *
+ * `unreachable` is the live array — read it AFTER every call has settled, and
+ * spread the key in only when it is non-empty, so absent stays distinguishable
+ * from empty (rule 3 above).
+ */
+export function holeCollector(): {
+  unreachable: Unreachable[];
+  orElse: <T>(id: string, call: Promise<T>, fallback: T) => Promise<T>;
+} {
+  const unreachable: Unreachable[] = [];
+  return {
+    unreachable,
+    orElse: async <T>(id: string, call: Promise<T>, fallback: T): Promise<T> => {
+      try {
+        return await call;
+      } catch (error) {
+        unreachable.push({ id, reason: unreachableReason(error) });
+        return fallback;
+      }
+    },
+  };
+}
+
+/**
+ * Prefix of the `unreachable.id` a failed per-board columns read records.
+ *
+ * `AggregateAPI` fans out over boards, so unlike `getSnapshot`'s five bare
+ * facet names its hole ids have to say WHICH board — `columns:<boardId>`.
+ */
+export const COLUMNS_HOLE = 'columns:';
+
+/**
+ * Drop the cards whose `stage` is unknown because their board's columns read
+ * failed, and hand back the holes so the caller can name them.
+ *
+ * This is the difference between a hole and an empty list, made usable. A
+ * failed columns read leaves every card on that board with no `stage`, which
+ * every stage predicate in this codebase reads as "not done", "not active",
+ * "not flowing" — so `health` scored the board `flow: 0` and reported it RED
+ * off a read that never happened (#148), `stale` listed its finished cards as
+ * stale, and `workload`/`team` reported everyone on it at zero WIP. Zero is a
+ * measurement; these were not.
+ *
+ * Structurally typed so the `--board` arms of `workload` and `stale` — which
+ * carry a `ContextSnapshot`'s facet-named holes (`columns`, not
+ * `columns:<id>`) — go through the same call. Those ids do not match the
+ * prefix, so nothing is excluded and the holes are still reported, which is
+ * the right answer for a snapshot that only ever covered one board.
+ *
+ * Lives HERE and not next to `AggregateSnapshot`, for two reasons that agree:
+ * it is a rule about reading an `Unreachable`, which is this module's whole
+ * remit — and five test files `jest.mock('../../api/aggregate')`, which
+ * auto-mocks every export of that module, so a pure helper exported from it
+ * comes back as a `jest.fn()` returning `undefined` and every destructuring
+ * call site throws. Nothing mocks `read-shape`.
+ */
+export function excludeUnreadableBoards<T extends { boardId?: string }>(
+  snapshot: { allCards: T[]; unreachable?: Unreachable[] },
+): { cards: T[]; unreachable: Unreachable[] } {
+  const unreachable = snapshot.unreachable ?? [];
+  const dark = new Set(
+    unreachable
+      .filter(h => h.id.startsWith(COLUMNS_HOLE))
+      .map(h => h.id.slice(COLUMNS_HOLE.length)),
+  );
+  return {
+    cards: dark.size === 0
+      ? snapshot.allCards
+      : snapshot.allCards.filter(c => !dark.has(c.boardId ?? '')),
+    unreachable,
+  };
+}
+
+/**
  * A `--limit` string as a usable cap, or `undefined` if it is not one.
  *
  * Whole digits only, and deliberately NOT `parseInt`: `parseInt` accepts a

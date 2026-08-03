@@ -202,6 +202,19 @@ describe('favro activity <cardId>', () => {
     expect(output).toContain('truncated to 1 of 2');
   });
 
+  it('never calls a capped count the "Total" (#137)', async () => {
+    // A `human` is handed the CAPPED rows, so any count it prints is a count of
+    // what was shown. Labelling that "Total" is the stronger claim #137 killed:
+    // 200 of 300 entries under `Total: 200` reads as the answer.
+    MockActivityApiClient.prototype.getCardActivity = jest.fn().mockResolvedValue(SAMPLE_ACTIVITY);
+
+    await runCli(['activity', CARD, '--limit', '1', '--human']);
+
+    const output = consoleSpy.mock.calls.flat().join('\n');
+    expect(output).not.toMatch(/total/i);
+    expect(output).toContain('truncated to 1 of 2');
+  });
+
   it('refuses an unparseable --since before calling the API', async () => {
     MockActivityApiClient.prototype.getCardActivity = jest.fn();
 

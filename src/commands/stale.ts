@@ -4,6 +4,7 @@
  */
 import { Command } from 'commander';
 import { AggregateCard } from '../api/aggregate';
+import { excludeUnreadableBoards, Unreachable } from '../lib/read-shape';
 import { Ctx, run } from '../lib/run';
 import { daysSince, DEFAULT_STALE_DAYS, isStale, staleWording } from '../lib/time';
 
@@ -47,6 +48,12 @@ interface StaleResult {
    * number of cards actually judged stale.
    */
   undated: UndatedCard[];
+  /**
+   * Parts of the read that failed, and therefore cards this assessment did not
+   * see at all (#148) — a different exclusion from `undated`, which is a card
+   * we DID read and could not date. Present only when non-empty.
+   */
+  unreachable?: Unreachable[];
   generatedAt: string;
 }
 
@@ -83,6 +90,13 @@ function formatHuman(data: StaleResult): string {
     }
   }
 
+  // Same reasoning as `undated` directly above: printed alongside "No stale
+  // cards found.", never instead of it.
+  if (data.unreachable?.length) {
+    lines.push(`  Not read — not assessed (${data.unreachable.length}):`);
+    for (const hole of data.unreachable) lines.push(`    • ${hole.id} — ${hole.reason}`);
+  }
+
   return lines.join('\n');
 }
 
@@ -101,7 +115,7 @@ export async function staleHandler(ctx: Ctx, options: StaleOptions) {
   const staleDays = !isNaN(parsedDays) && parsedDays >= 0 ? parsedDays : DEFAULT_STALE_DAYS;
   const cardLimit = parseInt(options.limit, 10) || 1000;
 
-  let snapshot: { allCards: AggregateCard[] };
+  let snapshot: { allCards: AggregateCard[]; unreachable?: Unreachable[] };
   let scope: string;
   if (options.board) {
     // `ctx.api.context` replaces the dynamic `await import` + `new ContextAPI`
@@ -113,6 +127,9 @@ export async function staleHandler(ctx: Ctx, options: StaleOptions) {
         ...c,
         boardName: boardSnapshot.board.name,
       })) as AggregateCard[],
+      // Carried across, not dropped — #116 records these and this arm was one
+      // of the five consumers #117 found throwing them away.
+      unreachable: boardSnapshot.unreachable,
     };
     scope = boardSnapshot.board.name;
   } else if (options.collection) {
@@ -126,11 +143,21 @@ export async function staleHandler(ctx: Ctx, options: StaleOptions) {
     scope = 'all collections';
   }
 
+  // What a hole does to `stale`: the unreadable board's cards are dropped and
+  // the hole is named beside `undated`, no exit code — this command finds
+  // rather than judges.
+  //
+  // Dropped rather than assessed: the very first thing the loop below does is
+  // `DONE_STAGES.includes(card.stage ?? '')`, and a board with no columns has
+  // no stage on anything. Every finished card on it would have sailed past that
+  // guard and been reported as a stale card somebody should chase (#148).
+  const { cards, unreachable } = excludeUnreadableBoards(snapshot);
+
   const assignedStale: StaleCard[] = [];
   const unassignedStale: StaleCard[] = [];
   const undated: UndatedCard[] = [];
 
-  for (const card of snapshot.allCards) {
+  for (const card of cards) {
     // Skip done/archived cards. Before the date check: this command has no
     // opinion about finished work, datable or not.
     if (DONE_STAGES.includes(card.stage ?? '')) continue;
@@ -179,6 +206,7 @@ export async function staleHandler(ctx: Ctx, options: StaleOptions) {
     unassignedStale,
     total: assignedStale.length + unassignedStale.length,
     undated,
+    ...(unreachable.length > 0 ? { unreachable } : {}),
     generatedAt: new Date().toISOString(),
   };
 
