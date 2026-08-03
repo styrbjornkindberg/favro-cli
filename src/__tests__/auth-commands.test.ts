@@ -50,7 +50,26 @@ describe('auth login command', () => {
   let consoleErrorSpy: jest.SpyInstance;
   let exitSpy: jest.SpyInstance;
 
+  // `isTTY` is typed `boolean`, but node leaves it ABSENT on a pipe rather than
+  // setting it false — measured, inside jest too. So the pipe case is modelled by
+  // DELETING the property, not by assigning `false`, and that distinction is the
+  // whole test: rewriting the guard to `process.stdin.isTTY === false` passes
+  // against `false` and does nothing on a real pipe, where the comparison is
+  // `undefined === false`. Assigning `false` here let that rewrite through the
+  // suite once already.
+  const stdin = process.stdin as { isTTY?: boolean };
+  const realIsTTY = stdin.isTTY;
+  const pretendPipe = (): void => {
+    delete stdin.isTTY;
+  };
+
   beforeEach(() => {
+    // `promptInput` refuses without a terminal (#147), and jest's stdin is a
+    // pipe. These tests are the WITH-a-terminal half, so they say so rather than
+    // being exempted by a `NODE_ENV === 'test'` back door — which would have
+    // left the guard untested in the only place it can be tested. The pipe half
+    // is the first two tests below.
+    stdin.isTTY = true;
     jest.resetAllMocks();  // Clears queued mock return values to prevent cross-test leakage
     consoleLogSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
     consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
@@ -84,10 +103,54 @@ describe('auth login command', () => {
   });
 
   afterEach(() => {
+    stdin.isTTY = realIsTTY;
     process.exitCode = undefined;
     consoleLogSpy.mockRestore();
     consoleErrorSpy.mockRestore();
     exitSpy.mockRestore();
+  });
+
+  test('refuses to prompt when stdin is not a terminal, rather than blocking on it', async () => {
+    // THE HOLE THIS CLOSES (#147). `readline` on a pipe never resolves —
+    // measured, a 60022ms `favro_run` timeout ending in a bare "Command failed".
+    // The interactive-command list cannot cover it: the list lets `--email` +
+    // `--api-key` through on purpose, and that form still prompts when the
+    // account has several organizations, or when either value is empty.
+    pretendPipe();
+
+    await expect(promptInput('Select organization [1-2]: ')).rejects.toThrow(/without a terminal/);
+    // The load-bearing half: it refused instead of opening the interface it
+    // would then have waited on forever.
+    expect(mockReadline.createInterface).not.toHaveBeenCalled();
+  });
+
+  test('a flagged auth login still refuses rather than hanging on the organization picker', async () => {
+    // The flagged form is the one an agent uses and the one the list waves
+    // through. Two organizations is all it takes to reach a prompt no flag skips.
+    pretendPipe();
+    MockedFavroHttpClient.prototype.get = jest.fn().mockImplementation((url: string) =>
+      url === '/organizations'
+        ? Promise.resolve({
+            entities: [
+              { organizationId: 'org-1', name: 'One' },
+              { organizationId: 'org-2', name: 'Two' },
+            ],
+          })
+        : Promise.resolve({}),
+    );
+
+    const program = buildRoot();
+    registerAuthCommand(program);
+
+    await program.parseAsync([
+      'node', 'test', '--human', 'auth', 'login', '--email', 'a@b.c', '--api-key', 'k',
+    ]);
+
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('without a terminal'));
+    expect(process.exitCode).toBe(1);
+    // Nothing saved: it refused before `writeConfig`, so a half-written config
+    // is not the price of the guard.
+    expect(mockFs.writeFile).not.toHaveBeenCalled();
   });
 
   test('saves API key via --api-key flag without prompt', async () => {

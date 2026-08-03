@@ -184,4 +184,35 @@ describe('favro_run tool', () => {
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('Command failed');
   });
+
+  test('a failing command carries its reason, not just "Command failed"', async () => {
+    // ADR-0002: a refusal must say WHY, and machine mode — the default, and what
+    // an agent gets — writes the envelope to STDOUT (rule 3). `promisify(execFile)`
+    // folds the child's stderr into `err.message` and hangs its stdout off the
+    // error object, MEASURED against node v22:
+    //
+    //   message  "Command failed: node …\na warning"
+    //   stdout   '{"error":{"message":"No email provided.","retryable":false}}'
+    //   stderr   "a warning"
+    //
+    // Reading `message` alone therefore dropped the reason for every in-CLI
+    // refusal — the confirmAction declines, the no-terminal guard, scope-lock —
+    // and returned a bare "Command failed: node …/cli.js auth login …".
+    (mockExecFile as unknown as jest.Mock).mockImplementation((...args: unknown[]) => {
+      const cb = args[args.length - 1] as (err: Error) => void;
+      cb(Object.assign(new Error('Command failed: node cli.js auth login\na warning'), {
+        stdout: '{"error":{"message":"No email provided.","retryable":false}}',
+        stderr: 'a warning',
+      }));
+    });
+    const { tools } = createMcpServer();
+
+    const result = await tools.get('favro_run')!({ command: 'auth login --email x --api-key y' }) as ToolResult;
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('No email provided.');
+    expect(result.content[0].text).toContain('"retryable":false');
+    // stderr is already inside `message`; appending it again would double it.
+    expect(result.content[0].text.match(/a warning/g)).toHaveLength(1);
+  });
 });

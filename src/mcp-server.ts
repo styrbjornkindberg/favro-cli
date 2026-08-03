@@ -21,6 +21,7 @@ import { promisify } from 'util';
 import * as path from 'path';
 import { z } from 'zod';
 import { splitCommand } from './lib/split-command';
+import { findInteractiveCommand, interactiveRefusal } from './lib/interactive-commands';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { version } = require('../package.json') as { version: string };
 
@@ -81,13 +82,40 @@ export function createMcpServer(opts: { credsEnv?: Record<string, string> } = {}
 
   async function runHandler(args: { command: string }): Promise<ToolResult> {
     const execArgs = splitCommand(args.command.trim());
+
+    // REFUSE BEFORE SPAWNING (#147). Every fd here is a pipe, so `shell`,
+    // `browse`, `skill edit`, `board --watch` and the bare main menu block on
+    // input that never arrives and come back 60 seconds later as a timeout. A
+    // timeout reads to an agent as "something went wrong, maybe retry"; this
+    // says "this command cannot work here", instantly, and names itself. Same
+    // list `favro shell` reads — `lib/interactive-commands.ts`.
+    const interactive = findInteractiveCommand(execArgs);
+    if (interactive) {
+      return { content: [{ type: 'text', text: interactiveRefusal(interactive) }], isError: true };
+    }
+
     try {
       const { stdout, stderr } = await execFileAsync('node', [favroBin, ...execArgs], { timeout: 60_000, env: childEnv });
       let text = stdout || '(no output)';
       if (stderr) text += '\n--- stderr ---\n' + stderr;
       return { content: [{ type: 'text', text }] };
     } catch (err: unknown) {
-      return { content: [{ type: 'text', text: err instanceof Error ? err.message : String(err) }], isError: true };
+      // CARRY THE REASON, NOT JUST "Command failed" (ADR-0002, #147). Node folds
+      // the child's STDERR into `err.message` and leaves its STDOUT on the error
+      // object — and machine mode, which is the default and the mode an agent
+      // gets, writes the `{"error":{message,retryable}}` envelope to STDOUT
+      // (ADR-0002 rule 3). So the message alone was "Command failed: node …/cli.js
+      // auth login --email --api-key" and nothing else: every in-CLI refusal —
+      // the 48 `confirmAction` declines, `promptInput`'s no-terminal guard, every
+      // scope-lock violation — reached the agent with its reason dropped. The
+      // refusals the list itself returns above never had this problem, which is
+      // exactly why it went unnoticed.
+      const text = err instanceof Error ? err.message : String(err);
+      const envelope = (err as { stdout?: string }).stdout?.trim();
+      return {
+        content: [{ type: 'text', text: envelope ? `${text}\n${envelope}` : text }],
+        isError: true,
+      };
     }
   }
 
