@@ -20,6 +20,7 @@
  *    one place.
  */
 import { classifyThrownError } from './favro-error';
+import { RefusalError } from './refusal';
 
 /** An item a composite read could not reach, and why. */
 export interface Unreachable {
@@ -176,23 +177,51 @@ export function excludeUnreadableBoards<T extends { boardId?: string }>(
 }
 
 /**
- * A `--limit` string as a usable cap, or `undefined` if it is not one.
+ * A supplied `--limit` as a usable cap, `undefined` when the flag is ABSENT,
+ * and a refusal when it is present and does not parse (#142).
  *
  * Whole digits only, and deliberately NOT `parseInt`: `parseInt` accepts a
  * numeric PREFIX and stops at the first non-digit, so `--limit 1e9` read as 1,
  * `--limit 5,000` as 5 and `--limit 2.7` as 2. A caller asking for effectively
  * no cap got ONE row back marked `truncated` — well-formed, plausible, and
- * wrong, which is the defect class #44/#91/#136 are all instances of. Rejecting
- * outright is the only reading that cannot answer a plausible wrong number.
+ * wrong, which is the defect class #44/#91/#136 are all instances of. #99 fixed
+ * that half by rejecting outright, but a rejection was still `undefined`, and
+ * `undefined` is what every caller reads as "the flag said nothing" — so
+ * `--limit banana` silently became NO cap on the print path and the command's
+ * own default on the fetch path. Both are a plausible answer invented from
+ * garbage, which is the one thing this codebase does not do (fail-closed).
  *
- * `undefined` means "the flag said nothing usable", and each caller decides
- * what that means: `capRows` treats it as no cap, `activity` and `comments`
- * fall back to their own default cap.
+ * So the two meanings are now two returns, and only one of them is a value:
+ *
+ *   - ABSENT  → `undefined`. Each caller keeps deciding what that means —
+ *     `capRows` no cap, `activity`/`comments`/the fetch caps their own default.
+ *   - GARBAGE → `RefusalError`, naming the value and what is accepted. It is
+ *     deterministic, so retrying is pointless, so it is a refusal and not a
+ *     failure — `run`'s boundary reports it `retryable: false` and exits 1.
+ *
+ * `0` IS GARBAGE, decided (#142). It parses as a number, so it is the one value
+ * where "malformed" is a judgement rather than a fact. `capRows` has always read
+ * it as no cap (`!(cap >= 1)`) and `parseLimit` has always rejected it, so the
+ * two disagreed in spirit; a caller typing `--limit 0` gets *everything* under
+ * the old reading, which is the exact plausible-wrong shape above. "Count only,
+ * no rows" is a real want, but it is not this flag — nothing in the CLI offers
+ * it, and inventing it here would make `0` mean something no other command's
+ * `--limit` means. Refuse, and let a ticket add `--count` if anyone asks.
+ *
+ * A NEGATIVE value is garbage by the same rule and never reached the digit test.
+ *
+ * `flag` names the flag in the refusal, because this is not only `--limit`'s
+ * parser: `sprint-plan --budget` has the same grammar and had the same prefix
+ * bug (`--budget 1e9` planned a ONE-POINT sprint). One parser, one wording, the
+ * flag substituted — not two spellings of the same decline.
  */
-export function parseLimit(limit?: string): number | undefined {
+export function parseLimit(limit?: string, flag = '--limit'): number | undefined {
   if (limit === undefined) return undefined;
   const trimmed = limit.trim();
-  return /^\d+$/.test(trimmed) && Number(trimmed) >= 1 ? Number(trimmed) : undefined;
+  if (/^\d+$/.test(trimmed) && Number(trimmed) >= 1) return Number(trimmed);
+  throw new RefusalError(
+    `${flag} takes a whole number of 1 or more — got "${limit}"`,
+  );
 }
 
 /**
@@ -206,12 +235,13 @@ export function parseLimit(limit?: string): number | undefined {
  * `limit` is `number | string` because commander hands a flag over as a string
  * and every one of the eighteen call sites would otherwise re-type the same
  * `parseInt`. Parsing here rather than eighteen times is also what makes the
- * unparseable case answer once: a `--limit banana` is NO cap, never an empty
- * list. It read as one until #99 — `NaN < 1` is false, so the old guard fell
- * through to `slice(0, NaN)` and returned zero rows marked `truncated`.
+ * unparseable case answer once — and since #142 that answer is a REFUSAL, not a
+ * silent no-cap: a string goes through `parseLimit`, which throws on anything
+ * that is not a whole number of 1 or more. This function therefore throws for a
+ * malformed string, which `run`'s error boundary turns into exit 1.
  *
- * A string goes through `parseLimit`, which takes whole digits and nothing
- * else — `parseInt` accepted a numeric PREFIX, so `--limit 1e9` capped at 1.
+ * A NUMBER handed in by a non-commander caller is not re-validated, so `NaN`
+ * still has to be caught here — that is what `!(cap >= 1)` is for.
  */
 export function capRows<T>(rows: T[], limit?: number | string): ListEnvelope<T> {
   const cap = typeof limit === 'string' ? parseLimit(limit) : limit;

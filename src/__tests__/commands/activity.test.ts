@@ -181,14 +181,22 @@ describe('favro activity <cardId>', () => {
     expect(options).not.toHaveProperty('limit');
   });
 
-  it('a non-numeric --limit falls back to the default rather than capping at 1 (#99)', async () => {
-    MockActivityApiClient.prototype.getCardActivity = jest.fn().mockResolvedValue(SAMPLE_ACTIVITY);
+  it('a non-numeric --limit refuses rather than falling back (#99 → #142)', async () => {
+    const read = jest.fn().mockResolvedValue(SAMPLE_ACTIVITY);
+    MockActivityApiClient.prototype.getCardActivity = read;
 
     await runCli(['activity', CARD, '--limit', '1e9']);
 
+    // #99 stopped it capping at 1; #142 stopped it answering at all. Falling
+    // back to this command's own default 200 is still a number invented from a
+    // value we could not read — and the caller cannot tell it happened.
     const parsed = JSON.parse(consoleSpy.mock.calls[0][0]);
-    expect(parsed.rows).toHaveLength(2);
-    expect(parsed.truncated).toBeUndefined();
+    expect(parsed.rows).toBeUndefined();
+    expect(parsed.error.message).toContain('1e9');
+    expect(parsed.error.retryable).toBe(false);
+    expect(process.exitCode).toBe(1);
+    // And the refusal costs no read: the parse runs before the fetch.
+    expect(read).not.toHaveBeenCalled();
   });
 
   it('says in human mode what `truncated` says in JSON mode', async () => {

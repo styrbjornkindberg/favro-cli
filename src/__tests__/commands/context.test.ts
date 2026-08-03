@@ -129,10 +129,14 @@ describe('favro context <board>', () => {
     expect(consoleSpy).toHaveBeenCalledWith(JSON.stringify(SAMPLE_SNAPSHOT, null, 2));
   });
 
-  it('clamps invalid --limit to 1000', async () => {
+  it('refuses an invalid --limit rather than clamping it to 1000', async () => {
+    // Clamping to the default is a fetch cap invented from a value we could not
+    // read, and the caller cannot tell it happened (#142/#143).
     await runCli(['context', 'boards-1234', '--limit', 'abc']);
 
-    expect(MockContextAPI.prototype.getSnapshot).toHaveBeenCalledWith('boards-1234', 1000);
+    expect(MockContextAPI.prototype.getSnapshot).not.toHaveBeenCalled();
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('abc'));
+    expect(process.exitCode).toBe(1);
   });
 
   it('fails with an error envelope on stdout when the API key is missing', async () => {

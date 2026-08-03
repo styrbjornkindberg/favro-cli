@@ -4,7 +4,7 @@
  */
 import { Command } from 'commander';
 import { AggregateCard } from '../api/aggregate';
-import { excludeUnreadableBoards, Unreachable } from '../lib/read-shape';
+import { excludeUnreadableBoards, parseLimit, Unreachable } from '../lib/read-shape';
 import { Ctx, run } from '../lib/run';
 import { daysSince, DEFAULT_STALE_DAYS, isStale, staleWording } from '../lib/time';
 
@@ -113,7 +113,7 @@ export async function staleHandler(ctx: Ctx, options: StaleOptions) {
   // and read `--days 0` as absent. Clamp-to-declared-default, as `context.ts:50`.
   const parsedDays = parseInt(options.days, 10);
   const staleDays = !isNaN(parsedDays) && parsedDays >= 0 ? parsedDays : DEFAULT_STALE_DAYS;
-  const cardLimit = parseInt(options.limit, 10) || 1000;
+  const cardLimit = parseLimit(options.limit) ?? 1000;
 
   let snapshot: { allCards: AggregateCard[]; unreachable?: Unreachable[] };
   let scope: string;

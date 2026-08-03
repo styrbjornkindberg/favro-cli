@@ -17,6 +17,7 @@
  *   - `unreachable`, when a sub-fetch could not be read (#116)
  */
 import { Command } from 'commander';
+import { parseLimit } from '../lib/read-shape';
 import { Ctx, run } from '../lib/run';
 
 interface ContextOptions {
@@ -28,8 +29,10 @@ interface ContextOptions {
  * back — no stdout capture, no client mock.
  */
 export async function contextHandler(ctx: Ctx, board: string, options: ContextOptions) {
-  const parsedLimit = parseInt(options.limit ?? '1000', 10);
-  const cardLimit = (!isNaN(parsedLimit) && parsedLimit >= 1) ? parsedLimit : 1000;
+  // A FETCH cap, so an absent flag falls back to the declared default and a
+  // malformed one refuses (#143) — never the default, which would be a whole
+  // paginated board read answering a question nobody asked.
+  const cardLimit = parseLimit(options.limit) ?? 1000;
 
   // A single read, so it stays bare (`read-shape.ts` rule 1) — the snapshot IS
   // the entity. Its own `unreachable` rides inside it, where the composite

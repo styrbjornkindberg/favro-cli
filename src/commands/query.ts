@@ -16,6 +16,7 @@
  */
 import { Command } from 'commander';
 import type { QueryResult } from '../types/query';
+import { parseLimit } from '../lib/read-shape';
 import { Ctx, run } from '../lib/run';
 
 /** The result, as it reads to a person. Byte-identical to the pre-#116 render. */
@@ -59,7 +60,7 @@ export async function queryHandler(
   queryParts: string[],
   options: QueryOptions,
 ) {
-  const cardLimit = parseInt(options.limit ?? '1000', 10) || 1000;
+  const cardLimit = parseLimit(options.limit) ?? 1000;
   const result = await ctx.api.query.execute(board, queryParts.join(' '), cardLimit);
 
   // A single read: the query result IS the entity, matches and all. Returning

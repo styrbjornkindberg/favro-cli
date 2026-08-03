@@ -159,6 +159,8 @@ const READS: ListRead[] = [
 ];
 
 let logSpy: jest.SpyInstance;
+/** Refusals reach stderr on the commands that own their own error boundary. */
+let errSpy: jest.SpyInstance;
 
 async function runCli(read: ListRead, extra: string[]): Promise<void> {
   const program = new Command();
@@ -181,7 +183,7 @@ const envelope = (): { rows: unknown[]; truncated?: true } =>
 beforeEach(() => {
   jest.clearAllMocks();
   logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
-  jest.spyOn(console, 'error').mockImplementation(() => {});
+  errSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
   jest.spyOn(console, 'table').mockImplementation(() => {});
   jest.spyOn(process, 'exit').mockImplementation(((code?: number) => {
     throw new ExitCalled(code ?? 0);
@@ -265,15 +267,33 @@ describe.each(READS.map((r) => [r.name, r] as const))('%s', (_name, read) => {
   // asking for effectively no cap got ONE row marked `truncated` — the exact
   // "plausible wrong number" this ticket exists to remove (#44, #91, #136).
   // `banana` was the one bad input the old guard happened to survive.
-  it.each(['banana', '1e9', '2abc', '2.7', '5,000', '1_000', '-1', ''])(
-    'an unparseable --limit (%p) is no cap, never a wrong cap',
+  //
+  // #99 made all of them "no cap", which is a strict improvement and still an
+  // answer invented from input we could not read: the caller asked to be capped,
+  // was not, and got a well-formed list with nothing saying the flag was
+  // ignored. #142 refuses instead, so this asserts the ABSENCE of a result
+  // rather than a different result — the one assertion that holds whether the
+  // command reports through the runner's error envelope or its own boundary.
+  // `0` is in the table by decision: it parses, and used to mean everything.
+  it.each(['banana', '1e9', '2abc', '2.7', '5,000', '1_000', '-1', '', '0'])(
+    'an unparseable --limit (%p) refuses, and emits no result at all',
     async (limit) => {
-      read.stub(THREE);
+      const stub = read.stub(THREE);
 
       await runCli(read, [...read.json, '--limit', limit]);
 
-      expect(envelope().rows).toHaveLength(THREE.length);
-      expect(envelope().truncated).toBeUndefined();
+      expect(() => envelope()).toThrow();
+      const said = [...logSpy.mock.calls, ...errSpy.mock.calls]
+        .map((c) => String(c[0]))
+        .join('\n');
+      expect(said).toContain('takes a whole number of 1 or more');
+      // A refusal names the value, so a caller can see what was read. `''` has
+      // nothing to name and still says what is accepted, above.
+      if (limit !== '') expect(said).toContain(limit);
+      // Nothing was fetched to throw away: the parse runs before the read on
+      // every command that owns its own parse, and the runner's `capRows` refuses
+      // before it writes. Either way there is no result line.
+      expect(stub.mock.calls.length).toBeLessThanOrEqual(1);
     },
   );
 });

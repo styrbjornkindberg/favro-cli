@@ -102,12 +102,13 @@ export async function sprintPlanHandler(ctx: Ctx, options: SprintPlanOptions) {
   // so `--budget 1e9` planned a ONE-POINT sprint and `--budget 40abc` silently
   // became 40 — a well-formed, plausible, wrong answer, which is the defect
   // class `read-shape.ts` names. Whole digits or a refusal, nothing between.
-  const budget = parseLimit(options.budget ?? '40');
-  if (budget === undefined) {
-    throw new RefusalError(`--budget must be a positive number, not "${options.budget}".`);
-  }
+  //
+  // The local `if (budget === undefined) throw` this used to carry is gone:
+  // since #142 `parseLimit` raises the refusal itself, naming the flag it was
+  // given, so a second wording here would be two spellings of one decline.
+  const budget = parseLimit(options.budget, '--budget') ?? 40;
 
-  const cardLimit = parseInt(options.limit ?? '500', 10) || 500;
+  const cardLimit = parseLimit(options.limit) ?? 500;
   const result = await ctx.api.sprintPlan.getSuggestions(options.board, budget, cardLimit);
 
   return { item: result, human: formatHuman };

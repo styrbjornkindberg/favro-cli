@@ -90,7 +90,7 @@ import { runMainMenu } from './commands/main-menu';
 import { logError, latchVerbose } from './lib/error-handler';
 import { ProgressBar } from './lib/progress';
 import { createFavroClient } from './lib/client-factory';
-import { capRows, noteTruncation, omitBulk, writeEnvelope } from './lib/read-shape';
+import { capRows, noteTruncation, omitBulk, parseLimit, writeEnvelope } from './lib/read-shape';
 
 /**
  * Build the CLI program (exported for testing).
@@ -338,10 +338,11 @@ cards
         process.exit(1);
       }
 
-      const parsedLimit = parseInt(options.limit, 10);
-      // A pure OUTPUT cap now, so there is nothing to clamp: the fetch runs to
-      // completion whatever this says.
-      const limit = !isNaN(parsedLimit) && parsedLimit >= 1 ? parsedLimit : 25;
+      // A pure OUTPUT cap, so there is nothing to clamp: the fetch runs to
+      // completion whatever this says. A malformed value refuses (#142) rather
+      // than falling back to 25 — the caller asked to be capped at something,
+      // and 25 is not it.
+      const limit = parseLimit(options.limit) ?? 25;
 
       const api = new CardsAPI(client);
 

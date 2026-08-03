@@ -59,7 +59,13 @@ export function registerCommentsCommand(program: Command): void {
       'Tip: Use `favro cards list --board <board>` to find card IDs.'
     )
     .option('--limit <number>', 'Maximum number of comments to print (default: 100)', '100')
-    .action(run(async (ctx: Ctx, cardId: string, options: { limit?: string }) => ({
+    .action(run(async (ctx: Ctx, cardId: string, options: { limit?: string }) => {
+      // Parsed BEFORE the fetch, not inline in the returned object: since #142 a
+      // malformed `--limit` refuses, and a refusal evaluated after `rows:` costs
+      // a whole comments read that is then thrown away. Property order decided
+      // that, which is too quiet a thing to leave load-bearing.
+      const limit = parseLimit(options.limit) ?? 100;
+      return {
       // The fetch runs to completion; `--limit` cuts the PRINT (#136). The old
       // shape capped the fetch and then printed that count as the total, so a
       // card with 150 comments answered "100". `capRows` inside the runner is
@@ -67,7 +73,7 @@ export function registerCommentsCommand(program: Command): void {
       // and cannot disagree — and it owns the parse too, so `--limit 1e9` is
       // not read as 1 by a local `parseInt` (#99).
       rows: await ctx.api.comments.listComments(cardId),
-      limit: parseLimit(options.limit) ?? 100,
+      limit,
       // The cut itself is the runner's line (`noteTruncation`): a `human` is
       // handed rows, never the envelope, so it cannot see one.
       human: (comments: Comment[]) => {
@@ -81,7 +87,8 @@ export function registerCommentsCommand(program: Command): void {
           console.log();
         }
       },
-    })));
+      };
+    }));
 
   // ─── comments add ──────────────────────────────────────────────────────────
   commentsCmd

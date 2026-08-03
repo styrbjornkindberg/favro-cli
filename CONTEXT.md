@@ -113,6 +113,17 @@ bare. `truncated` means `--limit` cut a complete fetch; `unreachable` means a co
 read could not reach part of its input, so an empty `rows` with no `unreachable`
 unambiguously means true-empty. `src/lib/read-shape.ts`.
 
+**`--limit`** — one parser for every cap, `parseLimit`, and three outcomes, no fourth:
+whole digits of 1 or more are the cap; an **absent** flag is `undefined`, which each
+caller reads as its own thing (no cap when printing, the command's declared default when
+fetching); and a **supplied value that does not parse** is a *refusal* naming the value —
+`1e9`, `5,000`, `1_000`, `2.7`, `-1`, `0`, `banana` all decline and exit 1. It used to
+mean "no cap" on the print path and "the default" on the fetch path, which is a plausible
+answer built from input we could not read. `0` is refused by decision, not omission: it
+parses, and `capRows` read it as *everything*. **A behaviour change** — anything scripted
+against the old silent-ignore now exits 1 (#142/#143). The same parser and the same
+wording serve `sprint-plan --budget`; the flag name is substituted.
+
 **refusal** — a deterministic decline: nothing was written, and the same call declines
 again for the same reason. That is the whole distinction the dispatch table needs, and
 it is why a refusal is never reported as retryable. `RefusalError`

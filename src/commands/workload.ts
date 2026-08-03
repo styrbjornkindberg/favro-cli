@@ -5,7 +5,7 @@
 import { Command } from 'commander';
 import { AggregateCard } from '../api/aggregate';
 import { extractEffort } from '../api/context';
-import { excludeUnreadableBoards, Unreachable } from '../lib/read-shape';
+import { excludeUnreadableBoards, parseLimit, Unreachable } from '../lib/read-shape';
 import { Ctx, run } from '../lib/run';
 
 const ACTIVE_STAGES = ['active', 'review', 'testing'];
@@ -134,7 +134,7 @@ interface WorkloadOptions {
 }
 
 export async function workloadHandler(ctx: Ctx, options: WorkloadOptions) {
-  const cardLimit = parseInt(options.limit, 10) || 1000;
+  const cardLimit = parseLimit(options.limit) ?? 1000;
 
   // Annotated rather than inferred: the four arms produce four different object
   // types, and a union of them trips the excess-property check at the

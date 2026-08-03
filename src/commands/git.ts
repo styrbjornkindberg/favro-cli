@@ -15,6 +15,7 @@ import { readConfig } from '../lib/config';
 import CardsAPI from '../lib/cards-api';
 import BoardsAPI from '../lib/boards-api';
 import { CommentsApiClient } from '../api/comments';
+import { parseLimit } from '../lib/read-shape';
 import {
   readProjectConfig,
   writeProjectConfig,
@@ -378,7 +379,7 @@ export function registerGitCommands(program: Command): void {
           return;
         }
 
-        const limit = parseInt(options.limit ?? '100', 10);
+        const limit = parseLimit(options.limit) ?? 100;
         const limited = todos.slice(0, limit);
 
         if (options.json) {
