@@ -151,6 +151,16 @@ function startServer(
      * check has to be verifiable through the door production uses.
      */
     ignoreArchiveWrites?: true;
+    /**
+     * Kill the connection instead of answering — a genuine transport failure.
+     *
+     * The only way to produce the error axios raises when there is NO response
+     * at all: `isAxiosError` is stamped, `error.response` is absent. A canned
+     * `{status}` object cannot reach that arm of `isWireFailure`, and neither can
+     * the `fail` hook above, so this is the one hook that proves a network reset
+     * is still read as transient.
+     */
+    resetOn?: (r: Received) => boolean;
   } = {},
 ): Promise<Stand> {
   const received: Received[] = [];
@@ -195,6 +205,11 @@ function startServer(
         res.writeHead(status, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(body));
       };
+
+      if (opts.resetOn?.(r)) {
+        req.socket.destroy();
+        return;
+      }
 
       const injected = opts.fail?.(r, failSeen);
       if (injected) {
@@ -687,7 +702,11 @@ describe('a failed multi-step write unwinds LIFO and reports rolled-back', () =>
     const result = await dispatch('probe-chain', { card: CARD, to: 'Doing', tags: ['bug'] }, ctx(stand));
 
     expect(result.outcome).toBe('rolled-back');
-    expect(result.retryable).toBe(true);
+    // Incidental to this test, which is about the LIFO unwind. `probe-chain`
+    // throws a bare in-process `Error`, and `retryAdvice` gates on the wire, so
+    // the advice is `false` — pinned deliberately, see the dedicated test in
+    // "a deterministic WIRE refusal is not retryable either (#66)".
+    expect(result.retryable).toBe(false);
     // What the caller can see afterwards: the card is exactly as it started.
     expect(stand.cards.get(CARD)!.columnId).toBe(TODO);
     expect(stand.cards.get(CARD)!.tags).toEqual([]);
@@ -794,8 +813,10 @@ describe('compare-before-restore is always on, in whatever shape the write took'
     // why it is not retryable. Here the pre-state was "Alice absent" and Alice
     // is absent: the rollback's goal is already met, by someone else's hand. The
     // per-element inverse is idempotent, so there is nothing to undo and nothing
-    // to clobber. Reporting not-retryable would send an agent to inspect
-    // wreckage that does not exist.
+    // to clobber. Reporting an ORPHAN here would send an agent to inspect
+    // wreckage that does not exist — which is what the empty list below pins.
+    // (`retryable` is a different question and answers `false`; `reportDispatch`
+    // still says "nothing was left behind" on a `rolled-back` either way.)
     //
     // Contrast the scalar case above: there the field was left on DONE, which is
     // neither what we wrote nor the pre-state — genuinely left behind.
@@ -810,7 +831,7 @@ describe('compare-before-restore is always on, in whatever shape the write took'
     }, ctx(stand));
 
     expect(result.outcome).toBe('rolled-back');
-    expect(result.retryable).toBe(true);
+    expect(result.retryable).toBe(false);
     expect(result.orphans ?? []).toEqual([]);
     // The guarantee that matters: we did not rewrite the element. Exactly one
     // PUT — ours — and no compensating write chasing an element already gone.
@@ -1295,6 +1316,39 @@ describe('a deterministic WIRE refusal is not retryable either (#66)', () => {
     expect(result.retryable).toBe(true);
   });
 
+  it('the SAME unnameable failure is not retryable once the unwind left an orphan', async () => {
+    // The outcome arm, isolated. Every other `rollback-incomplete` test in this
+    // file has a cause `isRetryable` rejects anyway — a 403, a refusal — so the
+    // guard that actually stops an orphan from being called retryable
+    // (`outcome !== 'rolled-back'`) was never the reason any of them was `false`.
+    // Measured: hardcoding `retryAdvice`'s outcome argument to `'rolled-back'`
+    // passed all 3036 other tests. This is the one that kills that mutation.
+    //
+    // Same 400 and same unprobed message as the test above, which is the whole
+    // construction: the CAUSE is identical and reads retryable, so the only thing
+    // that can move the answer is what the unwind left behind. An agent told
+    // "safe to retry" over an orphan would write on top of wreckage.
+    let puts = 0;
+    const stand = await startServer({
+      fail: (r) => {
+        if (r.method !== 'PUT') return undefined;
+        puts += 1;
+        // PUT 1 is the move and lands. PUT 2 is the tag write — the failure. PUT 3
+        // is the compensating move-back, which fails too, so the column stays
+        // where we put it and the orphan is real.
+        return puts >= 2 ? { status: 400, message: 'Something we have never probed' } : undefined;
+      },
+    });
+
+    const result = await dispatch('probe-chain', { card: CARD, to: 'Doing', tags: ['bug'] }, ctx(stand));
+
+    expect(result.outcome).toBe('rollback-incomplete');
+    expect(result.retryable).toBe(false);
+    // Read back, not counted: the wreckage the advice is about really is there.
+    expect(stand.cards.get(CARD)!.columnId).toBe(DOING);
+    expect(result.orphans?.map((o) => o.field)).toEqual(['columnId']);
+  });
+
   it('a 429 mid-batch is absorbed by the client, not turned into an unwind', async () => {
     // #67 deleted the only assertion that pinned 429 through the multi-create
     // path. `http-client` retries 429 generically, but nothing proved these
@@ -1319,15 +1373,63 @@ describe('a deterministic WIRE refusal is not retryable either (#66)', () => {
     expect(stand.cards.size).toBe(before + 3);
   }, 20000);
 
-  it('a plain in-process failure after a write is still retryable', async () => {
+  it('a plain in-process failure after a write is NOT retryable', async () => {
+    // **PINNED `false`. It was pinned `true` on purpose until now — do not flip
+    // it back without reading this.**
+    //
     // Same discriminator from the other side: `probe-chain` throws an ordinary
-    // Error carrying no HTTP response at all.
+    // `Error` carrying no HTTP response at all. The old reading was that the
+    // table's population is narrow — everything it sees was raised inside a write
+    // it instrumented — so unclassifiable there means a wire hiccup and the next
+    // attempt may behave differently.
+    //
+    // Narrow is not clean. `intent.run` is OUR code: a `TypeError` of ours, or
+    // any deterministic bare `Error` a future op raises, took that same arm and
+    // came back "safe to retry" — which is exactly the `--include bogus` defect
+    // #134 fixed at the CLI boundary and #151 fixed at the skill engine's unwind,
+    // surviving at the third site because inverting the default here would break
+    // the in-process failures that genuinely ARE transient.
+    //
+    // The carried-forward half of #151 enumerated those: ONE throw site, the
+    // archive read-back in `TxCards.setArchived`, which now says so with a
+    // `TransientError` and is pinned `true` by "a 200 that did not take is a LOUD
+    // failure". With that marked, `retryAdvice` gates all three callers on the
+    // wire and an unmarked in-process failure is deterministic-until-proven-
+    // otherwise: a wrong `false` costs one honest failure, a wrong `true` costs
+    // an agent looping forever.
     const stand = await startServer();
     const result = await dispatch('probe-chain', { card: CARD, to: 'Doing', tags: ['bug'] }, ctx(stand));
 
     expect(result.outcome).toBe('rolled-back');
-    expect(result.retryable).toBe(true);
+    expect(result.retryable).toBe(false);
   });
+
+  it('a socket the server killed mid-transaction is still retryable', async () => {
+    // The other half of the same change, and the dangerous half: narrowing the
+    // advice must not narrow it onto a REAL transient. A connection reset is the
+    // arm no canned `{status}` object can reach — axios stamps `isAxiosError` and
+    // attaches no `response` at all — so `retryAdvice` would answer `false` here
+    // if its gate asked `classifyThrownError(...) !== undefined` instead of
+    // `isWireFailure`. That mistake is invisible to every other test in this file:
+    // each one either carries a status or never touches the wire.
+    //
+    // A real destroyed socket, not a mocked rejection: the point is the error
+    // object axios actually builds. `http-client` retries a response-less failure
+    // four times at 1/2/4/8s before giving up, so this costs ~15s once.
+    const stand = await startServer({
+      // AFTER the move has landed, so there is something to unwind: the tag
+      // write's GET is the first request the reset can take.
+      resetOn: (r) => r.method === 'GET' && r.path === '/tags',
+    });
+
+    const result = await dispatch('probe-chain', { card: CARD, to: 'Doing', tags: ['bug'] }, ctx(stand));
+
+    expect(result.outcome).toBe('rolled-back');
+    expect(result.retryable).toBe(true);
+    // Read back, not counted: the move really was undone before the advice was
+    // given, which is the other half of what `retryable` is allowed to claim.
+    expect(stand.cards.get(CARD)!.columnId).toBe(TODO);
+  }, 30000);
 
   it('a refusal raised AFTER this invocation wrote unwinds, and is not retryable', async () => {
     // A `RefusalError` before the first write throws (covered above). Raised
@@ -1760,13 +1862,28 @@ describe('delete logs nothing, and therefore cannot join a transaction', () => {
     // above, so steps 2 and 3 run over a transaction that destroyed nothing —
     // and `rolled-back / retryable: true` is then TRUE, which is the only
     // condition under which `skill run` may print "safe to retry".
-    const stand = await startServer();
+    //
+    // Step 3 fails OFF THE WIRE, on an unprobed 400. It used to be `probe-fail`,
+    // which throws a bare in-process `Error` — and once `retryAdvice` started
+    // gating the table on the wire, that came back `retryable: false` and this
+    // test stopped reaching the "safe to retry" condition it exists to guard.
+    // Flipping the assertion instead would have left a test that cannot fail:
+    // the lie being pinned is `rolled-back AND retryable` printing over a
+    // destroyed card, so the failure mode has to keep both halves true.
+    let posts = 0;
+    const stand = await startServer({
+      fail: (r) => {
+        if (r.method !== 'POST' || r.path !== '/cards') return undefined;
+        posts += 1;
+        return posts === 2 ? { status: 400, message: 'Something we have never probed' } : undefined;
+      },
+    });
     const log = new CompensationLog();
 
     await expect(dispatch('delete', { card: CARD }, ctx(stand, { log }))).rejects.toThrow(RefusalError);
     const made = await dispatch<Card>('create', { name: 'later', board: BOARD }, ctx(stand, { log }));
     expect(made.outcome).toBe('ok');
-    const failed = await dispatch('probe-fail', {}, ctx(stand, { log }));
+    const failed = await dispatch('create', { name: 'refused', board: BOARD }, ctx(stand, { log }));
 
     expect(failed.outcome).toBe('rolled-back');
     expect(failed.retryable).toBe(true);
@@ -1969,6 +2086,14 @@ describe('archive is ONE intent with a direction, and it writes `archive` not `a
     expect(result.outcome).toBe('rolled-back');
     // Not a refusal — the call is fine, the wire changed. A refusal would claim
     // "repair the call", which is advice about the wrong thing.
+    //
+    // **This is the one test that pins `TransientError`.** `retryAdvice` gates
+    // every caller on `isWireFailure` now, and this failure is raised in OUR
+    // process, so the marker on `TxCards.setArchived`'s throw is the only reason
+    // this line is `true` rather than `false`. Drop the marker, or drop the
+    // `instanceof TransientError` disjunct from the gate, and this is the
+    // assertion that fails — nothing else in the suite reaches the arm. It keys
+    // on the stand's real refusal to move the card, not on a call count.
     expect(result.retryable).toBe(true);
   });
 
@@ -2096,7 +2221,11 @@ describe('the archive compensation restores the CAPTURED prior value', () => {
     );
 
     expect(result.outcome).toBe('rolled-back');
-    expect(result.retryable).toBe(true);
+    // Incidental: `probe-archive`'s `thenFail` is a bare in-process `Error`, so
+    // `retryAdvice`'s wire gate answers `false`. Contrast the read-back failure
+    // in "a 200 that did not take", which carries a `TransientError` and stays
+    // `true` — the two are the same shape only if you read the outcome instead.
+    expect(result.retryable).toBe(false);
     expect(stand.cards.get(CARD)!.archived).toBe(true);
 
     const bodies = puts(stand.received).map((r) => r.body);

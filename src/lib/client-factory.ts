@@ -23,15 +23,16 @@ export interface ClientFlags {
  * matter: the runner builds the client before the handler, so a credential-less
  * `favro`, `favro board` or `favro browse` meets this error at the error
  * boundary and used to be told `retryable: true` — "try again", for a key
- * nobody has set. `isRetryable` reads an UNCLASSIFIABLE error as retryable
- * (`dispatch.ts`) and these two have no HTTP response to classify, so naming
- * them refusals was what closed it.
+ * nobody has set. `isRetryable` read an UNCLASSIFIABLE error as retryable and
+ * these two have no HTTP response to classify, so naming them refusals was what
+ * closed it.
  *
- * Since #134 the boundary also defaults an unclassifiable error to
- * `retryable: false`, and since #151 so does the skill engine's end-of-run
- * unwind (ADR-0002, "Two populations"), so this no longer rests on the type
- * alone anywhere. It is kept because a named decline reads better than an
- * inferred one, not because anything now depends on it.
+ * `retryAdvice` now defaults an error that never touched the wire to
+ * `retryable: false` at all three of its callers — the boundary since #134, the
+ * skill engine's end-of-run unwind since #151, the dispatch table as of #151's
+ * carried-forward half (ADR-0002, "Two populations"). So this no longer rests on
+ * the type alone anywhere. It is kept because a named decline reads better than
+ * an inferred one, not because anything now depends on it.
  */
 export async function createFavroClient(flags?: ClientFlags): Promise<FavroHttpClient> {
   const token = await resolveApiKey(flags?.apiKey);

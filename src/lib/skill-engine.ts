@@ -21,8 +21,7 @@ import FavroHttpClient from '../lib/http-client';
 import { createFavroClient } from './client-factory';
 import { confirmAction } from './safety';
 import { readConfig, FavroConfig } from './config';
-import { dispatch, getIntent, intentNames, isRetryable, DispatchResult } from './dispatch';
-import { isWireFailure } from './favro-error';
+import { dispatch, getIntent, intentNames, retryAdvice, DispatchResult } from './dispatch';
 import { CompensationLog, Orphan, TxOutcome } from './tx-cards';
 import { parseLimit } from './read-shape';
 import ContextAPI from '../api/context';
@@ -52,12 +51,12 @@ export interface SkillRunResult {
    * "could running this again succeed?" — and only that one. A YAML typo is
    * fully undone and still cannot ever succeed, so it is `false` (#151).
    *
-   * `retryable` is the table's own derivation (`isRetryable`), carried rather
-   * than re-derived: `outcome === 'rolled-back'` is not the same question, and
-   * asking it here instead was one of the three drifted sites in #66. On the
-   * end-of-run unwind the table's derivation runs behind the same
-   * `isWireFailure` gate the CLI boundary uses, because that path sees the
-   * boundary's wide population (ADR-0002, "Two populations").
+   * `retryable` is the table's own derivation, carried rather than re-derived:
+   * `outcome === 'rolled-back'` is not the same question, and asking it here
+   * instead was one of the three drifted sites in #66. On the end-of-run unwind
+   * it is `retryAdvice` — the same gate-plus-derivation expression the CLI
+   * boundary and the table itself use, one function rather than three copies
+   * (ADR-0002, "Two populations").
    */
   rollback?: { outcome: TxOutcome; retryable: boolean; orphans: Orphan[] };
 }
@@ -433,16 +432,16 @@ export async function runSkill(
     // The wire is the gate and the table runs behind it (#151, the same shape
     // #134 gave the CLI boundary). `abortCause` here is whatever a step threw
     // OUTSIDE the table's instrumentation — an interpolation typo, an unknown
-    // intent, a `ParseError`, a `TypeError` of ours — which is the boundary's
-    // wide population, not the narrow one `isRetryable` reads unclassifiable
-    // errors as wire hiccups for. Behind the gate the table still decides which
-    // HTTP failures are deterministic, so the two cannot drift (#66). The
-    // rollback OBJECT already says the world is unchanged; `retryable` only
-    // ever answers whether running it again could succeed, and a typo cannot.
-    rollback = {
-      ...unwound,
-      retryable: isWireFailure(abortCause) && isRetryable(unwound.outcome, abortCause),
-    };
+    // intent, a `ParseError`, a `TypeError` of ours, none of which a rerun can
+    // change, but ALSO a genuine wire failure, which one can: `board()` and
+    // `assertScope` both run outside the try, so a `GET /widgets/{board}` that
+    // 400s escapes here. That is why the gate is not a constant `false`, and
+    // `skill-dispatch-wire.test.ts` pins both answers on the same seam. Behind
+    // the gate the table still decides which HTTP failures are deterministic, so
+    // the two cannot drift (#66). The rollback OBJECT already says the world is
+    // unchanged; `retryable` only ever answers whether running it again could
+    // succeed, and a typo cannot.
+    rollback = { ...unwound, retryable: retryAdvice(unwound.outcome, abortCause) };
   }
 
   const allCompleted = results.length === skill.steps.length;

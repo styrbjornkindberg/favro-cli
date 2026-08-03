@@ -310,23 +310,24 @@ describe('the run is ONE transaction — one log, threaded through every step', 
     expect(result.status).toBe('failed');
     expect(result.rollback?.outcome).toBe('rolled-back');
     expect(result.rollback?.orphans).toEqual([]);
-    // Still `true`, and #151 did NOT flip it — measured, against the issue's
-    // own claim that this pins the same bug as `skill-capture-wire.ts`. It does
-    // not: `probe-skill-fail` throws INSIDE `intent.run`, so the table catches
-    // it, unwinds, derives `retryable` itself and hands the engine a
-    // `StepDispatchFailure`; `rollback` is carried from that, and the
-    // end-of-run unwind #151 gated never runs (the table emptied the log).
-    // Forcing that line to `false` leaves this assertion green — measured.
+    // **PINNED `false`, and it used to be pinned `true`.** Do not flip it back.
     //
-    // So this is the table's own population, which #66 and #134 left ungated on
-    // the reading that everything it sees was raised inside a write it
-    // instrumented. `probe-skill-fail` is the case that reading does not cover:
-    // it instruments nothing and throws a bare `Error`, so "unclassifiable"
-    // here is a bug of OURS being called a wire hiccup. #151 stopped at the
-    // wide site and named this as the rule's one exception (ADR-0002, "Two
-    // populations") — gating the table too fails seven tests, one of which
-    // asserts this reading deliberately, so it is a decision, not a typo.
-    expect(result.rollback?.retryable).toBe(true);
+    // The path: `probe-skill-fail` throws INSIDE `intent.run`, so the table
+    // catches it, unwinds, derives `retryable` itself and hands the engine a
+    // `StepDispatchFailure`; `rollback` is carried from that, and the end-of-run
+    // unwind #151 gated never runs (the table emptied the log). So this reads the
+    // TABLE's derivation, not the engine's — which is why #151's gate left it
+    // `true` and why the version of this comment that shipped with #151 said so.
+    //
+    // What changed is the table's own default. `probe-skill-fail` instruments
+    // nothing and throws a bare `Error`, so "unclassifiable" here was a bug of
+    // OURS being reported as a wire hiccup — the previous comment named that
+    // defect and declined to close it, because inverting the default breaks the
+    // in-process failures that ARE transient. The carried-forward half of #151
+    // enumerated those: exactly one throw site, `TxCards.setArchived`, now
+    // carrying a `TransientError`. With that marked, `retryAdvice` can gate the
+    // table on the wire too, and a bare in-process `Error` is `false`.
+    expect(result.rollback?.retryable).toBe(false);
     // What a caller can see afterwards: the card step 1 made is gone.
     expect(stand.cards.size).toBe(0);
     expect(stand.received.some((r) => r.method === 'DELETE' && r.path === '/cards/new-card-1')).toBe(true);
@@ -461,6 +462,48 @@ describe('the run is ONE transaction — one log, threaded through every step', 
     expect(result.rollback?.retryable).toBe(true);
     // And the transaction still unwound: step 1's card is gone from the wire.
     expect(stand.cards.size).toBe(0);
+  });
+
+  it('the SAME escaping wire failure is not retryable once the unwind left an orphan', async () => {
+    // The `outcome` argument at THIS site, isolated. `retryAdvice(unwound.outcome,
+    // abortCause)` has two moving parts and only one of them was pinned here:
+    // every other end-of-run-unwind test in this file ends `rolled-back`, so
+    // hardcoding the argument to `'rolled-back'` passed all 3061 tests — measured.
+    // The dispatch table has the same test (`dispatch-tx-wire.test.ts`, "the SAME
+    // unnameable failure is not retryable once the unwind left an orphan"); the
+    // engine shares the expression, so it needs its own or the shared function is
+    // only half-covered.
+    //
+    // Same 400 on the same board as the test above, which is the construction:
+    // the CAUSE is identical and reads retryable, so the only thing that can move
+    // the answer is what the unwind left behind. Step 1's compensating
+    // `DELETE /cards/new-card-1` is refused with a 400 — not a 404, which
+    // `alreadyGone` would forgive — so the card survives and the orphan is real.
+    // An agent told "safe to retry" would write on top of it.
+    const stand = await startServer({
+      fail: (r) => {
+        if (r.path === `/widgets/${OTHER_BOARD}`) return { status: 400, message: 'upstream had a moment' };
+        if (r.method === 'DELETE' && r.path.startsWith('/cards/')) {
+          return { status: 400, message: 'upstream had a moment' };
+        }
+        return undefined;
+      },
+    });
+
+    const result = await runSkill(
+      skill(
+        { command: 'create', args: { name: 'first', board: BOARD } },
+        { command: 'create', args: { name: 'second', board: OTHER_BOARD } },
+      ),
+      opts(stand, { config: { scopeCollectionId: 'coll-a' } }),
+    );
+
+    expect(result.status).toBe('failed');
+    expect(result.rollback?.outcome).toBe('rollback-incomplete');
+    expect(result.rollback?.retryable).toBe(false);
+    // Read back, not counted: the wreckage the advice is about really is there.
+    expect(stand.cards.size).toBe(1);
+    expect(result.rollback?.orphans.map((o) => o.cause)).toEqual(['compensation-failed']);
   });
 
   it('a DETERMINISTIC wire failure escaping uninstrumented is NOT retryable either', async () => {

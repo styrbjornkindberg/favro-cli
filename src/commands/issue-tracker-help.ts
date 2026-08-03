@@ -83,7 +83,8 @@ THE TWO RELATIONSHIPS, AND THE ONE THAT DOES NOT EXIST
 ERRORS AND RETRY
   A refusal is deterministic and wrote nothing: repair the call, do not repeat it.
   A failure carries 'retryable' — obey that field. A clean 'rolled-back' is still
-  NOT retryable when the wire named the failure: same call, same refusal.
+  NOT retryable when the wire named the failure: same call, same refusal. Nor when
+  the failure never reached the wire at all — a bug on our side repeats exactly.
   403 is Favro's not-found for cards, boards, columns, comments and tasklists, so
   a 403 on a READ escalates once to a wider identifier shape while a 403 on a
   WRITE never does: "403 means nothing was written" is not constructible. And

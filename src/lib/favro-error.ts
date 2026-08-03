@@ -168,12 +168,13 @@ export function classifyThrownError(error: unknown): FavroErrorClassification | 
  *
  * `classifyThrownError` answers "which kind of HTTP failure", and returns
  * `undefined` for two things that are not remotely alike: a transport failure
- * that never got a response, and an `ENOENT`, a `TypeError`, a bad flag. The
- * dispatch table may conflate them — everything it sees was raised inside a
- * write it instrumented, so "unclassifiable" there really does mean "a wire
- * hiccup after a clean unwind". A caller that sees the whole population may not:
- * the CLI's error boundary (#134) and the skill engine's end-of-run unwind
- * (#151) both ask this first (ADR-0002, "Two populations of error").
+ * that never got a response, and an `ENOENT`, a `TypeError`, a bad flag. This is
+ * what tells those apart, and it is asked FIRST by every reader of retry advice —
+ * the CLI's error boundary (#134), the skill engine's end-of-run unwind (#151),
+ * and the dispatch table itself, which was the last holdout: its population is
+ * narrow but `intent.run` is still our code, so unclassifiable there meant "a
+ * wire hiccup" for a `TypeError` too. All three now ask through one expression,
+ * `retryAdvice` in `dispatch.ts` (ADR-0002, "Two populations of error").
  *
  * Structural, not string-matched: axios stamps `isAxiosError` on everything it
  * raises, transport failures included, so the discriminator is a property of

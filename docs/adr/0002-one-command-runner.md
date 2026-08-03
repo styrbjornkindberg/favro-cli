@@ -137,12 +137,16 @@ As accepted, `retryable` at the boundary was `isRetryable('rolled-back', error)`
 table's derivation, reused whole, so that the CLI and the table could not drift apart on "should
 I try again". That reuse was wrong, and the wording above overstated what the two share.
 
-**They are asked about different populations.** The table only ever sees errors raised inside a
-write it instrumented, so an error it cannot classify is a wire hiccup after a clean unwind, and
-`retryable: true` is the honest reading. The boundary sees everything any of the 128 commands can
-throw: argument validation, missing config, file I/O, our own bugs. Reusing one derivation across
-both is what made `favro boards list --include bogus` and a `TypeError` of ours both answer
-`retryable: true` — an instruction to loop forever on a failure that cannot change.
+**They were thought to be asked about different populations.** The table only ever sees errors
+raised inside a write it instrumented, which was read as making an error it cannot classify a wire
+hiccup after a clean unwind — so `retryable: true`. The boundary sees everything any of the 128
+commands can throw: argument validation, missing config, file I/O, our own bugs. Reusing one
+derivation across both is what made `favro boards list --include bogus` and a `TypeError` of ours
+both answer `retryable: true` — an instruction to loop forever on a failure that cannot change.
+
+(The narrow-population reading did not survive either. See "Why `dispatch.ts` stopped being the
+exception" below: it is our code in there too. What #134 established and what still stands is the
+GATE — everything after this paragraph is current.)
 
 The rule now: **the wire is the gate, the table runs behind it.**
 
@@ -162,39 +166,107 @@ The rule now: **the wire is the gate, the table runs behind it.**
 The discriminator is structural, not a string match on the message: it asks where the error came
 from, not what it says.
 
-**The gate is on the wide population, wherever it is read — two sites, not one (#151).**
-The rule is not "the CLI boundary is special"; it is that `isRetryable`'s unclassifiable-is-
-transient arm is only sound for errors raised inside a write the table instrumented. Any caller
-holding a wider population must gate. There are exactly three callers, and each now obeys:
+**The gate is on every population, and it is ONE expression — three sites, no exceptions
+(#151, carried forward).** `retryAdvice` in `dispatch.ts` holds it:
 
-- `dispatch.ts` — the table itself, on its own narrow population. **Ungated, correctly.**
-- `run.ts` (`retryableFrom`) — the CLI error boundary, everything 128 commands can throw. Gated.
+```ts
+export const retryAdvice = (outcome: TxOutcome, error: unknown): boolean =>
+  (isWireFailure(error) || error instanceof TransientError) && isRetryable(outcome, error);
+```
+
+- `dispatch.ts` — the table itself. Gated.
+- `run.ts` (`retryableFrom`) — the CLI error boundary, everything 128 commands can throw. Gated
+  since #134.
 - `skill-engine.ts` — `rollback.retryable` at the **end-of-run unwind**, where `abortCause` is
   whatever a step threw *outside* the table's instrumentation: an interpolation typo, an unknown
-  intent, a `ParseError`, a `TypeError` of ours. Gated as of #151. A skill that writes in step 1
+  intent, a `ParseError`, a `TypeError` of ours. Gated since #151. A skill that writes in step 1
   and mistypes `{{made.nope}}` in step 2 answered `retryable: true` on stdout and printed "safe to
   retry" until then; `skill-capture-wire.test.ts` pinned that answer as intended and now pins the
   opposite, with the reversal recorded on the assertion.
 
+The three used to be three hand-written spellings of one rule, which is #66's failure mode. They
+are now one function called three times.
+
+### Why `dispatch.ts` stopped being the exception
+
+#134 and #151 left the table ungated on the reading that its population is *narrow*: everything it
+sees was raised inside a write it instrumented, so unclassifiable means a wire hiccup after a clean
+unwind. **Narrow is not the same as clean.** `intent.run` is our code, so a `TypeError` of ours —
+or any deterministic bare `Error` a future op raises — took the same arm and came back
+`retryable: true`. That is #134's `--include bogus` defect wearing the table's clothes, and every
+reader of `DispatchResult.retryable` saw it: `reportDispatch` printing "safe to retry", the machine
+envelope on stdout, `skill run`'s summary. Nothing in the codebase *loops* on the field — the
+reader that acts on it is the agent, which `favro help issue-tracker` tells to obey it.
+
+#151 measured the naive fix and declined it: gating the table breaks the in-process failures that
+genuinely ARE transient, and `tx-cards.ts`'s "answered 200 but did not take" is one — the write was
+accepted, the state did not change, retrying is correct advice, and `isWireFailure` calls it
+`false` because it is a bare `Error` of ours. So the naive gate breaks a legitimately-retryable
+case to fix an illegitimate one.
+
+What closed it was **enumerating** that population rather than assuming it was large. The surface is
+the import closure of `dispatch.ts` — the intents' `run` bodies live in that file, so its closure
+(27 modules by `madge`) is what they can reach, not `TxCards`'s 22; the five extra are `dispatch.ts`
+itself, `read-shape.ts`, `safety.ts` and `api/comments.ts` with its types. Across all of it the
+genuinely-transient in-process throws number **exactly one**: `TxCards.setArchived`'s read-back.
+
+The rest of the non-`RefusalError` throws in that closure are either deterministic or unreachable
+from inside the try, and neither fact is guarded by a test — `refusal-drift.test.ts` covers the
+resolver family (`*ResolutionError` / `*LookupError`) plus five irregulars it lists by name, and
+says nothing about the bare `Error`s in `cards-api.ts`, `widgets-api.ts`, `config.ts` or
+`api/comments.ts`. What the enumeration measured about those, as of this ADR:
+
+- `cards-api.ts`'s `parseCardUrl` throws reach only `findCardByUrl`, which no intent calls.
+- `widgets-api.ts`'s "no card found" reaches only `commands/widgets.ts`, which is not an intent.
+- `api/comments.ts`'s empty-text throws reach only `run.ts` and `safety.ts`'s `boardOfComment`,
+  which calls `getComment` and swallows.
+- `config.ts`'s and `tracker-config.ts`'s file-read throws reach an intent only through
+  `tx.tracker()`, and `board()` primes that memo OUTSIDE the try.
+- `cards-api.ts`'s `mapDescription` throw is on every create/update path, but `CreateCardRequest`
+  and `UpdateCardRequest` declare no `descriptionFormat` and `createRequest` is a whitelist, not a
+  spread — and it is deterministic anyway, so the fail-closed default is the right answer for it.
+
+A bug of ours is by definition not transient, so one site is cheap to mark: it carries a
+`TransientError` (declared beside `RefusalError` in `refusal.ts`, the leaf module that exists so
+either marker can be raised without an import cycle) and the default gets to be fail-closed
+everywhere: unknown means deterministic-until-proven-otherwise, because a wrong `false` costs one
+honest failure and a wrong `true` costs an agent looping on a call that can never succeed.
+
+**Seven tests asserted the old reading. Five now assert the new one**, each carrying a note saying
+which way it is pinned and why — `dispatch-tx-wire.test.ts`'s *"a plain in-process failure after a
+write is NOT retryable"* and `skill-dispatch-wire.test.ts`'s *"a failure in step 2 undoes what step
+1 wrote"* are the two that pinned it deliberately. Of the other two:
+
+- *"the reported 'rolled-back, safe to retry' can no longer be a lie about a deleted card"* was
+  **not** flipped: the condition it guards IS `rolled-back AND retryable`, so flipping the
+  assertion would have left a test that cannot fail. Its third step now fails off the wire instead
+  of in-process, keeping both halves true.
+- *"a 200 that did not take is a LOUD failure, not a ✓ about the argument"* was not touched at all.
+  It is the one test the `TransientError` marker exists for, and the only one in the suite that
+  reaches the exemption — dropping either the marker or the `instanceof` disjunct fails exactly it.
+
 `skill-engine.ts`'s **other** rollback path — a `StepDispatchFailure`, where the table caught the
-error, unwound and derived `retryable` itself — is carried verbatim and stays ungated, because it
-is the table's own narrow population by construction. `skill-dispatch-wire.test.ts` is that path,
-not this one; #151's issue text named it as pinning the same defect and it does not.
+error, unwound and derived `retryable` itself — is still carried verbatim rather than re-derived.
+It now inherits the gate for free, because the table applies it. `skill-dispatch-wire.test.ts` is
+that path; #151's issue text named it as pinning the same defect as `skill-capture-wire.test.ts`
+and it does not — it reads the table's answer, not the engine's.
 
-**Narrow is not the same as clean, and this is the rule's one named exception.** `intent.run` is
-our code too, so a deterministic throw of ours raised in there — before the intent's first
-instrumented write, or from a plain `Error` like `tx-cards.ts`'s "answered 200 but did not take" —
-is still read as transient by `dispatch.ts`. `skill-dispatch-wire.test.ts`'s `probe-skill-fail`
-is exactly that shape: it writes nothing, throws a bare `Error`, and answers `true`. #151 measured
-the alternative and left it — gating `dispatch.ts` flips the verdict for every caller of the table
-and fails seven tests, one of them `dispatch-tx-wire.test.ts`'s *"a plain in-process failure after
-a write is still retryable"*, which asserts the current reading on purpose. Closing that is a
-decision about what the table's population means, not a typo, and it wants its own issue.
-
-Where the amendment above says a decline is `false` only where someone remembered to raise a
-`RefusalError`, that cost is no longer paid anywhere: the gate answers first at both wide sites.
+Where the first amendment says a decline is `false` only where someone remembered to raise a
+`RefusalError`, that cost is no longer paid anywhere: the gate answers first at all three sites.
 `RefusalError` still earns its keep as the type that *names* a decline, and `safety.ts` traces
 what it was load-bearing for.
+
+**Reach for `TransientError` only with an observation behind it.** It is the one exemption from a
+fail-closed default, so a site that raises it without a measurement re-opens the loop for that
+path. `setArchived` has #75's probe: `PUT {archive: …}` responds with a card row echoing
+`archived`, so a mismatch is an observed non-write, not a guess (ADR-0003).
+
+**That rule is not ratcheted, deliberately.** No test asserts the site count, so a second
+`TransientError` would ship unnoticed. Accepted because the drift pressure changed direction: while
+the default was fail-OPEN, the loop was re-opened by *omission* — someone forgetting to raise a
+`RefusalError` — which is what earned `refusal-drift.test.ts`. Fail-closed means omission is now the
+safe outcome, and opening the loop takes a deliberate `import { TransientError }`. A scan blind to
+`extends TransientError` would cost more than it buys; revisit if a second site ever appears.
 
 **`retryable` is not "the world is unchanged".** A rollback conveys that by existing, and
 `outcome` says how completely. `retryable` answers only "could running this again succeed" — the

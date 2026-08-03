@@ -52,7 +52,7 @@ import { requireTrackerMapping, verifyTrackerMapping, VerifiedTracker } from './
 // Every guard below that DECLINES to write throws this rather than a bare
 // `Error`, so the dispatch table's one structural test covers it: a deterministic
 // refusal must never be reported as a retryable `rolled-back`.
-import { RefusalError } from './refusal';
+import { RefusalError, TransientError } from './refusal';
 
 // ─── the three outcomes ──────────────────────────────────────────────────────
 
@@ -711,16 +711,22 @@ export class TxCards {
     // nothing either and then orphan on the compare, reporting wreckage that
     // does not exist.
     //
-    // Not a `RefusalError`: a refusal claims "deterministic, wrote nothing,
-    // repair the call", and the call is not what is wrong. This is a probed field
-    // no longer being honoured, which belongs in `isRetryable`'s unclassifiable
-    // family — the world is genuinely unchanged, so the next attempt is allowed
-    // to behave differently.
+    // `TransientError`, and NOT a `RefusalError`: a refusal claims
+    // "deterministic, wrote nothing, repair the call", and the call is not what
+    // is wrong. This is a probed field no longer being honoured — the world is
+    // genuinely unchanged, so the next attempt is allowed to behave differently.
+    //
+    // The marker is load-bearing, not decoration. `retryAdvice` gates on the WIRE
+    // now, at all three of its callers, so an unmarked in-process `Error` reads
+    // `retryable: false`; this is the one in-process failure in the intent
+    // closure that has an observation behind calling it transient, so it is the
+    // one exemption. A bare `Error` here would tell an agent not to retry a write
+    // that the very next attempt might land.
     //
     // Absent normalises to false, exactly as the capture above does. The two
     // must agree about the same card, and `Card.archived` is optional.
     if ((after.archived === true) !== archived) {
-      throw new Error(
+      throw new TransientError(
         `Archive write on card ${cardId} answered 200 but did not take: sent ` +
           `{archive: ${archived}}, the response reads archived=${JSON.stringify(after.archived)}.\n` +
           `Nothing was written, so nothing needs undoing. The write field \`archive\` is probed ` +

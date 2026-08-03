@@ -59,13 +59,13 @@ export async function confirmAction(message: string, flags?: { yes?: boolean }):
  * two-step skill whose second step straddles the lock reported `retryable:
  * true` before and `false` after, with nothing else touched.
  *
- * NEITHER wide-population reader still rests on the type alone. The runner's
- * error boundary has gated on `isWireFailure` since #134, and the skill
- * engine's end-of-run unwind since #151 (ADR-0002, "Two populations"), so a
- * `ScopeError` answers `false` at both for a second, independent reason — it
- * never touched the wire — whether or not it extends `RefusalError`. What the
- * type still buys is the NAMING: `checkScope` below branches on it, and a
- * decline that says what it is beats one inferred from where it came from.
+ * NO reader still rests on the type alone. `retryAdvice` gates on the wire at all
+ * three of its callers — the runner's error boundary since #134, the skill
+ * engine's end-of-run unwind since #151, the dispatch table as of #151's
+ * carried-forward half (ADR-0002, "Two populations") — so a `ScopeError` answers
+ * `false` everywhere for a second, independent reason: it never touched the wire.
+ * What the type still buys is the NAMING: `checkScope` below branches on it, and
+ * a decline that says what it is beats one inferred from where it came from.
  */
 export class ScopeError extends RefusalError {
   constructor(
