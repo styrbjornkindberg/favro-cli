@@ -13,7 +13,7 @@ import { CustomFieldsAPI, CustomFieldDefinition } from '../lib/custom-fields-api
 import { ColumnsAPI } from '../lib/columns-api';
 import { detectStage, WorkflowStage } from '../lib/workflow-stage';
 import { blockingEdges } from '../lib/blocking';
-import { Unreachable, unreachableReason } from '../lib/read-shape';
+import { holeCollector, Unreachable } from '../lib/read-shape';
 
 export { WorkflowStage };
 
@@ -265,21 +265,13 @@ export class ContextAPI {
     // snapshot — `context`, `standup`, `sprint-plan`, `query` — reported "we
     // could not look" as "there is nothing there".
     //
-    // Built directly rather than through `boundedSweep`: these are five
+    // Built off `holeCollector` rather than `boundedSweep`: these are five
     // different calls with five different return types, so there is no `ids`
     // list to sweep and no shared row to collect. Routing them through it would
     // also serialise them, and the parallelism is this snapshot's whole
-    // performance budget (< 1s for 500 cards). The wording still comes from
-    // `read-shape.ts`, which is the part that has to stay shared.
-    const unreachable: Unreachable[] = [];
-    const orElse = async <T>(id: string, call: Promise<T>, fallback: T): Promise<T> => {
-      try {
-        return await call;
-      } catch (error) {
-        unreachable.push({ id, reason: unreachableReason(error) });
-        return fallback;
-      }
-    };
+    // performance budget (< 1s for 500 cards). `holeCollector` lives in
+    // `read-shape.ts` because `AggregateAPI` needs the same fan-out (#148).
+    const { unreachable, orElse } = holeCollector();
 
     const [extendedBoard, cards, members, customFieldDefs, rawColumns] = await Promise.all([
       orElse('board', this.boardsApi.getBoardWithIncludes(boardId, ['custom-fields', 'members']), board as any),

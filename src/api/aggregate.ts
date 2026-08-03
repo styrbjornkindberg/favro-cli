@@ -20,6 +20,7 @@ import {
 } from './context';
 import { WorkflowStage } from '../lib/workflow-stage';
 import { blockingEdges } from '../lib/blocking';
+import { COLUMNS_HOLE, holeCollector, Unreachable } from '../lib/read-shape';
 
 // Re-export for convenience
 export { ContextCard, WorkflowStage, WorkflowStep };
@@ -68,6 +69,18 @@ export interface AggregateSnapshot {
   allCards: AggregateCard[];
   members: Array<{ id: string; name: string; email: string; role?: string }>;
   stats: AggregateStats;
+  /**
+   * Parts of this snapshot that could not be read (#148). Present only when
+   * there are any, so an absent marker means the whole fan-out landed — the
+   * same rule `ContextSnapshot.unreachable` follows (`read-shape.ts` rule 3).
+   *
+   * `id` is `columns:<boardId>` or `members:<collectionId>` — the facet plus
+   * the thing it was read for, because unlike `getSnapshot` this fan-out runs
+   * the same two calls once per board and once per collection, so a bare facet
+   * name would not say WHICH board went dark. Use `excludeUnreadableBoards`
+   * from `read-shape.ts` rather than re-parsing the prefix at a call site.
+   */
+  unreachable?: Unreachable[];
   generatedAt: string;
 }
 
@@ -191,6 +204,13 @@ export class AggregateAPI {
     const allMembers = new Map<string, { id: string; name: string; email: string; role?: string }>();
     const aggCollections: AggregateCollection[] = [];
 
+    // Two sub-fetches below fall back rather than fail the whole sweep — one
+    // dark board must not cost the caller the other eleven. Both used to do it
+    // behind a bare `.catch(() => [])`, so "we could not look" arrived as "there
+    // is nothing there" (#148, the same defect #116 fixed in `ContextAPI`).
+    // Recorded now, through the one seam.
+    const { unreachable, orElse } = holeCollector();
+
     // Process collections concurrently (max 3)
     await mapConcurrent(collections, 3, async (collection) => {
       const collId = collection.collectionId;
@@ -225,14 +245,20 @@ export class AggregateAPI {
       // Fetch columns for each board (needed for workflow enrichment)
       const boardColumnsMap = new Map<string, Column[]>();
       await mapConcurrent(boards, 3, async (board) => {
-        const cols = await this.columnsApi.listColumns(board.boardId).catch(() => []);
+        const cols = await orElse(
+          `${COLUMNS_HOLE}${board.boardId}`,
+          this.columnsApi.listColumns(board.boardId),
+          [] as Column[],
+        );
         boardColumnsMap.set(board.boardId, cols);
       });
 
       // Fetch members for the collection
-      const members = await this.membersApi.getMembers(
-        collId !== '__boards__' ? { collectionId: collId } : undefined,
-      ).catch(() => []);
+      const members = await orElse(
+        `members:${collId}`,
+        this.membersApi.getMembers(collId !== '__boards__' ? { collectionId: collId } : undefined),
+        [] as Member[],
+      );
       for (const m of members) {
         allMembers.set(m.id, { id: m.id, name: m.name, email: m.email, role: m.role });
       }
@@ -275,6 +301,9 @@ export class AggregateAPI {
       allCards,
       members: Array.from(allMembers.values()),
       stats: this.buildStats(allCards),
+      // Spread in only when non-empty — absent must stay distinguishable from
+      // empty, or the key stops meaning anything (`read-shape.ts` rule 3).
+      ...(unreachable.length > 0 ? { unreachable } : {}),
       generatedAt: new Date().toISOString(),
     };
   }

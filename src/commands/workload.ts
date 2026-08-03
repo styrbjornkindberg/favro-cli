@@ -5,6 +5,7 @@
 import { Command } from 'commander';
 import { AggregateCard } from '../api/aggregate';
 import { extractEffort } from '../api/context';
+import { excludeUnreadableBoards, Unreachable } from '../lib/read-shape';
 import { Ctx, run } from '../lib/run';
 
 const ACTIVE_STAGES = ['active', 'review', 'testing'];
@@ -31,6 +32,11 @@ interface WorkloadResult {
   members: MemberWorkload[];
   alerts: string[];
   total: number;
+  /**
+   * Parts of the read that failed, and therefore cards `total` does not count
+   * (#148). Present only when non-empty.
+   */
+  unreachable?: Unreachable[];
   generatedAt: string;
 }
 
@@ -111,6 +117,13 @@ function formatHuman(data: WorkloadResult): string {
     for (const a of data.alerts) lines.push(`    ⚠ ${a}`);
   }
 
+  // Off `unreachable` itself, so human mode cannot go quiet on a hole the JSON
+  // reports (#117).
+  if (data.unreachable?.length) {
+    lines.push(`\n  ⚠️  Not counted — ${data.unreachable.length} part(s) of this scope could not be read:`);
+    for (const hole of data.unreachable) lines.push(`     ${hole.id} — ${hole.reason}`);
+  }
+
   return lines.join('\n');
 }
 
@@ -123,7 +136,15 @@ interface WorkloadOptions {
 export async function workloadHandler(ctx: Ctx, options: WorkloadOptions) {
   const cardLimit = parseInt(options.limit, 10) || 1000;
 
-  let snapshot;
+  // Annotated rather than inferred: the four arms produce four different object
+  // types, and a union of them trips the excess-property check at the
+  // `excludeUnreadableBoards` call below. This names the three fields this
+  // handler actually reads.
+  let snapshot: {
+    allCards: AggregateCard[];
+    members: Array<{ id: string; name: string; email: string; role?: string }>;
+    unreachable?: Unreachable[];
+  };
   let scope: string;
   if (options.board) {
     // `ctx.api.context` replaces the dynamic `await import` + `new ContextAPI`
@@ -137,6 +158,11 @@ export async function workloadHandler(ctx: Ctx, options: WorkloadOptions) {
         boardName: boardSnapshot.board.name,
       })) as AggregateCard[],
       members: boardSnapshot.members,
+      // Carried across, not dropped. #116 already records the five facets this
+      // snapshot can lose; this arm threw them away, so a failed members read
+      // came out as everyone rendered by raw user id with nothing saying why
+      // (#117 found it, #148 closes it).
+      unreachable: boardSnapshot.unreachable,
     };
     scope = boardSnapshot.board.name;
   } else if (options.collection) {
@@ -150,13 +176,26 @@ export async function workloadHandler(ctx: Ctx, options: WorkloadOptions) {
     scope = 'all collections';
   }
 
-  const { members, alerts } = buildWorkloads(snapshot.allCards, snapshot.members);
+  // What a hole does to `workload`: the unreadable board's cards are dropped
+  // and the hole is named — but no exit code, because unlike `health` this
+  // command states no verdict, so its exit code has never been an answer and
+  // making it one would be a new claim, not a fix.
+  //
+  // Dropped rather than counted with an unknown stage: `activeCards` gates on
+  // ACTIVE_STAGES and `overloaded` gates on `activeCards`, so keeping them
+  // would report every member on that board at zero WIP and silently suppress
+  // every overload alert — the same fabricated-zero as `health`'s red board.
+  // The cost is that `total` under-counts, which is why the hole is printed
+  // next to it in both modes rather than only in the JSON.
+  const { cards, unreachable } = excludeUnreadableBoards(snapshot);
+  const { members, alerts } = buildWorkloads(cards, snapshot.members);
 
   const result: WorkloadResult = {
     scope,
     members,
     alerts,
-    total: snapshot.allCards.length,
+    total: cards.length,
+    ...(unreachable.length > 0 ? { unreachable } : {}),
     generatedAt: new Date().toISOString(),
   };
 
