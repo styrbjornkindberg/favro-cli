@@ -135,7 +135,7 @@ describe('a write whose target has an empty path segment never reaches the wire'
     expect(served).toEqual([]);
   });
 
-  it('refuses the same widening on PUT, POST and a nested path', async () => {
+  it('refuses the same widening on PUT, PATCH, POST and a nested path', async () => {
     const { client, served } = await startStand();
 
     await expect(new TagsAPI(client).updateTag('', { name: 'x' })).rejects.toThrow(RefusalError);
@@ -144,6 +144,27 @@ describe('a write whose target has an empty path segment never reaches the wire'
     // with an empty cardId it becomes `/cards//dependencies`, which is not.
     await expect(client.delete('/cards//dependencies')).rejects.toThrow(RefusalError);
     await expect(client.post('/collections//boards/b-1', {})).rejects.toThrow(RefusalError);
+    // PATCH has no production caller today, which is exactly why it is asserted:
+    // the guard's claim is "one chokepoint, not fourteen", and an unpinned verb
+    // is how the fifteenth module gets to forget. Unguarding `patch` alone
+    // otherwise passed the whole suite.
+    await expect(client.patch('/collections//x', {})).rejects.toThrow(RefusalError);
+
+    expect(served).toEqual([]);
+  });
+
+  it('refuses an id that URL RESOLUTION turns into a wider or different target', async () => {
+    // The template string is not the string that gets sent. Measured against
+    // this stand with the guard checking the raw path: `/tags/.` and `/tags/ `
+    // both left as `DELETE /tags/`, and `/tags/../boards/b-1` left as
+    // `DELETE /boards/b-1` — a tag delete arriving as a BOARD delete, which the
+    // scope lock never saw because no board was ever resolved.
+    const { client, served } = await startStand();
+
+    await expect(new TagsAPI(client).deleteTag('.')).rejects.toThrow(RefusalError);
+    await expect(new TagsAPI(client).deleteTag(' ')).rejects.toThrow(RefusalError);
+    await expect(new TagsAPI(client).deleteTag('../boards/b-1')).rejects.toThrow(RefusalError);
+    await expect(new UsersAPI(client).deleteGroup('..')).rejects.toThrow(RefusalError);
 
     expect(served).toEqual([]);
   });
@@ -288,6 +309,13 @@ describe('assertOrgScope', () => {
     // compare. What makes it refuse is the PRESENCE of a lock.
     config({ scopeCollectionId: 'col-anything-at-all' });
 
-    await expect(assertOrgScope('Deleting group grp-1')).rejects.toThrow(ScopeError);
+    const error = await assertOrgScope('Deleting group grp-1').catch((e) => e);
+
+    expect(error).toBeInstanceOf(ScopeError);
+    // And it NAMES the lock even with no cached name, the way `scope show` does.
+    // Dropping the `?? scopeCollectionId` fallback otherwise passed everything
+    // and shipped a refusal reading `locked collection ("undefined")`.
+    expect(error.message).toContain('col-anything-at-all');
+    expect(error.message).not.toContain('undefined');
   });
 });
