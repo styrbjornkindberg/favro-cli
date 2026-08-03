@@ -135,7 +135,7 @@ List cards on a board.
 |------|-------------|
 | `--board <boardId>` | **Required.** Board to list from |
 | `--json` | Output raw JSON |
-| `--limit <n>` | Max cards (default: 100) |
+| `--limit <n>` | Cap how many cards are **printed** (default: 25); sets `truncated`. The board is always fetched to completion |
 | `--filter <expr>` | Filter expression (repeatable) |
 
 ### `cards create <title>` ⚠️ WRITE
@@ -819,9 +819,8 @@ Filter syntax: `status:<value>`, `assignee:<user>`, `tag:<tag>`
 ### `context <board>` 📖 READ
 Full board snapshot for AI workflows — returns board metadata, columns, custom fields, members, cards, and stats in one JSON blob.
 
-| Flag | Description |
-|------|-------------|
-| `--limit <n>` | Max cards (default: 1000) |
+No flags. The board is read to completion; the `--limit` this used to accept was
+discarded downstream and is removed, so passing it exits 1.
 
 ### `query <board> <query...>` 📖 READ
 Semantic card search with natural language.
@@ -831,7 +830,6 @@ Query patterns: `status:done`, `assigned:@alice`, `blocked`, `priority:high`, `t
 | Flag | Description |
 |------|-------------|
 | `--json` | Output raw JSON |
-| `--limit <n>` | Max results |
 
 ### `standup` 📖 READ
 Daily standup view — groups cards by status category.
