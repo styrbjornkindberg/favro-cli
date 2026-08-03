@@ -176,9 +176,32 @@ it. `assertScope` in `src/lib/safety.ts`.
 Its remit has an edge, decided rather than implied (#104): a write to an **org-scoped**
 entity — a tag, a group, a webhook, a collection being created — lands on no board at
 all, so there is nothing for a collection lock to resolve and it is *out of remit*, not
-unguarded-by-oversight. Guarding those would need an org-level lock, which does not
-exist. `src/__tests__/scope-lock-coverage.test.ts` holds both lists — debt and
-decision — and fails on a stale entry in either.
+unguarded-by-oversight. There are nine such writes.
+`src/__tests__/scope-lock-coverage.test.ts` holds both lists — debt and decision — and
+fails on a stale entry in either.
+
+**org-level guard** — the SECOND guardrail, for the three of those nine that issue an
+irreversible org-wide DELETE (`tags delete`, `groups delete`, `webhooks delete`).
+`assertOrgScope` in `src/lib/safety.ts` (#125). It keys on the LOCK, not the target,
+and that is the design rather than a shortcut: a configured collection lock is the user
+saying "my writes stay inside this collection", an org-wide delete provably does not,
+and no resolution will make it — so a lock present is sufficient grounds to refuse.
+`--force` allows the single write and warns; no lock configured is a no-op that makes no
+request. The other six stay on `confirmAction` alone, which `-y` waives: `create` is
+additive and `update` is undone by another update. **Irreversibility is the line**, and
+the ratchet reads it off the HTTP verb — the `DELETE` call closure — never off the
+command's name, so a future `tags purge` cannot slip past by being called something
+else. Measured: a new unguarded org-level delete added to `src/commands/` fails
+`the org-level guard covers every irreversible org-level write`.
+
+Separately, and below both locks: no mutating request may name a target that URL
+resolution widens or moves. `assertBoundedTarget` in `src/lib/http-client.ts` (#125) is
+the chokepoint every resource module routes through. Every single-resource write is
+`/<resource>/${id}`, so an unset id does not fail safely — `deleteTag('')` sends
+`DELETE /tags/`, the organization's whole tag set, measured. `.`, `..`, a bare space and
+a traversal are the same hole once axios resolves the path, so the guard compares the
+**resolved** path, not the template string. Reads are deliberately unguarded: `GET
+/tags/` is the list endpoint and a widened read costs nothing.
 
 **compensation log** — the ordered record of reversible writes a transaction has made,
 which the dispatch table unwinds LIFO on failure. Each entry carries what the write did

@@ -9,7 +9,7 @@ import { Command } from 'commander';
 import TagsAPI from '../lib/tags-api';
 import { createFavroClient } from '../lib/client-factory';
 import { logError } from '../lib/error-handler';
-import { confirmAction, dryRunLog } from '../lib/safety';
+import { assertOrgScope, confirmAction, dryRunLog } from '../lib/safety';
 import { capRows, noteTruncation, writeEnvelope } from '../lib/read-shape';
 import { invalidateCache } from '../lib/name-cache';
 
@@ -82,12 +82,23 @@ export function registerTagsCommands(program: Command): void {
   // is nothing for the lock to resolve. Guarding here could only produce a check
   // that always passes (a lie) or one that always refuses (tag management broken
   // outright for every locked user). Neither is the lock doing its job. If these
-  // need a guardrail it is an ORG-level lock, which does not exist — not this one
-  // in a costume. The guard that does apply on these paths is `confirmAction`.
+  // need a guardrail it is an ORG-level guard, not this one in a costume.
   //
-  // Naming the cost rather than hiding it: `tags delete` strips the tag from every
-  // card in the organization, a wider blast radius than anything the collection
-  // lock guards today. Real gap; just not this lock's gap.
+  // #125 built that separate guard, and it covers exactly one of the three:
+  // `assertOrgScope` on `tags delete`, because `tags delete` strips the tag from
+  // every card in the organization and cannot be undone — a wider blast radius
+  // than anything the collection lock guards. `create` is additive and a stray
+  // one is undone by a delete; `update` renames org-wide but another rename puts
+  // it back. Irreversibility is the line. On those two the guard remains
+  // `confirmAction`, which `-y` waives.
+  //
+  // Not the reason, though #125's own body offers it: "an unknown tag name is
+  // already refused client-side". `createTag` refuses nothing — it posts the name
+  // it is given, which is the whole point of a create. The refusal is
+  // `TagLookupError` in `getTag`, and what it closes is the ACCIDENTAL-creation
+  // path on a CARD write (`cards update --tags "typo"` refuses instead of
+  // inventing a tag). That is true and it matters; it says nothing about this
+  // command, so it is not what exempts it.
   tagsCommand
     .command('create')
     .description('Create a new global tag')
@@ -173,12 +184,19 @@ export function registerTagsCommands(program: Command): void {
 
   tagsCommand
     .command('delete <tagId>')
-    .description('Delete a tag')
+    .description('Delete a tag — organization-wide; refused while a scope lock is set')
     .option('--dry-run', 'Preview without making API calls')
     .option('-y, --yes', 'Skip confirmation prompt')
+    .option('--force', 'Allow this org-wide delete despite the scope lock')
     .action(async (tagId: string, options) => {
       const verbose = tagsCommand.opts()?.verbose ?? false;
       try {
+        // #125 closes the gap the comment above names. The collection lock still
+        // cannot govern this write — but `assertOrgScope` can, and does: a
+        // configured lock refuses an org-wide delete unless --force. Before the
+        // dry-run, matching `cards create`, so a preview is not a way around it.
+        await assertOrgScope(`Deleting tag ${tagId}`, options.force);
+
         if (options.dryRun) {
           dryRunLog('deleting', 'tag', tagId);
           return;

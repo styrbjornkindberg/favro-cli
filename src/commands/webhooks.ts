@@ -9,7 +9,7 @@
  */
 import { Command } from 'commander';
 import { VALID_WEBHOOK_EVENTS, Webhook, WebhookEvent } from '../api/webhooks';
-import { confirmAction } from '../lib/safety';
+import { assertOrgScope, confirmAction } from '../lib/safety';
 import { Ctx, run } from '../lib/run';
 
 export function registerWebhooksCommand(program: Command): void {
@@ -50,9 +50,11 @@ export function registerWebhooksCommand(program: Command): void {
   // write lands on and asks whether it is in the locked collection. A webhook is
   // registered against the organization, not a board — there is no board to
   // resolve, so a check here would be either permanently green (a lie) or
-  // permanently red. Org-scoped writes want an org-level lock, which we do not
-  // have; borrowing the collection lock to stand in for one would only make the
-  // lock dishonest. `confirmAction` on delete is the guard these paths do have.
+  // permanently red. Org-scoped writes want an org-level lock; borrowing the
+  // collection lock to stand in for one would only make the lock dishonest.
+  // #125 built the separate org-level guard, and `delete` below takes it —
+  // `create` does not, because adding a webhook is additive and reversible by
+  // deleting it again.
   webhooksCmd
     .command('create')
     .description(
@@ -100,7 +102,15 @@ export function registerWebhooksCommand(program: Command): void {
       'Tip: Use `favro webhooks list` to find webhook IDs.'
     )
     .option('-y, --yes', 'Skip confirmation prompt')
-    .action(run(async (ctx: Ctx, webhookId: string, options: { yes?: boolean }) => {
+    .option('--force', 'Allow this org-wide delete despite the scope lock')
+    .action(run(async (ctx: Ctx, webhookId: string, options: { yes?: boolean; force?: boolean }) => {
+      // #125: the collection lock still cannot govern this (comment above), but
+      // the org guard can. A webhook is registered against the organization and
+      // deleting one cannot be undone — the integration behind it goes silent —
+      // so it sits with `tags delete` and `groups delete` on the irreversible
+      // side of the line. Before the confirmation, so `-y` cannot reach past it.
+      await assertOrgScope(`Deleting webhook ${webhookId}`, options.force);
+
       if (!(await confirmAction(`Delete webhook ${webhookId}?`, { yes: options.yes }))) {
         // Declining is a legitimate outcome, not a failure: exit 0, and say so
         // in a shape a caller can read rather than the bare word "Aborted."

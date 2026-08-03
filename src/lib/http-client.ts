@@ -1,5 +1,6 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
 import { rateLimitMessage } from './error-handler';
+import { RefusalError } from './refusal';
 
 /**
  * The shape every Favro list endpoint answers with. One declaration, here,
@@ -105,23 +106,107 @@ export class FavroHttpClient {
     return !status || status === 408 || status === 429 || (status >= 500);
   }
 
+  /**
+   * Refuse a mutating request whose target has an empty path segment (#125).
+   *
+   * Every single-resource write in this codebase is `/<resource>/${id}` —
+   * `/tags/${tagId}`, `/usergroups/${groupId}`, `/cards/${cardId}`,
+   * `/collections/${id}/boards/${id}` and eleven more. An empty id does not
+   * produce a malformed request that fails safely; it produces a well-formed one
+   * addressed at the COLLECTION. `deleteTag('')` sends `DELETE /tags/` — the
+   * organization's whole tag set instead of one tag — and `favro tags delete
+   * "$TAG" --yes` with `TAG` unset is the way in. #138 is the same shape: an
+   * empty filter read as "every card" rather than "no cards", and moved a board.
+   *
+   * Fail closed: an unbounded target refuses, it never widens. This is the
+   * chokepoint every resource module routes through, so it is one guard rather
+   * than fourteen for the fifteenth module to forget.
+   *
+   * READS are deliberately not guarded — `GET /tags/` is the list endpoint, and
+   * a widened read costs nothing.
+   *
+   * Measured, not assumed: no mutating URL in `src/` carries an empty segment
+   * when its ids are present. Every collection write is `'/tags'`, `'/cards'`,
+   * `'/widgets'`… with no trailing slash, and the single collection-level delete
+   * (`DELETE /cards/:id/dependencies`) has none either.
+   *
+   * It checks the path the WIRE WILL CARRY, not the template string, because the
+   * two are not the same string. axios resolves the path against `baseURL`, and
+   * resolution REWRITES the target before the request leaves. Measured against a
+   * local stand, with the first version of this guard in place:
+   *
+   *   deleteTag('.')            → DELETE /tags/          (still the collection)
+   *   deleteTag(' ')            → DELETE /tags/          (still the collection)
+   *   deleteTag('../boards/b1') → DELETE /boards/b1      (a DIFFERENT resource)
+   *
+   * None of those three has an empty segment as written, so a check on the raw
+   * template passed all three and validated a URL that was never sent. The last
+   * is the worst of the set: a tag delete arriving as a board delete escapes the
+   * scope lock as well, since no board was ever resolved to check.
+   *
+   * So: resolve first, then apply BOTH tests to the resolved path — no empty
+   * segment, and resolution changed nothing. Neither alone is enough. Resolution
+   * PRESERVES an empty segment (`/tags/` resolves to `/tags/`, `/cards//deps` to
+   * `/cards//deps`), so the equality test alone misses the original `''` hole;
+   * and `/tags/.` has no empty segment as written, so the segment test alone
+   * misses normalization. An id that survives resolution intact and leaves no
+   * empty segment names exactly one resource. No real Favro id contains `/`, `.`
+   * or a space, so nothing legitimate is caught — the fifteen mutating URLs in
+   * `src/` are all `/resource` or `/resource/${id}` with opaque alphanumeric ids.
+   */
+  private assertBoundedTarget(method: string, url: string): void {
+    const [pathOnly] = String(url ?? '').split(/[?#]/);
+    const wire = this.wirePath(pathOnly);
+    // An empty url needs no arm of its own: it resolves to `/`, which the
+    // equality test already rejects. Measured, and pinned in the wire test.
+    const unbounded =
+      wire !== pathOnly || wire.split('/').some((segment, i) => i > 0 && segment === '');
+    if (!unbounded) return;
+    throw new RefusalError(
+      `Refusing to ${method} "${url}": the target does not name one bounded resource — as sent it would ` +
+        `address a COLLECTION, or a different resource than the one named.\n` +
+        `  An unset, empty or non-id value is the usual cause, e.g. 'favro tags delete "$TAG"' with TAG ` +
+        `unset, which would send DELETE /tags/ and name every tag in the organization.\n` +
+        `  Pass the id explicitly. Run 'favro tags list' (or the matching list command) to find it.`
+    );
+  }
+
+  /**
+   * The path after URL resolution — what the request actually carries — or `''`
+   * when it cannot be resolved at all, which `assertBoundedTarget` reads as
+   * unbounded. Fail closed: an unparseable target refuses rather than escaping
+   * the comparison as a thrown `TypeError`.
+   */
+  private wirePath(pathOnly: string): string {
+    try {
+      // ponytail: any absolute base works — only the resolved pathname is read.
+      return new URL(pathOnly, 'http://favro.invalid').pathname;
+    } catch {
+      return '';
+    }
+  }
+
   async get<T = any>(url: string, config?: any): Promise<T> {
     return (await this.client.get<T>(url, config)).data;
   }
 
   async post<T = any>(url: string, data?: any, config?: any): Promise<T> {
+    this.assertBoundedTarget('POST', url);
     return (await this.client.post<T>(url, data, config)).data;
   }
 
   async patch<T = any>(url: string, data?: any, config?: any): Promise<T> {
+    this.assertBoundedTarget('PATCH', url);
     return (await this.client.patch<T>(url, data, config)).data;
   }
 
   async put<T = any>(url: string, data?: any, config?: any): Promise<T> {
+    this.assertBoundedTarget('PUT', url);
     return (await this.client.put<T>(url, data, config)).data;
   }
 
   async delete<T = any>(url: string, config?: any): Promise<T> {
+    this.assertBoundedTarget('DELETE', url);
     return (await this.client.delete<T>(url, config)).data;
   }
 

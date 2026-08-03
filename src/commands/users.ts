@@ -9,7 +9,7 @@ import { Command } from 'commander';
 import UsersAPI from '../lib/users-api';
 import { createFavroClient } from '../lib/client-factory';
 import { logError } from '../lib/error-handler';
-import { confirmAction, dryRunLog } from '../lib/safety';
+import { assertOrgScope, confirmAction, dryRunLog } from '../lib/safety';
 import { capRows, noteTruncation, writeEnvelope } from '../lib/read-shape';
 
 export function registerUsersCommands(program: Command): void {
@@ -139,8 +139,10 @@ export function registerUsersCommands(program: Command): void {
   // entity: no board, nothing to resolve. A check here would either always pass
   // (a lie) or always refuse, breaking group management for every locked user.
   // Neither is the lock working; it is the lock pretending. An org-level guardrail
-  // would be a DIFFERENT guardrail, and one that does not exist yet. What actually
-  // guards these paths is `confirmAction`.
+  // has to be a DIFFERENT guardrail — #125 built one (`assertOrgScope`), and it
+  // covers `delete` only: deleting a group is org-wide and irreversible, while
+  // `create` is additive and `update` is undone by another update. On those two
+  // the guard remains `confirmAction`, which `-y` waives.
   groupsCommand
     .command('create')
     .description('Create a new user group')
@@ -225,12 +227,18 @@ export function registerUsersCommands(program: Command): void {
 
   groupsCommand
     .command('delete <groupId>')
-    .description('Delete a user group')
+    .description('Delete a user group — organization-wide; refused while a scope lock is set')
     .option('--dry-run', 'Preview without making API calls')
     .option('-y, --yes', 'Skip confirmation prompt')
+    .option('--force', 'Allow this org-wide delete despite the scope lock')
     .action(async (groupId: string, options) => {
       const verbose = groupsCommand.opts()?.verbose ?? false;
       try {
+        // #125: org-wide and irreversible, so the org guard applies even though
+        // the collection lock cannot. Before the dry-run, so a preview is not a
+        // way around it.
+        await assertOrgScope(`Deleting group ${groupId}`, options.force);
+
         if (options.dryRun) {
           dryRunLog('deleting', 'group', groupId);
           return;
