@@ -18,13 +18,12 @@
  * config ends up compiling, not how it got there.
  */
 
-import * as fs from 'fs';
 import * as path from 'path';
 import * as ts from 'typescript';
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
-function fileNamesOf(configName: string): string[] {
+function parsedConfig(configName: string): ts.ParsedCommandLine {
   const configPath = path.join(REPO_ROOT, configName);
   const read = ts.readConfigFile(configPath, ts.sys.readFile);
   expect(read.error).toBeUndefined();
@@ -32,8 +31,14 @@ function fileNamesOf(configName: string): string[] {
   const parsed = ts.parseJsonConfigFileContent(read.config, ts.sys, REPO_ROOT);
   expect(parsed.errors).toEqual([]);
 
-  return parsed.fileNames.map((f) => path.relative(REPO_ROOT, f));
+  return parsed;
 }
+
+const relative = (files: readonly string[]): string[] =>
+  files.map((f) => path.relative(REPO_ROOT, f));
+
+const fileNamesOf = (configName: string): string[] =>
+  relative(parsedConfig(configName).fileNames);
 
 /**
  * Test-only code, by DIRECTORY and not just by extension (#128).
@@ -48,7 +53,8 @@ const posix = (f: string): string => f.split(path.sep).join('/');
 
 describe('type-check coverage', () => {
   it('keeps test-only code out of the build config, so dist/ stays clean', () => {
-    const built = fileNamesOf('tsconfig.json');
+    const config = parsedConfig('tsconfig.json');
+    const built = relative(config.fileNames);
 
     // Self-check: a scan that enumerated nothing would pass the filter vacuously.
     expect(built.length).toBeGreaterThan(50);
@@ -57,14 +63,19 @@ describe('type-check coverage', () => {
     expect(built.filter((f) => TEST_ONLY.test(posix(f)))).toEqual([]);
 
     // `exclude` only prunes the ROOT list — tsc still compiles and emits whatever
-    // those roots import. So a production `import '../test-support/x'` would put
-    // test code back in dist/ with the filter above still green.
-    const importers = built.filter((f) =>
-      [...fs.readFileSync(path.join(REPO_ROOT, f), 'utf8').matchAll(/from '([^']+)'/g)].some(
-        ([, spec]) => TEST_ONLY.test(spec)
-      )
-    );
-    expect(importers).toEqual([]);
+    // those roots import, so a production `import './test-support/x'` puts test
+    // code back in dist/ with the filter above still green. Ask TypeScript for
+    // the real closure: a regex over one import syntax misses the side-effect
+    // (`import 'x'`) and `require('x')` forms, which emit just the same.
+    const emitted = relative(
+      ts
+        .createProgram(config.fileNames, config.options)
+        .getSourceFiles()
+        .map((s) => s.fileName)
+    ).filter((f) => f.startsWith(`src${path.sep}`));
+
+    expect(emitted.length).toBeGreaterThanOrEqual(built.length);
+    expect(emitted.filter((f) => TEST_ONLY.test(posix(f)))).toEqual([]);
   });
 
   it('checks the unit and integration suites through tsconfig.test.json', () => {
