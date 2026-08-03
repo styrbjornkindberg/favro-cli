@@ -19,8 +19,12 @@
  * NO PTY, AND WHY THAT IS NOT A GAP. A pty is what distinguishes a pipe from a
  * terminal, and it was the only way to observe the old bug. It cannot observe
  * this fix: the decision is taken before any fd is handed to anything, so the
- * result is identical under a pty and under jest. `skill-edit-spawn.test.ts`
- * still covers the real-spawn path for the terminal case.
+ * result is identical under a pty and under jest — measured: run the pty suite's
+ * harness over a plain pipe instead of `script` and the refusal arm still passes,
+ * while its two siblings fail. `skill-edit-spawn.test.ts` still covers the
+ * real-spawn path for the terminal case, and `shell-pty.test.ts` takes #147's
+ * "under a real pty" clause literally: same refusal, real terminal above it, plus
+ * the child-fd measurement from the ticket that only a pty can make.
  *
  * NOTHING HERE CAN HANG. `child_process` is mocked and both mocks answer
  * immediately, so a removed guard fails an assertion in milliseconds rather than

@@ -1,0 +1,247 @@
+/**
+ * `favro shell` refusing an interactive command UNDER A REAL PTY (#147).
+ *
+ * WHY THIS FILE EXISTS SEPARATELY FROM `interactive-refusal.test.ts`. That file
+ * mocks `child_process` and asserts `expect(execSync).not.toHaveBeenCalled()`.
+ * It is the right test for the decision, and it is not a measurement of the
+ * condition the bug lived in. #147's acceptance criterion asked for a pty
+ * specifically, "since that is the only thing that distinguishes a pipe from a
+ * terminal", and an argument that the decision happens before any fd is handed
+ * over is not that measurement. So this file takes it.
+ *
+ * WHAT A PTY BUYS THAT JEST CANNOT FAKE. Node leaves `isTTY` **undefined** on a
+ * pipe, not `false`, and `tty.isatty(fd)` answers about the real fd — neither is
+ * reachable by assignment. Measured here, on this machine:
+ *
+ *   | parent           | child fds (stdin/stdout/stderr) |
+ *   |------------------|---------------------------------|
+ *   | jest (pipes)     | pipe / pipe / pipe              |
+ *   | under a pty      | TTY  / pipe / pipe              |
+ *
+ * The second row is the bug from the ticket, reproduced: `runFavro` uses
+ * `stdio: ['inherit','pipe','pipe']` so it can post-process output, so even with
+ * a real terminal above it the child gets a PIPE for stdout. vi then prints
+ * "Output is not to a terminal" and blocks. That row is only observable under a
+ * pty, and `keeps output capture` below asserts it directly.
+ *
+ * HOW THE PTY IS ALLOCATED. `script(1)`, which ships with macOS and Linux — no
+ * new devDependency for one test, and node-pty would mean a native gyp build.
+ * The flag syntax differs between the two platforms (see `PTY_ARGV`), so this
+ * suite is POSIX-only and skips cleanly elsewhere rather than failing.
+ *
+ * WHY A FAKE `favro` ON PATH. `runFavro` shells out to whatever `favro` resolves
+ * to. A real one would open $EDITOR — non-deterministic, and dependent on a
+ * global install. The shim is hermetic, it reports its own fd kinds (that is
+ * where the table above comes from), it touches a marker file so "a child ran"
+ * is observable even while it blocks, and for `skill edit` it BLOCKS — so a
+ * removed guard hangs and this suite fails on its own timeout instead of going
+ * green. Verified two independent ways, both by stripping the guard and running:
+ * removing the `skill edit` entry from `INTERACTIVE_COMMANDS`, and making
+ * `findInteractiveCommand` return `undefined` unconditionally. Each one put
+ * `refuses … without spawning` at the SIGKILL bound with its marker on disk,
+ * against 0.44s and no marker green — and `spawned` alone carries the failure,
+ * confirmed by deleting the `timedOut` assertion and watching it still go red.
+ *
+ * NOTHING HERE CAN HANG THE SUITE, AND JEST IS NOT WHAT STOPS IT. Measured: a
+ * synchronous test body runs past jest's per-test timeout without being
+ * preempted — a 6s `spawnSync` still reported its assertion, not a jest timeout,
+ * because the timer cannot fire while the body holds the thread. So `spawnSync`'s
+ * own `timeout` plus `killSignal: 'SIGKILL'` is the ONLY bound on a blocked run,
+ * `timedOut` is asserted on explicitly, and the SIGKILL on `script` closes the
+ * pty, which SIGHUPs the blocked shim rather than orphaning it (checked with
+ * `ps` after a red run: no surviving `sleep`).
+ */
+import { spawnSync } from 'child_process';
+import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, existsSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+
+/**
+ * Hard bound on one pty run.
+ *
+ * MEASURE IT IN THE CONDITION IT RUNS IN, NOT IN ISOLATION (ADR-0003). Alone
+ * this file's slowest green run is ~0.5s; inside the full 161-suite parallel run
+ * — which is how it actually executes — the slowest is ~1.5s, three times that,
+ * because the pty child spawns its own node and ts-node-transpiles `shell.ts`
+ * and everything it imports. CI is slower again: a 2-vCPU `ubuntu-latest` runner
+ * doing `npx jest --coverage` on two node versions. So the bound is set from the
+ * ~1.5s figure with room for a runner several times slower, not from the ~0.5s
+ * one. Overshooting only costs time on a genuine hang, which is rare;
+ * undershooting turns a green run red for no reason.
+ *
+ * Not a hang risk either way: jest's own per-test timeout never preempts a
+ * synchronous body, so `spawnSync`'s `timeout` is the only thing that ends a
+ * blocked run, and `timedOut` is asserted on rather than left implicit.
+ */
+const PTY_TIMEOUT_MS = 10_000;
+
+const SUPPORTED = process.platform === 'darwin' || process.platform === 'linux';
+
+/**
+ * `script` takes an argv on macOS and a single command STRING on Linux:
+ *   macOS: script -q /dev/null <cmd> <args…>
+ *   Linux: script -qec "<cmd …>" /dev/null
+ * The driver therefore takes ZERO arguments and reads its inputs from the
+ * environment, so there is nothing to quote and one code path covers both.
+ *
+ * ponytail: the macOS row is measured on this machine; the LINUX ROW IS NOT —
+ * it is util-linux's documented shape, not an observed one, and ADR-0003 says
+ * to label that rather than assert it. It is kept anyway because CI is where it
+ * runs: `.github/workflows/ci.yml` is `ubuntu-latest` on node 18.x and 20.x, so
+ * skipping Linux would mean the only pty test in the repo never executes in CI
+ * — strictly worse than a branch CI itself verifies on the first push. If it is
+ * wrong, CI goes red loudly and the fix is one argv. Upgrade path: once it has
+ * gone green on ubuntu once, delete this note.
+ *
+ * `process.execPath`, not `node`: `script` resolves its command against PATH, and
+ * the interpreter on PATH is not necessarily the one running jest — on this
+ * machine the ambient `node` is v10 and cannot load ts-node at all.
+ */
+const PTY_ARGV = (driver: string): readonly string[] =>
+  process.platform === 'darwin'
+    ? ['-q', '/dev/null', process.execPath, driver]
+    : ['-qec', `"${process.execPath}" "${driver}"`, '/dev/null'];
+
+let root: string;
+let binDir: string;
+let driver: string;
+/** One marker path per run, so a stale file cannot answer for a later run. */
+let runCount = 0;
+
+beforeAll(() => {
+  if (!SUPPORTED) return;
+  root = mkdtempSync(join(tmpdir(), 'favro-pty-'));
+  binDir = join(root, 'bin');
+  driver = join(root, 'driver.js');
+  mkdirSync(binDir);
+
+  // The child. Touches a marker, reports its inherited fds, then blocks for
+  // `skill edit` — the blocking is what makes a removed guard fail instead of
+  // pass. `sleep`, not an unbounded read: if SIGKILL ever misses it, it reaps
+  // itself.
+  //
+  // THE MARKER IS NOT REDUNDANT WITH THE OUTPUT. `runFavro` captures the child's
+  // stdout, so while the child blocks everything it printed sits unflushed in the
+  // pipe and never reaches this process — an assertion on absent output would be
+  // unfalsifiable exactly in the case that matters. A file on disk survives that,
+  // and is the real-pty analogue of `expect(execSync).not.toHaveBeenCalled()`.
+  const shim = join(binDir, 'favro');
+  writeFileSync(
+    shim,
+    [
+      '#!/bin/sh',
+      'exec 2>&1',
+      ': > "$FAVRO_PTY_MARKER"',
+      `"${process.execPath}" -e 'const k=f=>require("tty").isatty(f)?"TTY":"pipe";console.log("CHILD-FDS stdin="+k(0)+" stdout="+k(1)+" stderr="+k(2))'`,
+      'case "$1 $2" in',
+      '  "skill edit") sleep 30 ;;',
+      '  *) echo "CHILD-RAN $*" ;;',
+      'esac',
+      '',
+    ].join('\n'),
+    { mode: 0o755 },
+  );
+  chmodSync(shim, 0o755);
+
+  writeFileSync(
+    driver,
+    [
+      "const k = (f) => require('tty').isatty(f) ? 'TTY' : 'pipe';",
+      "console.log('PARENT-FDS stdin=' + k(0) + ' stdout=' + k(1) + ' stderr=' + k(2));",
+      'require(process.env.PTY_TS_NODE);',
+      "require(process.env.PTY_SHELL).runFavro(process.env.PTY_CMD);",
+      '',
+    ].join('\n'),
+  );
+});
+
+afterAll(() => {
+  if (root) rmSync(root, { recursive: true, force: true });
+});
+
+interface PtyRun {
+  readonly out: string;
+  readonly timedOut: boolean;
+  /** Whether a child `favro` actually ran — observed on disk, not in the output. */
+  readonly spawned: boolean;
+}
+
+/** Run `runFavro(cmd)` in a fresh node process whose three fds are a real pty. */
+function underPty(cmd: string): PtyRun {
+  // `root`, not `binDir`: `binDir` is prepended to the child's PATH, and test
+  // scratch state does not belong in a PATH directory.
+  const marker = join(root, `spawned-${runCount++}`);
+  const result = spawnSync('script', PTY_ARGV(driver) as string[], {
+    encoding: 'utf-8',
+    timeout: PTY_TIMEOUT_MS,
+    killSignal: 'SIGKILL',
+    // `ignore` is /dev/null. Not cosmetic: macOS `script` runs `tcgetattr` on its
+    // OWN stdin to copy the terminal settings onto the pty it allocates, and
+    // jest hands its children a socket — which fails with "tcgetattr/ioctl:
+    // Operation not supported on socket" before any pty exists.
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: {
+      ...process.env,
+      PATH: `${binDir}:${process.env.PATH ?? ''}`,
+      PTY_TS_NODE: require.resolve('ts-node/register/transpile-only'),
+      PTY_SHELL: require.resolve('../../commands/shell'),
+      PTY_CMD: cmd,
+      FAVRO_PTY_MARKER: marker,
+      // Colour would only add escapes around the strings asserted below.
+      NO_COLOR: '1',
+      FORCE_COLOR: '0',
+    },
+  });
+
+  return {
+    // `script` echoes CRs and a stray ^D; strip both plus any ANSI that leaks.
+    // `result.error` is folded in because a missing or different `script` gives
+    // empty stdout, and "expected PARENT-FDS…, received ''" does not say ENOENT.
+    out: `${result.stdout ?? ''}${result.stderr ?? ''}${result.error ? `\nspawnSync script: ${result.error.message}` : ''}`
+      .replace(/\r/g, '')
+      .replace(/\x1b\[[0-9;]*m/g, ''),
+    timedOut: result.signal === 'SIGKILL',
+    spawned: existsSync(marker),
+  };
+}
+
+const describePty = SUPPORTED ? describe : describe.skip;
+
+describePty('favro shell under a real pty', () => {
+  test('the pty is real — all three parent fds are terminals, not pipes', () => {
+    // Load-bearing. `isTTY` is `undefined` on a pipe, not `false`, so a harness
+    // that quietly degraded to pipes would satisfy every other assertion here.
+    // This one fails instead.
+    const run = underPty('boards list');
+
+    expect(run.timedOut).toBe(false);
+    expect(run.out).toContain('PARENT-FDS stdin=TTY stdout=TTY stderr=TTY');
+  });
+
+  test('refuses skill edit without spawning, rather than handing vi a pipe', () => {
+    const run = underPty('skill edit victim');
+
+    // The shim blocks for `skill edit`, so a missing guard shows up here as a
+    // SIGKILL at PTY_TIMEOUT_MS — the hang from the ticket, caught loudly.
+    expect(run.timedOut).toBe(false);
+    // No child, therefore nothing to block on. The inverse arm below observes
+    // this same marker as `true`, so neither direction is vacuous.
+    expect(run.spawned).toBe(false);
+    expect(run.out).toContain('favro skill edit');
+    expect(run.out).toContain('needs a terminal');
+  });
+
+  test('a non-interactive command still runs, and still has its output captured', () => {
+    // The inverse arm. A guard that refused everything under a pty would pass
+    // the test above; this is what stops it.
+    const run = underPty('boards list');
+
+    expect(run.timedOut).toBe(false);
+    expect(run.spawned).toBe(true);
+    expect(run.out).toContain('CHILD-RAN boards list');
+    // The ticket's measurement, reproduced: a real terminal above, and the child
+    // STILL gets a pipe for stdout, because capture is what pays for the refusal.
+    // Flip `runFavro` to a blanket `stdio: 'inherit'` and this line changes.
+    expect(run.out).toContain('CHILD-FDS stdin=TTY stdout=pipe stderr=pipe');
+  });
+});
