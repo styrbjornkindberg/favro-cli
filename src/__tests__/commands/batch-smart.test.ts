@@ -15,12 +15,22 @@ import {
 } from '../../commands/batch-smart';
 import CardsAPI, { Card } from '../../lib/cards-api';
 import FavroHttpClient from '../../lib/http-client';
+import BoardsAPI from '../../lib/boards-api';
+import ColumnDirectory from '../../lib/column-directory';
 import * as config from '../../lib/config';
 import * as assignee from '../../lib/assignee';
 
 jest.mock('../../lib/cards-api');
 jest.mock('../../lib/http-client');
 jest.mock('../../lib/config');
+// #150: a goal's non-keyword words are COLUMN names, and `<board>` may be a
+// board NAME — so the command settles both over the wire before it reads or
+// writes anything. Stood in below rather than automocked bare: an automock
+// resolves every column to `undefined`, which `settleColumns` falls back to the
+// typed token for, quietly restoring the pre-#150 behaviour these tests would
+// then be unable to detect.
+jest.mock('../../lib/boards-api');
+jest.mock('../../lib/column-directory');
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -553,11 +563,36 @@ describe('registerBatchSmartCommand (CLI)', () => {
   let consoleErrorSpy: jest.SpyInstance;
   const mockResolveApiKey = config.resolveApiKey as jest.MockedFunction<typeof config.resolveApiKey>;
 
+  /**
+   * The board's real columns. A goal naming anything else refuses (#150), so
+   * every goal below deliberately names one of these — and the refusal path is
+   * pinned over a `node:http` stand-in by
+   * `src/__tests__/batch-smart-goal-fail-closed-wire.test.ts`, where "no PUT
+   * reached the server" is checkable rather than inferred from a mock.
+   */
+  const COLUMNS = [
+    { columnId: 'col-backlog', name: 'Backlog' },
+    { columnId: 'col-review', name: 'Review' },
+    { columnId: 'col-done', name: 'Done' },
+  ];
+
   beforeEach(() => {
     jest.clearAllMocks();
     program = new Command();
     registerBatchSmartCommand(program);
     mockResolveApiKey.mockResolvedValue('test-token');
+
+    (BoardsAPI as jest.MockedClass<typeof BoardsAPI>).mockImplementation(() => ({
+      resolveBoardId: jest.fn(async (board: string) => board),
+    } as any));
+    (ColumnDirectory as jest.MockedClass<typeof ColumnDirectory>).mockImplementation(() => ({
+      resolveColumnId: jest.fn(async (value: string) => {
+        const hit = COLUMNS.find((c) => c.name.toLowerCase() === value.toLowerCase());
+        if (!hit) throw new Error(`No column named "${value}" on this board`);
+        return hit.columnId;
+      }),
+      nameOf: jest.fn(async (columnId: string) => COLUMNS.find((c) => c.columnId === columnId)?.name),
+    } as any));
 
     // Suppress console output
     consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
@@ -614,6 +649,11 @@ describe('registerBatchSmartCommand (CLI)', () => {
     }
 
     expect(mockUpdateCard).not.toHaveBeenCalled();
+    // And it got as far as the preview. Without this the assertion above also
+    // passes on a command that refused the goal outright, or never ran at all —
+    // which is exactly what happened when #150 made an unsettled column refuse.
+    expect(consoleSpy.mock.calls.flat().join(' ')).toMatch(/Dry-run mode/i);
+    expect(mockListCards).toHaveBeenCalled();
   });
 
   it('handles no matching cards gracefully', async () => {
