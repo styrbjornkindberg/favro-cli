@@ -156,14 +156,20 @@ describe('favro comments list', () => {
     expect(output).not.toContain('2 comment(s)');
   });
 
-  it('a non-numeric --limit falls back to the default rather than capping at 1 (#99)', async () => {
-    MockCommentsApiClient.prototype.listComments = jest.fn().mockResolvedValue(SAMPLE_COMMENTS);
+  it('a non-numeric --limit refuses rather than falling back (#99 → #142)', async () => {
+    const read = jest.fn().mockResolvedValue(SAMPLE_COMMENTS);
+    MockCommentsApiClient.prototype.listComments = read;
 
     await runCli(['comments', 'list', 'card-abc', '--limit', '1e9']);
 
+    // #99 stopped it capping at 1; #142 stopped it answering at all. The old
+    // fallback to 100 was a number invented from a value we could not read.
     const parsed = JSON.parse(String(consoleSpy.mock.calls[0][0]));
-    expect(parsed.rows).toHaveLength(2);
-    expect(parsed.truncated).toBeUndefined();
+    expect(parsed.rows).toBeUndefined();
+    expect(parsed.error.message).toContain('1e9');
+    expect(parsed.error.retryable).toBe(false);
+    expect(process.exitCode).toBe(1);
+    expect(read).not.toHaveBeenCalled();
   });
 
   it('answers an error envelope when the API key is missing', async () => {

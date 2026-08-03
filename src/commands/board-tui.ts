@@ -13,6 +13,7 @@
  * already the human view, so the machine shape is what has to be asked for.
  */
 import { Command } from 'commander';
+import { parseLimit } from '../lib/read-shape';
 import { Ctx, run } from '../lib/run';
 import { renderBoard, renderStatusBar, snapshotToColumns } from '../lib/board-renderer';
 import { c } from '../lib/theme';
@@ -35,7 +36,7 @@ const watchSeconds = (watch: boolean | string | undefined): number =>
  * stdout capture, no client mock.
  */
 export async function boardTuiHandler(ctx: Ctx, boardRef: string, options: BoardTuiOptions) {
-  const limit = parseInt(options.limit ?? '500', 10);
+  const limit = parseLimit(options.limit) ?? 500;
 
   // One shot, and the runner writes it. `--watch --json` used to concatenate a
   // fresh pretty-printed object onto stdout every interval, which no parser can

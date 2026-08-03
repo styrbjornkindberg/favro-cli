@@ -17,6 +17,7 @@
 
 import { Command } from 'commander';
 import { RefusalError } from '../lib/refusal';
+import { parseLimit } from '../lib/read-shape';
 import { Ctx, run } from '../lib/run';
 import type { StandupCard, StandupResult } from '../api/standup';
 
@@ -82,7 +83,7 @@ export async function standupHandler(ctx: Ctx, options: StandupOptions) {
     );
   }
 
-  const cardLimit = parseInt(options.limit ?? '500', 10) || 500;
+  const cardLimit = parseLimit(options.limit) ?? 500;
   const result = await ctx.api.standup.getStandup(options.board, cardLimit);
 
   return { item: result, human: formatHuman };

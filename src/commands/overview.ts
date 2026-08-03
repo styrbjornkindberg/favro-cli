@@ -4,7 +4,7 @@
  */
 import { Command } from 'commander';
 import { AggregateCard } from '../api/aggregate';
-import { Unreachable } from '../lib/read-shape';
+import { parseLimit, Unreachable } from '../lib/read-shape';
 import { Ctx, run } from '../lib/run';
 
 interface BoardSummary {
@@ -189,7 +189,7 @@ interface OverviewOptions {
 }
 
 export async function overviewHandler(ctx: Ctx, options: OverviewOptions) {
-  const cardLimit = parseInt(options.limit, 10) || 1000;
+  const cardLimit = parseLimit(options.limit) ?? 1000;
 
   let snapshot;
   let scope: string;

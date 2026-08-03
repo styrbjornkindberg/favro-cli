@@ -4,7 +4,7 @@
  */
 import { Command } from 'commander';
 import { extractEffort } from '../api/context';
-import { excludeUnreadableBoards, Unreachable } from '../lib/read-shape';
+import { excludeUnreadableBoards, parseLimit, Unreachable } from '../lib/read-shape';
 import { Ctx, run } from '../lib/run';
 
 const ACTIVE_STAGES = ['active', 'review', 'testing'];
@@ -73,7 +73,7 @@ interface TeamOptions {
 }
 
 export async function teamHandler(ctx: Ctx, options: TeamOptions) {
-  const cardLimit = parseInt(options.limit, 10) || 1000;
+  const cardLimit = parseLimit(options.limit) ?? 1000;
 
   let snapshot;
   let scope: string;

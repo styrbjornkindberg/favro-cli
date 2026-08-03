@@ -370,6 +370,21 @@ describe('git todos — reporting', () => {
     expect(MockCardsAPI.prototype.createCard).not.toHaveBeenCalled();
   });
 
+  test('a --limit it cannot read refuses even when the codebase is CLEAN', async () => {
+    // The clean arm returns before ever reading `limit`, so the parse used to sit
+    // below it: `--limit banana` refused on a repo with TODOs and exited 0 with
+    // "No TODO/FIXME/HACK comments found" on a repo without. Whether a typo was
+    // caught depended on the codebase (#142/#143 review).
+    (todoScanner.scanTodos as jest.Mock).mockReturnValue([]);
+
+    await runCli(['git', 'todos', '--limit', 'banana']);
+
+    expect(errors()).toContain('banana');
+    expect(output()).not.toContain('No TODO/FIXME/HACK comments found.');
+    // And it costs no scan at all — the refusal is decided from the flag alone.
+    expect(todoScanner.scanTodos).not.toHaveBeenCalled();
+  });
+
   test('--limit caps the listing and says how many were withheld', async () => {
     const many = Array.from({ length: 5 }, (_, i) => ({ ...item, line: i + 1 }));
     (todoScanner.scanTodos as jest.Mock).mockReturnValue(many);

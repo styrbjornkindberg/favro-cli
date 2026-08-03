@@ -5,6 +5,7 @@
 import { Command } from 'commander';
 import { resolveUserId } from '../lib/config';
 import { AggregateCard } from '../api/aggregate';
+import { parseLimit } from '../lib/read-shape';
 import { Ctx, run } from '../lib/run';
 
 interface MyCardsResult {
@@ -116,7 +117,7 @@ export async function myCardsHandler(ctx: Ctx, options: MyCardsOptions) {
     throw new Error('userId not configured. Run `favro auth login` to resolve your identity.');
   }
 
-  const cardLimit = parseInt(options.limit, 10) || 1000;
+  const cardLimit = parseLimit(options.limit) ?? 1000;
 
   let snapshot;
   if (options.collection) {

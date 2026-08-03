@@ -15,6 +15,7 @@ import { readConfig } from '../lib/config';
 import CardsAPI from '../lib/cards-api';
 import BoardsAPI from '../lib/boards-api';
 import { CommentsApiClient } from '../api/comments';
+import { parseLimit } from '../lib/read-shape';
 import {
   readProjectConfig,
   writeProjectConfig,
@@ -369,6 +370,14 @@ export function registerGitCommands(program: Command): void {
     .option('--limit <n>', 'Max TODOs to show (default: 100)', '100')
     .action(async (options) => {
       try {
+        // Parsed BEFORE the scan, because the empty-TODO arm returns 0 without
+        // ever reading `limit`: `--limit banana` refused on a repo with TODOs and
+        // exited 0 saying "No TODO/FIXME/HACK comments found" on a repo without,
+        // so whether a typo'd cap was caught depended on the codebase. A refusal
+        // must not be conditional on the data it never got to cap. Found in
+        // review of #142/#143.
+        const limit = parseLimit(options.limit) ?? 100;
+
         const root = findProjectRoot();
         process.stderr.write('Scanning codebase for TODOs...\n');
         const todos = scanTodos({ root });
@@ -378,7 +387,6 @@ export function registerGitCommands(program: Command): void {
           return;
         }
 
-        const limit = parseInt(options.limit ?? '100', 10);
         const limited = todos.slice(0, limit);
 
         if (options.json) {

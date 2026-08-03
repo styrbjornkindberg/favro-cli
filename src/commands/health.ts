@@ -10,7 +10,7 @@
  */
 import { Command } from 'commander';
 import { AggregateCard } from '../api/aggregate';
-import { excludeUnreadableBoards, Unreachable } from '../lib/read-shape';
+import { excludeUnreadableBoards, parseLimit, Unreachable } from '../lib/read-shape';
 import { RefusalError } from '../lib/refusal';
 import { Ctx, run } from '../lib/run';
 import { daysSince, DEFAULT_STALE_DAYS, isStale } from '../lib/time';
@@ -179,7 +179,7 @@ interface HealthOptions {
  * test.
  */
 export async function healthHandler(ctx: Ctx, options: HealthOptions) {
-  const cardLimit = parseInt(options.limit, 10) || 1000;
+  const cardLimit = parseLimit(options.limit) ?? 1000;
 
   let snapshot;
   let scope: string;

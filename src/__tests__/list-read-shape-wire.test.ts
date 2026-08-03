@@ -194,8 +194,12 @@ describe('the envelope and the output cap', () => {
   it('a numeric PREFIX is not a cap — `parseInt` read `1e9` as 1', () => {
     // Each of these returned `{rows:[1], truncated:true}` or similar: a
     // well-formed, plausible, wrong answer to "give me effectively everything".
+    // #99 stopped answering the wrong number; #142 stopped answering at all —
+    // a supplied `--limit` that does not parse is a refusal, because "no cap"
+    // was itself a plausible answer invented from garbage.
+    // `limit-fail-closed-coverage.test.ts` holds the whole table.
     for (const limit of ['1e9', '2abc', '2.7', '5,000', '1_000', 'banana']) {
-      expect(capRows([1, 2, 3], limit)).toEqual({ rows: [1, 2, 3] });
+      expect(() => capRows([1, 2, 3], limit)).toThrow(/--limit takes a whole number/);
     }
   });
 

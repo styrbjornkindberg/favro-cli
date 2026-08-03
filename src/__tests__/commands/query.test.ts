@@ -113,12 +113,19 @@ describe('query', () => {
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
-  test('--limit reaches the fetch, and a non-numeric one falls back to 1000 rather than NaN', async () => {
+  test('--limit reaches the fetch, and a non-numeric one refuses rather than defaulting', async () => {
     await runCli(['query', 'Sprint 42', 'x', '--limit', '50']);
     expect(MockQueryAPI.prototype.execute).toHaveBeenCalledWith('Sprint 42', 'x', 50);
 
+    // Falling back to 1000 was a fetch cap invented from garbage (#142/#143).
+    MockQueryAPI.prototype.execute = jest.fn();
     await runCli(['query', 'Sprint 42', 'x', '--limit', 'lots']);
-    expect(MockQueryAPI.prototype.execute).toHaveBeenLastCalledWith('Sprint 42', 'x', 1000);
+    expect(MockQueryAPI.prototype.execute).not.toHaveBeenCalled();
+    // Not `JSON.parse(output())`: the first run above already wrote a result
+    // line, so the spy holds two payloads.
+    expect(output()).toContain('--limit takes a whole number of 1 or more');
+    expect(output()).toContain('lots');
+    expect(process.exitCode).toBe(1);
   });
 
   test('JSON is the default: the whole result, no human rendering', async () => {

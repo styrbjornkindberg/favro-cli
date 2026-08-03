@@ -5,6 +5,7 @@
 import { Command } from 'commander';
 import { resolveUserId } from '../lib/config';
 import { AggregateCard } from '../api/aggregate';
+import { parseLimit } from '../lib/read-shape';
 import { Ctx, run } from '../lib/run';
 import { isBlocked } from '../api/standup';
 
@@ -107,7 +108,7 @@ export async function myStandupHandler(ctx: Ctx, options: MyStandupOptions) {
   }
 
   const dueSoonDays = parseInt(options.days, 10) || 3;
-  const cardLimit = parseInt(options.limit, 10) || 1000;
+  const cardLimit = parseLimit(options.limit) ?? 1000;
 
   let snapshot;
   if (options.collection) {

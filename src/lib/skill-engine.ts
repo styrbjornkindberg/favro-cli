@@ -24,6 +24,7 @@ import { readConfig, FavroConfig } from './config';
 import { dispatch, getIntent, intentNames, isRetryable, DispatchResult } from './dispatch';
 import { isWireFailure } from './favro-error';
 import { CompensationLog, Orphan, TxOutcome } from './tx-cards';
+import { parseLimit } from './read-shape';
 import ContextAPI from '../api/context';
 import { StandupAPI } from '../api/standup';
 import { SprintPlanAPI } from '../api/sprint-plan';
@@ -224,7 +225,7 @@ async function executeStep(
       const board = args.board ?? vars.board;
       if (!board) throw new Error('Step requires "board" argument');
       const contextApi = new ContextAPI(client);
-      const snapshot = await contextApi.getSnapshot(board, parseInt(args.limit ?? '1000', 10));
+      const snapshot = await contextApi.getSnapshot(board, parseLimit(args.limit) ?? 1000);
       return { output: JSON.stringify(snapshot, null, 2), value: snapshot };
     }
 
@@ -245,7 +246,11 @@ async function executeStep(
       const board = args.board ?? vars.board;
       if (!board) throw new Error('Step requires "board" argument');
       const sprintApi = new SprintPlanAPI(client);
-      const budget = args.budget ? parseInt(args.budget, 10) : undefined;
+      // `parseLimit`, not `parseInt`: the prefix parse made `budget: "1e9"` a
+      // ONE-POINT sprint here, which is the same defect #142 closed on the CLI's
+      // `--budget` — the two spellings of the same step must not disagree.
+      // Missed by #143, which counted `limit` sites only. Found in review.
+      const budget = parseLimit(args.budget, '--budget');
       const result = await sprintApi.getSuggestions(board, budget);
       const output = `Sprint plan for ${result.board.name} (budget: ${result.budget}):\n` +
         result.suggestions.map((c: any) => `  [${c.priority}] ${c.title} (effort: ${c.effort})`).join('\n');

@@ -13,6 +13,7 @@ import { Command } from 'commander';
 import { resolveUserId } from '../lib/config';
 import { AggregateCard } from '../api/aggregate';
 import { extractEffort } from '../api/context';
+import { parseLimit } from '../lib/read-shape';
 import { Ctx, run } from '../lib/run';
 
 const CANDIDATE_STAGES = ['queued', 'backlog', 'active'];
@@ -131,7 +132,7 @@ export async function nextHandler(ctx: Ctx, options: NextOptions) {
   }
 
   const count = parseInt(options.count, 10) || 5;
-  const cardLimit = parseInt(options.limit, 10) || 1000;
+  const cardLimit = parseLimit(options.limit) ?? 1000;
 
   let snapshot;
   if (options.collection) {

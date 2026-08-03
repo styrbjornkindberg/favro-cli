@@ -208,8 +208,13 @@ describe('diff command', () => {
     expect(MockContextAPI.prototype.getSnapshot).toHaveBeenCalledWith('board-1', 250);
 
     // `parseInt` stopped at the first non-digit, so `1e9` meant ONE card (#143).
+    // `parseLimit` rejected it, which made it the DEFAULT 1000 — still a number
+    // invented from a value we could not read. It refuses now (#142), and the
+    // snapshot is never fetched.
+    MockContextAPI.prototype.getSnapshot = jest.fn();
     await runCli(['diff', 'board-1', '--since', '1d', '--limit', '1e9']);
-    expect(MockContextAPI.prototype.getSnapshot).toHaveBeenLastCalledWith('board-1', 1000);
+    expect(MockContextAPI.prototype.getSnapshot).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
   });
 
   it('the handler returns the report, the formatter and the exit code', async () => {

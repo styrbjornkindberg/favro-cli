@@ -136,7 +136,9 @@ describe('favro sprint-plan', () => {
   it('refuses an invalid budget before any request goes out', async () => {
     await runCli(['sprint-plan', '--board', 'Sprint 42', '--budget', 'abc']).catch(() => {});
 
-    expect(envelope(consoleSpy).error.message).toContain('--budget must be a positive number');
+    // One parser, one wording: `parseLimit` raises the refusal and names the
+    // flag it was given, so `--budget` and `--limit` decline in the same words.
+    expect(envelope(consoleSpy).error.message).toContain('--budget takes a whole number of 1 or more');
     expect(envelope(consoleSpy).error.retryable).toBe(false);
     expect(MockSprintPlanAPI.prototype.getSuggestions).not.toHaveBeenCalled();
     expect(process.exitCode).toBe(1);
