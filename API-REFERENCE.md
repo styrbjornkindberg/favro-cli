@@ -325,7 +325,7 @@ favro boards list [collection-id] [--collection <name>] [--include stats,velocit
 
 | Option | Description |
 |---|---|
-| `--collection <name>` | Filter boards by collection name (case-insensitive substring match) |
+| `--collection <collection>` | Filter boards by collection id or exact name (trimmed, case-insensitive; narrowed on the wire). A name matching two collections refuses with both ids |
 | `--include <options>` | Comma-separated: `stats`, `velocity` |
 | `--human` | Table/detail view instead of the default JSON (root flag) |
 
