@@ -432,11 +432,15 @@ export async function runSkill(
     // The wire is the gate and the table runs behind it (#151, the same shape
     // #134 gave the CLI boundary). `abortCause` here is whatever a step threw
     // OUTSIDE the table's instrumentation — an interpolation typo, an unknown
-    // intent, a `ParseError`, a `TypeError` of ours — none of which a rerun can
-    // change. Behind the gate the table still decides which HTTP failures are
-    // deterministic, so the two cannot drift (#66). The rollback OBJECT already
-    // says the world is unchanged; `retryable` only ever answers whether running
-    // it again could succeed, and a typo cannot.
+    // intent, a `ParseError`, a `TypeError` of ours, none of which a rerun can
+    // change, but ALSO a genuine wire failure, which one can: `board()` and
+    // `assertScope` both run outside the try, so a `GET /widgets/{board}` that
+    // 400s escapes here. That is why the gate is not a constant `false`, and
+    // `skill-dispatch-wire.test.ts` pins both answers on the same seam. Behind
+    // the gate the table still decides which HTTP failures are deterministic, so
+    // the two cannot drift (#66). The rollback OBJECT already says the world is
+    // unchanged; `retryable` only ever answers whether running it again could
+    // succeed, and a typo cannot.
     rollback = { ...unwound, retryable: retryAdvice(unwound.outcome, abortCause) };
   }
 

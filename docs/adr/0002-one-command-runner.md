@@ -204,23 +204,46 @@ accepted, the state did not change, retrying is correct advice, and `isWireFailu
 `false` because it is a bare `Error` of ours. So the naive gate breaks a legitimately-retryable
 case to fix an illegitimate one.
 
-What closed it was **enumerating** that population rather than assuming it was large. Walking the
-import closure of `TxCards` — every module `intent.run` can reach — the genuinely-transient
-in-process throws number **exactly one**: `TxCards.setArchived`'s read-back. Every other decline
-reachable from an intent is already a `RefusalError` subclass, which `refusal-drift.test.ts` keeps
-true, and a bug of ours is by definition not transient. One site is cheap to mark, so it carries a
+What closed it was **enumerating** that population rather than assuming it was large. The surface is
+the import closure of `dispatch.ts` — the intents' `run` bodies live in that file, so its closure
+(27 modules by `madge`) is what they can reach, not `TxCards`'s 22; the five extra are `dispatch.ts`
+itself, `read-shape.ts`, `safety.ts` and `api/comments.ts` with its types. Across all of it the
+genuinely-transient in-process throws number **exactly one**: `TxCards.setArchived`'s read-back.
+
+The rest of the non-`RefusalError` throws in that closure are either deterministic or unreachable
+from inside the try, and neither fact is guarded by a test — `refusal-drift.test.ts` covers the
+resolver family (`*ResolutionError` / `*LookupError`) plus five irregulars it lists by name, and
+says nothing about the bare `Error`s in `cards-api.ts`, `widgets-api.ts`, `config.ts` or
+`api/comments.ts`. What the enumeration measured about those, as of this ADR:
+
+- `cards-api.ts`'s `parseCardUrl` throws reach only `findCardByUrl`, which no intent calls.
+- `widgets-api.ts`'s "no card found" reaches only `commands/widgets.ts`, which is not an intent.
+- `api/comments.ts`'s empty-text throws reach only `run.ts` and `safety.ts`'s `boardOfComment`,
+  which calls `getComment` and swallows.
+- `config.ts`'s and `tracker-config.ts`'s file-read throws reach an intent only through
+  `tx.tracker()`, and `board()` primes that memo OUTSIDE the try.
+- `cards-api.ts`'s `mapDescription` throw is on every create/update path, but `CreateCardRequest`
+  and `UpdateCardRequest` declare no `descriptionFormat` and `createRequest` is a whitelist, not a
+  spread — and it is deterministic anyway, so the fail-closed default is the right answer for it.
+
+A bug of ours is by definition not transient, so one site is cheap to mark: it carries a
 `TransientError` (declared beside `RefusalError` in `refusal.ts`, the leaf module that exists so
 either marker can be raised without an import cycle) and the default gets to be fail-closed
 everywhere: unknown means deterministic-until-proven-otherwise, because a wrong `false` costs one
 honest failure and a wrong `true` costs an agent looping on a call that can never succeed.
 
-Six tests asserted the old reading and now assert the new one, each carrying a note saying which
-way it is pinned and why — `dispatch-tx-wire.test.ts`'s *"a plain in-process failure after a write
-is NOT retryable"* and `skill-dispatch-wire.test.ts`'s *"a failure in step 2 undoes what step 1
-wrote"* are the two that pinned it deliberately. A seventh, *"the reported 'rolled-back, safe to
-retry' can no longer be a lie about a deleted card"*, was **not** flipped: the condition it guards
-IS `rolled-back AND retryable`, so flipping the assertion would have left a test that cannot fail.
-Its third step now fails off the wire instead of in-process, keeping both halves true.
+**Seven tests asserted the old reading. Five now assert the new one**, each carrying a note saying
+which way it is pinned and why — `dispatch-tx-wire.test.ts`'s *"a plain in-process failure after a
+write is NOT retryable"* and `skill-dispatch-wire.test.ts`'s *"a failure in step 2 undoes what step
+1 wrote"* are the two that pinned it deliberately. Of the other two:
+
+- *"the reported 'rolled-back, safe to retry' can no longer be a lie about a deleted card"* was
+  **not** flipped: the condition it guards IS `rolled-back AND retryable`, so flipping the
+  assertion would have left a test that cannot fail. Its third step now fails off the wire instead
+  of in-process, keeping both halves true.
+- *"a 200 that did not take is a LOUD failure, not a ✓ about the argument"* was not touched at all.
+  It is the one test the `TransientError` marker exists for, and the only one in the suite that
+  reaches the exemption — dropping either the marker or the `instanceof` disjunct fails exactly it.
 
 `skill-engine.ts`'s **other** rollback path — a `StepDispatchFailure`, where the table caught the
 error, unwound and derived `retryable` itself — is still carried verbatim rather than re-derived.
@@ -237,6 +260,13 @@ what it was load-bearing for.
 fail-closed default, so a site that raises it without a measurement re-opens the loop for that
 path. `setArchived` has #75's probe: `PUT {archive: …}` responds with a card row echoing
 `archived`, so a mismatch is an observed non-write, not a guess (ADR-0003).
+
+**That rule is not ratcheted, deliberately.** No test asserts the site count, so a second
+`TransientError` would ship unnoticed. Accepted because the drift pressure changed direction: while
+the default was fail-OPEN, the loop was re-opened by *omission* — someone forgetting to raise a
+`RefusalError` — which is what earned `refusal-drift.test.ts`. Fail-closed means omission is now the
+safe outcome, and opening the loop takes a deliberate `import { TransientError }`. A scan blind to
+`extends TransientError` would cost more than it buys; revisit if a second site ever appears.
 
 **`retryable` is not "the world is unchanged".** A rollback conveys that by existing, and
 `outcome` says how completely. `retryable` answers only "could running this again succeed" — the

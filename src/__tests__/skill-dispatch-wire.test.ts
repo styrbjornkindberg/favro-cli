@@ -464,6 +464,48 @@ describe('the run is ONE transaction — one log, threaded through every step', 
     expect(stand.cards.size).toBe(0);
   });
 
+  it('the SAME escaping wire failure is not retryable once the unwind left an orphan', async () => {
+    // The `outcome` argument at THIS site, isolated. `retryAdvice(unwound.outcome,
+    // abortCause)` has two moving parts and only one of them was pinned here:
+    // every other end-of-run-unwind test in this file ends `rolled-back`, so
+    // hardcoding the argument to `'rolled-back'` passed all 3061 tests — measured.
+    // The dispatch table has the same test (`dispatch-tx-wire.test.ts`, "the SAME
+    // unnameable failure is not retryable once the unwind left an orphan"); the
+    // engine shares the expression, so it needs its own or the shared function is
+    // only half-covered.
+    //
+    // Same 400 on the same board as the test above, which is the construction:
+    // the CAUSE is identical and reads retryable, so the only thing that can move
+    // the answer is what the unwind left behind. Step 1's compensating
+    // `DELETE /cards/new-card-1` is refused with a 400 — not a 404, which
+    // `alreadyGone` would forgive — so the card survives and the orphan is real.
+    // An agent told "safe to retry" would write on top of it.
+    const stand = await startServer({
+      fail: (r) => {
+        if (r.path === `/widgets/${OTHER_BOARD}`) return { status: 400, message: 'upstream had a moment' };
+        if (r.method === 'DELETE' && r.path.startsWith('/cards/')) {
+          return { status: 400, message: 'upstream had a moment' };
+        }
+        return undefined;
+      },
+    });
+
+    const result = await runSkill(
+      skill(
+        { command: 'create', args: { name: 'first', board: BOARD } },
+        { command: 'create', args: { name: 'second', board: OTHER_BOARD } },
+      ),
+      opts(stand, { config: { scopeCollectionId: 'coll-a' } }),
+    );
+
+    expect(result.status).toBe('failed');
+    expect(result.rollback?.outcome).toBe('rollback-incomplete');
+    expect(result.rollback?.retryable).toBe(false);
+    // Read back, not counted: the wreckage the advice is about really is there.
+    expect(stand.cards.size).toBe(1);
+    expect(result.rollback?.orphans.map((o) => o.cause)).toEqual(['compensation-failed']);
+  });
+
   it('a DETERMINISTIC wire failure escaping uninstrumented is NOT retryable either', async () => {
     // #151's gate is two conjuncts and this pins the SECOND one: behind
     // `isWireFailure` the table still decides which HTTP failures are

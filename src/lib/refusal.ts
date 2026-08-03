@@ -49,12 +49,15 @@ export class RefusalError extends Error {
  * (`retryAdvice` in `dispatch.ts`, ADR-0002 "Two populations").
  *
  * **The whole population is one throw site.** `TxCards.setArchived`'s
- * "answered 200 but did not take" is the only in-process failure in the intent
- * closure that is transient rather than deterministic — every other decline
- * reachable from `intent.run` is already a `RefusalError` subclass
- * (`refusal-drift.test.ts` holds that), and a bug of ours is by definition not
- * transient. That measurement is what makes the marker cheap: one site to
- * remember rather than a discipline every future author has to keep.
+ * "answered 200 but did not take" is the only in-process failure in
+ * `dispatch.ts`'s import closure that is transient rather than deterministic —
+ * every other non-`RefusalError` throw in there is either deterministic or
+ * unreachable from inside the table's try, enumerated one by one in ADR-0002
+ * ("Why `dispatch.ts` stopped being the exception"), and a bug of ours is by
+ * definition not transient. `refusal-drift.test.ts` guards the resolver family
+ * only, NOT that enumeration — it is a measurement, not a ratchet. That is what
+ * makes the marker cheap: one site to remember rather than a discipline every
+ * future author has to keep.
  *
  * Reach for it only with an OBSERVATION behind it, never as a default. An
  * unmarked bare `Error` is now `retryable: false`, which is the fail-closed
