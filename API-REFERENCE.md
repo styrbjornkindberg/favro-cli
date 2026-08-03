@@ -1816,7 +1816,7 @@ favro batch-smart <board> --goal "<goal>" [--dry-run] [--yes] [--json]
 
 | Argument | Required | Description |
 |---|---|---|
-| `<board>` | ✓ | Board ID |
+| `<board>` | ✓ | Board ID **or** exact board name |
 
 **Options:**
 
@@ -1825,6 +1825,7 @@ favro batch-smart <board> --goal "<goal>" [--dry-run] [--yes] [--json]
 | `--goal <goal>` | ✓ | Plain-English goal string |
 | `--dry-run` | — | Preview without applying |
 | `--yes` | — | Skip confirmation prompt |
+| `--force` | — | Bypass the scope check |
 | `--json` | — | Output result as JSON |
 
 **Supported goal patterns:**
@@ -1843,10 +1844,23 @@ favro batch-smart <board> --goal "<goal>" [--dry-run] [--yes] [--json]
 | `overdue` | Cards where `dueDate` is in the past |
 | `blocked` | Cards with `blocked` in tags or status |
 | `unassigned` | Cards with no assignees |
-| `<status-name>` | Cards matching the status (case-insensitive) |
+| `assigned` | Cards with at least one assignee |
+| `<column-name>` | Cards in that column, by name, case-insensitive |
 | `all` | All cards |
 
 Filters can be combined: `"overdue and unassigned"`, `"Backlog and blocked"`.
+
+**A word that is neither a keyword nor a column refuses.** The column names in a
+goal — filter words and the `move` target alike — are settled against the board's
+real columns before anything is read or written, by the same resolution
+`cards list --filter "status:…"` uses. So `--goal "move all frobnicated cards to
+Done"` names the word and lists the board's columns, and exits 1; it does not
+report "no cards matched", which is what it did before v2.4.2. The refusal fires
+under `--dry-run` and under `--yes` too: nothing reaches the wire.
+
+A goal that resolves but genuinely matches nothing is the other outcome and stays
+one — `"move all overdue cards to Done"` on a board with no overdue cards prints
+"No cards match the goal" and exits 0.
 
 **Atomic execution:** Operations run sequentially. If any operation fails, all previously completed operations are rolled back. The confirmation prompt is shown unless `--yes` is passed.
 

@@ -855,11 +855,19 @@ Natural language batch operations.
 | `--force` | Bypass scope check |
 | `--json` | Output raw JSON |
 
+`<board>` is a board id or an exact board name.
+
 Supported goal patterns:
 - `move all <filter> cards to <status>`
 - `assign all <filter> cards [with no owner] to <user>`
 - `close all <filter> cards`
 - `unassign all <filter> cards`
+
+Filter words: `overdue`, `blocked`, `unassigned`, `assigned`, `all` — or a COLUMN
+name on that board. A word that is neither refuses, naming the word and listing
+the board's columns, and writes nothing; it never selects zero cards silently.
+The refusal fires under `--dry-run` and `--yes` alike. A goal that resolves and
+matches nothing is different: it reports zero and exits 0.
 
 ### `risks <board>` 📖 READ
 Board risk analysis — surfaces overdue, blocked, unassigned, and incomplete cards.
