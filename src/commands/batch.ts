@@ -15,6 +15,8 @@ import BoardsAPI from '../lib/boards-api';
 import { createFavroClient } from '../lib/client-factory';
 import { logError } from '../lib/error-handler';
 import { resolveAssignee } from '../lib/assignee';
+import { applyFilters } from '../lib/cards-export';
+import FavroHttpClient from '../lib/http-client';
 import {
   BulkTransaction,
   BulkOperation,
@@ -30,36 +32,51 @@ import {
 // ---------------------------------------------------------------------------
 
 /**
- * Parse filter expressions like "status:Completed", "assignee:alice", "tag:bug".
- * Multiple --filter flags are ANDed together.
+ * `--filter` on a WRITE command, settled by the one resolution every read
+ * already uses (#138).
+ *
+ * `parseFilterExpression` used to live here: a THIRD `--filter` grammar that
+ * split on `:`, substring-matched tags and assignees, and read an unknown field
+ * as `() => false` — commented "match nothing (safe default)". Matching nothing
+ * is not a safe default on a command whose whole purpose is to change many cards
+ * at once: `batch move --filter "tagg:bug"` reported success having moved
+ * nothing, and a typo was indistinguishable from "no cards matched". It is gone;
+ * `applyFilters` runs the same parse-then-settle protocol as `cards list` and
+ * `cards export`, so an unknown field, tag, assignee or status REFUSES, naming
+ * the token and listing the candidates, in the same words and with the same
+ * structured `detail`.
+ *
+ * Called twice per command, on purpose. The first call filters NO cards — it
+ * exists to refuse before the confirmation prompt, the preview and the fetch,
+ * because a bulk write must never get as far as asking about a set it could not
+ * resolve. `cards export` splits it the same way at `cli.ts`.
+ *
+ * ponytail: the second call re-resolves, served from the name cache. Thread one
+ * `Query` through if it ever shows up in a profile.
+ *
+ * @throws ParseError / RefusalError — reaches `logError`, which exits 1.
  */
-export function parseFilterExpression(filterStr: string): (card: Card) => boolean {
-  const [field, ...valueParts] = filterStr.split(':');
-  const value = valueParts.join(':').trim().toLowerCase();
-  const key = field.trim().toLowerCase();
-
-  switch (key) {
-    case 'status':
-      return (card) => (card.status ?? '').toLowerCase() === value;
-    case 'assignee':
-    case 'owner':
-      return (card) => (card.assignees ?? []).some(a => a.toLowerCase().includes(value));
-    case 'tag':
-    case 'label':
-      return (card) => (card.tags ?? []).some(t => t.toLowerCase().includes(value));
-    default:
-      // Unknown filter — match nothing (safe default)
-      return () => false;
-  }
+async function settleFilter(
+  cards: Card[],
+  filters: string[],
+  client: FavroHttpClient,
+  boardId: () => Promise<string>,
+): Promise<Card[]> {
+  if (filters.length === 0) return cards;
+  return applyFilters(cards, filters, { client, boardId: await boardId() });
 }
 
 /**
- * Build a combined filter from multiple filter expressions (AND logic).
+ * The board id, resolved at most once and only if something asks.
+ *
+ * Three consumers need it — the scope lock, `status:`'s column vocabulary, and
+ * nothing else until one does — and `--board` may be a NAME. Resolving eagerly
+ * would put an unlocked, unfiltered user on the network for an answer nobody
+ * reads (#102/#104); resolving per consumer would do it twice.
  */
-export function buildFilterFn(filters: string[]): (card: Card) => boolean {
-  if (filters.length === 0) return () => true;
-  const fns = filters.map(parseFilterExpression);
-  return (card) => fns.every(fn => fn(card));
+function boardIdOnce(client: FavroHttpClient, board: string): () => Promise<string> {
+  let pending: Promise<string> | undefined;
+  return () => (pending ??= new BoardsAPI(client).resolveBoardId(board));
 }
 
 // Assignee resolution lives in `src/lib/assignee.ts` — one home for every call
@@ -279,10 +296,12 @@ export function registerBatchMoveCommand(batch: Command): void {
       'Examples:\n' +
       '  favro batch move --board <src-id> --to-board <dst-id> --filter "status:Completed"\n' +
       '  favro batch move --board <id> --status Done --dry-run\n\n' +
-      'Filters (repeatable, AND logic):\n' +
-      '  status:<value>   Match by status\n' +
+      'Filters (repeatable, AND logic) — the same grammar as `cards list --filter`:\n' +
+      '  status:<value>   Match by status (column name on --board)\n' +
       '  assignee:<user>  Match by assignee\n' +
-      '  tag:<tag>        Match by tag'
+      '  tag:<tag>        Match by tag\n\n' +
+      'An unknown field, tag, assignee or status REFUSES and lists the valid\n' +
+      'candidates — it never silently matches nothing.'
     )
     .requiredOption('--board <board>', 'Source board, by name or boardId')
     .option('--to-board <board>', 'Target board to move cards to, by name or boardId')
@@ -316,13 +335,19 @@ export function registerBatchMoveCommand(batch: Command): void {
         }
 
         const client = await createFavroClient();
-        
+        const boardId = boardIdOnce(client, options.board);
+
         const { checkResolvedScope, confirmAction } = await import('../lib/safety');
         // `--board` is a name or a boardId, but the lock GETs `/widgets/<id>` —
         // handed a name it 404s into "Board … not found", a refusal naming the
         // wrong problem (#82). Settle first; the thunk keeps an unlocked user
         // off the network entirely.
-        await checkResolvedScope(client, () => new BoardsAPI(client).resolveBoardId(options.board), options.force);
+        await checkResolvedScope(client, boardId, options.force);
+
+        // Refuse an unresolvable filter HERE — before the prompt, before the
+        // preview, before the board read. `--dry-run` gets the same refusal: a
+        // dry run that plans zero cards is the same lie one step earlier.
+        await settleFilter([], options.filter, client, boardId);
 
         if (!options.dryRun) {
           if (!(await confirmAction(`Apply batch move to cards from board ${options.board}?`, { yes: options.yes }))) {
@@ -347,8 +372,7 @@ export function registerBatchMoveCommand(batch: Command): void {
         }
 
         // Apply filters
-        const filterFn = buildFilterFn(options.filter);
-        const matchingCards = allCards.filter(filterFn);
+        const matchingCards = await settleFilter(allCards, options.filter, client, boardId);
 
         if (matchingCards.length === 0) {
           if (!options.json) {
@@ -428,10 +452,12 @@ export function registerBatchAssignCommand(batch: Command): void {
       '  favro batch assign --board <id> --filter "status:Backlog" --to @me\n' +
       '  favro batch assign --board <id> --filter "status:Backlog" --to alice --dry-run\n\n' +
       'Use @me as the assignee to assign to yourself.\n\n' +
-      'Filters (repeatable, AND logic):\n' +
-      '  status:<value>   Match by status\n' +
+      'Filters (repeatable, AND logic) — the same grammar as `cards list --filter`:\n' +
+      '  status:<value>   Match by status (column name on --board)\n' +
       '  assignee:<user>  Match by assignee\n' +
-      '  tag:<tag>        Match by tag'
+      '  tag:<tag>        Match by tag\n\n' +
+      'An unknown field, tag, assignee or status REFUSES and lists the valid\n' +
+      'candidates — it never silently matches nothing.'
     )
     .requiredOption('--board <board>', 'Board to assign cards on, by name or boardId')
     .requiredOption('--to <user>', 'User to assign cards to (use @me for yourself)')
@@ -458,6 +484,7 @@ export function registerBatchAssignCommand(batch: Command): void {
     }) => {
       try {
         const client = await createFavroClient();
+        const boardId = boardIdOnce(client, options.board);
 
         // Resolve first: an unknown or ambiguous assignee refuses before any
         // card is read or written. `assigneeId` is what `card.assignees` holds
@@ -466,7 +493,11 @@ export function registerBatchAssignCommand(batch: Command): void {
 
         const { checkResolvedScope, confirmAction } = await import('../lib/safety');
         // Settles before the lock — see `batch move` above (#82).
-        await checkResolvedScope(client, () => new BoardsAPI(client).resolveBoardId(options.board), options.force);
+        await checkResolvedScope(client, boardId, options.force);
+
+        // Refuse an unresolvable filter before the prompt, the preview and the
+        // board read — see `batch move` above (#138). `--dry-run` included.
+        await settleFilter([], options.filter, client, boardId);
 
         if (!options.dryRun) {
           if (!(await confirmAction(`Apply batch assign to cards on board ${options.board}?`, { yes: options.yes }))) {
@@ -491,8 +522,7 @@ export function registerBatchAssignCommand(batch: Command): void {
         }
 
         // Apply filters, then skip cards already assigned to this user
-        const filterFn = buildFilterFn(options.filter);
-        const baseMatchingCards = allCards.filter(filterFn);
+        const baseMatchingCards = await settleFilter(allCards, options.filter, client, boardId);
         const matchingCards = baseMatchingCards.filter(
           (card) => !(card.assignees ?? []).includes(assigneeId)
         );

@@ -851,7 +851,6 @@ cards
         // wrong problem (#82). The thunk keeps an unlocked user off the network.
         await checkResolvedScope(client, () => new BoardsAPI(client!).resolveBoardId(options.board), options.force);
 
-        const { buildFilterFn } = await import('./commands/batch');
         const {
           BulkTransaction,
           formatBulkPreview,
@@ -879,8 +878,17 @@ cards
         const filterExprs: string[] = [];
         if (options.label) filterExprs.push(`tag:${options.label}`);
 
-        const filterFn = buildFilterFn(filterExprs);
-        const matchingCards = allCards.filter(filterFn);
+        // The same settle every read runs (#138). This used to go through
+        // `buildFilterFn`, which substring-matched: in an org holding both `bug`
+        // and `debug`, `--label bug` WROTE to the `debug` cards too, and a
+        // mistyped label wrote to nothing while reporting success. `applyFilters`
+        // refuses an unresolvable label before any card is written.
+        const matchingCards = filterExprs.length
+          ? await applyFilters(allCards, filterExprs, {
+              client: client!,
+              boardId: await new BoardsAPI(client!).resolveBoardId(options.board),
+            })
+          : allCards;
 
         if (matchingCards.length === 0) {
           if (!options.json) {

@@ -504,7 +504,12 @@ CSV format: `card_id,status,owner,due_date`
 
 All batch commands support: `--dry-run`, `--yes`, `--force`, `--json`, `--verbose`
 
-Filter syntax: `status:<value>`, `assignee:<user>`, `tag:<tag>`
+Filter syntax: the same grammar as `cards list --filter` — `status:<value>`,
+`assignee:<user>`, `tag:<tag>`, combined with `AND`/`OR`/parentheses. An unknown
+field, tag, assignee or status **refuses**, naming the token and listing the
+valid candidates; it never silently selects zero cards. The refusal fires under
+`--dry-run` and ahead of `--yes`, so no bulk write proceeds on a filter that did
+not fully resolve (#138).
 
 ---
 

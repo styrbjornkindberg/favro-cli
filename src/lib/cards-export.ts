@@ -65,7 +65,14 @@ export async function applyFilters(
 ): Promise<Card[]> {
   if (filterExpressions.length === 0) return cards;
 
-  // Combine multiple filter expressions with AND operator
-  const combinedFilter = filterExpressions.join(' AND ');
+  // Combine multiple filter expressions with AND — each PARENTHESISED, because
+  // AND binds tighter than OR. A bare join turned
+  // `--filter "a OR b" --filter "c"` into `a OR b AND c`, which parses as
+  // `a OR (b AND c)` — a strictly WIDER set than the user asked for. `cards
+  // export` wrote the extra rows to a file; since #138 `batch move`/`batch
+  // assign` reach the same call, and would have WRITTEN to them.
+  // `resolveCardFilter` parenthesises on composition for this exact reason.
+  const combinedFilter =
+    filterExpressions.length === 1 ? filterExpressions[0] : filterExpressions.map((f) => `(${f})`).join(' AND ');
   return applyFilter(cards, combinedFilter, ctx);
 }

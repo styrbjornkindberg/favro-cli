@@ -15,6 +15,19 @@ import { Command } from 'commander';
 import CardsAPI, { Card } from '../lib/cards-api';
 import FavroHttpClient from '../lib/http-client';
 import * as config from '../lib/config';
+import { STUB_BOARD } from '../test-support/filter-vocabulary';
+
+/**
+ * `--label` is `tag:<label>`, and since #138 it is settled against the org's
+ * real tag list instead of substring-matched over the fetched cards. In an org
+ * holding both `bug` and `debug`, the old path WROTE to the `debug` cards on
+ * `--label bug`. So this suite now needs an org to settle against.
+ */
+jest.mock('../lib/client-factory', () => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const stub = async () => require('../test-support/filter-vocabulary').stubVocabularyClient();
+  return { __esModule: true, createFavroClient: jest.fn(stub), default: jest.fn(stub) };
+});
 
 jest.mock('../lib/cards-api');
 jest.mock('../lib/http-client');
@@ -211,7 +224,7 @@ describe('favro cards update — batch operations (CLA-1791)', () => {
 
       await program.parseAsync([
         'node', 'favro', 'cards', 'update',
-        '--board', 'Q2-Dev',
+        '--board', STUB_BOARD,
         '--label', 'urgent',
         '--status', 'done',
       ]);
@@ -238,7 +251,7 @@ describe('favro cards update — batch operations (CLA-1791)', () => {
 
       await program.parseAsync([
         'node', 'favro', 'cards', 'update',
-        '--board', 'Q2-Dev',
+        '--board', STUB_BOARD,
         '--assignee', 'alice',
       ]);
 
@@ -258,7 +271,7 @@ describe('favro cards update — batch operations (CLA-1791)', () => {
 
       await program.parseAsync([
         'node', 'favro', 'cards', 'update',
-        '--board', 'Q2-Dev',
+        '--board', STUB_BOARD,
         '--label', 'urgent',
         '--status', 'done',
         '--dry-run',
@@ -276,7 +289,7 @@ describe('favro cards update — batch operations (CLA-1791)', () => {
 
       await program.parseAsync([
         'node', 'favro', 'cards', 'update',
-        '--board', 'Q2-Dev',
+        '--board', STUB_BOARD,
         '--label', 'urgent',
         '--status', 'done',
       ]);
@@ -308,7 +321,7 @@ describe('favro cards update — batch operations (CLA-1791)', () => {
 
       await program.parseAsync([
         'node', 'favro', 'cards', 'update',
-        '--board', 'Q2-Dev',
+        '--board', STUB_BOARD,
         '--label', 'urgent',
         '--status', 'done',
         '--json',
