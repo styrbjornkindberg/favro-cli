@@ -310,7 +310,18 @@ export interface UpdateCardRequest {
   dueDate?: string;
   /** Target board ID when moving a card between boards. Supported by Favro API updateCard endpoint. */
   boardId?: string;
-  /** Target column ID when moving a card between columns on a board. */
+  /**
+   * Target column ID when moving a card between columns on a board. This is the
+   * **honoured** write: `status` is the silent no-op, and `updateCard`
+   * translates it into this field rather than forwarding it.
+   *
+   * Whether the PUT **response** echoes `columnId` back is **unmeasured**.
+   * `columnId` is measured on every GET row
+   * (`docs/research/tracker-contract-favro-carriers.md` §1.3), but a read-side
+   * row is not a write-side echo — the same distinction `dueDate` above records
+   * about its own write shape. Do not write a read-back against this field
+   * until a live probe says the echo is there (#101, blocked on #105).
+   */
   columnId?: string;
   /**
    * Move the card across the archive line. `true` archives, `false` un-archives.

@@ -481,6 +481,28 @@ export class TxCards {
    * Favro's UI "status" IS the column, and `PUT {status}` 200s and changes
    * nothing — so a move is a `columnId` write. Scalar shape: one value replaced
    * another, and strict equality is the honest guard.
+   *
+   * The write is deliberately NOT read back, unlike `setArchived` below. That
+   * asymmetry is a measurement gap, not an oversight (#101). `setArchived`
+   * compares because #75 probed that the `PUT {archive}` **response** echoes
+   * `archived`; nothing equivalent has ever been probed for `columnId`. The
+   * carrier table measures `columnId` on every GET row
+   * (`docs/research/tracker-contract-favro-carriers.md` §1.3) — a read-side row
+   * is not a write-side echo, and inferring one from the other is the step
+   * ADR-0003 refuses. Getting it wrong is not cheap: if the response omits the
+   * field, `after.columnId` is `undefined` on every move and the guard throws on
+   * every `claim` and every `resolve` — two commands that work today.
+   *
+   * The stand cannot settle it. `dispatch-tx-wire.test.ts` answers a PUT with a
+   * full card row because WE wrote it that way, so a read-back tested there
+   * verifies our own assumption against itself. Only a live probe closes this,
+   * blocked on #105's throwaway board — the same gate as #126.
+   *
+   * What defends the move meanwhile: `columnId` is not a member of the
+   * silent-no-op family, it is the honoured verb that family is TRANSLATED INTO,
+   * and callers report `moved.columnId` — the observed value, never the
+   * requested one — so a no-op surfaces as the old column rather than as a
+   * fabricated success.
    */
   async moveColumn(cardRef: string, status: string): Promise<Card> {
     const before = await this.api.getCard(cardRef);
