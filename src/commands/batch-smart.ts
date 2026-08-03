@@ -589,11 +589,15 @@ export function registerBatchSmartCommand(program: Command): void {
         // `boardIdOnce` in `batch.ts`; inlined rather than shared because #110
         // deletes this file.
         //
-        // The thunk saves REPEATED work, not wire traffic: measured against the
-        // built CLI, dropping the memo changes the request sequence not at all,
-        // because `resolveBoardId` and `ColumnDirectory` both sit behind the
-        // name cache. It is not what keeps anyone off the network — this command
-        // reads the board either way.
+        // The thunk mostly saves REPEATED work rather than wire traffic:
+        // `resolveBoardId` sits behind the persistent boards cache, so the second
+        // call is a cache hit and the request sequence is unchanged. That holds
+        // only while the cache is ENABLED, though — `readCache`/`writeCache` both
+        // no-op without a `client.organizationId`, which `favro auth` warns may
+        // be absent, and there the two settle sites cost two `GET /widgets`
+        // instead of one. Measured over the stand-in: 19 board listings without
+        // the memo against 18 with it. It is still not what keeps anyone off the
+        // network — this command reads the board either way.
         let pendingBoardId: Promise<string> | undefined;
         const boardId = () => (pendingBoardId ??= new BoardsAPI(client).resolveBoardId(board));
 

@@ -38,8 +38,18 @@ const ORG = 'org-tags-wire';
 
 // The cache is a file that outlives a test. Every case below starts from an
 // empty one, so a hit is only ever the one the case itself planted.
-beforeEach(() => {
-  fs.rmSync(CACHE_FILE, { force: true });
+//
+// `invalidateCache()`, NOT `fs.rmSync` of the file. `name-cache` memoises the
+// parsed file in a module global that only its own `writeFile` clears, and this
+// suite keeps ONE `FAVRO_CONFIG_DIR` for every case — so the memo path matches
+// and unlinking the file left the previous case's records being served from
+// memory. Measured before this change: 8 of the 14 cases below began with a
+// `tags` record they never planted, and the comment above was false for all of
+// them. `invalidateCache()` truncates through `writeFile`, which is what drops
+// the memo.
+beforeEach(async () => {
+  const { invalidateCache } = await import('../lib/name-cache');
+  await invalidateCache();
 });
 
 interface Received {
@@ -322,4 +332,23 @@ describe('TxCards.setTags refuses on the same wording as the other tag writes', 
       await close();
     }
   });
+});
+
+// ─── the cleanup's own check ────────────────────────────────────────────────
+
+/**
+ * LAST in the file on purpose: by here every case above has filled both the
+ * cache file and `name-cache`'s module memo, which is the only state in which
+ * the `beforeEach` cleanup can be caught doing nothing.
+ *
+ * Every "a hit is only ever the one this case planted" claim above rests on the
+ * cleanup working, and the `fs.rmSync` this replaced did not — the memo is
+ * cleared only by `name-cache`'s own `writeFile`, so unlinking the file left the
+ * previous case's records answering from memory. Reverting the `beforeEach` to
+ * `fs.rmSync(CACHE_FILE, { force: true })` turns this test red and nothing else
+ * in the file with it, which is exactly why it is here.
+ */
+test('the beforeEach cleanup really empties the cache, memo included', async () => {
+  const { readCacheRecord } = await import('../lib/name-cache');
+  expect(await readCacheRecord(ORG, 'tags')).toBeUndefined();
 });

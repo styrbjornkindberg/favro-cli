@@ -362,14 +362,43 @@ describe('batch-smart refuses a goal word it cannot settle, and writes nothing',
     expect(said()).toContain('Done');
   });
 
-  test('and it refuses under --json without pretending the run succeeded', async () => {
+  /**
+   * BOTH POLARITIES, because an absence assertion on its own cannot show that
+   * its needle exists.
+   *
+   * `not.toContain('"success": 0')` was the whole of this arm, and a string this
+   * command never emits under any input would have satisfied it forever. The arm
+   * below drives the one path that really does print those bytes — a goal the
+   * command fully understood, answering zero — so the absence above is a
+   * measured difference between two reachable outputs rather than a claim about
+   * a string nobody has seen. Proven by mutation: dropping the filter's column
+   * names from `ParsedGoal.columnNames` restores the #150 fail-open, this pair
+   * goes red on the refusal arm, and the zero-match arm stays green.
+   */
+  test('and it refuses under --json, emitting no summary at all', async () => {
     const stand = await startServer();
 
     const code = await exitCodeOf(BOARD, '--goal', 'move all frobnicated cards to Done', '--yes', '--json');
 
     expect(mutations(stand.received)).toEqual([]);
     expect(code).toBe(1);
+    namedTheWord('frobnicated');
+    // Not the zero summary the arm below proves this command really can print.
     expect(said()).not.toContain('"success": 0');
+    expect(said()).not.toContain('"total": 0');
+  });
+
+  test('the zero-match --json summary the refusal must not be mistaken for', async () => {
+    const stand = await startServer();
+
+    // `overdue` is a KEYWORD and no card on this stand is overdue: understood,
+    // matched nothing. These are the exact bytes the arm above asserts are absent.
+    const code = await exitCodeOf(BOARD, '--goal', 'move all overdue cards to Done', '--yes', '--json');
+
+    expect(mutations(stand.received)).toEqual([]);
+    expect(code).toBe(0);
+    expect(said()).toContain('"success": 0');
+    expect(said()).toContain('"total": 0');
   });
 });
 

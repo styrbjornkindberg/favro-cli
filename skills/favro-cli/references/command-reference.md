@@ -790,6 +790,12 @@ Move matching cards between boards/statuses.
 | `-y, --yes` | Skip confirmation |
 | `--force` | Bypass scope check |
 
+`--status` must name a column on the **destination** board (`--to-board` when
+given, else `--board`). It is settled before anything is read or written, like
+`status:` in `--filter`: a value naming no column refuses and lists that board's
+columns, under `--dry-run` and `--yes` alike, rather than previewing a plan that
+fails card by card at the wire.
+
 ### `batch assign` ⚠️ WRITE — HIGH BLAST RADIUS
 Assign matching cards to a user.
 

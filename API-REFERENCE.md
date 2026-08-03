@@ -1750,6 +1750,12 @@ favro batch move --board <id> [--to-board <id>] [--status <value>]
 
 **Notes:** At least one of `--to-board` or `--status` must be specified.
 
+`--status` names a **column on the destination board** — `--to-board` when one is
+given, otherwise `--board` — and is settled against that board's real columns
+before anything is read or written, exactly like `status:` in `--filter`. A value
+that names no column refuses, listing that board's columns, under `--dry-run` and
+`--yes` alike; it does not preview a plan it cannot apply.
+
 **Filter syntax:**
 
 | Expression | Matches |
@@ -1768,6 +1774,7 @@ favro batch move --board board-001 --to-board archive-board --status Archived
 **Error cases:**
 - No `--to-board` or `--status` → `✗ Specify --to-board and/or --status to set the target state`
 - Board not found → `✗ Board not found: "<id>"`
+- `--status` naming no column on the destination board → refuses, listing that board's columns, exit 1
 - No matching cards → Shows count and exits 0
 
 ---
