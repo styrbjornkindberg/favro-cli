@@ -15,11 +15,14 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { Command } from 'commander';
-import { run, apiNamespace, Ctx } from '../lib/run';
+import { run, apiNamespace, AnyResult, Ctx } from '../lib/run';
 import FavroHttpClient from '../lib/http-client';
 import { RefusalError } from '../lib/refusal';
 import { DispatchResult } from '../lib/dispatch';
 import { latchVerbose } from '../lib/error-handler';
+import { checkScope, checkCollectionScope } from '../lib/safety';
+import { FavroConfig } from '../lib/config';
+import { stripAnsi } from '../lib/theme';
 
 /** Every class `ctx.api` can build, as `[module, export]`. The laziness proof reads this. */
 const API_MODULES: ReadonlyArray<readonly [string, string]> = [
@@ -455,6 +458,219 @@ describe('the error boundary', () => {
     // MCP.
     const source = fs.readFileSync(path.join(__dirname, '..', 'lib', 'run.ts'), 'utf-8');
     expect(source).not.toMatch(/process\.exit\(/);
+  });
+});
+
+// ─── the scope refusal ───────────────────────────────────────────────────────
+
+/**
+ * A scope violation is the one failure a write guardrail exists to produce, and
+ * until #133 it was the one failure with no machine answer: `checkScope` and
+ * `checkCollectionScope` printed to stderr and called `process.exit(1)`, so the
+ * boundary above never ran and stdout came back EMPTY under the JSON default.
+ *
+ * The real `safety.ts`, unmocked, for the reason the file header gives: a stubbed
+ * refusal proves the runner can serialise a `ScopeError` somebody hand-built,
+ * not that the lock produces one. `LOCKED` is passed as an argument rather than
+ * written to the temp config, so neither helper reads `readConfig` and neither
+ * reaches the wire — `checkCollectionScope` compares two strings, and
+ * `assertScope`'s boardless arm refuses before its `/widgets/` GET.
+ */
+const LOCKED = { scopeCollectionId: 'coll-locked', scopeCollectionName: 'Locked' } as FavroConfig;
+
+const COLLECTION_REFUSAL =
+  'Scope violation: target collection "coll-other" is not the locked collection "Locked".\n' +
+  "  Run 'favro scope show' to see your current lock.\n" +
+  "  Run 'favro scope set <collectionId>' to change it, or pass --force to override.";
+
+describe('a scope refusal reaches the caller', () => {
+  it('writes the envelope to stdout and nothing to stderr, exit 1', async () => {
+    const { root, leaf } = program();
+    leaf.action(run(async () => checkCollectionScope('coll-other', LOCKED)));
+
+    await parse(root, ['thing']);
+
+    expect(JSON.parse(stdout()[0]).error).toEqual({
+      message: COLLECTION_REFUSAL,
+      // The lock is configuration: the identical call refuses identically until
+      // someone runs `favro scope set`. #120's reason, still measured here.
+      retryable: false,
+    });
+    expect(stderr()).toEqual([]);
+    expect(process.exitCode).toBe(1);
+  });
+
+  it('writes the envelope for the BOARD helper too — one defect, two callers', async () => {
+    const { root, leaf } = program();
+    leaf.action(run(async (ctx: Ctx) => checkScope('', ctx.client, LOCKED)));
+
+    await parse(root, ['thing']);
+
+    const { error } = JSON.parse(stdout()[0]);
+    expect([error.message.split('\n')[0], error.retryable]).toEqual([
+      'Scope violation: this write names no board, so the scope lock ("Locked") cannot be checked.',
+      false,
+    ]);
+    expect(process.exitCode).toBe(1);
+  });
+
+  it('does not serialise a refusal the way it serialises an empty result', async () => {
+    // THE DISCRIMINATING ARM. "Nothing matched" and "I refused to look" are
+    // different answers, and before #133 the refusal's shape was a third thing
+    // — no stdout at all — which reads to an agent as neither. An empty result
+    // is a positive claim about the world, so it keeps its envelope and exit 0;
+    // a refusal makes no claim, so it carries `error` and exit 1. A fix that
+    // collapsed the two would pass the test above and fail this one.
+    const shapeOf = async (action: () => Promise<AnyResult>) => {
+      out.mockClear();
+      process.exitCode = undefined;
+      const { root, leaf } = program();
+      leaf.action(run(action));
+      await parse(root, ['thing']);
+      return { stdout: stdout(), code: process.exitCode };
+    };
+
+    const empty = await shapeOf(async () => ({ rows: [] }));
+    const refused = await shapeOf(async () => checkCollectionScope('coll-other', LOCKED));
+
+    expect(empty).toEqual({ stdout: ['{"rows":[]}'], code: undefined });
+    expect(Object.keys(JSON.parse(refused.stdout[0]))).toEqual(['error']);
+    expect(refused.code).toBe(1);
+  });
+
+  it('says nothing at all when no lock is configured', async () => {
+    // The omit arm. The guard keys on `scopeCollectionId`, so a config without
+    // one must leave the command untouched — otherwise the two tests above
+    // would also pass against a `checkCollectionScope` that refuses everything.
+    const { root, leaf } = program();
+    leaf.action(
+      run(async () => {
+        checkCollectionScope('coll-other', {} as FavroConfig);
+        return { item: { ok: true } };
+      }),
+    );
+
+    await parse(root, ['thing']);
+
+    expect(stdout()).toEqual(['{"ok":true}']);
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it('keeps the human line the lock has always printed', async () => {
+    // #133's other acceptance criterion: only the JSON path gains anything.
+    // `✗ Scope violation:` — NOT `✗ Error:` — is what `checkCollectionScope`
+    // printed for itself before the exit was removed, and `logError` prints it
+    // now. Asserted on the joined stream because the heading moved from three
+    // `console.error` calls to one, which is the same bytes and a different
+    // call count.
+    const { root, leaf } = program();
+    leaf.action(run(async () => checkCollectionScope('coll-other', LOCKED)));
+
+    await parse(root, ['thing', '--human']);
+
+    expect(stripAnsi(stderr().join('\n'))).toBe(`✗ ${COLLECTION_REFUSAL}`);
+    expect(stdout()).toEqual([]);
+    expect(process.exitCode).toBe(1);
+  });
+
+  it('lets a write through when the target IS the locked collection', async () => {
+    // THE MATCH ARM. Deleting the equality return — so the lock refuses even its
+    // own collection — passed 162 suites / 3070 tests. The refusal arms above
+    // all pass against a guard that refuses everything, and the omit arm only
+    // covers "no lock configured", so nothing asserted that a lock LETS the
+    // in-scope write through.
+    const { root, leaf } = program();
+    leaf.action(
+      run(async () => {
+        checkCollectionScope('coll-locked', LOCKED);
+        return { item: { ok: true } };
+      }),
+    );
+
+    await parse(root, ['thing']);
+
+    expect(stdout()).toEqual(['{"ok":true}']);
+    expect(stderr()).toEqual([]);
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it('--force overrides the COLLECTION lock, warning rather than refusing', async () => {
+    // Deleting the `force` arm also passed all 3070: `--force` was pinned for
+    // the BOARD lock (`attachments.test.ts`) and for nothing on the collection
+    // side, so the escape hatch could have been removed by this ticket's rewrite
+    // without a single failure. The warning goes to `console.warn`, which is
+    // neither of the two streams the rest of this file spies on.
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const { root, leaf } = program();
+    leaf.action(
+      run(async () => {
+        checkCollectionScope('coll-other', LOCKED, true);
+        return { item: { ok: true } };
+      }),
+    );
+
+    await parse(root, ['thing']);
+
+    expect(stdout()).toEqual(['{"ok":true}']);
+    expect(stripAnsi(String(warn.mock.calls[0]?.[0]))).toBe(
+      '⚠ Warning: Target collection coll-other is outside your locked scope (Locked), ' +
+        'but proceeding because --force was used.',
+    );
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it('rewords a 404 from the board GET, and does not call it a scope violation', async () => {
+    // `checkScope`'s ONLY remaining behaviour of its own once #133 removed the
+    // print-and-exit — and deleting it, letting axios' bare
+    // "Request failed with status code 404" through, passed all 3070 tests. The
+    // reword is reachable: `http-client.get` is `(await this.client.get(...)).data`
+    // with no catch, so the axios error arrives with `response.status` intact.
+    //
+    // Not a `ScopeError`, and asserted as such: a missing board is the id being
+    // wrong, which the lock has no opinion about. So the envelope must NOT say
+    // "Scope violation", and `retryable` must still be false — a deleted board
+    // does not come back on a retry.
+    const notFound = Object.assign(new Error('Request failed with status code 404'), {
+      response: { status: 404 },
+    });
+    const client = {
+      get: async () => {
+        throw notFound;
+      },
+    } as unknown as FavroHttpClient;
+
+    const { root, leaf } = program();
+    leaf.action(run(async () => checkScope('board-gone', client, LOCKED)));
+
+    await parse(root, ['thing']);
+
+    expect(JSON.parse(stdout()[0]).error).toEqual({
+      message: 'Scope check failed: Board board-gone not found.',
+      retryable: false,
+    });
+    expect(process.exitCode).toBe(1);
+  });
+
+  it('passes a NON-404 wire error through untouched', async () => {
+    // The foreign arm for the reword: only a 404 is reworded, so a 403 keeps
+    // whatever the classifier makes of it. Without this, the reword could be
+    // widened to every status and nothing would notice.
+    const forbidden = Object.assign(new Error('Request failed with status code 403'), {
+      response: { status: 403 },
+    });
+    const client = {
+      get: async () => {
+        throw forbidden;
+      },
+    } as unknown as FavroHttpClient;
+
+    const { root, leaf } = program();
+    leaf.action(run(async () => checkScope('board-locked-out', client, LOCKED)));
+
+    await parse(root, ['thing']);
+
+    expect(JSON.parse(stdout()[0]).error.message).not.toContain('Scope check failed');
+    expect(process.exitCode).toBe(1);
   });
 });
 

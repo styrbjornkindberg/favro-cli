@@ -65,8 +65,9 @@ it and drops `client` from the type, so touching it is a compile error. Four com
 it — `auth`, `issue-tracker-help`, `shell`, `skill`. Four declarations instead of 114.
 
 Scope is **not** on `ctx`. `assertScope` already takes `(boardId, client, config, force)`, and
-#92 kept `checkScope` as the CLI skin for non-card writes. A scope helper on `ctx` would be a
-fourth public spelling of the check that #92 just collapsed to two. `confirmAction` likewise
+#92 kept `checkScope` as the wrapper for non-card writes — a CLI skin that printed and exited
+until #133 made it throw like everything else (amendment below). A scope helper on `ctx` would
+be a fourth public spelling of the check that #92 just collapsed to two. `confirmAction` likewise
 stays a free function: 48 sites, no dependencies, nothing to inject.
 
 ### The runner owns output
@@ -130,6 +131,102 @@ In JSON mode an error is an envelope on **stdout**: `{ error: { message, retryab
 mode keeps `logError` on stderr unchanged. The reason it goes to stdout is the product's own
 honest-failure thesis: MCP hands an agent stdout first and stderr as an appended blob, so a
 failed command currently yields `(no output)` plus a decorated `✗` line, which is unparseable.
+
+### Amendment (#133): the ban on hard exits reaches every module, not just the commands
+
+The 292 sites above were counted in `src/cli.ts` and `src/commands/`, and the ratchet that holds
+them scans only those two. `src/lib/safety.ts` was invisible to it, and its two scope guards —
+`checkScope`, `checkCollectionScope` — printed a decorated `✗ Scope violation:` line and called
+a hard exit from four call depths down. Measured on the built CLI with a lock configured:
+
+```
+$ favro collections delete coll-other --yes
+exit=1   stdout: (empty)   stderr: ✗ Scope violation: target collection "coll-other" …
+```
+
+That is the exact shape rule 3 was written against, surviving on the one failure a write
+guardrail exists to produce. After: `exit=1`, 268 bytes of `{"error":{…,"retryable":false}}` on
+stdout, 0 bytes on stderr. `assertScope` and `assertOrgScope`, one function over, already threw.
+So the guards now throw `ScopeError` too, and the boundary renders it.
+
+Three things the fix holds that a smaller one would have dropped:
+
+- **Exit 1 stays.** A refusal is a negative finding, and stdout carrying the envelope is not a
+  reason to claim success. Both are required: parseable stdout *and* a non-zero code.
+- **The human line keeps its heading, and three other lines moved — each measured.**
+  `error-handler.ts` heads a `ScopeError` with `Scope violation:` rather than `Error:`, keyed on
+  `.name` because `safety.ts` imports that module and the class cannot be imported back without a
+  cycle. On the refusal this amendment is about the bytes are identical: `collections delete
+  --human`, 224 stderr bytes before and 224 after on a pipe. Three deltas elsewhere, all on
+  stderr, none on stdout, and none of them "unchanged" — an earlier draft of this bullet claimed
+  the whole human surface was, which the review measured as false:
+    - **Colour, on the refusal itself.** The MESSAGE is now plain where three of its lines were
+      coloured: JSON is the default even at a TTY, so a coloured message would put escape codes
+      inside the value an agent parses. Under `FORCE_COLOR=1`, 273 bytes before against 244 after
+      — the 29 are the escape pairs on `'favro scope show'`, `'favro scope set …'` and
+      `--force`. The strings stay quoted, so the what-to-do-next survives as text. Stated cost,
+      not a regression to fix; a switch that dropped `chalk` to level 0 in machine mode would let
+      both back, and belongs to whoever wants it, not to this ticket.
+    - **`checkScope`'s 404 reword GAINED a heading**, because it stopped printing for itself:
+      `✗ Scope check failed: Board <id> not found.` (52 bytes) is now
+      `✗ Error: Scope check failed: …` (59). Correct — a missing board is not a scope violation —
+      and the same arm gained 90 bytes of envelope on stdout where it had written none.
+    - **`assertOrgScope`'s two legacy callers LOST one.** `tags delete` and `groups delete` said
+      `✗ Error: Scope violation: …` from #125 to here and now say `✗ Scope violation: …`: 482
+      stderr bytes before, 475 after. That is the unification the `.name` read buys, and it is a
+      change to the two most destructive writes in the tool, so it is recorded rather than
+      absorbed.
+- **A refusal is not a failed write.** `git commit --comment` resolves its board inside a
+  best-effort `catch` that reports "(Could not add comment to card)". While the guard EXITED
+  that catch could not see it; once it throws, an unfiltered catch downgrades the lock to a
+  notice — measured at exit 0 with the violation gone. The catch now rethrows a `RefusalError`.
+  It is the only swallowing catch downstream of a scope check (grepped: `catch {` across
+  `cli.ts`, `src/commands/`, `src/lib/`).
+
+The ban is scanned over **every non-test file under `src/`**, for the hard exit alone — the other
+four preamble spellings are command-shaped and a library has no `run()` to adopt. The unmigrated
+commands are excused by the ALLOWLIST they already carry, not by being out of scope, so they lose
+the excuse the moment #115–#119 strike them off. It first shipped scoped to `src/lib/`, which left
+the identical hole one directory over; both halves were then measured on a green tree at 162 suites
+/ 3084 tests:
+
+- `process.exit(1)` added to `src/api/comments.ts` — a module `git.ts`, `comments.ts` and
+  `attachments.ts` all import — passed everything. `src/api/`, `src/test-support/` and the two
+  server entry points were as invisible as `src/lib/` had been.
+- `import { exit } from 'node:process'` and then `exit(1)`, inside `src/lib/read-shape.ts`,
+  passed everything. So there are two spellings, the second banning the IMPORT rather than
+  enumerating call forms, with a self-check arm on synthetic strings — that pattern has no live
+  example in the tree to prove it is not simply misspelled, and the excuse predicate is asserted
+  non-vacuous for the same reason.
+
+Two exceptions, argued rather than assumed: `ErrorFormatter.fatal`, whose exit is its declared
+`never` and which has no production caller left; and `src/mcp-server.ts`, under
+`require.main === module`, where a transport that will not connect has no boundary to report to.
+
+**What throwing does NOT buy — the residual, counted rather than sampled.** The envelope reaches
+stdout only where the CALLER is inside `run()`, and most callers are not yet. Measured on the
+built CLI under a lock, across all 38 write paths that take a scope guard: **12 put the refusal on
+stdout, 26 put it on stderr and write 0 bytes to stdout.** The 12 are `collections
+delete`/`update`, `boards create`/`delete`/`update`, `members add`/`remove`, `comments
+add`/`update`/`delete`, `webhooks delete`, `tracker init`. The 26 include every `cards`, `columns`,
+`dependencies`, `custom-fields`, `git`, `batch`, `batch-smart`, `tasks`, `tasklists`, `widgets` and
+`attachments` write, plus `tags delete` and `groups delete`. All 38 exit 1 and all 38 report the
+violation somewhere; none is silent on both streams.
+
+So #133 is the necessary half and not the sufficient one, and the acceptance criterion "a scope
+violation under the JSON default emits the error envelope on stdout" holds on 12 paths of 38. Both
+helpers now throw, which is what no caller could work around; the remaining silence is a property
+of the ENTRY POINT — a legacy `catch { logError; exit(1) }` — and is discharged one command at a
+time by #115–#119, not by a second change in `safety.ts`. Nine `RefusalError` subclasses exist and
+none is silent by virtue of its class.
+
+**And the throw's TYPE is load-bearing at two readers, so `checkScope`'s rethrow is pinned.**
+Every board-lock refusal passes through that one `catch`. Rewriting `throw error` as
+`throw new Error(error.message)` — same wording, same `retryable: false` — passed 162 suites /
+3085 tests while reintroducing this amendment's own third bullet (`git commit --comment` back to
+exit 0 with the violation replaced by the notice) and breaking its second (`boards delete --human`
+printing `✗ Error: Scope violation: …`). `safety.test.ts` now asserts `instanceof` on what that
+funnel rethrows, with the 404 arm as the opposite polarity.
 
 ### Amendment (#134): two populations of error, one derivation behind a gate
 

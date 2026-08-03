@@ -59,6 +59,47 @@ describe('logError', () => {
     expect(output).toContain('Error:');
     expect(output).toContain('[object Object]');
   });
+
+  // ─── the scope heading, and the de-duplication under it (#133) ─────────────
+  //
+  // `logError` heads a `ScopeError` with `Scope violation:` and then strips that
+  // same prefix off the message so it is not printed twice. Both conjuncts of
+  // the strip were mutated separately: dropping the `.name` check failed three
+  // tests, dropping the `startsWith` check passed all 3070 — so these arms
+  // exist because the second one had nothing holding it.
+  //
+  // A ScopeError is built here from `{ name }` rather than imported, because
+  // importing `safety.ts` for a name string would pull the whole write-guardrail
+  // module into a formatting test. The read under test IS the string.
+  const named = (name: string, message: string): Error =>
+    Object.assign(new Error(message), { name });
+
+  const line = (): string =>
+    stripAnsi(stderrSpy.mock.calls.map((c: any[]) => String(c[0])).join('\n'));
+
+  test('heads a ScopeError with Scope violation and prints its body once', () => {
+    logError(named('ScopeError', 'Scope violation: board "b" is not in locked collection "L".'));
+    expect(line()).toBe('✗ Scope violation: board "b" is not in locked collection "L".');
+  });
+
+  test('keeps a ScopeError message that does NOT carry the prefix intact', () => {
+    // THE FOREIGN ARM, and the one the surviving mutation needed. With the
+    // `startsWith` conjunct gone the slice runs unconditionally on any
+    // ScopeError, so a refusal worded without the prefix loses its first 16
+    // characters silently — 'the lock refuses this' became 'ck refuses this'.
+    // Every ScopeError in `safety.ts` happens to carry the prefix today, which
+    // is exactly why nothing failed.
+    logError(named('ScopeError', 'the lock refuses this'));
+    expect(line()).toBe('✗ Scope violation: the lock refuses this');
+  });
+
+  test('does not head a NON-scope error with Scope violation, whatever it says', () => {
+    // The other polarity. A bare `Error` whose message opens with the same words
+    // — `assertScope`'s wording reaches `cli.ts` through mocked `safety` modules
+    // in four command suites — keeps `Error:` and keeps its whole message.
+    logError(new Error('Scope violation: something else built this'));
+    expect(line()).toBe('✗ Error: Scope violation: something else built this');
+  });
 });
 
 describe('notFoundError', () => {

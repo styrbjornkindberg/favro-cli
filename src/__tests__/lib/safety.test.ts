@@ -4,7 +4,8 @@
  * The interesting case is the boardless write: the lock cannot be checked, so it
  * has to refuse rather than fall through. See issue #77.
  */
-import { assertScope, ScopeError } from '../../lib/safety';
+import { assertScope, checkScope, ScopeError } from '../../lib/safety';
+import { RefusalError } from '../../lib/refusal';
 import { isRetryable } from '../../lib/dispatch';
 
 function makeClient(collectionIds: string[] = [], name = 'Some board') {
@@ -95,13 +96,78 @@ describe('assertScope', () => {
    * error boundary gates on `isWireFailure` first since #134 and the skill
    * engine's end-of-run unwind since #151 (ADR-0002, "Two populations"), so a
    * `ScopeError` answers `false` at both for a second, independent reason — it
-   * never touched the wire. This assertion is the derivation on its own, which
-   * is what `checkScope` still branches on, so it keeps earning its keep.
+   * never touched the wire. This assertion is the derivation on its own, so it
+   * keeps earning its keep.
    */
   it('is not retryable — a scope refusal is a deterministic decline', () => {
     const refusal = new ScopeError('Scope violation: nope', 'board-1', 'col-1');
 
     expect(isRetryable('rolled-back', refusal)).toBe(false);
+  });
+});
+
+/**
+ * `checkScope` — the funnel, and the one place the refusal's TYPE can be lost.
+ *
+ * Every board-lock refusal in the codebase passes through this `catch` on its way
+ * out: 13 command call sites plus `checkResolvedScope`. `assertScope` throws a
+ * `ScopeError`; `checkScope` catches it to reword a 404 and rethrows. Rewriting
+ * that rethrow as `throw new Error(error.message)` — same wording, same
+ * `retryable: false`, no type — passed all 162 suites / 3085 tests, and cost two
+ * things measured on the built CLI:
+ *
+ *   - `git commit --comment` under a lock went back to exit 0 with the refusal
+ *     replaced by `(Could not add comment to card)`. That catch filters on
+ *     `instanceof RefusalError`, which is exactly what the rewrite drops — the
+ *     regression #133's second commit had just fixed, reintroduced.
+ *   - `boards delete --human` printed `✗ Error: Scope violation: …` (215 bytes)
+ *     where it prints `✗ Scope violation: …` (208). `logError` heads on
+ *     `.name === 'ScopeError'`. #133's other acceptance criterion.
+ *
+ * Nothing saw it because the arms that cover those two readers hand-build their
+ * own refusal: `git-scope.test.ts` mocks `safety` wholesale and throws a
+ * `RefusalError` it wrote itself, and `error-handler.test.ts` builds one from
+ * `{ name }`. Both are right for what they test. Neither can observe the funnel.
+ */
+describe('checkScope', () => {
+  it('rethrows the refusal AS a ScopeError — the type both readers key on', async () => {
+    const client = makeClient(['col-other']);
+
+    // Not `.toThrow(ScopeError)`: jest's `toThrow` with a class matches by
+    // constructor NAME up the prototype chain, so a bare `Error` renamed to
+    // 'ScopeError' would satisfy it. `instanceof` is what `git.ts` and the
+    // dispatch table actually ask.
+    const thrown = await checkScope('board-1', client, LOCKED).catch((e) => e);
+    expect(thrown).toBeInstanceOf(ScopeError);
+    expect(thrown).toBeInstanceOf(RefusalError);
+    expect(thrown.name).toBe('ScopeError');
+  });
+
+  it('does NOT dress a 404 up as a refusal — the foreign arm of the same rethrow', async () => {
+    // The reword is the only thing this wrapper adds, and it must stay a bare
+    // `Error`: a missing board is the id being wrong, which the lock has no
+    // opinion about. Without this arm the assertion above could be satisfied by
+    // wrapping everything in a `ScopeError`.
+    const client = {
+      get: jest.fn().mockRejectedValue(
+        Object.assign(new Error('Request failed with status code 404'), {
+          response: { status: 404 },
+        }),
+      ),
+    } as any;
+
+    const thrown = await checkScope('board-gone', client, LOCKED).catch((e) => e);
+    expect(thrown).not.toBeInstanceOf(RefusalError);
+    expect(thrown.message).toBe('Scope check failed: Board board-gone not found.');
+  });
+
+  it('passes an unlocked config straight through, with no request', async () => {
+    // The omit arm: the two above pass against a `checkScope` that refuses
+    // unconditionally.
+    const client = makeClient(['col-other']);
+
+    await expect(checkScope('board-1', client, {} as any)).resolves.toBeUndefined();
+    expect(client.get).not.toHaveBeenCalled();
   });
 });
 

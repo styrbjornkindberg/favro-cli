@@ -193,3 +193,131 @@ describe('the command-runner ratchet', () => {
     expect(stale).toEqual([]);
   });
 });
+
+// ─── the hard-exit ban, over every production module (#133) ──────────────────
+
+/**
+ * WHY THIS IS A SECOND SCAN AND NOT A SIXTH PATTERN
+ * The five bans above are the command PREAMBLE, and nothing outside
+ * `src/commands/` has one to lose: `safety.ts` legitimately writes
+ * `new CardsAPI(`, and no library module has a `run()` to adopt, so widening the
+ * scan above would need both allowlists re-argued for files the runner will
+ * never govern.
+ *
+ * One of the five DOES belong everywhere. A hard exit in a library is worse than
+ * in a command, which is exactly what #133 was: `safety.ts`'s scope guards
+ * exited the process from four call depths down, so the runner's error boundary
+ * never ran and a scope violation under the JSON default wrote NOTHING to
+ * stdout. `src/lib/` was invisible to the scan above, so the spelling was not
+ * banned anywhere and nothing caught it for six migration steps.
+ *
+ * WHY IT WALKS ALL OF `src/` AND NOT JUST `src/lib/`
+ * #133 first shipped this scoped to `src/lib/`, which left the identical hole
+ * one directory over. Measured on the review of that branch, both on a
+ * green tree: a live `process.exit(1)` added to `src/api/comments.ts` — a module
+ * `git.ts`, `comments.ts` and `attachments.ts` all import — passed 162 suites /
+ * 3084 tests. `src/api/`, `src/test-support/` and the two server entry points
+ * were as invisible as `src/lib/` had been. A ban that names the directory it
+ * was written for is a ban on one bug, so the walk is now every non-test file
+ * under `src/`, and the unmigrated commands are excused by the ALLOWLIST above
+ * rather than by being out of scope — which means they lose the excuse
+ * automatically when #115–#119 strike them off.
+ *
+ * WHY TWO SPELLINGS
+ * Same measurement: `import { exit } from 'node:process'` and then `exit(1)` is
+ * a live hard exit that `process.exit(` cannot see, and it too passed all 162
+ * suites / 3084 tests from inside `src/lib/read-shape.ts`. Banning the IMPORT
+ * rather than trying to enumerate call spellings keeps the scan text-literal and
+ * covers every re-spelling of it (`{ exit }`, `{ default as process }`,
+ * `require('node:process')`). Nothing in `src/` imports that module today, which
+ * is why the pattern needs the self-check arm below: it has no live example to
+ * prove it is not simply misspelled.
+ *
+ * The ban is text-literal, same as above, so a match in a comment counts —
+ * which is why `safety.ts`'s prose now says `process.exit` without the call
+ * parens where it used to spell the whole thing out. That is the cost, and it is
+ * the cheap side: a scanner that has to parse before it bans can be wrong.
+ */
+const EXIT_SPELLINGS: ReadonlyArray<{ readonly what: string; readonly pattern: RegExp }> = [
+  { what: 'process.exit(', pattern: /process\.exit\(/ },
+  { what: "import from 'process'", pattern: /(?:from|require\()\s*['"](?:node:)?process['"]/ },
+];
+
+const EXIT_ALLOWED: readonly string[] = [
+  // `ErrorFormatter.fatal` — declared `never`, so the exit IS its contract. It
+  // has no production caller left (only its own test), and deleting a module
+  // export from a published package is a semver call, not a ratchet's.
+  'src/lib/error-handler.ts',
+  // The stdio MCP entry point, under `require.main === module`: a transport that
+  // will not connect has no boundary to report to and no command to fail.
+  'src/mcp-server.ts',
+];
+
+/** Every production module. Tests and integration tests are not shipped. */
+function productionFiles(): string[] {
+  const walk = (dir: string): string[] =>
+    fs.readdirSync(path.join(REPO_ROOT, dir), { withFileTypes: true }).flatMap((entry) => {
+      if (entry.isDirectory()) {
+        return entry.name.startsWith('__') ? [] : walk(`${dir}/${entry.name}`);
+      }
+      return entry.name.endsWith('.ts') ? [`${dir}/${entry.name}`] : [];
+    });
+  return walk('src').sort();
+}
+
+/** THE scan. The self-check arm runs this, not a hand-rolled copy of it. */
+const exitOffencesIn = (source: string): string[] =>
+  EXIT_SPELLINGS.filter(({ pattern }) => pattern.test(source)).map(({ what }) => what);
+
+describe('no module exits the process', () => {
+  const production = productionFiles();
+  const exiting = production.filter((file) => exitOffencesIn(sourceOf(file)).length > 0);
+  // An unmigrated command is expected to exit — that is what ALLOWLIST above
+  // records, and it shrinks as #115–#119 land. Reused rather than copied so the
+  // two lists cannot disagree.
+  const excused = (file: string) => EXIT_ALLOWED.includes(file) || ALLOWLIST.includes(file);
+
+  it('finds the files it is meant to be reading', () => {
+    // A floor, not a count to keep updated. A scanner resolving nothing would
+    // report zero violations and pass forever. One name per directory the
+    // `src/lib`-only version of this scan could not see.
+    expect(production.length).toBeGreaterThan(100);
+    expect(production).toEqual(
+      expect.arrayContaining([
+        'src/cli.ts',
+        'src/lib/safety.ts',
+        'src/api/comments.ts',
+        'src/test-support/scope-passthrough.ts',
+        'src/mcp-http-server.ts',
+      ]),
+    );
+    expect(production.filter((f) => f.includes('__tests__'))).toEqual([]);
+  });
+
+  it('detects each banned spelling — the scan itself, on a known-dirty string', () => {
+    // The self-check. `import from 'process'` has no live example in the tree, so
+    // nothing else would notice it being misspelled into a pattern that matches
+    // nothing. Both arms of every spelling: it fires, and it does not fire on the
+    // shape it must tolerate.
+    expect(exitOffencesIn('  process.exit(1);')).toEqual(['process.exit(']);
+    expect(exitOffencesIn("import { exit } from 'node:process';")).toEqual([
+      "import from 'process'",
+    ]);
+    expect(exitOffencesIn("const { exit } = require('process');")).toEqual([
+      "import from 'process'",
+    ]);
+    // `process.exitCode` is the sanctioned replacement, and `process-title` is
+    // not the process module — neither may trip either pattern.
+    expect(exitOffencesIn("process.exitCode = 1;\nimport x from './process-title';")).toEqual([]);
+  });
+
+  it('bans the spelling everywhere it is not argued for', () => {
+    expect(exiting.filter((file) => !excused(file))).toEqual([]);
+  });
+
+  it('has no stale entry on the short list of exceptions', () => {
+    // Both directions, same as the allowlist above: an entry that has gone
+    // clean, or been renamed away, must be struck off rather than left as cover.
+    expect(EXIT_ALLOWED.filter((file) => !exiting.includes(file))).toEqual([]);
+  });
+});

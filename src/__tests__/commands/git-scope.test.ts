@@ -12,6 +12,7 @@ import * as gitIntegration from '../../lib/git-integration';
 import * as todoScanner from '../../lib/todo-scanner';
 import CardsAPI from '../../lib/cards-api';
 import BoardsAPI from '../../lib/boards-api';
+import { RefusalError } from '../../lib/refusal';
 import { passThroughScopeResolution } from '../../test-support/scope-passthrough';
 
 jest.mock('../../lib/http-client');
@@ -210,5 +211,78 @@ describe('favro git todos --create — scope lock', () => {
     await runCli(['git', 'todos', '--dry-run']);
 
     expect(MockCardsAPI.prototype.createCard).not.toHaveBeenCalled();
+  });
+});
+
+// ─── git commit --comment — the refusal must escape the best-effort catch ─────
+
+/**
+ * `git commit --comment` resolves its board inside a `catch` that reports
+ * "(Could not add comment to card)" and carries on, because a failed comment is
+ * not a failed commit. The scope check sits inside that catch.
+ *
+ * While the check called `process.exit(1)` the catch could not see it. #133 made
+ * it THROW, and an unfiltered catch then downgraded the write guardrail to a
+ * notice — measured on the built CLI under a lock: `(Could not add comment to
+ * card)` and exit 0, where the same command had printed the violation and exited
+ * 1. Nothing in 162 suites / 3070 tests failed on it, which is why this exists.
+ *
+ * Both polarities, and both on real bytes rather than on an absence alone: a
+ * refusal reaches the outer boundary, an ordinary failure still does not.
+ */
+describe('favro git commit --comment — a refusal is not a failed comment', () => {
+  const NOTICE = '  (Could not add comment to card)';
+  const logged = (): string =>
+    (console.log as unknown as jest.Mock).mock.calls.map((c) => String(c[0])).join('\n');
+  const errored = (): string =>
+    (console.error as unknown as jest.Mock).mock.calls.map((c) => String(c[0])).join('\n');
+
+  beforeEach(() => {
+    (gitIntegration.hasStagedChanges as jest.Mock).mockReturnValue(true);
+    (gitIntegration.getCurrentBranch as jest.Mock).mockReturnValue('feature/card-1-x');
+    (gitIntegration.commitWithMessage as jest.Mock).mockReturnValue('abc1234');
+    MockCardsAPI.prototype.getCard = jest
+      .fn()
+      .mockResolvedValue({ cardId: 'card-1', boardId: 'board-out' });
+  });
+
+  it('exits 1 and reports the violation rather than "could not add comment"', async () => {
+    (safety.checkScope as jest.Mock).mockRejectedValue(
+      Object.assign(new RefusalError('Scope violation: board "board-out" is outside the lock.'), {
+        name: 'ScopeError',
+      }),
+    );
+
+    await runCli(['git', 'commit', '-m', 'msg', '--card', 'card-1', '--comment']);
+
+    expect(errored()).toContain('Scope violation: board "board-out" is outside the lock.');
+    expect(logged()).not.toContain(NOTICE);
+    expect(process.exit).toHaveBeenCalledWith(1);
+  });
+
+  it('still swallows an ORDINARY comment failure, exit code untouched', async () => {
+    // The foreign arm. Rethrowing everything would turn a 500 on the comment
+    // POST into a failed commit, which is the behaviour this catch exists to
+    // prevent — so the filter has to be a filter, not a removal.
+    (safety.checkScope as jest.Mock).mockRejectedValue(new Error('socket hang up'));
+
+    await runCli(['git', 'commit', '-m', 'msg', '--card', 'card-1', '--comment']);
+
+    expect(logged()).toContain(NOTICE);
+    expect(process.exit).not.toHaveBeenCalledWith(1);
+  });
+
+  it('takes the lock at all on this path — and only under a lock', async () => {
+    // The omit arm, and the guard against the two arms above passing against a
+    // `checkResolvedScope` that refuses unconditionally. `--comment` is the only
+    // Favro write here, so with no lock configured nothing is checked and no
+    // card is read.
+    (config.readConfig as jest.Mock).mockResolvedValue({});
+
+    await runCli(['git', 'commit', '-m', 'msg', '--card', 'card-1', '--comment']);
+
+    expect(safety.checkScope).not.toHaveBeenCalled();
+    expect(MockCardsAPI.prototype.getCard).not.toHaveBeenCalled();
+    expect(process.exit).not.toHaveBeenCalledWith(1);
   });
 });

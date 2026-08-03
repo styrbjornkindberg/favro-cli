@@ -11,6 +11,7 @@ import { Command } from 'commander';
 import { logError } from '../lib/error-handler';
 import { createFavroClient } from '../lib/client-factory';
 import { boardOfCard, checkResolvedScope, checkScope, confirmAction, dryRunLog } from '../lib/safety';
+import { RefusalError } from '../lib/refusal';
 import { readConfig } from '../lib/config';
 import CardsAPI from '../lib/cards-api';
 import BoardsAPI from '../lib/boards-api';
@@ -221,15 +222,24 @@ export function registerGitCommands(program: Command): void {
             // one extra GET on the --comment path only, and only under a lock.
             // The shared resolver wraps it: a stale card
             // reference must reach the shared refusal as '', not kill the
-            // command. `checkScope` exits the process on a violation rather than
-            // returning, so the surrounding catch never dresses a refusal up as
-            // "could not add comment".
+            // command.
             await checkResolvedScope(client, () => boardOfCard(client, cardId), options.force);
 
             const commentsApi = new CommentsApiClient(client);
             await commentsApi.addComment(cardId, `Commit \`${hash}\`: ${options.message}`);
             console.log('✓ Comment added to card');
-          } catch {
+          } catch (error) {
+            // A REFUSAL IS NOT A FAILED COMMENT (#133). This catch is best-effort
+            // for the comment write — a 500, a deleted card, a dropped socket —
+            // and until #133 the scope check could not reach it, because
+            // `checkScope` called `process.exit(1)` from inside. Now it throws,
+            // and an unfiltered catch turns the write guardrail into a notice:
+            // measured on the built CLI, `git commit --comment` under a lock the
+            // card was outside printed `(Could not add comment to card)` and
+            // exited 0 where it had printed the violation and exited 1. Rethrown
+            // to the outer boundary, which is the only place that decides an
+            // exit code.
+            if (error instanceof RefusalError) throw error;
             console.log('  (Could not add comment to card)');
           }
         }
