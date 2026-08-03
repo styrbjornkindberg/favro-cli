@@ -1316,6 +1316,39 @@ describe('a deterministic WIRE refusal is not retryable either (#66)', () => {
     expect(result.retryable).toBe(true);
   });
 
+  it('the SAME unnameable failure is not retryable once the unwind left an orphan', async () => {
+    // The outcome arm, isolated. Every other `rollback-incomplete` test in this
+    // file has a cause `isRetryable` rejects anyway — a 403, a refusal — so the
+    // guard that actually stops an orphan from being called retryable
+    // (`outcome !== 'rolled-back'`) was never the reason any of them was `false`.
+    // Measured: hardcoding `retryAdvice`'s outcome argument to `'rolled-back'`
+    // passed all 3036 other tests. This is the one that kills that mutation.
+    //
+    // Same 400 and same unprobed message as the test above, which is the whole
+    // construction: the CAUSE is identical and reads retryable, so the only thing
+    // that can move the answer is what the unwind left behind. An agent told
+    // "safe to retry" over an orphan would write on top of wreckage.
+    let puts = 0;
+    const stand = await startServer({
+      fail: (r) => {
+        if (r.method !== 'PUT') return undefined;
+        puts += 1;
+        // PUT 1 is the move and lands. PUT 2 is the tag write — the failure. PUT 3
+        // is the compensating move-back, which fails too, so the column stays
+        // where we put it and the orphan is real.
+        return puts >= 2 ? { status: 400, message: 'Something we have never probed' } : undefined;
+      },
+    });
+
+    const result = await dispatch('probe-chain', { card: CARD, to: 'Doing', tags: ['bug'] }, ctx(stand));
+
+    expect(result.outcome).toBe('rollback-incomplete');
+    expect(result.retryable).toBe(false);
+    // Read back, not counted: the wreckage the advice is about really is there.
+    expect(stand.cards.get(CARD)!.columnId).toBe(DOING);
+    expect(result.orphans?.map((o) => o.field)).toEqual(['columnId']);
+  });
+
   it('a 429 mid-batch is absorbed by the client, not turned into an unwind', async () => {
     // #67 deleted the only assertion that pinned 429 through the multi-create
     // path. `http-client` retries 429 generically, but nothing proved these
