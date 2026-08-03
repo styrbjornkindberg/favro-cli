@@ -47,9 +47,17 @@ const ORG = 'org-tags-wire';
 // `tags` record they never planted, and the comment above was false for all of
 // them. `invalidateCache()` truncates through `writeFile`, which is what drops
 // the memo.
+//
+// The claim is asserted right here, per case, rather than in a test of its own:
+// WHICH cases the old cleanup left dirty depends entirely on ordering, so a
+// standalone test passes or fails on where it happens to land — one placed last
+// in this file stayed green, because the case before it invalidates. Measured
+// both ways: `fs.rmSync` here fails 12 of the 14 cases, `invalidateCache()`
+// passes all 14.
 beforeEach(async () => {
-  const { invalidateCache } = await import('../lib/name-cache');
+  const { invalidateCache, readCacheRecord } = await import('../lib/name-cache');
   await invalidateCache();
+  expect(await readCacheRecord(ORG, 'tags')).toBeUndefined();
 });
 
 interface Received {
@@ -332,23 +340,4 @@ describe('TxCards.setTags refuses on the same wording as the other tag writes', 
       await close();
     }
   });
-});
-
-// ─── the cleanup's own check ────────────────────────────────────────────────
-
-/**
- * LAST in the file on purpose: by here every case above has filled both the
- * cache file and `name-cache`'s module memo, which is the only state in which
- * the `beforeEach` cleanup can be caught doing nothing.
- *
- * Every "a hit is only ever the one this case planted" claim above rests on the
- * cleanup working, and the `fs.rmSync` this replaced did not — the memo is
- * cleared only by `name-cache`'s own `writeFile`, so unlinking the file left the
- * previous case's records answering from memory. Reverting the `beforeEach` to
- * `fs.rmSync(CACHE_FILE, { force: true })` turns this test red and nothing else
- * in the file with it, which is exactly why it is here.
- */
-test('the beforeEach cleanup really empties the cache, memo included', async () => {
-  const { readCacheRecord } = await import('../lib/name-cache');
-  expect(await readCacheRecord(ORG, 'tags')).toBeUndefined();
 });
