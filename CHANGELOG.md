@@ -294,6 +294,24 @@ Issue #95, ADR-0006.
   (`??=`/`||=`, `Array()`, `undefined!`, an empty template literal, and a `catch ({})`
   that binds nothing) are now caught in both seeds.
 
+- One judge of "done" (#98, ADR-0005). The set `['done','approved','archived']` had five
+  copies — three named `DONE_STAGES`, one named `COMPLETED_STAGES`, one inlined — and
+  `standup`'s `isCompleted` asked the same question of a *column name* with a separate
+  keyword list. All six now route through `isDoneStage` in `lib/workflow-stage.ts`, the
+  module that already held `detectStage` for the same reason. `judgeBlockers` remains the
+  only judge of *blocked*; `board-renderer`'s `statusIcon` is labelled cosmetic in source so
+  it is not swept into the merge later.
+
+  **Behaviour change in `standup`:** a card in an `Approved` or `Archived` column now groups
+  as `completed`, where before it matched no group and was dropped from the output entirely.
+  Swedish (`Klar`, `Färdig`, `Avslutad`) and `Shipped`/`Deployed`/`Live` count as completed
+  now too. In the other direction, a column named `Unresolved` no longer reads as completed —
+  the old list tested `status.includes('resolved')`.
+
+- Two comments claiming `next` pays the per-blocker sweep (`my-standup.ts`, `docs/commands.md`)
+  said the opposite of the code: `next` dropped its blocking term in #47 and does not import
+  `judgeBlockers`. Only `cards list --filter unblocked` pays it (#98).
+
 ### Known gaps at release
 
 - The output migration is incomplete — see the caveat under Breaking #1.

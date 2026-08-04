@@ -151,7 +151,7 @@ There is one edge, with one direction flag. No `depends-on`, no `related`, no
 So `unblocked` is wrong in one direction only — it can hide a takeable ticket,
 never offer a blocked one.
 
-### Only `unblocked` and `next` judge a blocker's doneness
+### Only `cards list --filter unblocked` judges a blocker's doneness
 
 Judging costs a tracker-mapping read plus one read per blocker, so the summary
 commands do not pay it. Nothing clears a Favro edge when the blocker finishes,
@@ -166,6 +166,10 @@ and leave the blocked *state* to the column:
 | `team` | `members[].dependencyCount`, `bottleneck.dependencyCount` | cards carrying ≥1 edge |
 | `standup` | `StandupCard.dependencies` | that card's edge count |
 | `my-standup`, `standup` | `blocked` group | column/status says blocked — edges are **not** consulted |
+
+`next` was listed here as a second payer and is not one: it dropped its blocking
+term in #47 and does not read a blocker at all. Ask the frontier instead —
+`cards list --board <id> --filter "unblocked"`. Corrected in #98.
 
 The interactive TUI follows the same rule: *My Work* lists cards under **With
 dependencies** rather than *Blocked*, counts them in `queued` all the same, and
