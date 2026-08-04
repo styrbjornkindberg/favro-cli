@@ -3,7 +3,8 @@
  * CLA-1799 / FAVRO-037: Standup & Sprint Commands
  *
  * Groups board cards by status categories for daily standup overview:
- *   - completed: cards with status matching "done", "completed", "closed", "released"
+ *   - completed: cards whose column reads as a finished stage, judged by the one
+ *     done judge (`isDoneStage` in `lib/workflow-stage.ts`) — #98
  *   - in-progress: cards with status matching "in progress", "in-review", "review"
  *   - blocked: cards whose status says so (dependency edges are reported as a
  *     count, not as a blocked state — #61)
@@ -15,6 +16,7 @@
 import FavroHttpClient from '../lib/http-client';
 import ContextAPI, { type ContextCard, type BoardContextSnapshot } from './context';
 import type { Unreachable } from '../lib/read-shape';
+import { detectStage, isDoneStage } from '../lib/workflow-stage';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -52,16 +54,33 @@ export interface StandupResult {
 
 // ─── Status Classifiers ───────────────────────────────────────────────────────
 
-const COMPLETED_STATUSES = ['done', 'completed', 'closed', 'released', 'finished', 'resolved'];
 const IN_PROGRESS_STATUSES = ['in progress', 'in-progress', 'in review', 'in-review', 'review', 'doing', 'active', 'wip'];
 const BLOCKED_STATUSES = ['blocked', 'on hold', 'on-hold'];
 
 /**
  * Returns true if the card is considered "completed" based on its status.
+ *
+ * `status` IS the column name once `hydrateNames` has run, and "what does this
+ * column name mean" is the question `detectStage` exists to answer — so this had
+ * no business carrying a keyword list of its own (#98). It now routes
+ * through the one done judge, which merges what its old `COMPLETED_STATUSES`
+ * knew with what `detectStage` knew. Three deltas, all deliberate:
+ *
+ *   - **Wider.** `Approved` and `Archived` are finished stages, so an Approved
+ *     card now lands in `completed` instead of falling out of the standup
+ *     entirely — it matched no group before. Swedish (`Klar`, `Färdig`,
+ *     `Avslutad`) and `Shipped` / `Deployed` / `Live` count now too.
+ *   - **Narrower, once.** `Unresolved` used to read as completed, because the
+ *     old list did `status.includes('resolved')`. See the lookbehind in
+ *     `workflow-stage.ts`.
+ *   - **Unchanged where it matters.** A status matching no keyword still falls
+ *     through to a non-done stage, so an unrecognised column is not completed.
+ *
+ * Unlike `isBlocked` below, this deliberately does NOT fall back to
+ * `card.column` — that asymmetry predates #98 and is left exactly as it was.
  */
 export function isCompleted(card: ContextCard): boolean {
-  const status = (card.status ?? '').toLowerCase().trim();
-  return COMPLETED_STATUSES.some(s => status === s || status.includes(s));
+  return isDoneStage(detectStage(card.status));
 }
 
 /**

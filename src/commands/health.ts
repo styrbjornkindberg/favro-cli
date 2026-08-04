@@ -14,12 +14,12 @@ import { excludeUnreadableBoards, Unreachable } from '../lib/read-shape';
 import { RefusalError } from '../lib/refusal';
 import { Ctx, run } from '../lib/run';
 import { daysSince, DEFAULT_STALE_DAYS, isStale } from '../lib/time';
+import { isDoneStage } from '../lib/workflow-stage';
 
-// 'approved' and 'done' are unreachable here — `nonDone` strips DONE_STAGES
+// 'approved' and 'done' are unreachable here — `nonDone` strips the done stages
 // before the flow numerator is computed. Kept so the list reads as the full set
 // of stages that would count as flowing.
 const FLOWING_STAGES = ['active', 'review', 'testing', 'approved', 'done'];
-const DONE_STAGES = ['done', 'approved', 'archived'];
 
 export interface BoardHealth {
   name: string;
@@ -58,7 +58,7 @@ export function scoreBoard(cards: AggregateCard[]): BoardHealth['breakdown'] {
   if (cards.length === 0) return { flow: 100, stale: 100, dependencies: 100, overdue: 100 };
 
   // Flow ratio: % of non-done cards in flowing stages
-  const nonDone = cards.filter(c => !DONE_STAGES.includes(c.stage ?? ''));
+  const nonDone = cards.filter(c => !isDoneStage(c.stage));
   const flowing = nonDone.filter(c => FLOWING_STAGES.includes(c.stage ?? ''));
   const flowScore = nonDone.length > 0
     ? Math.round((flowing.length / nonDone.length) * 100)

@@ -6,9 +6,9 @@ import { Command } from 'commander';
 import { extractEffort } from '../api/context';
 import { excludeUnreadableBoards, Unreachable } from '../lib/read-shape';
 import { Ctx, run } from '../lib/run';
+import { isDoneStage } from '../lib/workflow-stage';
 
 const ACTIVE_STAGES = ['active', 'review', 'testing'];
-const DONE_STAGES = ['done', 'approved', 'archived'];
 
 interface TeamMember {
   name: string;
@@ -124,7 +124,7 @@ export async function teamHandler(ctx: Ctx, options: TeamOptions) {
       if (bName && !tm.activeBoards.includes(bName)) tm.activeBoards.push(bName);
 
       if (ACTIVE_STAGES.includes(card.stage ?? '')) tm.wipCount++;
-      if (DONE_STAGES.includes(card.stage ?? '')) tm.doneCount++;
+      if (isDoneStage(card.stage)) tm.doneCount++;
       if ((card.blockedBy && card.blockedBy.length > 0)) tm.dependencyCount++;
     }
   }

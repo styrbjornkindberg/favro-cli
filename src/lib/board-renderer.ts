@@ -94,6 +94,19 @@ export function snapshotToColumns(
 
 // ─── Card Formatting ──────────────────────────────────────────────────────────
 
+/**
+ * COSMETIC ONLY — this picks a glyph and decides nothing (#98).
+ *
+ * DO NOT consolidate this into `isDoneStage` / `detectStage` / `judgeBlockers`,
+ * and do not "fix" it to agree with them. #98 collapsed the done judgement into
+ * one home and left this substring match standing *on purpose*: a wrong glyph
+ * costs a moment's confusion in a rendered board, so `'block'` and `'done'` as
+ * substrings are cheap and adequate. The same match deciding whether a card is
+ * takeable, countable, or writable is not adequate, and that is the distinction
+ * being preserved — not an oversight. If you need a verdict here, take the
+ * verdict as a field on `RenderCard` from a caller that paid for it (which is
+ * what `blocked` on line 19 is for), rather than deriving one from a name.
+ */
 function statusIcon(card: RenderCard): string {
   if (card.blocked) return c.error('◆');
   const s = (card.status ?? '').toLowerCase();

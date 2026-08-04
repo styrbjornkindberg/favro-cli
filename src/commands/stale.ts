@@ -7,8 +7,7 @@ import { AggregateCard } from '../api/aggregate';
 import { excludeUnreadableBoards, Unreachable } from '../lib/read-shape';
 import { Ctx, run } from '../lib/run';
 import { daysSince, DEFAULT_STALE_DAYS, isStale, staleWording } from '../lib/time';
-
-const DONE_STAGES = ['done', 'approved', 'archived'];
+import { isDoneStage } from '../lib/workflow-stage';
 
 interface StaleCard {
   id: string;
@@ -146,9 +145,9 @@ export async function staleHandler(ctx: Ctx, options: StaleOptions) {
   // rather than judges.
   //
   // Dropped rather than assessed: the very first thing the loop below does is
-  // `DONE_STAGES.includes(card.stage ?? '')`, and a board with no columns has
-  // no stage on anything. Every finished card on it would have sailed past that
-  // guard and been reported as a stale card somebody should chase (#148).
+  // `isDoneStage(card.stage)`, and a board with no columns has no stage on
+  // anything. Every finished card on it would have sailed past that guard and
+  // been reported as a stale card somebody should chase (#148).
   const { cards, unreachable } = excludeUnreadableBoards(snapshot);
 
   const assignedStale: StaleCard[] = [];
@@ -158,7 +157,7 @@ export async function staleHandler(ctx: Ctx, options: StaleOptions) {
   for (const card of cards) {
     // Skip done/archived cards. Before the date check: this command has no
     // opinion about finished work, datable or not.
-    if (DONE_STAGES.includes(card.stage ?? '')) continue;
+    if (isDoneStage(card.stage)) continue;
 
     // Favro sends no last-modified field; age is measured from creation.
     const days = daysSince(card.createdAt);

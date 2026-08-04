@@ -18,6 +18,7 @@ import { resolveUserId } from '../lib/config';
 import { isOverdue } from '../lib/card-predicates';
 import { isPromptCancelled } from '../lib/prompt-cancelled';
 import { Ctx, run } from '../lib/run';
+import { isDoneStage } from '../lib/workflow-stage';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { Select, AutoComplete } = require('enquirer');
@@ -301,7 +302,11 @@ async function showMyWork(ctx: Ctx): Promise<void> {
       // keeps every card that is neither active nor done, edges or not.
       const active = myCards.filter((ca: any) => ['active', 'review', 'testing'].includes(ca.stage ?? ''));
       const withDeps = myCards.filter((ca: any) => ca.blockedBy?.length > 0);
-      const other = myCards.filter((ca: any) => !['active', 'review', 'testing', 'done', 'approved', 'archived'].includes(ca.stage ?? ''));
+      // The done half of this was the fifth copy of the finished-stage set,
+      // inlined and fused with the active one (#98). The active half stays local
+      // — it is the same list line 302 filters `active` by, and consolidating
+      // *that* set is a different question from consolidating doneness.
+      const other = myCards.filter((ca: any) => !['active', 'review', 'testing'].includes(ca.stage ?? '') && !isDoneStage(ca.stage));
 
       console.log(`  ${c.success(`${myCards.length} cards`)}  ${c.info(`${active.length} active`)}  ${withDeps.length > 0 ? c.muted(`${withDeps.length} with dependencies`) : ''}  ${c.muted(`${other.length} queued`)}`);
       console.log('');

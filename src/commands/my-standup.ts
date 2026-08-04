@@ -8,8 +8,8 @@ import { AggregateCard } from '../api/aggregate';
 import { Unreachable } from '../lib/read-shape';
 import { Ctx, run } from '../lib/run';
 import { isBlocked } from '../api/standup';
+import { isDoneStage } from '../lib/workflow-stage';
 
-const COMPLETED_STAGES = ['done', 'approved', 'archived'];
 const IN_PROGRESS_STAGES = ['active', 'review', 'testing'];
 
 interface StandupCard {
@@ -53,8 +53,11 @@ function classifyCard(card: AggregateCard, dueSoonDays: number): StandupCard['gr
   // `isBefore` edge when the blocker finishes, so length-of-edges is a
   // permanent over-count — and sitting above the `completed` check it hid the
   // real stage of finished work. Judging doneness costs a per-blocker sweep
-  // (`judgeBlockers`); `unblocked` and `next` pay it, a standup summary should
-  // not.
+  // (`judgeBlockers`); `cards list --filter unblocked` is the ONLY caller that
+  // pays it, a standup summary should not. (`next` used to be named here too
+  // and no longer belongs: it dropped its blocking term in #47 and does not
+  // import `judgeBlockers` — see the comment at `next.ts:86`. Corrected in
+  // #98.)
   //
   // The blocked *state* comes from the same column-name predicate `favro
   // standup` uses, so the two commands cannot disagree about one card. The
@@ -84,7 +87,7 @@ function classifyCard(card: AggregateCard, dueSoonDays: number): StandupCard['gr
   // "blocked" is a truer thing to say about that card than "stage unknown".
   if (card.stage === undefined) return 'stage-unknown';
 
-  if (COMPLETED_STAGES.includes(card.stage)) return 'completed';
+  if (isDoneStage(card.stage)) return 'completed';
 
   if (card.due) {
     const daysUntilDue = (new Date(card.due).getTime() - Date.now()) / (1000 * 60 * 60 * 24);

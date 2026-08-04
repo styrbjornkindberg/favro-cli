@@ -1,11 +1,26 @@
 /**
- * Workflow stage detection — the ONE home (#52).
+ * Workflow stage detection — the ONE home (#52, finished in #98).
  *
  * `detectStage` used to exist as three byte-identical copies (api/context.ts,
  * api/aggregate.ts, commands/init.ts). It is a keyword guess at what a column
  * name means, so it is demoted here to what a guess may be trusted with:
  * an **init-time proposal and display**. `claim` / `resolve` never consult it —
  * they read the two stored `columnId`s, which is why the mapping is ids.
+ *
+ * #98 finished that consolidation rather than starting a third round elsewhere:
+ * this module is now also the one home for **"does this stage mean finished"**
+ * (`isDoneStage`). The set had five copies — `DONE_STAGES` in `team`, `stale`
+ * and `health`, the same three strings as `COMPLETED_STAGES` in `my-standup`,
+ * and inlined into a longer array in `main-menu` — and `isCompleted` in
+ * `api/standup.ts` asked the same question of a column name with a keyword list
+ * of its own (`COMPLETED_STATUSES`). All six call sites now route here.
+ *
+ * WHAT THIS MODULE IS NOT ALLOWED TO DECIDE: whether a card is **blocked**.
+ * That is `judgeBlockers` in `blocking.ts` and nothing else — it is the only
+ * predicate with real evidence (the tracker's mapped `done` columnId, then
+ * `archived`). A keyword guess at "blocked" off a column name is a heuristic,
+ * and the two that remain say so where they live (`api/standup.ts`,
+ * `lib/card-predicates.ts`). See `docs/adr/0005-one-done-judge.md`.
  */
 import { foldName } from './fold-name';
 
@@ -42,7 +57,18 @@ export function detectStage(name: string | null | undefined): WorkflowStage {
   const n = foldName(name);
 
   // Done / completed / archived
-  if (/done|klar|färdig|complete|closed|released|shipped|deploy|live|finished|avslut/i.test(n)) return 'done';
+  //
+  // `(?<!un)resolv` carries what `isCompleted`'s own keyword list had and this
+  // one did not (#98): a Jira-style `Resolved` column. It is a lookbehind and
+  // not a bare `resolv` for two separate reasons. Keeping `Unresolved` out of
+  // `done` is the obvious one — but the reason it has to be fixed HERE rather
+  // than left as-is is that this branch runs FIRST and returns immediately, so
+  // a false `done` becomes `proposeColumnMapping`'s pick for the board's done
+  // column and `init` writes that guess into context.json. The old
+  // `COMPLETED_STATUSES.some(s => status.includes(s))` did call `Unresolved`
+  // completed, so this is a deliberate narrowing of the merged behaviour, not
+  // an inherited bug.
+  if (/done|klar|färdig|complete|closed|released|shipped|deploy|live|finished|avslut|(?<!un)resolv/i.test(n)) return 'done';
   if (/archived?|arkiver/i.test(n)) return 'archived';
 
   // Approved / accepted
@@ -64,6 +90,28 @@ export function detectStage(name: string | null | undefined): WorkflowStage {
   if (/backlog|inbox|new|ny|todo|to.do|icke|idea|wish|önskelista|triage|incoming/i.test(n)) return 'backlog';
 
   return 'queued';
+}
+
+/**
+ * The stages that mean the work is finished.
+ *
+ * Typed as `WorkflowStage[]` on purpose: it is the only thing stopping a typo
+ * here from becoming a set member that no column can ever detect as, which is a
+ * silent `false` forever rather than a compile error.
+ */
+const DONE_STAGES: readonly WorkflowStage[] = ['done', 'approved', 'archived'];
+
+/**
+ * Is this stage a finished one? The ONE done judge (#98).
+ *
+ * Takes a `string` and not a `WorkflowStage` because every caller reads
+ * `card.stage`, which is `string | undefined` — a stage that came off a
+ * snapshot, not a literal. A card with NO stage is not finished: it is a card
+ * nothing could be read about, and `my-standup` routes exactly that case to its
+ * own `stage-unknown` group rather than letting it pass as a verdict (#149).
+ */
+export function isDoneStage(stage: string | null | undefined): boolean {
+  return (DONE_STAGES as readonly string[]).includes(stage ?? '');
 }
 
 export interface StagedColumn {
