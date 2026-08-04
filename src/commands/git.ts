@@ -299,13 +299,61 @@ export function registerGitCommands(program: Command): void {
           for (const m of current) console.log(`    ${m.branch} → card ${m.cardId}`);
         }
 
+        const targets = [
+          ...merged.map(m => ({ cardId: m.cardId!, status: 'Done' })),
+          ...open.map(m => ({ cardId: m.cardId!, status: 'In Progress' })),
+        ];
+
+        // The branch mappings carry only card IDs, so the board has to be
+        // resolved per card. Scope-check the whole pass first: a batch that
+        // straddles the lock must refuse as a whole rather than half-write.
+        // Once per DISTINCT card and once per DISTINCT board — two branches on
+        // the same card, or two cards on the same board, are not two of
+        // everything.
+        //
+        // And BEFORE the preview (#155). This block sat below the `--dry-run`
+        // return, so a repo whose branches point at cards outside the lock
+        // planned the whole sweep at exit 0 — measured on the built CLI, 4678
+        // bytes ending `Would move cards "56 card(s) to \"Done\""`, zero
+        // requests — while the real run refused. The largest preview of the five
+        // in #155 after `git todos`.
+        //
+        // GATED ON A CONFIGURED LOCK for the reason `dependencies.ts` spells
+        // out: the client and the per-card GETs are eager, so an ungated hoist
+        // would charge a credential and N requests to a `--dry-run` for a user
+        // with no lock, for a verdict there is no lock to produce. Gated on
+        // there being targets too — with nothing to move there is nothing to
+        // check, and the `total === 0` arm below still answers for itself.
+        const globalConfig = await readConfig();
+        if (targets.length > 0 && globalConfig?.scopeCollectionId) {
+          const client = await createFavroClient();
+          const cardsApi = new CardsAPI(client);
+          const targetBoards = new Set<string>();
+          for (const cardId of new Set(targets.map(t => t.cardId))) {
+            try {
+              const card = await cardsApi.getCard(cardId);
+              targetBoards.add(card?.boardId ?? '');
+            } catch {
+              // A stale mapping onto a deleted card resolves no board, and an
+              // unknown board is not an allowed one. The empty string hands it to
+              // the shared refusal — a no-op when no lock is configured, so the
+              // rest of the batch still syncs and the write loop below reports the
+              // bad card, exactly as it did before the lock existed.
+              targetBoards.add('');
+            }
+          }
+          for (const boardId of targetBoards) {
+            await checkScope(boardId, client, globalConfig, options.force);
+          }
+        }
+
         if (options.dryRun) {
           if (merged.length) dryRunLog('move', 'cards', `${merged.length} card(s) to "Done"`);
           if (open.length) dryRunLog('move', 'cards', `${open.length} card(s) to "In Progress"`);
           return;
         }
 
-        const total = merged.length + open.length;
+        const total = targets.length;
         if (total === 0) {
           console.log('\nNo card status changes needed.');
           return;
@@ -318,36 +366,6 @@ export function registerGitCommands(program: Command): void {
 
         const client = await createFavroClient();
         const cardsApi = new CardsAPI(client);
-
-        const targets = [
-          ...merged.map(m => ({ cardId: m.cardId!, status: 'Done' })),
-          ...open.map(m => ({ cardId: m.cardId!, status: 'In Progress' })),
-        ];
-
-        // The branch mappings carry only card IDs, so the board has to be
-        // resolved per card. Scope-check the whole pass first: a batch that
-        // straddles the lock must refuse as a whole rather than half-write.
-        // Once per DISTINCT card and once per DISTINCT board — two branches on
-        // the same card, or two cards on the same board, are not two of
-        // everything.
-        const globalConfig = await readConfig();
-        const targetBoards = new Set<string>();
-        for (const cardId of new Set(targets.map(t => t.cardId))) {
-          try {
-            const card = await cardsApi.getCard(cardId);
-            targetBoards.add(card?.boardId ?? '');
-          } catch {
-            // A stale mapping onto a deleted card resolves no board, and an
-            // unknown board is not an allowed one. The empty string hands it to
-            // the shared refusal — a no-op when no lock is configured, so the
-            // rest of the batch still syncs and the write loop below reports the
-            // bad card, exactly as it did before the lock existed.
-            targetBoards.add('');
-          }
-        }
-        for (const boardId of targetBoards) {
-          await checkScope(boardId, client, globalConfig, options.force);
-        }
 
         let updated = 0;
         for (const t of targets) {
@@ -428,6 +446,33 @@ export function registerGitCommands(program: Command): void {
             process.exit(1);
           }
 
+          // The board comes from --board or the repo's link config, neither of
+          // which is bound by the scope lock. Check BEFORE the confirm, like
+          // every other caller: no point asking "create 100 cards?" and only
+          // then admitting the board is locked out.
+          //
+          // And before the PREVIEW too (#155). This sat below the `--dry-run`
+          // return, so `git todos --board <outside-the-lock> --dry-run` printed
+          // `Would create N cards on board <outside-the-lock>` and every card
+          // title at exit 0, with zero requests — the worst of the five, because
+          // it names a board the lock forbids and plans a write there in volume.
+          //
+          // Either source is a NAME or a boardId, and the lock GETs
+          // `/widgets/<id>` — handed a name it 404s into "Board … not found",
+          // a refusal naming the wrong problem (#82).
+          //
+          // GATED ON A CONFIGURED LOCK. `checkResolvedScope` already declines to
+          // resolve when nothing is locked, but its `client` parameter is EAGER —
+          // its own docstring says so — so the gate is what keeps the credential
+          // out of an unlocked preview. That makes this a second copy of the
+          // guard's "is a lock configured" test, the same duplication #152 was
+          // reviewed for; the arm that keys on `scopeCollectionName` instead is
+          // pinned in `dry-run-scope-order-wire.test.ts`.
+          if ((await readConfig())?.scopeCollectionId) {
+            const client = await createFavroClient();
+            await checkResolvedScope(client, () => new BoardsAPI(client).resolveBoardId(boardId), options.force);
+          }
+
           console.log(`\nWould create ${limited.length} cards on board ${boardId}:`);
           for (const item of limited) {
             console.log(`  + ${todoToCardTitle(item)}`);
@@ -440,16 +485,6 @@ export function registerGitCommands(program: Command): void {
 
           const client = await createFavroClient();
           const cardsApi = new CardsAPI(client);
-
-          // The board comes from --board or the repo's link config, neither of
-          // which is bound by the scope lock. Check BEFORE the confirm, like
-          // every other caller: no point asking "create 100 cards?" and only
-          // then admitting the board is locked out.
-          //
-          // Either source is a NAME or a boardId, and the lock GETs
-          // `/widgets/<id>` — handed a name it 404s into "Board … not found",
-          // a refusal naming the wrong problem (#82).
-          await checkResolvedScope(client, () => new BoardsAPI(client).resolveBoardId(boardId), options.force);
 
           if (!(await confirmAction(`Create ${limited.length} cards from TODOs?`, { yes: options.yes }))) {
             console.log('Aborted.');

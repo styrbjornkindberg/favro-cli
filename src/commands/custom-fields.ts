@@ -165,27 +165,34 @@ export function registerCustomFieldsCommands(program: Command): void {
       'For text/user/link fields, pass the string value directly.'
     )
     .option('--json', 'Output updated field value as JSON')
-    .option('--dry-run', 'Print what would be updated without making API calls')
+    .option('--dry-run', 'Preview the write. Reads the card first to check the scope lock')
     .option('-y, --yes', 'Skip confirmation prompt')
     .option('--force', 'Bypass scope check')
     .action(async (cardId: string, fieldId: string, value: string, options) => {
       const verbose = program.opts()?.verbose ?? false;
       try {
+        const { readConfig } = await import('../lib/config');
+        const { checkScope, confirmAction } = await import('../lib/safety');
+        const config = await readConfig();
+
+        // Before the preview and gated on the lock (#155) — see
+        // `dependencies.ts` for why the gate is required rather than tidy. This
+        // one previewed 64 bytes at exit 0 for a card on a board outside the
+        // lock while the real run refused, measured on the built CLI.
+        if (config?.scopeCollectionId) {
+          const client = await createFavroClient();
+          const { default: CardsAPI } = await import('../lib/cards-api');
+          const card = await new CardsAPI(client).getCard(cardId);
+          await checkScope(card.boardId ?? '', client, config, options.force);
+        }
+
         if (options.dryRun) {
           console.log(`[dry-run] Would set custom field ${fieldId} on ${cardId} to "${value}"`);
           return;
         }
 
         const client = await createFavroClient();
-        
-        const { default: CardsAPI } = await import('../lib/cards-api');
-        const cardsApi = new CardsAPI(client);
-        const card = await cardsApi.getCard(cardId);
-        
-        const { readConfig } = await import('../lib/config');
-        const { checkScope, confirmAction } = await import('../lib/safety');
-        await checkScope(card.boardId ?? '', client, await readConfig(), options.force);
-        
+
         if (!(await confirmAction(`Set custom field ${fieldId} on card ${cardId}?`, { yes: options.yes }))) {
           console.log('Aborted.');
           process.exit(0);

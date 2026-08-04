@@ -115,12 +115,33 @@ describe('favro dependencies delete', () => {
   });
 
   it('still runs the scope check on a card with no board', async () => {
+    // A LOCK IS CONFIGURED HERE, where this arm used to run against `{}` (#155).
+    // The check is gated on the lock now, because the card read that feeds it is
+    // eager and an unlocked user must not be billed for it — so under `{}` there
+    // is no call to observe, and the arm's real subject (a boardless card reaches
+    // the check as `''`, fail-closed) only means anything under a lock anyway:
+    // `assertScope` returns immediately without one.
+    (config.readConfig as jest.Mock).mockResolvedValue({ scopeCollectionId: 'coll-1' });
     MockCardsAPI.prototype.getCard = jest.fn().mockResolvedValue({ cardId: 'card-1' });
     MockCardsAPI.prototype.unlinkCard = jest.fn().mockResolvedValue(undefined);
 
     await runCli(['dependencies', 'delete', 'card-1', 'card-2', '--yes']);
 
-    expect(safety.checkScope).toHaveBeenCalledWith('', expect.anything(), {}, undefined);
+    expect(safety.checkScope).toHaveBeenCalledWith('', expect.anything(), { scopeCollectionId: 'coll-1' }, undefined);
+  });
+
+  it('with NO lock configured it reads no card at all — the guard is gated (#155)', async () => {
+    // The other polarity of the arm above, and the cost the gate exists to avoid:
+    // with nothing locked, `checkScope` is a no-op, so the GET that only ever fed
+    // it is pure waste. `checkResolvedScope`'s docstring names exactly this —
+    // billing an unlocked user "a GET for an answer nobody was going to read".
+    MockCardsAPI.prototype.unlinkCard = jest.fn().mockResolvedValue(undefined);
+
+    await runCli(['dependencies', 'delete', 'card-1', 'card-2', '--yes']);
+
+    expect(MockCardsAPI.prototype.getCard).not.toHaveBeenCalled();
+    expect(safety.checkScope).not.toHaveBeenCalled();
+    expect(MockCardsAPI.prototype.unlinkCard).toHaveBeenCalledWith('card-1', 'card-2');
   });
 });
 

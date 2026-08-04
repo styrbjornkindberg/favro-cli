@@ -102,9 +102,53 @@ describe('favro git sync — scope lock', () => {
     expect(safety.checkScope).toHaveBeenCalledWith('board-a', expect.anything(), expect.anything(), true);
   });
 
-  it('dry-run neither checks scope nor writes', async () => {
+  it('dry-run checks scope for every target board, and still writes nothing', async () => {
+    // It used to check NOTHING on this path — the guard sat below the `--dry-run`
+    // return, so a repo whose branches point outside the lock planned the whole
+    // sweep at exit 0 while the real run refused (#155). The title of this test
+    // asserted that as correct. Both boards are checked before the preview now;
+    // the "writes nothing" half is unchanged and still the point of `--dry-run`.
     await runCli(['git', 'sync', '--dry-run']);
 
+    expect(safety.checkScope).toHaveBeenCalledWith('board-a', expect.anything(), expect.anything(), undefined);
+    expect(safety.checkScope).toHaveBeenCalledWith('board-b', expect.anything(), expect.anything(), undefined);
+    expect(MockCardsAPI.prototype.updateCard).not.toHaveBeenCalled();
+  });
+
+  it('a sync with nothing to move resolves nothing, even under a lock', async () => {
+    // The second conjunct of the hoisted guard's condition (#155): a lock alone
+    // is not enough, there has to be something to check. Every mapping here is
+    // `current`, so `targets` is empty.
+    //
+    // This arm does NOT kill the deletion of `targets.length > 0` on its own,
+    // measured: with the conjunct gone the loops still iterate empty sets, so
+    // nothing here is called either way and the whole suite stayed green. What
+    // the deletion changes is that the CLIENT gets constructed — a credential
+    // demanded for a sync with nothing to sync — and the arm that fails on it is
+    // `git sync with nothing to move needs no credential` in
+    // `dry-run-scope-order-wire.test.ts`, where the credential is absent for
+    // real. Kept as the cheap statement of intent next to the code it describes.
+    (gitIntegration.analyzeBranches as jest.Mock).mockReturnValue([
+      { branch: 'feature/one', cardId: 'card-1', status: 'current' },
+    ]);
+
+    await runCli(['git', 'sync', '--dry-run']);
+
+    expect(safety.checkScope).not.toHaveBeenCalled();
+    expect(MockCardsAPI.prototype.getCard).not.toHaveBeenCalled();
+    expect(MockCardsAPI.prototype.updateCard).not.toHaveBeenCalled();
+  });
+
+  it('dry-run with NO lock configured checks nothing and resolves no card', async () => {
+    // The gate, in the polarity that pays for it: the per-card GETs and the
+    // credential are eager, so an unlocked `--dry-run` must stay free (#102/#104,
+    // #135).
+    (config.readConfig as jest.Mock).mockResolvedValue({});
+
+    await runCli(['git', 'sync', '--dry-run']);
+
+    expect(safety.checkScope).not.toHaveBeenCalled();
+    expect(MockCardsAPI.prototype.getCard).not.toHaveBeenCalled();
     expect(MockCardsAPI.prototype.updateCard).not.toHaveBeenCalled();
   });
 
@@ -207,9 +251,23 @@ describe('favro git todos --create — scope lock', () => {
     expect(check).toBeLessThan(confirm);
   });
 
-  it('dry-run creates nothing', async () => {
+  it('dry-run takes the lock on the target board, and creates nothing', async () => {
+    // The lock ran below the `--dry-run` return until #155, so
+    // `git todos --board <outside-the-lock> --dry-run` printed `Would create N
+    // cards on board <outside-the-lock>` and every card title at exit 0.
     await runCli(['git', 'todos', '--dry-run']);
 
+    expect(safety.checkScope).toHaveBeenCalledWith('board-a', expect.anything(), expect.anything(), undefined);
+    expect(MockCardsAPI.prototype.createCard).not.toHaveBeenCalled();
+  });
+
+  it('dry-run with NO lock configured takes nothing and resolves no board', async () => {
+    (config.readConfig as jest.Mock).mockResolvedValue({});
+
+    await runCli(['git', 'todos', '--dry-run']);
+
+    expect(safety.checkScope).not.toHaveBeenCalled();
+    expect(MockBoardsAPI.prototype.resolveBoardId).not.toHaveBeenCalled();
     expect(MockCardsAPI.prototype.createCard).not.toHaveBeenCalled();
   });
 });
