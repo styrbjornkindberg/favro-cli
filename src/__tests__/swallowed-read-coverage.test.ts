@@ -28,17 +28,23 @@
  *     that only knew `catch` would be one refactor from useless.
  *   - It is resolved through the checker, so a handler hoisted to a `const` is
  *     followed to the function it names.
- *   - It counts as a SWALLOW when it both IGNORES the error — no parameter, or a
- *     parameter never mentioned in the body — and ANSWERS WITH EMPTINESS: `[]`,
- *     `{}`, `undefined`, `null`, `0`, `''`, `false`, or an empty body.
+ *   - It counts as a SWALLOW when it both DECLINES TO TREAT THE ERROR AS A VALUE
+ *     — no parameter, or one that is not destructured — and ANSWERS WITH
+ *     EMPTINESS: `[]`, `{}`, `undefined`, `null`, `0`, `''`, `false`, or an empty
+ *     body.
  *
- * Both conjuncts are required, and each carries its half. A handler that reads
- * the error is doing something with it (`init.ts:334` inspects
- * `err.code`, `auth.ts` reports it, the three `boards-*.ts` writers re-throw a
- * classified one). A handler that ignores the error but SAYS something —
- * `board-tui.ts:103` prints "Refresh failed, retrying…" — is not manufacturing a
- * plausible answer, which is the harm. Dropping either conjunct floods this list
- * with correct code, and a ratchet everybody learns to ignore guards nothing.
+ * Both conjuncts are required, and the second carries most of the weight. A
+ * handler that does something with the error is not answering with emptiness
+ * anyway (`init.ts:334` inspects `err.code`, `auth.ts` reports it, the three
+ * `boards-*.ts` writers re-throw a classified one), and a handler that ignores the
+ * error but SAYS something — `board-tui.ts:103` prints "Refresh failed, retrying…"
+ * — has a body the emptiness test rejects. Dropping the emptiness conjunct floods
+ * this list with correct code, and a ratchet everybody learns to ignore guards
+ * nothing.
+ *
+ * A named-but-unused parameter is NOT an exemption. That is the whole point:
+ * `.catch(_ => [])` is the same defect as `.catch(() => [])` and is one of the two
+ * bypasses this file is tested against.
  *
  * ponytail: promise-callback shape only. A `try { x = await f() } catch { x = []
  * }` swallow is the same defect in a shape this does not walk. Deliberate: the
@@ -181,20 +187,29 @@ function emptinessToken(body: ts.Node): string | undefined {
   return undefined;
 }
 
-/** Does the handler never mention the error it was handed? */
+/**
+ * Does the handler decline to treat the error as a value?
+ *
+ * Only the parameter LIST is read. This started as a walk of the body looking for
+ * a mention of the parameter, and mutation testing showed that walk could not
+ * change a single verdict, here or on any synthetic input: `emptinessToken` below
+ * accepts only bodies too small to mention anything — a bare emptiness literal, or
+ * a block whose one statement returns one — so a handler that both names its error
+ * and answers with emptiness cannot be written. It is deleted rather than kept as
+ * decoration, because an inert conjunct is how a ratchet stops being believed.
+ *
+ * What DOES change a verdict, and so stays, is a DESTRUCTURED parameter:
+ * `.catch(({ message }) => [])` pulls the error apart before answering, which is a
+ * decision about content rather than a swallow of a read.
+ *
+ * A named-but-unused parameter is deliberately NOT an exemption — `_error => []`
+ * is the first of the two bypasses at the bottom of this file, and treating a
+ * parameter's mere presence as handling is what would let it through.
+ */
 function ignoresError(fn: ts.FunctionLikeDeclaration): boolean {
   const [first] = fn.parameters;
   if (!first) return true;
-  // A destructured error is being read apart — that is handling, not ignoring.
-  if (!ts.isIdentifier(first.name)) return false;
-  const name = first.name.text;
-  let mentioned = false;
-  if (fn.body) {
-    walk(fn.body, (n) => {
-      if (ts.isIdentifier(n) && n.text === name) mentioned = true;
-    });
-  }
-  return !mentioned;
+  return ts.isIdentifier(first.name);
 }
 
 /**
