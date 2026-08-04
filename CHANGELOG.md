@@ -143,6 +143,29 @@ Issue #95, ADR-0006.
   back a card missing the facet the caller had asked for — indistinguishable from "this
   card has none". All four now record an `unreachable` entry on the card they return, so
   an empty facet and an unreadable one are two different answers (#153).
+- A column that is *waiting* was counted as finished work. `detectStage` tested `approv`
+  before `pending`, so `Pending Approval` read `approved` — done — and the unanchored `live`
+  in the done branch matched inside "de**live**ry", so `Delivery`, `Deliverables` and
+  `Livestream` read done too. Both reached `team`'s `doneCount`, `stale`'s skip guard,
+  `health`'s flow ratio and, since #98, `standup`'s and `my-standup`'s `completed` group. A
+  wait branch (`pending`/`awaiting`/`waiting`/`vänta`) now runs first; `approv`/`godkän`
+  narrowed to `approved`/`godkän[dt]` so the gate names `Approval` and `Godkännande` fall to
+  `review`; `live` is `\blive\b` with `delivered` spelled out beside it; `sign.?off` names a
+  gate and moved to `review` while `signed.?off` names the decision and stays `approved`;
+  `accept(?!ance)` keeps `Accepted` without claiming `Acceptance Testing`; and `(?<!o)klar`
+  stops Swedish `Oklar` — *unclear* — reading as done, the same shape as the `(?<!un)resolv`
+  lookbehind already beside it. Measured over 161 column names: **44 verdicts move**, 41
+  losing a `done` that was a gate, a negation or a "de**live**ry" false positive, and three
+  gaining one they never had (`Signed Off` and its spellings, which read `queued` before).
+  **Not one name that was correctly read as done stopped being read as done** (#158).
+
+- The documented-command ratchet could not see an options **table**, so every option table in
+  every doc was unchecked — `command-reference.md` gave a `--json` row to 19 commands that
+  have had no `--json` since 3.0.0. It now reads table structure (row → cells → the code
+  spans in the first cell) and asks the same question the invocation arm asks. Found and
+  swept 38 phantom flags across three docs. A second hole surfaced with it: a fenced command
+  written across a trailing `\` was scanned one line at a time, so flags on its continuation
+  lines were invisible; 22 such commands are joined now (#156).
 
 - `favro standup --help` pointed at an `unblocked` command — a top-level command that has
   never existed. Its help now says `favro cards list <board> --filter "unblocked"`. The
