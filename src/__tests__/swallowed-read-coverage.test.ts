@@ -606,8 +606,12 @@ describe('no read answers a failure with emptiness, outside the two lists', () =
     // swallowing or not, so it goes red if `isPromise` or the walk collapses.
     expect(handlerSites).toBeGreaterThanOrEqual(12);
     expect(sourceFiles.length).toBeGreaterThan(100);
-    // Seed two's floor. Measured at 160 clauses under this commit; a collapse of
+    // Seed two's floor. Measured at 156 clauses under this commit; a collapse of
     // the walk or of `ts.isCatchClause` would report zero swallows and pass.
+    // It said 160 for the length of #153 — the figure the header was corrected
+    // FROM, left behind here by the same change that corrected every other
+    // instance. Re-measured in review: 156, and the four that went are
+    // `getCardById`'s.
     expect(catchClauses).toBeGreaterThanOrEqual(120);
   });
 

@@ -20,8 +20,15 @@ Every **list** read now prints one envelope:
 
 `rows` is always present. `truncated` appears only when `--limit` cut rows off
 the end; `unreachable` only when a composite read could not reach part of its
-input. **Single** reads (`cards get`, `tags get`, `boards get`, …) are unchanged
-and stay bare.
+input. **Single** reads (`cards get`, `tags get`, `boards get`, …) stay bare —
+no `rows`, no envelope.
+
+A bare read can still carry `unreachable`, on the entity itself: `cards get
+<card> --include board,collection,links,comments` costs one call per facet, and a
+facet it could not read is named under the same `unreachable` key with the same
+`{id, reason}` shape. There is no envelope to put it in, so the card holds it.
+The key is absent when every facet answered — which is what makes `links: []`
+mean "no dependencies" rather than "we could not look".
 
 The envelope is always an envelope, marker or not: a shape that varied with the
 data would make the branch that matters most the one an agent exercises least.

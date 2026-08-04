@@ -22,6 +22,13 @@
  * key anywhere in the bytes, and each failure arm pins the marker naming that one
  * facet.
  *
+ * TWO REFUSAL SHAPES, and the second is the one that matters. The default is an
+ * injected 404, chosen to keep the retry ladder and `byBoard`'s name escalation out
+ * of the way; but `favro-error.ts`'s header records that Favro answers **403** for
+ * not-found, so the injected shape is not the one a real token without access
+ * produces. The `PERMISSION` arm drives that shape at all four facets and pins what
+ * was measured, including the one place the reason comes out wrong.
+ *
  * The output asserted is what an AGENT RECEIVES — stdout off `buildProgram()`,
  * parsed back as JSON — not the API's return value. `cards get` is ADR-0002
  * migrated (`run(...)` on the runner, JSON by default), so the card IS the
@@ -88,18 +95,36 @@ const CARD_BODY = {
 /** Every server this file started, so a failed assertion cannot leak one. */
 const running: http.Server[] = [];
 
+/** How the named facet refuses. */
+interface Refusal { status: number; message: string }
+
+/**
+ * The DEFAULT refusal: a **404 carrying a message outside `NOT_FOUND_MESSAGES`**,
+ * chosen for two measured reasons and not for realism. `shouldRetry` retries every
+ * 5xx four times with exponential backoff (~15s a facet), and `'Access denied'` IS
+ * in that set, so `escalatableOnRead` sends `byBoard` off to a name lookup and the
+ * reported reason becomes the lookup's rather than the facet's. The failure is
+ * INJECTED, so this is not a claim about what Favro sends (ADR-0003) — and because
+ * it is not, `PERMISSION` below covers the shape `favro-error.ts`'s own header says
+ * Favro really answers.
+ */
+const NOT_FOUND: Refusal = { status: 404, message: 'facet unavailable' };
+
+/**
+ * The refusal Favro is MEASURED to send for a resource a key cannot see:
+ * `favro-error.ts`'s header records that it answers 403 across several resources,
+ * and `'Access denied'` is in its probed `NOT_FOUND_MESSAGES` set. So this — not
+ * the 404 above — is the shape a token without board, collection or comment access
+ * actually produces, and the arm that drives it is what keeps the marker honest on
+ * the path real users take.
+ */
+const PERMISSION: Refusal = { status: 403, message: 'Access denied' };
+
 /**
  * A Favro stand-in that answers every facet, except the ONE named — which
- * refuses.
- *
- * The refusal is a **404 carrying a message outside `NOT_FOUND_MESSAGES`**, for
- * two measured reasons and not for realism: `shouldRetry` retries every 5xx four
- * times with exponential backoff (~15s a facet), and `'Access denied'` IS in that
- * set, so `escalatableOnRead` would send `byBoard` off to a name lookup and the
- * reported reason would be the lookup's, not the facet's. The failure is
- * INJECTED, so this is not a claim about what Favro sends (ADR-0003).
+ * refuses with `refusal`.
  */
-function startServer(fail?: Facet): Promise<{ urls: string[] }> {
+function startServer(fail?: Facet, refusal: Refusal = NOT_FOUND): Promise<{ urls: string[] }> {
   const urls: string[] = [];
   const server = http.createServer((req, res) => {
     req.on('data', () => { /* no bodies on this path */ });
@@ -110,7 +135,7 @@ function startServer(fail?: Facet): Promise<{ urls: string[] }> {
         res.writeHead(status, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(body));
       };
-      const refuse = (): void => send(404, { message: 'facet unavailable' });
+      const refuse = (): void => send(refusal.status, { message: refusal.message });
       const pathOnly = url.split('?')[0].replace(/^\/api\/v1/, '');
 
       if (pathOnly === `/cards/${CARD}/dependencies`) {
@@ -185,8 +210,11 @@ interface Payload {
  * back the raw stdout line plus its parse — the bytes an agent reads, and nothing
  * reconstructed from the API's return value.
  */
-async function getCard(fail?: Facet): Promise<{ raw: string; payload: Payload; urls: string[] }> {
-  const { urls } = await startServer(fail);
+async function getCard(
+  fail?: Facet,
+  refusal?: Refusal,
+): Promise<{ raw: string; payload: Payload; urls: string[] }> {
+  const { urls } = await startServer(fail, refusal);
   // Cleared per invocation, not per test: one arm below runs this TWICE, and
   // reading the first matching line would have compared a payload to itself.
   logSpy.mockClear();
@@ -285,6 +313,48 @@ describe('cards get --include: an empty facet and an unreadable one are distingu
     expect(Object.keys(read)).toContain(broken);
     expect(read[broken]).not.toBeUndefined();
     expect('unreachable' in read).toBe(false);
+  });
+
+  it.each(FACETS)('%s: a 403 — what Favro really sends — is a hole naming it too', async (broken) => {
+    // The 404 above is injected, not observed. THIS is the observed shape:
+    // `favro-error.ts`'s header records Favro answering 403 for not-found across
+    // several resources, and `'Access denied'` is in its probed
+    // `NOT_FOUND_MESSAGES`, so a token without access to the board, the collection
+    // or the comments produces this and not a 404. Measured in review of #153,
+    // because the marker being right on the injected failure says nothing about
+    // the one production actually hits.
+    const { payload } = await getCard(broken, PERMISSION);
+
+    // What holds at all four: ONE hole, and its `id` is the facet. That is the
+    // whole claim of #153 — an agent can tell WHICH facet it is missing.
+    expect(payload.unreachable).toHaveLength(1);
+    expect(payload.unreachable?.[0].id).toBe(broken);
+    expect(Object.keys(payload)).not.toContain(broken);
+    expect(payload.cardId).toBe(CARD);
+    expect(process.exitCode).toBeUndefined();
+
+    // The REASON, and the one asymmetry it has. Three facets are plain
+    // `client.get`s, so the reason is the classified 403 verbatim.
+    //
+    // `board` is not: `BoardsAPI.getBoard` routes through `byBoard`, which reads
+    // `escalatableOnRead` on the 403 and retries the id as a NAME — so the reason
+    // that lands is `resolveBoardId`'s refusal about a board name, for a value
+    // that was never a name but the `widgetCommonId` the card itself carried.
+    // It also costs an extra `/widgets?limit=100` listing.
+    //
+    // Pinned rather than fixed: `byBoard` is shared by `boards get <boardId>`,
+    // which has always answered the same way, so the misattribution predates this
+    // change and lives in a file this branch does not own. Pinned so a fix there
+    // comes back HERE — the id is what an agent branches on and it is correct
+    // either way, but the wording tells a caller "no such board" when the truth is
+    // "your key cannot see it".
+    const reason = payload.unreachable?.[0].reason ?? '';
+    if (broken === 'board') {
+      expect(reason).toContain(`No board named "${BOARD}"`);
+      expect(reason).not.toContain('Access denied');
+    } else {
+      expect(reason).toBe('Favro said "Access denied" — the resource is missing or not visible to your key.');
+    }
   });
 
   it('the four facets are four separate reads, so one failure is one hole', async () => {
