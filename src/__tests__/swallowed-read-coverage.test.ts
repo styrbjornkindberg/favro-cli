@@ -18,7 +18,10 @@
  * [])` is only the spelling this defect happened to have twice; `.catch(_ => [])`
  * is the same defect and slips straight through a substring match, which is
  * precisely how #84, #99/#127, #128 and #142/#143's ratchets came to be blind to
- * the thing they were written for. So:
+ * the thing they were written for. There are TWO SEEDS, because the same lie has
+ * two grammars.
+ *
+ * SEED ONE — the promise callback (#116, #148, #149 all lived here):
  *
  *   - The RECEIVER must be a promise, decided by asking the checker whether its
  *     type has a `then` member. An object with a `catch` method of its own, or a
@@ -28,10 +31,31 @@
  *     that only knew `catch` would be one refactor from useless.
  *   - It is resolved through the checker, so a handler hoisted to a `const` is
  *     followed to the function it names.
- *   - It counts as a SWALLOW when it both DECLINES TO TREAT THE ERROR AS A VALUE
- *     — no parameter, or one that is not destructured — and ANSWERS WITH
- *     EMPTINESS: `[]`, `{}`, `undefined`, `null`, `0`, `''`, `false`, or an empty
- *     body.
+ *
+ * SEED TWO — the `try`/`catch` STATEMENT (#153). `try { cards = await
+ * listCards(b) } catch { cards = [] }` is the identical substitution in a shape
+ * seed one does not walk at all, and #149 shipped asserting that population was
+ * zero. It is not zero: 19 of the 160 `catch` clauses in non-test `src/` match,
+ * re-measured under this commit and triaged into `CATCH_DEBT`/`CATCH_DECIDED`
+ * below. The seed is `ts.CatchClause`, and the error binding — absent, or present
+ * and not destructured — takes the place of the handler's parameter list.
+ *
+ * Either seed counts as a SWALLOW when it both DECLINES TO TREAT THE ERROR AS A
+ * VALUE — no binding, or one that is not destructured — and ANSWERS WITH
+ * EMPTINESS: `[]`, `{}`, `undefined`, `null`, `0`, `''`, `false`, an empty body,
+ * or a lone statement that RETURNS or ASSIGNS one of those. Both predicates
+ * (`ignoresError`, `emptinessToken`) are shared by the two seeds rather than
+ * copied, so a spelling fix lands on both at once.
+ *
+ * SEED TWO IS LESS PRECISE THAN SEED ONE, deliberately. Seed one leans on
+ * `isPromise` to know a read was attempted; a `try` block can wrap anything, so
+ * the clauses it raises include parses and probes where the throw IS the answer
+ * (`new URL(x)` in a validator, a base64 decode of an untrusted header). Those are
+ * `CATCH_DECIDED` with the argument written out. Narrowing the seed to "the try
+ * block awaits something" was measured and rejected: it drops
+ * `todo-scanner.ts`'s `readFileSync`/`readdirSync`, which are reads. Broad and
+ * triaged beats narrow and blind — narrow and blind is what six ratchets here
+ * already were.
  *
  * Both conjuncts are required, and the second carries most of the weight. A
  * handler that does something with the error is not answering with emptiness
@@ -46,37 +70,32 @@
  * `.catch(_ => [])` is the same defect as `.catch(() => [])` and is one of the two
  * bypasses this file is tested against.
  *
- * ponytail: promise-callback shape only. A `try { … } catch { return [] }` swallow
- * is the same defect in a shape this does not walk, and that ceiling is real.
+ * ponytail: a swallow spread over MORE THAN ONE statement is out of reach —
+ * `catch { log(e); return [] }` is exempted on purpose (it says something), but so
+ * is `catch { a = []; b = [] }`, which is not. Two-statement catch bodies that
+ * answer with nothing but emptiness are the real ceiling; none exist in `src/`
+ * today (measured), and the upgrade is "every statement is a return-or-assign of
+ * an emptiness token" rather than "exactly one".
  *
- * The population is NOT zero, and an earlier version of this comment said it was
- * — measured during #149's review by running these same two predicates over
- * `ts.CatchClause` instead of `.catch`: of 159 `catch` clauses in non-test `src/`,
- * **19** both decline to bind the error and answer with an emptiness token
- * (`api/webhooks.ts:48`, `commands/browse.ts:253`, `commands/tasklists.ts:30`,
- * `lib/cards-api.ts:721/726/735/744`, `lib/config.ts:178`,
- * `lib/git-integration.ts:105/174`, `lib/http-client.ts:184`,
- * `lib/name-cache.ts:70/81/97`, `lib/skill-store.ts:105/125`,
- * `lib/todo-scanner.ts:79/110`, `mcp-http-server.ts:75`). Most are plausibly
- * `DECIDED` — a cache miss, an "is this a git repo" probe — but that is a triage
- * of nineteen call sites, not a line of predicate, and doing it blind inside this
- * ticket is how an allowlist becomes a place to park a build. So the seed stays
- * unwritten and the ceiling stays stated with its true number rather than a
- * flattering one: what this file guards completely is the promise-callback shape,
- * which is where #116, #148 and #149 all lived.
- *
- * The upgrade path is a second seed over `ts.CatchClause` with the same
- * `ignoresError` and `emptinessToken` predicates, plus the nineteen-way triage —
- * its own ticket, because the triage is the work.
- *
- * TWO LISTS, AND WHY THEY ARE NOT ONE
+ * FOUR LISTS, AND WHY THEY ARE NOT ONE
  *   - `DEBT` — a swallow that should record its hole and does not yet. Only ever
  *     shrinks.
  *   - `DECIDED` — a swallow whose caller already distinguishes the fallback from
  *     real data and reports it, so no hole marker is missing. Not debt, and
  *     pretending it is would mean a permanently red ratchet.
+ *   - `CATCH_DEBT` / `CATCH_DECIDED` — the same split for seed two. Kept apart
+ *     from the first pair because the two populations have different provenance
+ *     and different precision (see above). All four feed one `EXEMPT`, so the
+ *     exemption, staleness and exactly-once arms are shared and seed two got
+ *     them for free.
  *
- * Both are checked for STALENESS, so neither can rot: an entry that no longer
+ *     #153 gave a second reason — that collapsing them would mean rewriting
+ *     #149's "exactly the three init reads" assertion. That reason DIED in the
+ *     merge: #154 discharged all three of those reads, `DEBT` is now `{}` and
+ *     pinned empty, and the assertion it named no longer exists. The provenance
+ *     argument above is the whole justification now.
+ *
+ * All four are checked for STALENESS, so none can rot: an entry that no longer
  * exists under its key fails the build. And the predicate itself is checked
  * against synthetic sources in BOTH polarities at the bottom of this file,
  * through THIS scan rather than a hand-rolled copy of it — a copy would only ever
@@ -90,6 +109,14 @@
  *   - A read feeding a DURABLE ARTEFACT propagates instead, because there is no
  *     envelope to carry a marker and the artefact outlives the warning. That is
  *     how #154 discharged `init`'s three.
+ *
+ * For a `CATCH_DEBT` line, also drop the `9` in the count assertion to `8` — the
+ * count is pinned in BOTH directions on purpose, because "moved it to
+ * `CATCH_DECIDED`" is the cheap way to discharge a defect without fixing it, and a
+ * shrink is a two-character edit next to the line you are already deleting.
+ * Discharging a `cards-api.ts` or `skill-store.ts` line renumbers its `#n`
+ * siblings; the staleness arm will tell you, and the new numbers are in the
+ * failure message.
  */
 import * as path from 'path';
 import * as ts from 'typescript';
@@ -151,8 +178,74 @@ const DECIDED: Record<string, string> = {
     'an existence probe — `fs.access` rejects to MEAN "not there", so `false` is the answer and not a stand-in for one (#131)',
 };
 
+/**
+ * CATCH_DEBT: seed two's half of the same debt — a `try`/`catch` that answers a
+ * failed read with emptiness and leaves its caller unable to tell.
+ *
+ * Keyed `<file> <enclosing>() catch → <fallback>`, `#n` when one function has
+ * several. NOT keyed on the line, which churns; see `enclosingName`.
+ *
+ * These NINE are triage, not a parking space. Each was read at its site under this
+ * commit and the reason states what a caller actually observes — not "looks
+ * sloppy". Fixing them is #153's follow-up and deliberately not #153: four other
+ * branches were live in these files when this landed, and the checker fix is what
+ * stops the count growing while that is scheduled.
+ */
+const CATCH_DEBT: Record<string, string> = {
+  'src/commands/tasklists.ts boardOfTaskList() catch → \'\'':
+    "#153 — fails CLOSED (`assertScope` refuses on `''`, and `--force` does not rescue it), but SILENTLY: the refusal it produces says \"the underlying error is reported separately\" and on this path nothing reported it, unlike `boardOfCard` two hops down which console.errors first",
+  'src/lib/cards-api.ts getCardById() catch → undefined':
+    '#153 — `--include board` failing leaves `card.board` absent, which is exactly what "this card has no board" looks like; the caller asked for the facet and gets a card quietly missing it',
+  'src/lib/cards-api.ts getCardById() catch → undefined #2':
+    '#153 — same for `--include collection`',
+  'src/lib/cards-api.ts getCardById() catch → undefined #3':
+    '#153 — same for `--include links`; the `card.links = …` assignment is INSIDE the try, so a failed `/dependencies` read leaves the field undefined where a successful empty one writes `[]` — a distinction no caller is told about and no schema states',
+  'src/lib/cards-api.ts getCardById() catch → undefined #4':
+    '#153 — same for `--include comments` off `/comments?cardCommonId=`',
+  'src/lib/skill-store.ts listSkills() catch → undefined':
+    '#153 — a builtin skill file that exists but will not parse is dropped from `skills list` with no warning, so a broken skill and an uninstalled one read identically',
+  'src/lib/skill-store.ts listSkills() catch → undefined #2':
+    '#153 — same for the user skills directory, which overrides builtin, so a corrupt user file silently un-overrides too',
+  'src/lib/todo-scanner.ts walk() catch → undefined':
+    '#153 — an unreadable directory is skipped and the scan still reports its TODO list as the answer; the fix is a skipped-paths count in the result, not a throw',
+  'src/lib/todo-scanner.ts scanFile() catch → undefined':
+    '#153 — same for a single unreadable file',
+};
+
+/**
+ * CATCH_DECIDED: the clause is real and the emptiness is the honest answer.
+ *
+ * TEN of them, and most are here because seed two has no `isPromise` gate to tell
+ * a read from a parse (see the header). A validator whose `throw` IS its answer,
+ * and a cache miss, are not the substitution this file guards — but writing the
+ * predicate so it never raises them would blind it to `.catch(() => false)` on a
+ * real read, which is the trade #149 already refused once.
+ */
+const CATCH_DECIDED: Record<string, string> = {
+  'src/api/webhooks.ts isValidWebhookUrl() catch → false':
+    'a VALIDATOR — `new URL(url.trim())` throwing IS the answer "not a valid URL", so `false` is a measurement and not a stand-in for one (same argument as the `fs.access` entry above)',
+  'src/commands/browse.ts browseHandler() catch → undefined':
+    'the empty body leaves `boardName` as the board ID the user typed, which is a TRUTHFUL label; and the very next statement `browseCards(…, options.board, …)` reads the same board unguarded, so an unreachable board still fails loudly',
+  'src/lib/config.ts resolveUserId() catch → undefined':
+    'measured all five callers (`assignee.ts:48`, `my-cards.ts:152`, `my-standup.ts:156`, `next.ts:142`, `main-menu.ts:276`) — every one tests `!userId` and REFUSES with a remedy rather than proceeding on an empty identity; the refusal does misattribute a transient read failure to "not configured", which is wording, not a fabricated answer',
+  'src/lib/git-integration.ts isBranchMerged() catch → false':
+    "`false` means \"not merged\", the CONSERVATIVE direction: its one caller (`analyzeBranches`) reports the branch as 'open', so a failed `git branch --merged` never advertises a branch as safe to delete",
+  'src/lib/git-integration.ts isGitRepo() catch → false':
+    'a PROBE — `git rev-parse --git-dir` exiting non-zero is precisely how one asks "is this a git repo", so the throw is the answer',
+  "src/lib/http-client.ts wirePath() catch → ''":
+    "documented FAIL-CLOSED: `assertBoundedTarget` reads `''` as unbounded and throws `RefusalError`, so an unparseable target refuses rather than escaping the comparison (the doc comment above it says so)",
+  'src/lib/name-cache.ts readFile() catch → {}':
+    'a cache MISS, which sends the caller to the real read; reasoned in place and deliberately not memoized so one failed open does not pin "no cache" for the process',
+  'src/lib/name-cache.ts readFile() catch → undefined':
+    'corrupt JSON reads as no cache, `data` stays `{}`, same miss path — memoized on purpose because re-parsing the same bad bytes cannot start succeeding',
+  'src/lib/name-cache.ts writeFile() catch → undefined':
+    'a failed cache WRITE, not a read: nothing downstream consumes a value from it, and the next read simply misses',
+  'src/mcp-http-server.ts parseBasicAuth() catch → null':
+    'a PARSE of an untrusted header — `null` means "no credentials", the caller 401s, and the same `null` is returned by the two explicit malformed-header guards on either side of it',
+};
+
 /** Exempt either way — debt and decision are both non-failing, for different reasons. */
-const EXEMPT = { ...DEBT, ...DECIDED };
+const EXEMPT = { ...DEBT, ...DECIDED, ...CATCH_DEBT, ...CATCH_DECIDED };
 
 // ─── the program ─────────────────────────────────────────────────────────────
 
@@ -215,6 +308,18 @@ function emptinessToken(body: ts.Node): string | undefined {
     if (body.statements.length === 0) return 'undefined';
     if (body.statements.length !== 1) return undefined;
     const [only] = body.statements;
+    // ASSIGNING the emptiness is the same answer as returning it, and it is the
+    // shape #153 was filed for — `try { cards = await read() } catch { cards = [] }`
+    // has no `return` anywhere, so a return-only test cannot see the ticket's own
+    // example. Zero sites in `src/` are spelled this way today; the arm exists for
+    // the next one, which is what a ratchet is.
+    if (
+      ts.isExpressionStatement(only) &&
+      ts.isBinaryExpression(only.expression) &&
+      only.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken
+    ) {
+      return emptinessToken(only.expression.right);
+    }
     if (!ts.isReturnStatement(only)) return undefined;
     return only.expression === undefined ? 'undefined' : emptinessToken(only.expression);
   }
@@ -224,7 +329,11 @@ function emptinessToken(body: ts.Node): string | undefined {
 /**
  * Does the handler decline to treat the error as a value?
  *
- * Only the parameter LIST is read. This started as a walk of the body looking for
+ * Takes the BINDING rather than the function, so seed one hands it `.catch`'s first
+ * parameter name and seed two hands it `catch (e)`'s — one predicate, not two that
+ * can drift apart. `undefined` is both "`.catch(() => …)`" and "bare `catch {`".
+ *
+ * Only the binding is read. This started as a walk of the body looking for
  * a mention of the parameter, and mutation testing showed that walk could not
  * change a single verdict, here or on any synthetic input: `emptinessToken` below
  * accepts only bodies too small to mention anything — a bare emptiness literal, or
@@ -240,10 +349,34 @@ function emptinessToken(body: ts.Node): string | undefined {
  * is the first of the two bypasses at the bottom of this file, and treating a
  * parameter's mere presence as handling is what would let it through.
  */
-function ignoresError(fn: ts.FunctionLikeDeclaration): boolean {
-  const [first] = fn.parameters;
-  if (!first) return true;
-  return ts.isIdentifier(first.name);
+function ignoresError(bound: ts.BindingName | undefined): boolean {
+  if (!bound) return true;
+  return ts.isIdentifier(bound);
+}
+
+/**
+ * The named function, method or `const` a node sits inside — the discriminating
+ * half of a `catch` clause's key.
+ *
+ * A `catch` clause has no read to name the way a promise handler's receiver does:
+ * its `try` block can hold several calls, and naming the first one misnames 5 of
+ * the 19 live sites (`isValidWebhookUrl/trim`, `writeFile/cacheFilePath`,
+ * `parseBasicAuth/toString`, `isBranchMerged/filter`, and `wirePath`, which has no
+ * call at all). The enclosing declaration is stable under edits above it, unique
+ * for 13 of the 19 on its own, and actually findable by a human — which the key's
+ * whole job is.
+ */
+function enclosingName(node: ts.Node): string {
+  for (let p: ts.Node | undefined = node.parent; p; p = p.parent) {
+    const named =
+      ts.isFunctionDeclaration(p) || ts.isMethodDeclaration(p) || ts.isFunctionExpression(p)
+        ? p.name
+        : ts.isVariableDeclaration(p) || ts.isPropertyAssignment(p)
+          ? p.name
+          : undefined;
+    if (named && ts.isIdentifier(named)) return named.text;
+  }
+  return '<module>';
 }
 
 /**
@@ -279,10 +412,15 @@ function readName(receiver: ts.Expression): string {
 function findSwallows(
   prog: ts.Program,
   files: readonly ts.SourceFile[],
-): { findings: Finding[]; handlerSites: number } {
+): { findings: Finding[]; handlerSites: number; catchClauses: number } {
+  // Also BINDS the program, which is what sets `node.parent` — `enclosingName` and
+  // `getStart()` both walk parents and answer `undefined`/throw without it.
   const checker = prog.getTypeChecker();
   const findings: Finding[] = [];
   let handlerSites = 0;
+  let catchClauses = 0;
+  /** Occurrence counter per catch key, so two identical bases get `#2`, `#3`. */
+  const seenCatchKey = new Map<string, number>();
 
   const isFunctionish = (node: ts.Node | undefined): node is ts.FunctionLikeDeclaration =>
     !!node &&
@@ -314,6 +452,27 @@ function findSwallows(
   for (const sf of files) {
     const rel = path.relative(REPO_ROOT, sf.fileName).split(path.sep).join('/');
     walk(sf, (n) => {
+      // ── SEED TWO: the `try`/`catch` statement (#153) ──
+      if (ts.isCatchClause(n)) {
+        catchClauses++;
+        if (!ignoresError(n.variableDeclaration?.name)) return;
+        const fallback = emptinessToken(n.block);
+        if (fallback === undefined) return;
+        // No line number in the key — it churns on every edit above it. The
+        // ordinal is scoped to one file+function+fallback, so it only moves when
+        // a sibling clause in the SAME function is added or discharged, and when
+        // it moves the staleness arm says so.
+        const base = `${rel} ${enclosingName(n)}() catch → ${fallback}`;
+        const nth = (seenCatchKey.get(base) ?? 0) + 1;
+        seenCatchKey.set(base, nth);
+        findings.push({
+          key: nth === 1 ? base : `${base} #${nth}`,
+          where: `${rel}:${sf.getLineAndCharacterOfPosition(n.getStart()).line + 1}`,
+        });
+        return;
+      }
+
+      // ── SEED ONE: the promise rejection handler (#116, #148, #149) ──
       if (!ts.isCallExpression(n) || !ts.isPropertyAccessExpression(n.expression)) return;
       const method = n.expression.name.text;
       // `.catch(onRejected)` and `.then(_, onRejected)` are the same seat.
@@ -326,7 +485,7 @@ function findSwallows(
       handlerSites++;
       const handler = resolvedFunction(handlerArg);
       if (!handler || !handler.body) return;
-      if (!ignoresError(handler)) return;
+      if (!ignoresError(handler.parameters[0]?.name)) return;
       const fallback = emptinessToken(handler.body);
       if (fallback === undefined) return;
 
@@ -337,14 +496,14 @@ function findSwallows(
     });
   }
 
-  return { findings, handlerSites };
+  return { findings, handlerSites, catchClauses };
 }
 
 const sourceFiles = program
   .getSourceFiles()
   .filter((sf) => !sf.isDeclarationFile && sf.fileName.startsWith(path.join(REPO_ROOT, 'src')));
 
-const { findings: live, handlerSites } = findSwallows(program, sourceFiles);
+const { findings: live, handlerSites, catchClauses } = findSwallows(program, sourceFiles);
 const liveKeys = new Set(live.map((f) => f.key));
 
 // ─── the self-check ──────────────────────────────────────────────────────────
@@ -380,6 +539,9 @@ describe('no read answers a failure with emptiness, outside the two lists', () =
     // swallowing or not, so it goes red if `isPromise` or the walk collapses.
     expect(handlerSites).toBeGreaterThanOrEqual(12);
     expect(sourceFiles.length).toBeGreaterThan(100);
+    // Seed two's floor. Measured at 160 clauses under this commit; a collapse of
+    // the walk or of `ts.isCatchClause` would report zero swallows and pass.
+    expect(catchClauses).toBeGreaterThanOrEqual(120);
   });
 
   it('no read swallows its failure outside DEBT and DECIDED', () => {
@@ -397,6 +559,25 @@ describe('no read answers a failure with emptiness, outside the two lists', () =
     // which the header's nineteen untriaged `ts.CatchClause` sites forbid saying.
     // A new line here would be a regression rather than a record of one.
     expect(Object.keys(DEBT).sort()).toEqual([]);
+  });
+
+  it('the catch lists hold the nineteen clauses they were triaged at, split 9/10', () => {
+    // The exemption and exactly-once arms already pin the SET of catch keys. What
+    // they cannot see is the SPLIT: silently moving a key from `CATCH_DEBT` to
+    // `CATCH_DECIDED` would discharge a defect by relabelling it, and parking a
+    // tenth build in `CATCH_DEBT` is the failure mode #149's header names. Both
+    // move a count.
+    expect(Object.keys(CATCH_DEBT)).toHaveLength(9);
+    expect(Object.keys(CATCH_DECIDED)).toHaveLength(10);
+    // Disjoint, or `EXEMPT`'s spread would silently let the later list win and one
+    // of the counts above would be describing a key nobody reads.
+    expect(Object.keys(CATCH_DEBT).filter((k) => k in CATCH_DECIDED)).toEqual([]);
+    // Every reason is a real reason. An empty string would pass the counts.
+    expect(
+      Object.entries({ ...CATCH_DEBT, ...CATCH_DECIDED })
+        .filter(([, why]) => why.trim().length < 20)
+        .map(([key]) => key),
+    ).toEqual([]);
   });
 
   it('no entry in either list is stale — a discharged read must be removed', () => {
@@ -513,5 +694,122 @@ describe('the predicate itself, run through the real scan in both polarities', (
     // while the positive one failed loudly. This is the seam check: a case that
     // MUST be found, so a broken host cannot look like a clean repo.
     expect(scan(`${PREAMBLE}export const a = read().catch(() => []);`)).toHaveLength(1);
+  });
+});
+
+describe('seed two — the try/catch statement, through the same scan (#153)', () => {
+  /** A statement-shaped swallow, wrapped in the function the key names. */
+  const inFn = (name: string, body: string): string =>
+    `${PREAMBLE}export async function ${name}(): Promise<string[]> {\n${body}\n}`;
+
+  it('CATCHES a statement swallow however it is spelled', () => {
+    // The `return` form, bare `catch`.
+    expect(scan(inFn('a', 'try { return await read(); } catch { return []; }')))
+      .toEqual(['src/__synthetic__.ts a() catch → []']);
+    // The ASSIGNMENT form — the shape #153's body is written in, which has no
+    // `return` in the catch at all.
+    expect(scan(inFn('b', 'let out: string[] = []; try { out = await read(); } catch { out = []; } return out;')))
+      .toEqual(['src/__synthetic__.ts b() catch → []']);
+    // A property target, which is how `cards-api.ts` spells its four.
+    expect(scan(inFn('c', 'const o: { v?: string[] } = {}; try { o.v = await read(); } catch { o.v = []; } return o.v ?? [];')))
+      .toEqual(['src/__synthetic__.ts c() catch → []']);
+    // The empty body — `catch { /* best effort */ }`, which is the single most
+    // common live spelling here (11 of the 19).
+    expect(scan(inFn('d', 'const o: { v?: string[] } = {}; try { o.v = await read(); } catch { } return o.v ?? [];')))
+      .toEqual(['src/__synthetic__.ts d() catch → undefined']);
+    // A bare `return;`.
+    expect(scan(inFn('e', 'try { await read(); } catch { return; } return [];')))
+      .toEqual(['src/__synthetic__.ts e() catch → undefined']);
+    // Every other emptiness a clause could answer with, on the shapes the live
+    // sites actually use: `''`, `false`, `null`, `{}`.
+    expect(scan(`declare function r2(): Promise<string>;\nexport async function f(): Promise<string> { try { return await r2(); } catch { return ''; } }`))
+      .toEqual(['src/__synthetic__.ts f() catch → \'\'']);
+    expect(scan(`declare function r3(): Promise<boolean>;\nexport async function g(): Promise<boolean> { try { return await r3(); } catch { return false; } }`))
+      .toEqual(['src/__synthetic__.ts g() catch → false']);
+    expect(scan(`declare function r4(): Promise<string | null>;\nexport async function h(): Promise<string | null> { try { return await r4(); } catch { return null; } }`))
+      .toEqual(['src/__synthetic__.ts h() catch → null']);
+    // A SYNCHRONOUS read. Seed two has no `isPromise` gate on purpose — dropping
+    // these would drop `todo-scanner.ts`'s two `readFileSync`/`readdirSync` sites,
+    // which are reads.
+    expect(scan(`declare function sync(): string[];\nexport function i(): string[] { try { return sync(); } catch { return []; } }`))
+      .toEqual(['src/__synthetic__.ts i() catch → []']);
+    // Nested inside another `catch`, so the walk has to recurse into clause bodies
+    // and not just past them. The outer clause reports the error, so only the
+    // inner one is a swallow.
+    expect(scan(inFn('j', "try { return await read(); } catch (e) { console.error(e); try { return await read(); } catch { return []; } }")))
+      .toEqual(['src/__synthetic__.ts j() catch → []']);
+  });
+
+  it('does NOT catch a clause that reads the error, or that says something', () => {
+    // Both conjuncts, one at a time — the same pair seed one is checked against.
+    expect(scan(inFn('a', 'try { return await read(); } catch (e) { throw e; }'))).toEqual([]);
+    expect(scan(inFn('b', 'try { return await read(); } catch (e) { return [String(e)]; }'))).toEqual([]);
+    // DESTRUCTURED binding — the error was pulled apart before answering, which is
+    // a decision about content. This is the one thing `ignoresError` still decides.
+    expect(scan(inFn('c', 'try { return await read(); } catch ({ message }) { return []; }'))).toEqual([]);
+    // Says something on the way out.
+    expect(scan(inFn('d', "try { return await read(); } catch { console.error('failed'); return []; }"))).toEqual([]);
+    // A non-empty fallback is a decision about content, not a swallow.
+    expect(scan(inFn('e', "try { return await read(); } catch { return ['fallback']; }"))).toEqual([]);
+    // No catch clause at all — `finally` is not a rejection handler.
+    expect(scan(inFn('f', 'try { return await read(); } finally { }'))).toEqual([]);
+    // Re-throwing something ELSE is still not emptiness.
+    expect(scan(inFn('g', "try { return await read(); } catch { throw new Error('nope'); }"))).toEqual([]);
+  });
+
+  it('catches the two bypasses this seed invites', () => {
+    // ONE — the ASSIGNMENT form with a type assertion around the emptiness. This
+    // stacks the two holes this ratchet has actually had: the statement shape
+    // (#153) and `[] as T`, which is this repo's dominant spelling and which
+    // #149's scan missed while claiming spelling could not defeat it. It reaches
+    // `emptinessToken` through the assignment arm and then through the `as` arm,
+    // so a regression in either one lets it through.
+    expect(scan(inFn(
+      'bypassOne',
+      'let out: string[] = []; try { out = await read(); } catch { out = [] as string[]; } return out;',
+    ))).toEqual(['src/__synthetic__.ts bypassOne() catch → []']);
+    // …and the double assertion, which is exactly how `cards-api.ts:749` spells
+    // its own value (`as unknown as typeof card.board`).
+    expect(scan(inFn(
+      'bypassOneB',
+      'let out: string[] = []; try { out = await read(); } catch { out = ([] as unknown) as string[]; } return out;',
+    ))).toEqual(['src/__synthetic__.ts bypassOneB() catch → []']);
+
+    // TWO — a NAMED but unread error binding, inside a nested arrow inside a
+    // method, so nothing about it is at the shape a naive rule would look at:
+    // "has a binding" is not handling, and the clause is two functions deep from
+    // the export. `enclosingName` has to find the arrow's `const`, not the class
+    // or the method, or the key names the wrong site.
+    expect(scan(
+      `${PREAMBLE}export class C {\n` +
+        `  m(): () => Promise<string[]> {\n` +
+        `    const swallow = async (): Promise<string[]> => {\n` +
+        `      try { return await read(); } catch (unusedErr) { return []; }\n` +
+        `    };\n` +
+        `    return swallow;\n` +
+        `  }\n` +
+        `}`,
+    )).toEqual(['src/__synthetic__.ts swallow() catch → []']);
+  });
+
+  it('two clauses in one function get distinct keys', () => {
+    // The `#n` ordinal. Without it `cards-api.ts`'s four collapse onto one key and
+    // three of them hide inside the fourth's exemption — the same collapse the
+    // exactly-once arm exists to prevent for seed one.
+    expect(scan(inFn(
+      'twice',
+      'try { return await read(); } catch { return []; } finally { }',
+    ) + `\nexport async function twice2(): Promise<string[]> { try { return await read(); } catch { return []; } }`))
+      .toEqual([
+        'src/__synthetic__.ts twice() catch → []',
+        'src/__synthetic__.ts twice2() catch → []',
+      ]);
+    expect(scan(inFn(
+      'twin',
+      'try { return await read(); } catch { return []; }\n  try { return await read(); } catch { return []; }',
+    ))).toEqual([
+      'src/__synthetic__.ts twin() catch → []',
+      'src/__synthetic__.ts twin() catch → [] #2',
+    ]);
   });
 });
