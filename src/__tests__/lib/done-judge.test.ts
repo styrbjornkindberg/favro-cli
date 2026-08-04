@@ -14,7 +14,7 @@
  * are asserted separately rather than as a set, so deleting any ONE of them from
  * `DONE_STAGES` fails a named assertion instead of hiding behind its siblings.
  */
-import { detectStage, isDoneStage } from '../../lib/workflow-stage';
+import { detectStage, isDoneStage, proposeColumnMapping } from '../../lib/workflow-stage';
 import { isCompleted } from '../../api/standup';
 import type { ContextCard } from '../../api/context';
 
@@ -94,6 +94,137 @@ describe('detectStage feeds the one done judge', () => {
     expect(detectStage('Unresolved')).not.toBe('done');
     expect(isDoneStage(detectStage('Unresolved'))).toBe(false);
     expect(isCompleted(card('Unresolved'))).toBe(false);
+  });
+});
+
+/**
+ * #158 — the two inherited misreads, and the names that must NOT move with them.
+ *
+ * BOTH POLARITIES, ALWAYS PAIRED. A test that only asserts `Pending Approval` is
+ * not done passes for a `detectStage` that returns `'backlog'` for every name on
+ * earth, which is the unfalsifiable shape this repo keeps shipping. So each arm
+ * below pins the name that changed AND the sibling that must not, and pins the
+ * exact stage rather than only its doneness — `not.toBe('done')` is satisfied by
+ * `'approved'`, which is the very bug.
+ *
+ * Measured over 87 column names before and after: exactly ten verdicts move, all
+ * ten listed here or in the propose arm below.
+ */
+describe('a column that is waiting is not a column that is finished (#158)', () => {
+  // Each separately, because they take three different routes through the ladder
+  // — `pending` and `awaiting` hit the new wait branch, `Approval` reaches the
+  // `review` branch only because `approv` was narrowed to `approved`. Grouping
+  // them into one `it.each` would let any two cover for the third.
+  it('reads `Pending Approval` as review, not as approved', () => {
+    expect(detectStage('Pending Approval')).toBe('review');
+    expect(isDoneStage(detectStage('Pending Approval'))).toBe(false);
+    expect(isCompleted(card('Pending Approval'))).toBe(false);
+  });
+
+  it('reads `Awaiting Approval` as review', () => {
+    expect(detectStage('Awaiting Approval')).toBe('review');
+    expect(isDoneStage(detectStage('Awaiting Approval'))).toBe(false);
+  });
+
+  it('reads the Swedish gate `Väntar på godkännande` as review', () => {
+    expect(detectStage('Väntar på godkännande')).toBe('review');
+    expect(isDoneStage(detectStage('Väntar på godkännande'))).toBe(false);
+  });
+
+  // The gate NAMED, with no wait word at all. This is what the `approv` →
+  // `approved` and `godkän` → `godkänd` narrowings buy, and it is why they are not
+  // redundant with the wait branch above: restore either stem and these two go
+  // back to reading `approved`, while every wait-worded name above still passes.
+  it('reads the bare gate `Approval` as review, not as approved', () => {
+    expect(detectStage('Approval')).toBe('review');
+    expect(isDoneStage(detectStage('Approval'))).toBe(false);
+  });
+
+  it('reads the bare Swedish gate `Godkännande` as review, not as approved', () => {
+    expect(detectStage('Godkännande')).toBe('review');
+    expect(isDoneStage(detectStage('Godkännande'))).toBe(false);
+  });
+
+  // A wait word paired with a DONE word, not an APPROVED one. Kills the
+  // wait branch being moved back below `done`, which would leave this at `done`
+  // while every assertion above still passed.
+  it('reads `Awaiting Deploy` as review, though `Deploy` alone is done', () => {
+    expect(detectStage('Awaiting Deploy')).toBe('review');
+    expect(detectStage('Deploy')).toBe('done');
+  });
+
+  // THE POLARITY ARM. Deleting `approved` from the approved branch, or moving the
+  // wait branch above nothing at all, has to fail here.
+  it.each(['Approved', 'Godkänd', 'Accepted', 'Verified', 'Sign-off'])(
+    'still reads the decided `%s` as approved, and approved is finished',
+    (name) => {
+      expect(detectStage(name)).toBe('approved');
+      expect(isDoneStage(detectStage(name))).toBe(true);
+    },
+  );
+
+  // `Pending` on its own was already `review` before #158 and must stay there:
+  // the new branch returns `review` too, so a mutation that deletes the ENTIRE
+  // wait branch is invisible to this one. It is here as the no-change control,
+  // not as a kill.
+  it('leaves plain `Pending` where it already was', () => {
+    expect(detectStage('Pending')).toBe('review');
+  });
+});
+
+describe('`live` is a word, not a substring of "delivery" (#158)', () => {
+  // Separately again: `Delivery` and `Deliverables` differ only in suffix, but
+  // `Livestream` reaches the same bug from the other side of the string, so a
+  // half-fix that anchored only the left edge would still pass two of the three.
+  it.each(['Delivery', 'Deliverables', 'Livestream'])(
+    'does not read `%s` as finished work',
+    (name) => {
+      expect(detectStage(name)).toBe('queued');
+      expect(isDoneStage(detectStage(name))).toBe(false);
+      expect(isCompleted(card(name))).toBe(false);
+    },
+  );
+
+  // THE POLARITY ARM, and the reason `delivered` is spelled out in the pattern:
+  // anchoring `live` without it demotes real finished work, and `not.toBe('done')`
+  // on the three names above cannot see that happen.
+  it.each(['Live', 'Go Live', 'Delivered', 'Released', 'Shipped'])(
+    'still reads `%s` as done',
+    (name) => {
+      expect(detectStage(name)).toBe('done');
+      expect(isDoneStage(detectStage(name))).toBe(true);
+    },
+  );
+});
+
+describe('what the #158 narrowing does to `init`\'s proposed done column', () => {
+  const col = (name: string) => ({ columnId: name.toLowerCase().replace(/\s+/g, '-'), name });
+
+  // `proposeColumnMapping` matches `stage === 'done'` EXACTLY, not `isDoneStage`,
+  // so the `Pending Approval` half of #158 never reached it — `approved` was
+  // never a candidate. Pinned because that is the claim the ticket asked to be
+  // traced, and it is the difference between the two halves' blast radius.
+  it('never proposed an approved column as done, so the gate fix cannot move it', () => {
+    const columns = [col('Backlog'), col('Doing'), col('Pending Approval'), col('Done')];
+    expect(proposeColumnMapping(columns).done?.name).toBe('Done');
+    expect(proposeColumnMapping(columns).active?.name).toBe('Doing');
+  });
+
+  // The `live` half DID reach it. `Delivery` used to read `done`, and the pick is
+  // the RIGHTMOST done-reading column, so it beat a real `Done` to its left.
+  it('no longer prefers a rightmost `Delivery` over a real `Done`', () => {
+    const columns = [col('Backlog'), col('Done'), col('Delivery')];
+    expect(proposeColumnMapping(columns).done?.name).toBe('Done');
+  });
+
+  // …and where `Delivery` was the ONLY done-reading column, the pick does not
+  // move: nothing reads `done` now, and the last-column fallback lands on the
+  // same column the old regex picked. This is the arm that says `favro init`
+  // proposes the same mapping as before for that board shape.
+  it('still proposes the last column when `Delivery` was the only candidate', () => {
+    const columns = [col('Backlog'), col('Doing'), col('Delivery')];
+    expect(proposeColumnMapping(columns).done?.name).toBe('Delivery');
+    expect(proposeColumnMapping(columns).active?.name).toBe('Doing');
   });
 });
 

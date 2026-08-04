@@ -56,23 +56,56 @@ export function detectStage(name: string | null | undefined): WorkflowStage {
   // workflow (#141).
   const n = foldName(name);
 
+  // WAITING FOR SOMEBODY — and therefore not finished (#158).
+  //
+  // This runs before `done`, not after, because the names it exists for pair a
+  // wait word with a FINISHED word: `Pending Approval` read `approved`,
+  // `Awaiting Deploy` read `done`. Both are work explicitly parked until a human
+  // acts, and both were counted as finished — in `team`'s `doneCount`, `health`'s
+  // flow ratio, `stale`'s skip guard, and since #98 in `standup`'s and
+  // `my-standup`'s `completed` group, where a card in `Pending Approval` was
+  // reported as delivered work.
+  //
+  // A wait word beats every later branch, so this is one line rather than a
+  // guard bolted onto each of them — the same reason the branch below narrowed
+  // instead of growing a lookbehind per spelling.
+  //
+  // ponytail: explicit wait WORDS only. `Ready to Deploy` and `To Deploy` are
+  // the same mistake with no wait word in them and still read `done` — measured,
+  // not overlooked. Fixing those needs a rule about anticipation prefixes
+  // ("ready to", "to", "för att"), which is a bigger claim than this ticket
+  // argued; make it its own change if a real board turns one up.
+  if (/pending|awaiting|await|waiting|vänta/i.test(n)) return 'review';
+
   // Done / completed / archived
   //
   // `(?<!un)resolv` carries what `isCompleted`'s own keyword list had and this
   // one did not (#98): a Jira-style `Resolved` column. It is a lookbehind and
   // not a bare `resolv` for two separate reasons. Keeping `Unresolved` out of
   // `done` is the obvious one — but the reason it has to be fixed HERE rather
-  // than left as-is is that this branch runs FIRST and returns immediately, so
-  // a false `done` becomes `proposeColumnMapping`'s pick for the board's done
-  // column and `init` writes that guess into context.json. The old
+  // than left as-is is that this branch returns immediately, so a false `done`
+  // becomes `proposeColumnMapping`'s pick for the board's done column and `init`
+  // writes that guess into context.json. The old
   // `COMPLETED_STATUSES.some(s => status.includes(s))` did call `Unresolved`
   // completed, so this is a deliberate narrowing of the merged behaviour, not
   // an inherited bug.
-  if (/done|klar|färdig|complete|closed|released|shipped|deploy|live|finished|avslut|(?<!un)resolv/i.test(n)) return 'done';
+  //
+  // `live` is `\blive\b` and not a bare `live` because "de**live**ry" contains
+  // it: `Delivery`, `Deliverables` and `Livestream` all read `done` off it, and a
+  // `Deliverables` column is a list of what is owed, not a column of finished
+  // work (#158). It was presumably written for a `Live` column, which still
+  // matches. `delivered` is spelled out beside it — the past participle IS
+  // finished work, and anchoring `live` would otherwise have silently demoted it.
+  if (/done|klar|färdig|complete|closed|released|shipped|deploy|\blive\b|delivered|finished|avslut|(?<!un)resolv/i.test(n)) return 'done';
   if (/archived?|arkiver/i.test(n)) return 'archived';
 
-  // Approved / accepted
-  if (/approv|godkän|accept|verified|sign.?off/i.test(n)) return 'approved';
+  // Approved / accepted.
+  //
+  // `approved`, not `approv`, and `godkänd`, not `godkän` (#158): the shorter
+  // stems also match `Approval` and `godkännande` — the NAME OF THE GATE, which
+  // is a column of work waiting for a decision, not work that got one. Both now
+  // fall to the `review` branch below, where the gate belongs.
+  if (/approved|godkänd|accept|verified|sign.?off/i.test(n)) return 'approved';
 
   // Active / in progress / developing — check BEFORE testing so "Developing" isn't caught by "test"
   if (/progress|develop|pågå|aktiv|doing|working|implement|bygg|coding|current/i.test(n)) return 'active';
@@ -80,8 +113,8 @@ export function detectStage(name: string | null | undefined): WorkflowStage {
   // Testing / QA
   if (/test|qa|kvalit|verif/i.test(n)) return 'testing';
 
-  // Review / code review
-  if (/review|gransk|feedback|pending/i.test(n)) return 'review';
+  // Review / code review — and the approval GATE, see the branch above.
+  if (/review|gransk|feedback|pending|approval|godkännande/i.test(n)) return 'review';
 
   // Queued / selected / ready / next
   if (/select|vald|ready|next|sprint|priorit|planned|schedul|redo/i.test(n)) return 'queued';

@@ -127,6 +127,40 @@ judge instead of two:
   tuned, for the reason in the bullet above. `Unresolved` was the ONLY narrowing across those 48
   names.
 
+### Amendment (#158): two of those three quirks were tuned, in the shared judge
+
+The bullet above deferred the tuning rather than refusing it — "recorded, not tuned" bought an
+argument on its own terms, and #158 is where it happened. What changed, in `detectStage` and
+nowhere else, because a special case at one call site is what turns a shared judge back into five:
+
+- **A wait branch runs first.** `/pending|awaiting|await|waiting|vänta/` returns `review`. It sits
+  above `done`, not beside `approved`, because the names it exists for pair a wait word with a
+  *finished* word — `Pending Approval` read `approved`, `Awaiting Deploy` read `done`.
+- **`approv` narrowed to `approved`, `godkän` to `godkänd`.** The short stems also matched
+  `Approval` and `godkännande` — the name of the gate, not a decision — which the wait branch alone
+  does not catch, since neither carries a wait word. Both now reach `review`, which gained
+  `approval|godkännande`.
+- **`live` anchored to `\blive\b`, with `delivered` spelled out beside it.** `Delivery`,
+  `Deliverables` and `Livestream` no longer read `done` off the `live` inside "de**live**ry".
+  `Delivered` is finished work and keeps saying so; anchoring alone would have demoted it.
+
+**Kept, deliberately.** `Accepted`, `Verified`, `Sign-off` and `Godkänd` still read `approved` and
+therefore done: each is a past participle naming a decision that was made, unlike `Approval`.
+`Ready to Deploy` and `To Deploy` still read `done` — the bullet above is still true of them. They
+are the same mistake with no wait word in them, and closing them needs a rule about anticipation
+prefixes, which is a larger claim than this ticket argued.
+
+**Blast radius, traced rather than assumed.** `proposeColumnMapping` matches `stage === 'done'`
+exactly, not `isDoneStage`, so the `Pending Approval` half never reached `favro init` at all —
+`approved` was never a candidate for a board's done column. The `live` half did: `Delivery` used to
+read `done`, and the pick is the *rightmost* such column, so on a board written
+`Backlog | Done | Delivery` it beat a real `Done`. It no longer does. Where `Delivery` was the only
+done-reading column, the pick does not move — nothing reads `done`, and the last-column fallback
+lands on the same column. All three shapes are pinned in `done-judge.test.ts`.
+
+Measured over 87 column names, before and after: ten verdicts move, all ten listed above, and none
+of them a name that was previously read as done correctly.
+
 The five stage-set copies are gone. `done-judge.test.ts` ratchets the count at one definition in
 the tree, the same way `detectStage`'s own ratchet has since #52. That ratchet greps for the three
 stage names **co-occurring** in a non-test file, not for one literal spelling of the array: as
