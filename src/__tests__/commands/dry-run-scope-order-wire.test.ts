@@ -926,19 +926,39 @@ describe('git sync with nothing to move needs no credential (#155)', () => {
  * `8754500` this predicate reports exactly five gaps, at exactly the lines #155
  * names — `dependencies.ts:129`, `:162`, `custom-fields.ts:174`, `git.ts:302`
  * and `:436`. Run against the tree it ships in, zero. It is textual and
- * therefore conservative in one direction: it only looks at a bare
- * `if (options.dryRun)` line, so `if (!options.dryRun)` (a confirm gate) and
+ * therefore conservative in one direction: the condition has to be exactly
+ * `options.dryRun`, so `if (!options.dryRun)` (a confirm gate) and
  * `if (options.create || options.dryRun)` (a block ENTRY, not a preview) are not
- * previews and are correctly not hits. A preview spelled some third way would
- * slip past — which is the ceiling, and the reason the nine behavioural subjects
- * above exist rather than this alone.
+ * previews and are correctly not hits.
  *
- * ponytail: a text scan, not an AST walk. Upgrade to ts-morph if a preview ever
- * needs a spelling this cannot see.
+ * The GUARD list was a hand-written enumeration of five names in review, and it
+ * did not include this repo's own local guard helpers — `checkTaskScope`
+ * (`tasks.ts`) and `checkTargetScope` (`members.ts`) — so `members add` and
+ * `tasks update/complete/delete` were four guarded previews the scan skipped
+ * entirely, four of the nine subjects `CONTEXT.md` names among them. It matches
+ * the SHAPE now (`check…Scope` / `assert…Scope`), which raised the denominators
+ * from 33/29 to 38/33 and left the five historical gaps identical. That was the
+ * exact failure mode of #149's ratchet, blind to the repo's own dominant
+ * spelling; an enumeration of names is one.
+ *
+ * CEILING, measured against constructed bypasses rather than guessed at. These
+ * four still slip past, and the nine behavioural subjects above are why that is
+ * survivable: a preview hoisted into a HELPER defined above the first
+ * `.command(` (the block window never sees it); a preview gated on a differently
+ * spelled flag (`if (!options.execute)`); a guard reached through an alias
+ * (`const g = checkScope; await g(…)` — `guard === -1`, and the block is then
+ * skipped rather than reported); and a condition wrapped across lines by a
+ * formatter. A same-line body (`if (options.dryRun) { …; return; }`) used to
+ * slip past too and no longer does — the `{?$` anchor is gone, which changed
+ * nothing on the real tree in either polarity.
+ *
+ * ponytail: a text scan, not an AST walk. Upgrade to the TypeScript compiler API
+ * (already a devDependency) if any of the four remaining bypasses ever becomes a
+ * spelling this repo actually uses.
  */
 describe('no guarded write previews ahead of its own scope guard (#155)', () => {
-  const GUARD = /\b(checkScope|checkCollectionScope|checkResolvedScope|assertScope|assertOrgScope)\s*\(/;
-  const PREVIEW = /^\s*if\s*\(\s*options\.dryRun\s*\)\s*\{?\s*$/;
+  const GUARD = /\b(?:check|assert)\w*Scope\s*\(/;
+  const PREVIEW = /^\s*if\s*\(\s*options\.dryRun\s*\)/;
 
   /** One entry per `.command(...)` registration that calls a scope guard. */
   const scan = (root: string) => {
@@ -974,8 +994,8 @@ describe('no guarded write previews ahead of its own scope guard (#155)', () => 
     expect(gaps).toEqual([]);
     // The denominators, so a scan that silently stopped reading files fails here
     // rather than passing vacuously with an empty gap list.
-    expect(guarded).toBeGreaterThanOrEqual(33);
-    expect(withPreview).toBeGreaterThanOrEqual(29);
+    expect(guarded).toBeGreaterThanOrEqual(38);
+    expect(withPreview).toBeGreaterThanOrEqual(33);
   });
 
   it('reports a gap when the preview is moved back above the guard', () => {
@@ -1000,6 +1020,32 @@ describe('no guarded write previews ahead of its own scope guard (#155)', () => 
     );
 
     expect(scan(dir).gaps).toEqual(['regressed.ts:3']);
+  });
+
+  it('sees a preview whose body sits on the same line, and a LOCAL guard helper', () => {
+    // Two constructed bypasses that both worked against the review version: the
+    // whole preview on one line (the old `{?$` anchor could not match it), and a
+    // guard named like the repo's own `checkTaskScope`/`checkTargetScope` rather
+    // than one of five enumerated names (`guard === -1` skipped the block whole,
+    // so no gap was reported and the block did not even count).
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'favro-order-ratchet-'));
+    tmpDirs.push(dir);
+    fs.writeFileSync(
+      path.join(dir, 'sneaky.ts'),
+      [
+        "parent.command('update <taskId>')",
+        '  .action(async (taskId, options) => {',
+        "    if (options.dryRun) { dryRunLog('update', 'task', taskId); return; }",
+        '    await checkTaskScope(client, options.card, options.force);',
+        '  });',
+        '',
+      ].join('\n'),
+    );
+
+    const { gaps, guarded, withPreview } = scan(dir);
+    expect(gaps).toEqual(['sneaky.ts:3']);
+    expect(guarded).toBe(1);
+    expect(withPreview).toBe(1);
   });
 });
 

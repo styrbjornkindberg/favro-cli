@@ -153,10 +153,16 @@ describe('favro git sync — scope lock', () => {
   });
 
   it('does not abort the whole sync when one target card cannot be read', async () => {
-    // A stale branch mapping pointing at a deleted card. With no lock
-    // configured this is a no-op, and the batch must still run — the old
-    // behaviour printed "✗ Could not update card X" for the bad one and synced
-    // the rest.
+    // A stale branch mapping pointing at a deleted card. The batch must still
+    // run — the old behaviour printed "✗ Could not update card X" for the bad
+    // one and synced the rest.
+    //
+    // A LOCK IS CONFIGURED here (the outer `beforeEach`), and since #155 that is
+    // the only way this path is reachable at all: the resolve loop is gated on
+    // the lock, so with nothing locked no card is read and there is no failure to
+    // survive. `card-1` resolves to `''` and reaches the check fail-closed; the
+    // check itself is a stub here, so what this arm pins is that the LOOP carries
+    // on, not what the real refusal would do with `''`.
     MockCardsAPI.prototype.getCard = jest.fn().mockImplementation(async (id: string) => {
       if (id === 'card-1') throw new Error('404 Not Found');
       return { cardId: 'card-2', boardId: 'board-b' };

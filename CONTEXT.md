@@ -216,12 +216,18 @@ credential. The **shape** of the refusal still differs by migration state, and t
 
 Stated as a whole-CLI rule this time, because it is now **checkable** rather than
 generalised: `dry-run-scope-order-wire.test.ts` scans every `.command(…)` registration in
-`src/commands` that calls a scope guard — 33 of them, 29 with an `if (options.dryRun)`
+`src/commands` that calls a scope guard — 38 of them, 33 with an `if (options.dryRun)`
 preview — and fails on any whose preview precedes its guard. Falsifiable in both
 polarities: the same predicate run against `src/commands` at `8754500` reports exactly the
-five gaps #155 closed, at the five lines the ticket named. It is a text scan and therefore
-blind to a preview spelled some third way, which is why the nine behavioural subjects sit
-beside it rather than being replaced by it.
+five gaps #155 closed, at the five lines the ticket named. It is a text scan, and its
+ceiling is measured against constructed bypasses rather than guessed at: a preview hoisted
+into a helper, one gated on a differently spelled flag, a guard reached through an alias,
+and a condition a formatter wrapped across lines all still slip past. That is why the nine
+behavioural subjects sit beside it rather than being replaced by it. (The counts were
+33/29 as first written, because the guard list enumerated five names and missed this
+repo's own `checkTaskScope` and `checkTargetScope` — so `members add` and `tasks
+update/complete/delete`, four of the nine, were skipped whole. Matching the shape rather
+than a name list fixed it without changing either polarity.)
 
 This paragraph has claimed something false twice — that the lock always ran first (#135
 corrected it for four commands), then that those four were permanently different (#152

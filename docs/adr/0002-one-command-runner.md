@@ -614,9 +614,23 @@ caught the opposite: deferring every credential error behind a lazy getter turne
 `FAVRO_API_KEY= favro boards delete board-1 --dry-run` from exit 1 into exit 0 previewing
 the delete. Note for the measured example in the #135 amendment above, which writes
 `FAVRO_API_KEY=` and reports `exit=0`: that holds for a credential that is **absent**, and
-not for one that is set-and-empty, which is exit 1 today at every site including the
-`boards` pair. With **no lock** and an absent credential, all five preview at exit 0 —
-that is the arm ADR-0002's example is about, and it is unchanged.
+not for one that is set-and-empty. Re-measured in review, on the built CLI against a local
+stand, all four cells:
+
+```
+boards delete board-1 --dry-run   no lock, FAVRO_API_KEY=   exit=1  envelope: "set but empty"
+boards delete board-1 --dry-run   no lock, no credential    exit=0  [dry-run] Would delete …
+dependencies delete … --dry-run   lock,    FAVRO_API_KEY=   exit=1  ✗ Error: set but empty
+dependencies delete … --dry-run   no lock, FAVRO_API_KEY=   exit=0  preview, 0 requests
+```
+
+So the `boards` pair reaches `resolveApiKey` whether or not a lock is configured and refuses
+an empty key either way, while the five gate the credential behind the lock and an empty key
+costs them nothing on the unlocked path. The #152 amendment's parenthetical above — that
+ungating would make `FAVRO_API_KEY= … --dry-run → exit=0` false — is therefore already false
+for the set-and-empty spelling it is written with; it holds for an absent credential, which
+is the case that arm is really about. With **no lock** and an absent credential, all five
+preview at exit 0, unchanged.
 
 **The refusal reaches the wrong stream, knowingly.** These five end in
 `catch { logError; process.exit(1) }`, so the refusal lands on stderr as
@@ -640,11 +654,22 @@ is the part that plans a write: `Would create N cards on board X` and
 **And the rule is now checkable instead of generalised.** The same paragraph of
 `CONTEXT.md` has been false twice and over-general once, and `scope-lock-coverage.test.ts`
 ratchets only *whether* a guard exists. `dry-run-scope-order-wire.test.ts` now scans every
-`.command(…)` registration in `src/commands` that calls a scope guard — 33, of which 29
+`.command(…)` registration in `src/commands` that calls a scope guard — 38, of which 33
 have an `if (options.dryRun)` preview — and fails on any whose preview precedes its guard.
 Falsifiable rather than asserted: the same predicate run against `src/commands` at
 `8754500` reports exactly five gaps at `dependencies.ts:129`, `:162`,
 `custom-fields.ts:174`, `git.ts:302` and `:436` — the five lines #155 named.
+
+Those counts read 33/29 as first written, and review corrected the predicate rather than
+the prose: its guard list was an enumeration of five function names and missed this repo's
+own local helpers, `checkTaskScope` (`tasks.ts`) and `checkTargetScope` (`members.ts`), so
+`members add` and `tasks update/complete/delete` — four guarded previews, and four of the
+nine subjects this amendment names — were skipped whole and could have regressed unseen.
+It matches the `check…Scope` / `assert…Scope` SHAPE now; both polarities are unchanged.
+Four constructed bypasses still evade it (a preview hoisted into a helper, one gated on a
+differently spelled flag, a guard reached through an alias, a condition a formatter wrapped
+across lines) and are named in the test's own header, which is why the behavioural subjects
+stand beside it rather than being replaced by it.
 
 The three `--dry-run` help strings that said "without making API calls" on
 `dependencies delete/delete-all` and `custom-fields set` are false under a lock for exactly
