@@ -1,6 +1,6 @@
 {
   "name": "@square-moon/favro-cli",
-  "version": "2.4.1",
+  "version": "3.0.0",
   "description": "Favro command-line interface",
   "main": "dist/index.js",
   "//files": "#128 defence in depth: a build-config regression must not ship test code. `skills` is runtime — skill-store.ts resolves <pkg>/skills/builtin.",
