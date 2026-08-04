@@ -25,7 +25,7 @@ import CardsAPI, { Card } from './cards-api';
 import { assertScope } from './safety';
 import { classifyThrownError, isWireFailure } from './favro-error';
 import { foldName } from './fold-name';
-import { CompensationLog, Orphan, TxCards, TxOutcome } from './tx-cards';
+import { CompensationLog, Orphan, ReadTx, TxCards, TxOutcome } from './tx-cards';
 import { CATEGORY_TAGS, STATE_TAGS, VerifiedTracker } from './tracker-config';
 import { RefusalError, TransientError } from './refusal';
 import { capRows, ListEnvelope, parseLimit } from './read-shape';
@@ -86,12 +86,10 @@ export interface DispatchResult<T = unknown> {
 }
 
 /**
- * One named intent. Declared once, registered against the one table.
- *
- * `run` receives `TxCards` and nothing else — no client, no config, no
- * `CardsAPI` — so an un-instrumented write from an intent is unconstructible.
+ * Everything an intent declares that does not depend on whether it writes.
+ * Not exported: `Intent` below is the type callers name.
  */
-export interface Intent<A = any, R = unknown> {
+interface IntentCore<A> {
   name: string;
   /** One line, for `--help` and for the drift test. */
   summary: string;
@@ -112,18 +110,14 @@ export interface Intent<A = any, R = unknown> {
    * An array when one invocation writes to several boards — a multi-create with
    * per-entry boards. EVERY board is checked; taking the first would let one
    * in-scope entry smuggle the rest of the batch past the lock.
-   */
-  board(args: A, tx: TxCards): Promise<string | string[] | undefined>;
-  /**
-   * This intent writes NOTHING, so the scope lock has nothing to guard and no
-   * board is required. Declared per intent, never inferred: an intent that
-   * yields no board is otherwise unlockable, and defaulting to "unlocked" is
-   * how a fork card slipped a write past the lock.
    *
-   * Absent means "this writes", which is the fail-closed default a new intent
-   * inherits with nothing to remember.
+   * `ReadTx` on BOTH arms, `readOnly` or not (#107). `board()` runs BEFORE
+   * `assertScope`, so a write made from here would never be checked against the
+   * lock at all — it would be the one write in the table that the mandatory
+   * guardrail structurally cannot see. No intent writes in `board()` today; now
+   * none can.
    */
-  readOnly?: true;
+  board: (args: A, tx: ReadTx) => Promise<string | string[] | undefined>;
   /**
    * This intent makes a write with NO inverse, so it cannot be composed into a
    * larger transaction.
@@ -143,8 +137,50 @@ export interface Intent<A = any, R = unknown> {
    * `favro cards delete` — and is the only way to reach one.
    */
   terminal?: true;
-  run(args: A, tx: TxCards): Promise<R>;
 }
+
+/**
+ * One named intent. Declared once, registered against the one table.
+ *
+ * `run` receives a tx facade and nothing else — no client, no config, no
+ * `CardsAPI` — so an un-instrumented write from an intent is unconstructible.
+ *
+ * **WHICH facade follows `readOnly`, and that is why this is a UNION** rather
+ * than one interface with an optional flag (#107). `readOnly: true` gets
+ * `ReadTx`, on which no write exists, so the declaration is a compile-time
+ * guarantee instead of a promise. It was load-bearing while it was still only a
+ * promise: `readOnly` is what skips the boardless-write refusal below, so an
+ * intent that declared it falsely took the exemption from the scope lock AND
+ * made the write it promised not to.
+ *
+ * `board` and `run` are function-typed PROPERTIES, not methods, and that is
+ * load-bearing too. Method-syntax parameters stay bivariant even under
+ * `strictFunctionTypes`, so a `readOnly` arm declaring `run(a, tx: ReadTx)`
+ * would still accept an implementation annotated `(a, tx: TxCards)` — the whole
+ * write surface back, for the price of one type annotation. A property is
+ * contravariant in its parameters, which refuses that.
+ *
+ * `readOnly?: undefined` on the write arm rather than an omitted field: it is
+ * what makes `readOnly` a discriminant, so an object literal declaring
+ * `readOnly: true` cannot fall through to the arm whose `run` takes `TxCards`.
+ * Absent still means "this writes", which stays the fail-closed default a new
+ * intent inherits with nothing to remember.
+ */
+export type Intent<A = any, R = unknown> =
+  | (IntentCore<A> & {
+      /**
+       * This intent writes NOTHING, so the scope lock has nothing to guard and
+       * no board is required. Declared per intent, never inferred: an intent
+       * that yields no board is otherwise unlockable, and defaulting to
+       * "unlocked" is how a fork card slipped a write past the lock.
+       */
+      readOnly: true;
+      run: (args: A, tx: ReadTx) => Promise<R>;
+    })
+  | (IntentCore<A> & {
+      readOnly?: undefined;
+      run: (args: A, tx: TxCards) => Promise<R>;
+    });
 
 /**
  * A refusal: the intent declined to write, and the same call will decline again.
@@ -431,12 +467,18 @@ export interface MultiCreateArgs {
 }
 
 /**
- * How many cards one multi-create may make. Over the cap the intent REFUSES —
- * it never creates the first 20 and drops the rest, because a partial create
- * that reports success is exactly the silent-wrong-answer class this build
+ * How many cards one enumerated multi-WRITE may touch. Over the cap the intent
+ * REFUSES — it never writes the first 20 and drops the rest, because a partial
+ * batch that reports success is exactly the silent-wrong-answer class this build
  * exists to close.
+ *
+ * ONE declaration, deliberately: `create` is its only reader today, and a second
+ * constant for the next batched write would be a second number to keep in step
+ * with this one's refusal wording. The argument is transaction integrity, which
+ * is a property of the batch and not of the verb, so the name is the verb-neutral
+ * one (#107).
  */
-export const MULTI_CREATE_CAP = 20;
+export const MULTI_WRITE_CAP = 20;
 
 const isMulti = (a: CreateArgs | MultiCreateArgs): a is MultiCreateArgs =>
   Array.isArray((a as MultiCreateArgs).cards);
@@ -461,13 +503,13 @@ function createEntries(a: CreateArgs | MultiCreateArgs): NormalCreateArgs[] {
   if (a.cards.length === 0) {
     throw new RefusalError('Nothing to create: the enumerated card list is empty.');
   }
-  if (a.cards.length > MULTI_CREATE_CAP) {
+  if (a.cards.length > MULTI_WRITE_CAP) {
     throw new RefusalError(
       `Refusing to create ${a.cards.length} cards in one call — a multi-create is capped at ` +
-        `${MULTI_CREATE_CAP}.\n` +
+        `${MULTI_WRITE_CAP}.\n` +
         `The cap is not a page size: the whole batch is one transaction, so creating the first ` +
-        `${MULTI_CREATE_CAP} and dropping the rest would report success for cards that do not exist. ` +
-        `Split the list into batches of ${MULTI_CREATE_CAP} or fewer and run them one at a time.`,
+        `${MULTI_WRITE_CAP} and dropping the rest would report success for cards that do not exist. ` +
+        `Split the list into batches of ${MULTI_WRITE_CAP} or fewer and run them one at a time.`,
     );
   }
   return a.cards.map(normalize);
@@ -486,7 +528,7 @@ const createRequest = (a: NormalCreateArgs) => ({
 });
 
 /**
- * `create` — one card, or an enumerated batch of at most `MULTI_CREATE_CAP`.
+ * `create` — one card, or an enumerated batch of at most `MULTI_WRITE_CAP`.
  *
  * There is no bulk route to reach for: `POST /cards/bulk` does not exist (it
  * falls through to Favro's web app and answers 200 with an HTML page, so the old
@@ -594,10 +636,18 @@ registerIntent<DeleteArgs, DeleteResult>({
  * board" as if it were "the children" — and hierarchy is same-board only
  * (`parentCardId` is never cross-board), so the board read is complete by
  * construction **provided the card has a board instance at all**. That
- * precondition is not decoration: `listCards(undefined)` omits `widgetCommonId`
- * from the query and paginates the whole ORGANISATION to completion, which is
- * exactly the unbounded sweep this build refuses. A card with no
- * `widgetCommonId` — a fork — therefore refuses before the list.
+ * precondition is not decoration: a board-less list omits `widgetCommonId` from
+ * the query and paginates the whole ORGANISATION to completion, which is exactly
+ * the unbounded sweep this build refuses. A card with no `widgetCommonId` — a
+ * fork — therefore refuses before the list.
+ *
+ * The precondition STAYS, and is no longer the only thing holding the sweep back
+ * (#107). `TxCards.listCards` now takes a required non-empty board and refuses an
+ * empty one, so the sweep is unreachable from the facade rather than merely
+ * unreached. The refusal here is kept because it answers a different question and
+ * says so: a fork has no children by construction, so this is an honest empty
+ * answer's refusal, not a boundedness one, and it names the instance to read
+ * instead.
  *
  * Skill args are STRINGS, and `read` is reachable as a skill step, so `children`
  * and `limit` are coerced rather than trusted: `children: "false"` is truthy in
@@ -671,7 +721,9 @@ registerIntent<ReadArgs, ReadResult>({
   // guards mutation; making it guard reads would break `read` on any card
   // outside the locked collection, which is the opposite of honest failure.
   // Declared, not inferred — a boardless WRITE is refused under a lock, and
-  // this is the one intent that has earned the exemption.
+  // this is the one intent that has earned the exemption. Declaring it also
+  // narrows `tx` below to `ReadTx`, so the exemption and the promise behind it
+  // are now the same fact rather than two that could disagree (#107).
   readOnly: true,
   board: async () => undefined,
   run: async (a, tx) => {

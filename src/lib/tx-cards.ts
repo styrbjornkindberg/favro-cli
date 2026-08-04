@@ -17,7 +17,9 @@
  *
  * Intents receive `TxCards` and nothing else — no `CardsAPI`, no
  * `FavroHttpClient` — so an un-instrumented write is not merely discouraged, it
- * is unconstructible from inside an intent.
+ * is unconstructible from inside an intent. An intent that declares
+ * `readOnly: true` receives the narrower `ReadTx` below, on which no write
+ * exists at all.
  *
  * ## Compare-before-restore, facade-wide, always on
  *
@@ -334,6 +336,39 @@ const setDiff = (current: readonly string[], desired: readonly string[]) => ({
 });
 
 /**
+ * Every read an intent may make, and **not one write**.
+ *
+ * This is the surface a `readOnly: true` intent receives — see `Intent.run` in
+ * `dispatch.ts`, which is a union of two arms precisely so that it can hand this
+ * one out. It is what turns `readOnly` from a promise into a compile error: the
+ * writes are not reachable through a `ReadTx`-typed `tx`, so an intent declaring
+ * it writes nothing and then writing does not build (#107).
+ *
+ * That matters beyond tidiness. `readOnly` is what skips the boardless-write
+ * refusal in `dispatch`, so an intent that declared it falsely would take the
+ * exemption from the scope lock AND make the write it promised not to — the
+ * promise being unenforceable was a hole in the lock itself.
+ *
+ * An INTERFACE rather than a base class. The ticket's shape was `TxCards extends
+ * ReadTx`; `implements` buys the identical subtyping — a `TxCards` is a `ReadTx`
+ * either way — without moving nine method bodies into a base or downgrading two
+ * `private` fields to `protected` to keep them reachable. `implements` is what
+ * keeps the two in step: a read whose signature drifts from this list stops
+ * compiling on the class below.
+ */
+export interface ReadTx {
+  getCard(cardRef: string, options?: { include?: string[]; board?: string }): Promise<Card>;
+  getCardLinks(cardRef: string): Promise<CardLink[]>;
+  listCards(boardId: string): Promise<Card[]>;
+  resolveCardId(cardRef: string, options?: { widgetCommonId?: string }): Promise<string>;
+  resolveCardCommonId(cardRef: string, options?: { widgetCommonId?: string }): Promise<string>;
+  resolveColumnId(value: string, boardId?: string): Promise<string>;
+  resolveAssignee(value: string): Promise<string>;
+  tracker(): Promise<VerifiedTracker>;
+  liveEdge(cardId: string, farId: string): Promise<LiveEdge | null>;
+}
+
+/**
  * The only card surface an intent gets: every read, and only instrumented
  * writes. Seven reversible ops, each declared once, capture + mutate + push fused
  * — plus `deleteCard`, the one write with no inverse, which logs nothing and
@@ -343,7 +378,7 @@ const setDiff = (current: readonly string[], desired: readonly string[]) => ({
  * config, so it cannot build one either. A raw un-instrumented write from an
  * intent is unrepresentable, not merely discouraged.
  */
-export class TxCards {
+export class TxCards implements ReadTx {
   /**
    * The `client` is held for the READS an intent cannot express through
    * `CardsAPI` — the tracker mapping and assignee resolution. It stays
@@ -370,8 +405,41 @@ export class TxCards {
    * One board's cards, paginated to completion. `read`'s children listing is a
    * client-side pass over this: `parentCardId` is not a proven `GET /cards`
    * filter, and hierarchy is same-board only, so one board read answers it.
+   *
+   * **A board is REQUIRED, and empty REFUSES** (#107). `CardsAPI.listCards`
+   * takes an absent board and then omits `widgetCommonId`, which paginates every
+   * card in the ORGANISATION to completion — the unbounded whole-org sweep this
+   * build refuses. Measured, not inferred: `boardIdOf` maps a falsy board to
+   * `undefined` and the `if (boardId)` guard around `params.widgetCommonId` then
+   * does not fire, so the request goes out as `/cards?limit=100&archived=false`
+   * and `getAllPages` reads it to the end.
+   *
+   * The type and the guard close different halves and NEITHER closes it alone.
+   * Dropping `?` deletes `undefined` from the signature; `''` is still a
+   * `string`, and `boardIdOf('')` is `undefined` too — so a future intent
+   * spelling `tx.listCards(card.boardId ?? '')` would compile and sweep. The
+   * refusal is what makes the sweep unreachable from this facade rather than
+   * merely un-spellable one way.
+   *
+   * Unreachable from any caller today, on purpose: `read` refuses a boardless
+   * card before it gets here, for a reason of its own (a fork has no children by
+   * construction). This is the guard for the intents not yet written, which is
+   * where the ticket said the value was.
    */
-  listCards(boardId?: string): Promise<Card[]> {
+  // `async`, so the refusal below arrives as a REJECTION and not as a synchronous
+  // throw out of a `Promise`-returning call. The rest of the facade's guards
+  // (`setTags`, `setAssignees`) sit inside `async` methods and reject; a caller
+  // writing `tx.listCards(x).catch(…)` would never see a sync throw.
+  async listCards(boardId: string): Promise<Card[]> {
+    if (!boardId) {
+      throw new RefusalError(
+        `Refusing to list cards with no board. An empty board id omits widgetCommonId, which reads ` +
+          `every card in the organisation, paginated to completion — the unbounded sweep this build ` +
+          `refuses.\n` +
+          `Pass the board-resident instance's widgetCommonId. A card that has none is an assignment ` +
+          `fork, and a fork is on no board to list.`,
+      );
+    }
     return this.api.listCards(boardId);
   }
 

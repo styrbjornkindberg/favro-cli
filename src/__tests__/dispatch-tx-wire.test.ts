@@ -28,12 +28,12 @@ import {
   intentNames,
   UnknownIntentError,
   DispatchContext,
-  MULTI_CREATE_CAP,
+  MULTI_WRITE_CAP,
   ReadResult,
   RefusalError,
 } from '../lib/dispatch';
 import { Card } from '../lib/cards-api';
-import { CompensationLog, TxCards } from '../lib/tx-cards';
+import { CompensationLog, ReadTx, TxCards } from '../lib/tx-cards';
 import { ScopeError } from '../lib/safety';
 import { TrackerMapping, renderTrackerBlock } from '../lib/tracker-config';
 
@@ -416,7 +416,7 @@ beforeAll(() => {
     name: 'probe-move',
     summary: 'move a card, optionally failing afterwards',
     preview: (a: any) => [`move ${a.card} to "${a.to}"`],
-    board: async (a: any, tx: TxCards) => (await tx.getCard(a.card)).boardId,
+    board: async (a: any, tx: ReadTx) => (await tx.getCard(a.card)).boardId,
     run: async (a: any, tx: TxCards) => {
       const moved = await tx.moveColumn(a.card, a.to);
       if (a.thenFail) throw new Error('probe failure after the move');
@@ -427,7 +427,7 @@ beforeAll(() => {
     name: 'probe-tags',
     summary: 'replace tags, optionally failing afterwards',
     preview: (a: any) => [`set tags on ${a.card} to ${a.tags.join(', ')}`],
-    board: async (a: any, tx: TxCards) => (await tx.getCard(a.card)).boardId,
+    board: async (a: any, tx: ReadTx) => (await tx.getCard(a.card)).boardId,
     run: async (a: any, tx: TxCards) => {
       await tx.setTags(a.card, a.tags);
       if (a.thenFail) throw new Error('probe failure after the tag write');
@@ -438,7 +438,7 @@ beforeAll(() => {
     name: 'probe-assignees',
     summary: 'replace assignees, optionally failing afterwards',
     preview: (a: any) => [`set assignees on ${a.card} to ${a.assignees.join(', ')}`],
-    board: async (a: any, tx: TxCards) => (await tx.getCard(a.card)).boardId,
+    board: async (a: any, tx: ReadTx) => (await tx.getCard(a.card)).boardId,
     run: async (a: any, tx: TxCards) => {
       await tx.setAssignees(a.card, a.assignees);
       if (a.thenFail) throw new Error('probe failure after the assignee write');
@@ -449,7 +449,7 @@ beforeAll(() => {
     name: 'probe-chain',
     summary: 'two reversible ops in one invocation, then a failure',
     preview: (a: any) => [`move ${a.card}`, `tag ${a.card}`],
-    board: async (a: any, tx: TxCards) => (await tx.getCard(a.card)).boardId,
+    board: async (a: any, tx: ReadTx) => (await tx.getCard(a.card)).boardId,
     run: async (a: any, tx: TxCards) => {
       await tx.moveColumn(a.card, a.to);
       await tx.setTags(a.card, a.tags);
@@ -460,7 +460,7 @@ beforeAll(() => {
     name: 'probe-refuse-after-write',
     summary: 'writes, then refuses deterministically',
     preview: (a: any) => [`move ${a.card}, then refuse`],
-    board: async (a: any, tx: TxCards) => (await tx.getCard(a.card)).boardId,
+    board: async (a: any, tx: ReadTx) => (await tx.getCard(a.card)).boardId,
     run: async (a: any, tx: TxCards) => {
       await tx.moveColumn(a.card, a.to);
       throw new RefusalError('probe refuses, after writing');
@@ -470,7 +470,7 @@ beforeAll(() => {
     name: 'probe-archive',
     summary: 'move a card across the archive line, optionally failing afterwards',
     preview: (a: any) => [`archive ${a.card} = ${a.archived}`],
-    board: async (a: any, tx: TxCards) => (await tx.getCard(a.card)).boardId,
+    board: async (a: any, tx: ReadTx) => (await tx.getCard(a.card)).boardId,
     run: async (a: any, tx: TxCards) => {
       await tx.setArchived(a.card, a.archived);
       if (a.thenFail) throw new Error('probe failure after the archive write');
@@ -1673,9 +1673,9 @@ describe('multi-create is one bounded transaction over an enumerated list', () =
     expect(writes(stand.received).filter((r) => r.method === 'DELETE')).toHaveLength(2);
   });
 
-  it(`over ${MULTI_CREATE_CAP} refuses, and creates nothing at all`, async () => {
+  it(`over ${MULTI_WRITE_CAP} refuses, and creates nothing at all`, async () => {
     const stand = await startServer();
-    const cards = Array.from({ length: MULTI_CREATE_CAP + 1 }, (_, i) => ({ name: `Card ${i}`, board: BOARD }));
+    const cards = Array.from({ length: MULTI_WRITE_CAP + 1 }, (_, i) => ({ name: `Card ${i}`, board: BOARD }));
 
     // A refusal, not a fourth outcome, and not a truncation: creating the first
     // 20 and dropping the 21st would report success for a card that is missing.
@@ -1685,11 +1685,11 @@ describe('multi-create is one bounded transaction over an enumerated list', () =
 
   it('exactly the cap is allowed — the boundary is inclusive', async () => {
     const stand = await startServer();
-    const cards = Array.from({ length: MULTI_CREATE_CAP }, (_, i) => ({ name: `Card ${i}`, board: BOARD }));
+    const cards = Array.from({ length: MULTI_WRITE_CAP }, (_, i) => ({ name: `Card ${i}`, board: BOARD }));
 
     const result = await dispatch<Card[]>('create', { cards }, ctx(stand));
     expect(result.outcome).toBe('ok');
-    expect(result.value).toHaveLength(MULTI_CREATE_CAP);
+    expect(result.value).toHaveLength(MULTI_WRITE_CAP);
   });
 
   it('an empty list refuses rather than reporting a successful nothing', async () => {
