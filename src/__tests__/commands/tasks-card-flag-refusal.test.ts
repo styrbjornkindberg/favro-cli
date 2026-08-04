@@ -314,6 +314,19 @@ describe.each(WRITES)('tasks %s with --card at a board outside the lock', (_name
     expect(writeFn()).not.toHaveBeenCalled();
     expect(exit).toHaveBeenCalledWith(1);
   });
+
+  it('and --force DOES rescue it, warning first — the contrast arm 2 needs', async () => {
+    // The positive polarity of arm 2's `consoleWarn` assertion, and of the
+    // sentence it measures: force means "this board is outside the lock,
+    // proceed", so once a board resolved it warns and proceeds. Without this,
+    // `expect(consoleWarn).not.toHaveBeenCalled()` would hold in a build where
+    // nothing ever warns.
+    await runCli([...argv, '--card', 'card-1', '--force']);
+
+    expect(reported).not.toHaveBeenCalled();
+    expect(consoleWarn).toHaveBeenCalledWith(expect.stringContaining('--force was used'));
+    expect(writeFn()).toHaveBeenCalled();
+  });
 });
 
 // ─── arm 5: --card given but unreadable — the generic wording is right here ───

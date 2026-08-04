@@ -111,7 +111,6 @@ Issues #142/#143.
   and why `--force` does not stand in for the flag (#126). Measured on all three: exit 1,
   stderr, stdout empty, before and after. The generic wording is unchanged wherever it is
   true — `--card` given but unreadable, or given for a card with no board instance.
-
 - `--dry-run` no longer demands credentials for a preview that never touches the wire.
   Commands whose preview *is* a wire-derived scope verdict (`comments add/update/delete`,
   `members add --board-target`, and `boards update/delete` under a lock — see below) still

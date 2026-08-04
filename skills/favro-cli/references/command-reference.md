@@ -544,6 +544,7 @@ Create a new task on a card.
 |------|-------------|
 | `--dry-run` | Preview only |
 | `-y, --yes` | Skip confirmation |
+| `--force` | Bypass scope check |
 | `--json` | Output raw JSON |
 
 ### `tasks complete <taskId>` ⚠️ WRITE
@@ -553,7 +554,9 @@ Mark a task as completed.
 | Flag | Description |
 |------|-------------|
 | `--card <cardCommonId>` | The card the task belongs to. **Required under a scope lock** — a taskId names no board, so the lock has nothing to check without it |
+| `--dry-run` | Preview only |
 | `-y, --yes` | Skip confirmation |
+| `--force` | Bypass scope check |
 | `--json` | Output raw JSON |
 
 ### `tasks update <taskId>` ⚠️ WRITE
@@ -569,6 +572,7 @@ Update a task's name, completed state, or position.
 | `--card <cardCommonId>` | The card the task belongs to. **Required under a scope lock** — a taskId names no board, so the lock has nothing to check without it |
 | `--dry-run` | Preview only |
 | `-y, --yes` | Skip confirmation |
+| `--force` | Bypass scope check |
 | `--json` | Output raw JSON |
 
 ### `tasks delete <taskId>` ⚠️ WRITE
@@ -580,6 +584,7 @@ Delete a task.
 | `--card <cardCommonId>` | The card the task belongs to. **Required under a scope lock** — a taskId names no board, so the lock has nothing to check without it |
 | `--dry-run` | Preview only |
 | `-y, --yes` | Skip confirmation |
+| `--force` | Bypass scope check |
 
 ---
 
