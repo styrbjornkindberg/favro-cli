@@ -411,8 +411,9 @@ export class TxCards implements ReadTx {
    * card in the ORGANISATION to completion — the unbounded whole-org sweep this
    * build refuses. Measured, not inferred: `boardIdOf` maps a falsy board to
    * `undefined` and the `if (boardId)` guard around `params.widgetCommonId` then
-   * does not fire, so the request goes out as `/cards?limit=100&archived=false`
-   * and `getAllPages` reads it to the end.
+   * does not fire, so the request goes out as
+   * `/cards?limit=100&archived=false&descriptionFormat=markdown` — no
+   * `widgetCommonId` — and `getAllPages` reads it to the end.
    *
    * The type and the guard close different halves and NEITHER closes it alone.
    * Dropping `?` deletes `undefined` from the signature; `''` is still a
