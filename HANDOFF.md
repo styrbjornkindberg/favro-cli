@@ -170,10 +170,13 @@ two-line fix.
 
 ## 6. Open decisions needing a human
 
-- **#140** — `ParseErrorDetail` has six `kind` discriminants and zero production
-  readers. Delete them, or give them a reader (a JSON refusal body an agent can
-  branch on)? Interacts with #133; both should agree on one shape. Labelled
-  `needs-triage` deliberately.
+- ~~**#140**~~ — **DECIDED and implemented: option 1, delete the discriminants.**
+  `ParseErrorDetail` is gone entirely — the six `kind` values and the
+  `value`/`position`/`field`/`candidates` payload with them. The refusal MESSAGE is
+  the whole contract, unchanged byte for byte. If a consumer ever needs to branch
+  on *why* a filter failed, it goes in the `{error:{message,retryable}}` envelope
+  #133 settled, with a reader. Do not re-open. (Left in this list only so the
+  entry is not read as still open — the rest of this snapshot is still as of #117.)
 - **#142** — should a malformed `--limit` refuse rather than silently mean no cap?
   Behaviour change across 21 commands.
 - **`RefusalError` divergence.** #116 throws `RefusalError` for a bad flag, so

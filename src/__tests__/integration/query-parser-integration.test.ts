@@ -187,7 +187,8 @@ describe('Query Parser CLI Integration', () => {
   describe('Error handling', () => {
     // The refusal is RAISED, not printed and exited (#83): the command's own
     // catch reports it, so export and list say the same words about the same
-    // input and both carry the structured `detail` an agent can read.
+    // input. There is no structured `detail` beside those words — #140 deleted
+    // it, and the MESSAGE is the whole contract.
     test('invalid syntax refuses', async () => {
       await expect(applyFilter(sampleCards, 'status:done AND AND', ctx()))
         .rejects.toBeInstanceOf(ParseError);

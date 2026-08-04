@@ -335,13 +335,21 @@ describe('applyFilter', () => {
     // could not check. Answering would silently drop every card with any edge.
     // The refusal is RAISED, so the command reports it the way `cards list`
     // reports its own (#83) — it is not printed and exited from in here.
-    // `toThrow(/…/)` pins the wording; the class is asserted separately because
-    // `toThrow` matches a constructor by NAME, so it is satisfied by anything
-    // that happens to be called `ParseError`. #140 deleted this site's
+    // The class is asserted separately from the wording because `toThrow`
+    // matches a constructor by NAME, so it is satisfied by anything that
+    // happens to be called `ParseError`. #140 deleted this site's
     // `{ kind: 'unsupported-here' }`, so the class and the prose are all that
     // is left to pin.
-    await expect(applyFilter(sampleCards, 'unblocked', ctx()))
-      .rejects.toThrow(/cards list/);
+    //
+    // The prose is pinned WHOLE, not by `/cards list/`: this refusal's wording
+    // lives nowhere else in the repo, and a partial match let the entire
+    // sentence collapse to the two words "cards list" with 3161 tests still
+    // green — a refusal that says WHAT but no longer says WHY (ADR-0002).
+    await expect(applyFilter(sampleCards, 'unblocked', ctx())).rejects.toThrow(
+      `"unblocked" is not available on export: it has to judge each blocker, and an ` +
+        `export has no way to tell you which ones it could not reach. ` +
+        `Ask the frontier instead: favro cards list <board> --filter "unblocked"`
+    );
     await expect(applyFilter(sampleCards, 'unblocked', ctx()))
       .rejects.toBeInstanceOf(ParseError);
 

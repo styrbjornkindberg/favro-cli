@@ -586,6 +586,15 @@ describe('parseQuery — fails closed on the field list', () => {
       // The candidate list is IN the prose — that is where it always had to be.
       expect(e.message).toContain('status');
       expect(e.message).toContain('title');
+
+      // …and it is SORTED. `detail.candidates` carried the sorted array as a
+      // machine-readable second copy; with that copy gone (#140) the prose is
+      // the only place the ordering can be read, and nothing pinned it —
+      // dropping the `.sort()` in `query-parser.ts` left 3161 tests green while
+      // handing the user an unordered list to scan.
+      const listed = e.message.replace(/^.*Known fields: /, '').replace(/\.$/, '').split(', ');
+      expect(listed.length).toBeGreaterThan(10);
+      expect(listed).toEqual([...listed].sort());
     }
   });
 
