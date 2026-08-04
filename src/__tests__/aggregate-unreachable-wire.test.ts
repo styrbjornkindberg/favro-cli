@@ -68,6 +68,13 @@ interface Wire {
    * kind. Off by default, so every test above sees byte-identical cards.
    */
   ghostBlockers?: number;
+  /**
+   * Point one card of the GOOD board at a column that board does not have, so it
+   * ends up with NO `stage` off a columns read that succeeded perfectly. The one
+   * case that tells "exclude the dark board's cards" apart from "exclude every
+   * stageless card" — see the test that uses it. Off by default.
+   */
+  orphanColumn?: boolean;
 }
 
 /**
@@ -107,6 +114,9 @@ function startServer(wire: Wire = {}): Promise<FavroHttpClient> {
       ...Array.from({ length: 10 }, (_, i) => card(boardId, i, 'done', 60)),
       ...Array.from({ length: 3 }, (_, i) => card(boardId, 10 + i, 'doing', 0)),
     ];
+    if (wire.orphanColumn && boardId === GOOD) {
+      cards[12] = { ...cards[12], columnId: `${boardId}-deleted-column` };
+    }
     if (wire.ghostBlockers && boardId === GOOD) {
       cards[0] = {
         ...cards[0],
@@ -426,6 +436,58 @@ describe('the other three snapshot consumers state what they do with a hole (#14
  */
 const STANDUP_OPTS = { days: '3' };
 const NEXT_OPTS = { count: '5' };
+
+/**
+ * The exclusion is BOARD-scoped, and that is not the same rule as "drop every
+ * card with no stage" (#149).
+ *
+ * Found by mutation: loosening `excludeUnreadableBoards`'s single-board test from
+ * `h.id === 'columns'` to `h.id.startsWith('columns')` sends an AGGREGATE snapshot
+ * down the single-board arm, where the filter is on `stage` rather than on
+ * `boardId`. On a fixture where the only stageless cards are the dark board's, the
+ * two rules agree exactly and 3183 tests passed.
+ *
+ * They stop agreeing the moment a READABLE board holds a card with no stage — a
+ * card whose column was deleted, or that carries no `columnId` at all. That card's
+ * board answered; its missing stage is a fact about the card. Dropping it and
+ * charging it to another board's outage under-counts a board that was read
+ * perfectly, which is the same class of quiet wrong number as the bug this all
+ * started from.
+ *
+ * `--board X` cannot express this case (one board, so any hole is the whole
+ * snapshot), which is exactly why the two arms need different rules and why this
+ * has to be asserted on the aggregate side.
+ */
+describe('a hole excludes its own board, not every stageless card (#149)', () => {
+  it('keeps a readable board\'s stageless card while dropping the dark board\'s', async () => {
+    const client = await startServer({ failColumnsFor: [DARK], orphanColumn: true });
+    const result = await workloadHandler(ctxFor(client), NO_OPTS);
+
+    // All thirteen of the readable board's cards, including the orphan. Twelve
+    // would mean the orphan was blamed on the other board's failed read.
+    expect(result.item.total).toBe(13);
+    const orphan = result.item.members[0].cards.find(c => c.id === `${GOOD}-c12`);
+    expect(orphan).toBeDefined();
+    expect(orphan!.stage).toBeUndefined();
+    // …and it is not counted active, which is honest: nothing said it was.
+    expect(result.item.members[0].activeCards).toBe(2);
+    expect(result.item.unreachable?.map(h => h.id)).toEqual([`columns:${DARK}`]);
+  });
+
+  it('and my-standup files that card under stageUnknown too, with the SAME reason list', async () => {
+    // The other half of the pair: `my-standup` keeps stageless cards either way,
+    // so the orphan joins the dark board's thirteen. Fourteen, not thirteen — the
+    // guard keys on the card's own missing stage, not on which board it came from,
+    // which is what makes it the root-cause fix rather than the reported path.
+    const client = await startServer({ failColumnsFor: [DARK], orphanColumn: true });
+    const result = await myStandupHandler(ctxFor(client), STANDUP_OPTS);
+
+    expect(result.item.stageUnknown).toHaveLength(14);
+    expect(result.item.stageUnknown.map(c => c.id)).toContain(`${GOOD}-c12`);
+    expect(result.item.inProgress.map(c => c.id).sort()).toEqual([`${GOOD}-c10`, `${GOOD}-c11`]);
+    expect(result.item.total).toBe(26);
+  });
+});
 
 describe('my-standup does not report finished work as in progress (#149)', () => {
   it('puts the dark board\'s cards in stageUnknown, and NOT in inProgress', async () => {
