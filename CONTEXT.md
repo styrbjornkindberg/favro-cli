@@ -111,7 +111,11 @@ table so the CLI, `skill run` and MCP all get the same guardrails. Nine exist:
 Always an envelope, never "an array unless something went wrong". A single read stays
 bare. `truncated` means `--limit` cut a complete fetch; `unreachable` means a composite
 read could not reach part of its input, so an empty `rows` with no `unreachable`
-unambiguously means true-empty. `src/lib/read-shape.ts`.
+unambiguously means true-empty. A composite read that answers with a SINGLE entity has
+no envelope to carry the marker, so it rides on the entity instead — `context`'s
+snapshot and `cards get --include` both do this, same key, same `{id, reason}` shape.
+A read feeding a durable artefact has neither, so it propagates instead and writes
+nothing (`favro init`). `src/lib/read-shape.ts`.
 
 **`--limit`** — a **print** cap and only a print cap, with one parser, `parseLimit`, and
 three outcomes, no fourth: whole digits of 1 or more are the cap; an **absent** flag is

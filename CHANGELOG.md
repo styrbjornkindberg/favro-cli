@@ -138,6 +138,12 @@ Issue #95, ADR-0006.
 
 ### Fixed
 
+- `cards get --include` lost facets silently. Each of `board`, `collection`, `links` and
+  `comments` was read inside `catch { /* best effort */ }`, so a failed sub-fetch handed
+  back a card missing the facet the caller had asked for — indistinguishable from "this
+  card has none". All four now record an `unreachable` entry on the card they return, so
+  an empty facet and an unreadable one are two different answers (#153).
+
 - `favro standup --help` pointed at an `unblocked` command — a top-level command that has
   never existed. Its help now says `favro cards list <board> --filter "unblocked"`. The
   drift test covered help *topics* and tracked `.md` files, not `.description()` strings;
