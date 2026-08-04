@@ -5,6 +5,25 @@
  * from the Favro API and writes a complete context file that LLMs can consume
  * instantly without additional API calls.
  *
+ * WHAT THIS FILE SAYS ABOUT A FACET IT COULD NOT READ: nothing, because it is
+ * never written (#154). Three reads — `/columns`, `/customfields`, `/users` —
+ * used to answer a rejection with `[]`, and the schema below has no field for
+ * "unread": an absent `workflow`, an empty `customFields` and an empty `team`
+ * are what a board with no columns, an org with no fields and a collection with
+ * no members produce. So a 403 became a confident finding in a file later
+ * agents read with no memory of the failure. Every other consumer of a failed
+ * read in this codebase records an `unreachable` marker instead (#116, #148,
+ * #149) — but those answer a QUERY, where refusing the whole answer over one
+ * dark board is disproportionate. `init` produces a durable artefact and is
+ * cheap and idempotent to re-run, so it fails closed instead: the error
+ * propagates, no file is written, and `favro init --refresh` is one command.
+ *
+ * The errors propagate RAW rather than wrapped in a `RefusalError`, because a
+ * 502 on a read is a wire failure and not a deterministic decline —
+ * `retryAdvice` is right to call it retryable, and a `RefusalError` would
+ * assert `retryable: false`. `listBoardsByCollection` below has always
+ * propagated raw for exactly that reason.
+ *
  * Usage:
  *   favro init                    # Create .favro/context.json from scoped collection
  *   favro init --collection <id>  # Specify collection explicitly
@@ -164,16 +183,19 @@ export async function initHandler(ctx: Ctx, options: InitOptions) {
     console.log(`  Board: ${board.name}`);
     const slug = slugify(board.name);
 
-    // Fetch columns for workflow.
+    // Fetch columns for workflow. NOT tolerated — see the header. A failed
+    // read became `[]`, which the ternary below wrote as an ABSENT `workflow`,
+    // which is what a board with no columns produces. Now that the read cannot
+    // fail quietly, an absent `workflow` is a measurement: `/columns` answered,
+    // and this board has none.
     //
-    // The `await` is a value and the transform is OUTSIDE any catch. The
-    // two used to share a `try` written for "some boards have no
-    // columns", so anything the MAP threw was read as that too — and
-    // `detectStage` threw a TypeError on a column Favro sent with no
-    // name, silently costing the whole board its workflow on exit 0.
-    // The guard for that now lives in `detectStage` itself, where all
-    // four of its callers get it.
-    const cols = await columnsApi.listColumns(board.boardId).catch(() => []);
+    // The transform is OUTSIDE any catch, which is the older half of this. The
+    // two used to share a `try` written for "some boards have no columns", so
+    // anything the MAP threw was read as that too — and `detectStage` threw a
+    // TypeError on a column Favro sent with no name, silently costing the whole
+    // board its workflow on exit 0. The guard for that now lives in
+    // `detectStage` itself, where all four of its callers get it.
+    const cols = await columnsApi.listColumns(board.boardId);
     const workflow: ContextWorkflowStep[] | undefined =
       cols.length > 0
         ? cols.map((col, i) => ({
@@ -202,15 +224,16 @@ export async function initHandler(ctx: Ctx, options: InitOptions) {
   const fieldsApi = ctx.api.customFields;
   const customFields: Record<string, ContextCustomField> = {};
   const boardIds = new Set(rawBoards.map(b => b.boardId));
-  // Only the FETCH is tolerated. The transform below is outside any
-  // catch, because the two used to share a `try` and
-  // `customFields[field.name] = entry` mutates the outer map inside the
-  // loop: a throw at field N left 1..N-1 in place, swallowed the error,
-  // and fell through to `writeFile`. That produced a context.json which
-  // looked complete while silently missing every custom field after the
-  // bad one — and every agent reading it afterwards could not set those
-  // fields and had no way to learn they existed.
-  const allFields = await fieldsApi.listFields().catch(() => []);
+  // NEITHER the fetch nor the transform is tolerated. The fetch used to be:
+  // `[]` on a 403 wrote an empty `customFields` map, indistinguishable from an
+  // org that has none, and every agent reading the file afterwards could not
+  // set those fields and had no way to learn they existed (#154).
+  //
+  // The transform was the same defect one layer in (#100): the two shared a
+  // `try` and `customFields[field.name] = entry` mutates the outer map inside
+  // the loop, so a throw at field N left 1..N-1 in place, swallowed the error,
+  // and fell through to `writeFile`.
+  const allFields = await fieldsApi.listFields();
   for (const field of allFields) {
     if (!field.name) continue;
     // Keep only board-local fields belonging to our boards
@@ -232,8 +255,14 @@ export async function initHandler(ctx: Ctx, options: InitOptions) {
 
   // Fetch team members — /users is org-scoped, so we filter by the
   // collection's sharedToUsers to get only collection members.
+  //
+  // NOT tolerated either: `[]` wrote an empty `team` that read as "this
+  // collection has no members" (#154). Note this is a different answer from the
+  // membership read just below, which DOES fall back — and is right to, because
+  // its fallback is recorded in `notes.team` and on stderr, so it is a reported
+  // third state rather than a manufactured finding.
   console.log('Fetching team members...');
-  const allUsers = await ctx.api.members.getMembers().catch(() => []);
+  const allUsers = await ctx.api.members.getMembers();
 
   // Get collection member IDs from raw API response (sharedToUsers).
   //

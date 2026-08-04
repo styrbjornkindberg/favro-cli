@@ -180,12 +180,20 @@ describe('init — the file it writes', () => {
     expect(Object.keys(writtenContext().boards)).toEqual(['atgarder-forbattringar']);
   });
 
-  test('a board whose columns cannot be read is still recorded, just without a workflow', async () => {
-    MockColumns.prototype.listColumns = jest.fn().mockRejectedValue(new Error('400 no widgetCommonId'));
+  test('a board with NO columns is recorded with no `workflow` key at all', async () => {
+    // The absent half of the pair below. `/columns` ANSWERED and this board has
+    // none, so the omission is a measurement — and it is an omission, not a
+    // `workflow: null`: asserted with `in` rather than `toBeUndefined`, which
+    // passes identically for a missing key and a key holding `undefined` and so
+    // cannot tell absent from empty (the trap #149 hit at eight sites).
+    MockColumns.prototype.listColumns = jest.fn().mockResolvedValue([]);
 
     await runCli(['init']);
 
-    expect(writtenContext().boards['sprint-42'].workflow).toBeUndefined();
+    const board = writtenContext().boards['sprint-42'];
+    expect('workflow' in board).toBe(false);
+    expect(board.boardId).toBe('board-a');
+    expect(process.exitCode).toBeUndefined();
   });
 
   test('keeps only board-local custom fields belonging to our boards, and inlines their options', async () => {
@@ -227,15 +235,21 @@ describe('init — the file it writes', () => {
     expect(process.exitCode).toBe(1);
   });
 
-  test('a custom-field FETCH that fails still degrades to no fields, as before', async () => {
-    // The control for the test above: only the fetch was ever meant to be
-    // tolerated, and it still is.
-    MockFields.prototype.listFields = jest.fn().mockRejectedValue(new Error('403'));
+  test('an org with NO board-local custom fields writes an empty map, and that is a finding', async () => {
+    // The other absent/empty pair. `listFields` ANSWERED with rows, none of
+    // which survive the board-local filter, so `{}` here means "none" — which
+    // is only true because a FAILED read can no longer produce the same `{}`
+    // (see the refusal arms below).
+    MockFields.prototype.listFields = jest
+      .fn()
+      .mockResolvedValue([{ fieldId: 'f-9', name: 'Org wide', type: 'Text' }]);
 
     await runCli(['init']);
 
-    expect(writtenContext().customFields).toEqual({});
-    expect(exitSpy).not.toHaveBeenCalled();
+    const ctx = writtenContext();
+    expect('customFields' in ctx).toBe(true);
+    expect(ctx.customFields).toEqual({});
+    expect(process.exitCode).toBeUndefined();
   });
 
   test('a column with no name keeps the rest of the board’s workflow', async () => {
@@ -322,7 +336,90 @@ describe('init — the file it writes', () => {
   });
 });
 
+/**
+ * The three reads that used to answer a rejection with `[]` (#154).
+ *
+ * Each arm fails ONE read and leaves the other two HEALTHY — deliberately not a
+ * blanket rejection, which cannot tell a handler that propagates from one that
+ * swallows, because under a blanket rejection every arm dies at the first read
+ * either way. So each arm carries a message unique to its own read and asserts
+ * that message reached stderr: that is what pins WHICH read propagated, rather
+ * than merely that the run did not finish.
+ *
+ * The counterpart assertion — that the healthy two thirds of the fetch did not
+ * reach disk — is `writeFile` not called with `context.json`. On a real disk,
+ * asserted in both polarities, that lives in `init-clobber.test.ts`.
+ */
+/** A read that answered 403 — classified, so deterministic. */
+const forbidden = (what: string) =>
+  Object.assign(new Error(`403 ${what} forbidden`), {
+    isAxiosError: true,
+    response: { status: 403, data: { message: `403 ${what} forbidden` } },
+  });
+
+/** A read that never got a response at all — the transient family. */
+const reset = () => Object.assign(new Error('ECONNRESET socket hang up'), { isAxiosError: true });
+
+const FACETS: [string, (e: Error) => void, string][] = [
+  ['columns', (e) => { MockColumns.prototype.listColumns = jest.fn().mockRejectedValue(e); }, 'columns'],
+  ['custom fields', (e) => { MockFields.prototype.listFields = jest.fn().mockRejectedValue(e); }, 'customfields'],
+  ['team members', (e) => { MockMembers.prototype.getMembers = jest.fn().mockRejectedValue(e); }, 'users'],
+];
+
+describe.each(FACETS)('init — an unreadable %s facet is never written as an empty one', (_facet, failWith, what) => {
+  const breakIt = () => failWith(forbidden(what));
+  const breakTransport = () => failWith(reset());
+  const wording = `403 ${what} forbidden`;
+
+  test('writes no context.json, exits 1, and says which read failed', async () => {
+    breakIt();
+
+    await runCli(['init']);
+
+    expect(mockFs.writeFile).not.toHaveBeenCalledWith(
+      '/repo/.favro/context.json',
+      expect.any(String),
+      'utf-8',
+    );
+    expect(errors()).toContain(wording);
+    expect(process.exitCode).toBe(1);
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  test('a TRANSPORT failure on the same read is reported RETRYABLE', async () => {
+    // Why the errors propagate RAW instead of being wrapped in a
+    // `RefusalError`, and the one arm where the two differ. A `RefusalError`
+    // asserts `retryable: false` unconditionally; a socket reset is the case
+    // where that is a lie, and `retryAdvice` gets it right only if the axios
+    // stamp survives to the boundary. (A classified 403 comes out `false` either
+    // way, which is why this arm uses a transport failure and not the 403
+    // above.) Machine mode is the default, so the envelope is on stdout.
+    breakTransport();
+
+    await runJson(['init']);
+
+    const envelope = JSON.parse(
+      logSpy.mock.calls.map((c) => String(c[0])).find((l) => l.trimStart().startsWith('{'))!,
+    );
+    expect(envelope.error.message).toContain('ECONNRESET');
+    expect(envelope.error.retryable).toBe(true);
+  });
+});
+
 describe('init — the guards around the write', () => {
+  test('all three reads healthy still writes the file — the control for the arms above', async () => {
+    // Without this, every arm above could be passing because the pipeline never
+    // reaches the write at all.
+    await runCli(['init']);
+
+    expect(mockFs.writeFile).toHaveBeenCalledWith(
+      '/repo/.favro/context.json',
+      expect.any(String),
+      'utf-8',
+    );
+    expect(process.exitCode).toBeUndefined();
+  });
+
   test('refuses to clobber an existing context.json', async () => {
     mockFs.access.mockResolvedValue(undefined);
 

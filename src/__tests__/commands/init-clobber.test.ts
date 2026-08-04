@@ -1,5 +1,6 @@
 /**
- * `favro init` refuses to clobber an existing context.json — on a REAL disk (#131).
+ * `favro init` and the real disk: it refuses to clobber an existing context.json
+ * (#131), and it leaves none behind when a facet could not be read (#154).
  *
  * WHY THIS IS NOT JUST ANOTHER CASE IN `init.test.ts`
  * That file mocks `fs/promises` wholesale, so its clobber test proves only that
@@ -144,6 +145,23 @@ test('writes the file when there is nothing in the way — the guard is the only
 
   expect(JSON.parse(fs.readFileSync(contextFile, 'utf-8')).scope.collectionId).toBe('coll-1');
   expect(exitSpy).not.toHaveBeenCalled();
+});
+
+test('an unreadable facet leaves NO file on disk at all (#154)', async () => {
+  // The other polarity of the control above, and the reason it is here rather
+  // than only in `init.test.ts`: that suite mocks `fs/promises`, so its version
+  // proves `writeFile` was not *called*. What matters is that no half-true
+  // context.json exists for a later agent to read, and only a real path can say
+  // so. The control directly above plants nothing and DOES produce the file, so
+  // "absent" here cannot be the pipeline failing to reach the write.
+  fs.rmSync(contextFile);
+  MockFields.prototype.listFields = jest.fn().mockRejectedValue(new Error('403 customfields forbidden'));
+
+  await runInit();
+
+  expect(fs.existsSync(contextFile)).toBe(false);
+  expect(process.exitCode).toBe(1);
+  expect(errorSpy.mock.calls.map((c) => String(c[0])).join('\n')).toContain('403 customfields forbidden');
 });
 
 test('--refresh overwrites the real file on disk', async () => {

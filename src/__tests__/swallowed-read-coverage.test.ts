@@ -82,9 +82,14 @@
  * through THIS scan rather than a hand-rolled copy of it — a copy would only ever
  * prove that the copy works.
  *
- * TO DISCHARGE A DEBT ENTRY: route the read through `holeCollector` (see
- * `api/context.ts` and `api/aggregate.ts` for the two shapes), then delete its
- * line. Deleting the line is not optional.
+ * TO DISCHARGE A DEBT ENTRY, one of two ways, then delete its line — deleting the
+ * line is not optional:
+ *   - A read that answers a QUERY records its hole and returns what it did get.
+ *     `holeCollector`/`boundedSweep` in `read-shape.ts`; see `api/context.ts` and
+ *     `api/aggregate.ts` for the two shapes.
+ *   - A read feeding a DURABLE ARTEFACT propagates instead, because there is no
+ *     envelope to carry a marker and the artefact outlives the warning. That is
+ *     how #154 discharged `init`'s three.
  */
 import * as path from 'path';
 import * as ts from 'typescript';
@@ -95,32 +100,26 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..');
  * DEBT: reads whose rejection is answered with emptiness and whose caller cannot
  * tell, keyed `<file> <read>() → <fallback>` and valued with why it is still here.
  *
- * All three are in `favro init`, which writes `.favro/context.json` for agents to
- * read later. They are the LAST three in `src/`: #116 discharged the five in
- * `ContextAPI.getSnapshot` and #148 the two in `AggregateAPI`, both by recording
- * the hole. `init` has no `unreachable` field to record one into — its output is a
- * config file with a published schema, not a `ListEnvelope` — so discharging
- * these means deciding what that file says about a facet it could not read, which
- * is a schema change and its own ticket. No issue is filed for it yet; #149
- * recorded them here so the count cannot silently grow while that is decided.
+ * **EMPTY, and pinned empty below.** It held three entries, all in `favro init`,
+ * and #154 discharged them. Not the way #116 and #148 discharged theirs — those
+ * answer a QUERY, so they record an `unreachable` hole and hand back what they
+ * did read. `init` writes a durable config file with a published schema and no
+ * field for "unread", and it is cheap and idempotent to re-run, so it fails
+ * closed instead: the three reads propagate, no file is written, and the schema
+ * never had to grow a third state that only an LLM reading the file could be
+ * trusted to honour. Both are discharges; the rung differs because the output
+ * does.
  *
  * Do NOT add a line here to green a build. A new key is a new place where "we
  * could not look" reaches a caller as "there is nothing there".
  */
-const DEBT: Record<string, string> = {
-  'src/commands/init.ts listColumns() → []':
-    '#149 — a board with no workflow in context.json is indistinguishable from one whose /columns read failed',
-  'src/commands/init.ts listFields() → []':
-    '#149 — same: an empty customFields map means "none" and "unread" alike',
-  'src/commands/init.ts getMembers() → []':
-    '#149 — same for team; note the PRIVACY filter below it already fails closed and reports',
-};
+const DEBT: Record<string, string> = {};
 
 /**
  * DECIDED: the fallback is not a manufactured answer, because the caller reads it
  * as a third state and says so.
  *
- * The first entry is the reason this list exists rather than a fourth debt line:
+ * The first entry is the reason this list exists rather than a debt line:
  * `init`'s membership read answers `undefined` on failure, and the very next
  * statement is `if (membership === undefined)` writing a paragraph to stderr and a
  * note into the file, on purpose, so an empty `team` is never mistaken for "this
@@ -383,17 +382,13 @@ describe('no read answers a failure with emptiness, outside the two lists', () =
       .toEqual([]);
   });
 
-  it('the debt list holds exactly the three init reads it was measured at', () => {
+  it('the debt list is EMPTY, and cannot grow back', () => {
     // Stated as its own assertion, so the list cannot grow quietly inside the
-    // exemption above. Note this is THREE, not the four #149's body claims: at
-    // `d6a09b3` the fourth (`init`'s membership read) answers `undefined` and its
-    // caller handles it, so it is a decision and sits in `DECIDED`. The ticket's
-    // count was written before #118 landed on that file.
-    expect(Object.keys(DEBT).sort()).toEqual([
-      'src/commands/init.ts getMembers() → []',
-      'src/commands/init.ts listColumns() → []',
-      'src/commands/init.ts listFields() → []',
-    ]);
+    // exemption above. It held the three `init` reads until #154 made them
+    // propagate; there is now no swallowed read in `src/` that its caller cannot
+    // tell about, and a new line here would be a regression rather than a
+    // record of one.
+    expect(Object.keys(DEBT).sort()).toEqual([]);
   });
 
   it('no entry in either list is stale — a discharged read must be removed', () => {
