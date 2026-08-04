@@ -196,14 +196,25 @@ board it cannot resolve is *uncheckable*, not exempt. `--force` is the only esca
 hatch, and it does not rescue the no-board case. `assertScope` in `src/lib/safety.ts`.
 
 `--dry-run` is a preview, never a safety wall, and it is not a way around the lock —
-because a preview writes nothing for the lock to guard. Where the lock runs *relative*
-to the preview varies, measured against a built CLI rather than assumed: `boards create`,
-`members add` and `comments add/update/delete` check first, so their preview carries the
-verdict; `boards update/delete` and `collections update/delete` return from the preview
-before checking, so theirs does not. (`collections create` and `webhooks create` are
-org-scoped, below — there is no lock to run.) That is an information difference, not a
-safety one — the real run checks in every case. This paragraph used to claim the lock
-always ran first, which was false for four commands (#135).
+because a preview writes nothing for the lock to guard. The lock runs **before** the
+preview on every command that has one, so a preview always carries the verdict:
+`boards create`, `members add` and `comments add/update/delete` always did, and
+`boards update/delete` and `collections update/delete` joined them in #152 — they
+returned from the preview first, so a target outside the lock previewed at exit 0 while
+the real run refused. (`collections create` and `webhooks create` are org-scoped, below —
+there is no lock to run.) Measured against a built CLI, not assumed, in both directions:
+a target outside the lock exits 1 with the refusal envelope on stdout, and a target
+inside it still previews at exit 0.
+
+The ORDER has a price on the two `boards` commands, paid deliberately: their guard
+resolves the board over the wire, so `boards update/delete --dry-run` now needs a
+credential *when a lock is configured*. Both call sites therefore gate on the lock —
+with nothing locked there is no verdict to produce, the client is never touched, and the
+credential-free preview #135 measured is unchanged. `collections update/delete` pay
+nothing either way: `checkCollectionScope` is a comparison against local config.
+This paragraph twice claimed something false — that the lock always ran first (#135
+corrected it for four commands) and then that those four were permanently different
+(#152 made the first claim true instead).
 
 Its remit has an edge, decided rather than implied (#104): a write to an **org-scoped**
 entity — a tag, a group, a webhook, a collection being created — lands on no board at

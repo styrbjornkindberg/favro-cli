@@ -40,12 +40,14 @@ export function registerCollectionsUpdateCommand(collectionsParent: Command): vo
       if (name) updateData.name = name;
       if (options.description) updateData.description = options.description;
 
+      // Before the preview (#152), and after the argument validation above for the
+      // reason spelled out on `boards-update.ts`. Free — no client, no request.
+      checkCollectionScope(id, ctx.config, options.force);
+
       if (options.dryRun) {
         console.log(`[dry-run] Would update collection ${id} with:`, JSON.stringify(updateData));
         return;
       }
-
-      checkCollectionScope(id, ctx.config, options.force);
 
       if (!(await confirmAction(`Update collection ${id}?`, { yes: options.yes }))) {
         console.log('Aborted.');

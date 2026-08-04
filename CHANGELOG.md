@@ -103,10 +103,10 @@ Issues #142/#143.
   every caller (#133). Acceptance holds on 12 of 38 guarded write paths; the remaining 26
   need the #115–#119 migration first.
 - `--dry-run` no longer demands credentials for a preview that never touches the wire.
-  Eight of the twelve migrated write commands now preview credential-free; the four whose
-  preview *is* a wire-derived scope verdict (`comments add/update/delete`,
-  `members add --board-target`) still require them, deliberately — a credential-free
-  preview there would print a plan the lock was never asked about (#135).
+  Commands whose preview *is* a wire-derived scope verdict (`comments add/update/delete`,
+  `members add --board-target`, and `boards update/delete` under a lock — see below) still
+  require them, deliberately: a credential-free preview there would print a plan the lock
+  was never asked about (#135, #152). Everything else previews credential-free.
 - A board whose `/columns` read fails leaves every card on it with no workflow stage, and
   four more commands were reading that absence as a stage. Each now states its own answer
   rather than inventing one (#149):
@@ -135,10 +135,20 @@ Issues #142/#143.
   is the substitution behind #116, #148 and #149. Five live sites remain, all in `favro
   init`, all listed with a reason — three as debt and two as decisions the caller already
   reports.
+- `boards update/delete` and `collections update/delete` checked the scope lock *after*
+  returning from their `--dry-run` preview, so a target outside the locked collection
+  previewed at exit 0 while the real run refused — the preview promised an action the
+  guardrail would not allow. All four now take the lock **before** the preview, so
+  `--dry-run` refuses exactly where the real run does: exit 1 with the refusal envelope on
+  stdout. A target *inside* the lock previews as before (#152).
+
+  **Behaviour change worth knowing:** the two `boards` commands resolve the board over the
+  wire to check it, so `boards update --dry-run` and `boards delete --dry-run` now need
+  working credentials **when a scope lock is configured**. With no lock configured they are
+  unchanged and still preview with no credentials at all. The `collections` pair needs
+  nothing either way — its check is a comparison against local config. `--force` on a
+  `--dry-run` now warns on stderr and previews anyway, where before it did nothing.
 
 ### Known gaps at release
 
-- `boards update/delete` and `collections update/delete` return from their `--dry-run`
-  preview *before* checking the scope lock, so a target outside the lock previews
-  cheerfully while the real run refuses (#152).
 - The output migration is incomplete — see the caveat under Breaking #1.

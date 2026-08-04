@@ -470,6 +470,82 @@ GET); and `members add`'s said the same, which is false for its DEFAULT `--board
 and was missed in the first draft even though it is the fourth wire-touching preview this
 amendment names.
 
+### Amendment (#152): the four that checked after their preview now check before it
+
+The amendment above measured that `boards update/delete` and `collections update/delete`
+"already return from the preview **before** their scope check and therefore have no verdict
+to lose". True as a measurement, and the wrong thing to leave standing: a preview that
+promises a delete the real run refuses is not a missing verdict, it is a **wrong** one.
+#152 moves the guard above the preview in all four. `--dry-run` help text is unchanged for
+the `collections` pair and remains accurate; the `boards` pair's is not (see below).
+
+**This does not contradict the #135 rule, it is priced by it.** The rule is that a dry run
+pays for exactly what its own preview reaches for. Under #152 the two `boards` previews
+genuinely reach for the wire — `checkScope` resolves the board's collection through
+`GET /widgets/{id}` — so they now pay, and they move from #135's eight-command
+"derived entirely from argv and `ctx.config`" group into its four-command wire-touching
+group, alongside `comments add/update/delete` and `members add --board-target`. The
+mechanism that charges them is the one already in `withClient`: nothing keys on a command
+name, and the deferred refusal fires on the first touch of `ctx.client`. The `collections`
+pair does not move, because `checkCollectionScope` is a comparison against local config —
+which is what made it the decisive half of the ticket: the refusal was free and the preview
+still declined to make it.
+
+**Both `boards` call sites gate on a configured lock, and that gate is load-bearing.**
+`ctx.client` is an ARGUMENT to `checkScope`, so it is evaluated before the guard can decide
+it has nothing to do. Ungated, a user with no lock would be charged a credential check for a
+verdict there is no lock to produce, and the measured example above —
+`FAVRO_API_KEY= favro boards delete board-1 --dry-run` → `exit=0` — would become false,
+taking #102/#104's "no behaviour change when no lock is configured, and no extra requests on
+that path" with it. `checkResolvedScope` exists for this same evaluation-order reason and
+cannot be reused here: its `client` parameter is eager too. So the honest statement is
+narrower than "credential-gated": **`boards update/delete --dry-run` is credential- and
+wire-gated exactly when a scope lock is configured, and unchanged otherwise.**
+
+Measured against `dist/cli.js`, `FAVRO_CONFIG_DIR` on a throwaway config, no real
+credential, and the wire served by a local stand rather than a live org:
+
+```
+# lock configured; brd-other sits outside it
+$ favro boards delete brd-other --dry-run
+before: exit=0   stdout: [dry-run] Would delete board brd-other
+after:  exit=1   stdout: {"error":{"message":"Scope violation: board \"Board brd-other\" …","retryable":false}}
+
+# lock configured; brd-inside sits inside it — the omit arm
+$ favro boards delete brd-inside --dry-run
+before: exit=0   stdout: [dry-run] Would delete board brd-inside
+after:  exit=0   stdout: [dry-run] Would delete board brd-inside      # unchanged
+
+# lock configured, credential absent
+$ favro boards delete brd-other --dry-run
+before: exit=0   stdout: [dry-run] Would delete board brd-other
+after:  exit=1   stdout: {"error":{"message":"✗ API key not found. …","retryable":false}}
+
+# NO lock, credential absent — #135's measured example, deliberately unchanged
+$ favro boards delete brd-other --dry-run
+before: exit=0   stdout: [dry-run] Would delete board brd-other
+after:  exit=0   stdout: [dry-run] Would delete board brd-other       # unchanged
+```
+
+Two consequences stated rather than discovered later:
+
+- **`--force` on a `--dry-run` now means "warn and preview anyway", exit 0.** It previously
+  meant nothing at all on these four, since the guard it bypasses never ran. Same wording as
+  the real run, on stderr, so a parsed stdout is still just the preview line. On the `boards`
+  pair `--force` still pays for the wire, because `assertScope` resolves before it consults
+  `force`. Pinned in `dry-run-scope-order-wire.test.ts`.
+- **A bad id under a lock now answers `Scope check failed: Board <id> not found.`** rather
+  than previewing, because the guard's resolving GET is what 404s and `checkScope` rewords it
+  (#133). That is a different refusal from the scope violation and the test pins which one
+  fired; asserting only "exit 1" would have hidden it. Argument validation still runs first
+  and still answers credential-free — `boards update <id> --name '' --dry-run` says
+  `Board name cannot be empty or whitespace-only`, not a scope or credential error.
+
+The `boards update/delete` `--dry-run` help strings said `Preview without making API calls` /
+`Print what would be updated without making API calls`. Under a lock that is now false, for
+the same reason #135 corrected the `comments` trio's, so both are reworded rather than left to
+mislead. The `collections` pair's are untouched and still true.
+
 ## Consequences
 
 - **#99 is re-scoped.** "Route every list read through the envelope" stops being a migration

@@ -23,7 +23,7 @@ export function registerBoardsUpdateCommand(boardsParent: Command): void {
     .description('Update an existing board')
     .option('--name <name>', 'New board name')
     .option('--description <text>', 'New board description')
-    .option('--dry-run', 'Print what would be updated without making API calls')
+    .option('--dry-run', 'Preview the update. Reads the board first to check the scope lock')
     .option('-y, --yes', 'Skip confirmation prompt')
     .option('--force', 'Bypass scope check')
     .action(run(async (ctx, id: string, options: UpdateOptions) => {
@@ -41,12 +41,21 @@ export function registerBoardsUpdateCommand(boardsParent: Command): void {
       if (name) updateData.name = name;
       if (description) updateData.description = description;
 
+      // The lock runs before the preview, gated on a configured lock — see
+      // `boards-delete.ts` for why the gate is required rather than tidy. Placed
+      // AFTER the argument validation above so an empty `--name` still answers
+      // `Board name cannot be empty…` credential-free, which is the property
+      // ADR-0002's #135 amendment names ("flag validation reaches the user
+      // credential-free"); hoisting the guard over it would trade one wrong answer
+      // for another.
+      if (ctx.config?.scopeCollectionId) {
+        await checkScope(id, ctx.client, ctx.config, options.force);
+      }
+
       if (options.dryRun) {
         console.log(`[dry-run] Would update board ${id} with:`, JSON.stringify(updateData));
         return;
       }
-
-      await checkScope(id, ctx.client, ctx.config, options.force);
 
       if (!(await confirmAction(`Update board ${id}?`, { yes: options.yes }))) {
         console.log('Aborted.');
