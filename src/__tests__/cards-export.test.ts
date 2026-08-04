@@ -335,8 +335,15 @@ describe('applyFilter', () => {
     // could not check. Answering would silently drop every card with any edge.
     // The refusal is RAISED, so the command reports it the way `cards list`
     // reports its own (#83) — it is not printed and exited from in here.
+    // `toThrow(/…/)` pins the wording; the class is asserted separately because
+    // `toThrow` matches a constructor by NAME, so it is satisfied by anything
+    // that happens to be called `ParseError`. #140 deleted this site's
+    // `{ kind: 'unsupported-here' }`, so the class and the prose are all that
+    // is left to pin.
     await expect(applyFilter(sampleCards, 'unblocked', ctx()))
       .rejects.toThrow(/cards list/);
+    await expect(applyFilter(sampleCards, 'unblocked', ctx()))
+      .rejects.toBeInstanceOf(ParseError);
 
     // A specific edge needs no judgement, so it still works.
     await expect(applyFilter(sampleCards, 'blocked-by:CLA-1', ctx())).resolves.toEqual([]);

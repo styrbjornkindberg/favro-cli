@@ -589,6 +589,20 @@ describe('parseQuery — fails closed on the field list', () => {
     }
   });
 
+  test('the refusal names the OFFSET of the unknown field, not just position 0', () => {
+    // The `detail.position` this replaces was only ever asserted on a query
+    // whose bad field sat at offset 0, so hardcoding `position 0` in the prose
+    // passed. A nested query is the only arm that can tell the two apart.
+    try {
+      parseQuery('status:done AND invalidfield:value');
+      throw new Error('expected a refusal');
+    } catch (err) {
+      expect((err as Error).message).toContain(
+        "Unknown filter field 'invalidfield' at position 16 —"
+      );
+    }
+  });
+
   test('the fields the old VALID_FIELDS list kept alive are refused', () => {
     // On no card Favro sends: refusing them is the point of deriving the list.
     for (const dead of ['estimate:5', 'priority:high', 'created_by:john', 'relationship:blocks']) {

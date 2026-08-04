@@ -8,7 +8,7 @@ import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
 import { parseQuery, ParseError, FieldPredicate } from '../../lib/query-parser';
-import { validateQueryValues } from '../../lib/query-values';
+import { validateQueryValues, refuseEmpty } from '../../lib/query-values';
 import { writeCache } from '../../lib/name-cache';
 
 const WIDGETS = [
@@ -205,6 +205,37 @@ describe('assignee: through the one resolution home', () => {
     const { client } = makeClient();
     await expect(validateQueryValues(parseQuery('assignee:nobody'), { client }))
       .rejects.toThrow(/Unknown assignee "nobody"/);
+  });
+});
+
+describe('refuseEmpty', () => {
+  // Its three existing arms are CLI-level (`cli-cards-list-vocabulary`,
+  // `batch-filter-fail-closed-wire`, `write-echo-wire`) and see only the printed
+  // line, so they pin the wording but not the class. #140 deleted this site's
+  // `{ kind: 'unknown-value', field, value }`, which leaves the class and the
+  // prose as the whole contract — both asserted here.
+  test('an empty value refuses as a ParseError, naming the flag', () => {
+    expect(() => refuseEmpty('filter', '')).toThrow(ParseError);
+    try {
+      refuseEmpty('filter', '   ');
+      throw new Error('expected a refusal');
+    } catch (err) {
+      const e = err as Error;
+      expect(e).toBeInstanceOf(ParseError);
+      expect(e.name).toBe('ParseError');
+      expect(e.message).toBe(
+        `--filter was passed with an empty value — it narrows nothing, and ignoring ` +
+          `it would answer the whole board. Pass a value, or drop the flag.`
+      );
+    }
+  });
+
+  test('an ABSENT flag is not an empty one', () => {
+    expect(() => refuseEmpty('filter', undefined)).not.toThrow();
+  });
+
+  test('a non-empty value passes', () => {
+    expect(() => refuseEmpty('tag', 'bug')).not.toThrow();
   });
 });
 
