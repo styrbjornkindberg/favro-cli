@@ -77,17 +77,19 @@ and `favro init` does not invent one (#154).
 If `/columns`, `/customfields` or `/users` fails, the command reports the error,
 exits non-zero, and writes no `context.json` at all. An earlier version turned
 each of those failures into an empty value, which is indistinguishable from the
-real finding — so a 403 on `/users` produced `"team": {}`, and every agent
+real finding — a failed `/users` read produced `"team": {}`, and every agent
 reading the file afterwards concluded the collection had no members.
 
-So every value in a `context.json` that exists is a measurement:
+So every value in a `context.json` that exists is a measurement, with one
+exception named in the last row:
 
 | You see | It means |
 |---------|----------|
 | no `workflow` key on a board | `/columns` answered, and that board has none |
 | `"customFields": {}` | `/customfields` answered, and no board-local field belongs to these boards |
 | `"team": {}` **and no** `notes.team` | the membership filter ran, and matched nobody |
-| `"team": {}` **with** `notes.team` | the collection's `sharedToUsers` could not be read, so `team` fails closed to nobody rather than opening to the whole org. This is the one facet with a third state, and it is stated in the file because a privacy filter that cannot run must not be skipped. |
+| `"team": {}` **with** `notes.team` | the collection's `sharedToUsers` could not be read, so `team` fails closed to nobody rather than opening to the whole org. It is stated in the file because a privacy filter that cannot run must not be skipped. |
+| `scope.collectionName` | **not guaranteed to be a measurement.** If `GET /collections/:id` fails, `init` falls back to the name in your local `~/.favro/config.json`, or to the raw `collectionId` when there is none — with no marker and no note. `collectionId` is always the real one; the *name* may be stale. It is display text only; nothing keys off it. |
 
 The one thing this costs: a partially-readable workspace produces no file until
 the key can read every facet. `favro init --refresh` is the retry.
@@ -143,7 +145,7 @@ If you're building tools that read this file:
 2. **Resolve boards by the slug key first**, then `name`, then `boardId`
 3. **Use each board's `workflow` array** for stage-aware operations (e.g. "active cards" = cards in the columns whose `stage` is `active`)
 4. **Never modify `context.json` directly** — always use `favro init --refresh`
-5. **Trust every value as a measurement** — see *What the File Says About a Facet It Could Not Read*. A missing or empty facet is a finding, not a failed read; the one exception announces itself in `notes.team`
+5. **Trust every value as a measurement** — see *What the File Says About a Facet It Could Not Read*. A missing or empty facet is a finding, not a failed read. Two values are exceptions: `notes.team` announces its own, and `scope.collectionName` can be a stale local name with nothing announcing it — key off `collectionId`, never the name
 6. **Custom field types** determine how to set values:
    - `single_select` / `multiple_select` → use option values
    - `text` / `number` / `date` → use raw values

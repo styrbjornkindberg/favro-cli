@@ -199,6 +199,13 @@ function emptinessToken(body: ts.Node): string | undefined {
   if (ts.isArrayLiteralExpression(body)) return body.elements.length === 0 ? '[]' : undefined;
   if (ts.isObjectLiteralExpression(body)) return body.properties.length === 0 ? '{}' : undefined;
   if (ts.isIdentifier(body) && body.text === 'undefined') return 'undefined';
+  // `void 0` and `new Array()` are `undefined` and `[]` in a second spelling, and
+  // both passed 9 of 9 when planted in `init.ts` during #154's review — the same
+  // hole the `as` line above closed, one spelling further out.
+  if (ts.isVoidExpression(body)) return 'undefined';
+  if (ts.isNewExpression(body) && ts.isIdentifier(body.expression) && body.expression.text === 'Array') {
+    return (body.arguments?.length ?? 0) === 0 ? '[]' : undefined;
+  }
   if (body.kind === ts.SyntaxKind.NullKeyword) return 'null';
   if (body.kind === ts.SyntaxKind.FalseKeyword) return 'false';
   if (ts.isNumericLiteral(body) && body.text === '0') return '0';
@@ -385,9 +392,10 @@ describe('no read answers a failure with emptiness, outside the two lists', () =
   it('the debt list is EMPTY, and cannot grow back', () => {
     // Stated as its own assertion, so the list cannot grow quietly inside the
     // exemption above. It held the three `init` reads until #154 made them
-    // propagate; there is now no swallowed read in `src/` that its caller cannot
-    // tell about, and a new line here would be a regression rather than a
-    // record of one.
+    // propagate, so there is now no swallowed read IN THE SHAPE THIS SCAN WALKS
+    // that its caller cannot tell about — not the same thing as none in `src/`,
+    // which the header's nineteen untriaged `ts.CatchClause` sites forbid saying.
+    // A new line here would be a regression rather than a record of one.
     expect(Object.keys(DEBT).sort()).toEqual([]);
   });
 
@@ -433,6 +441,13 @@ describe('the predicate itself, run through the real scan in both polarities', (
       .toEqual(['src/__synthetic__.ts read() → []']);
     expect(scan(`${PREAMBLE}export const f4 = read().catch(() => ([] satisfies string[]));`))
       .toEqual(['src/__synthetic__.ts read() → []']);
+    // The two spellings this scan still missed after #149's review: `void 0` for
+    // `undefined`, and a zero-argument `new Array()` for `[]`. Both typecheck and
+    // both passed 9 of 9 when planted in `init.ts` (#154 review).
+    expect(scan(`${PREAMBLE}export const f5 = read().catch(() => void 0 as never);`))
+      .toEqual(['src/__synthetic__.ts read() → undefined']);
+    expect(scan(`${PREAMBLE}export const f6 = read().catch(() => new Array<string>());`))
+      .toEqual(['src/__synthetic__.ts read() → []']);
     // Every other emptiness the fallback could be.
     expect(scan(`${PREAMBLE}export const g = read().catch(() => undefined);`))
       .toEqual(['src/__synthetic__.ts read() → undefined']);
@@ -460,6 +475,9 @@ describe('the predicate itself, run through the real scan in both polarities', (
       .toEqual([]);
     // A non-empty fallback is a decision about content, not a swallow of a read.
     expect(scan(`${PREAMBLE}export const e = read().catch(() => ['fallback']);`)).toEqual([]);
+    // …and the polarity of the `new Array()` arm above: an ARGUMENT makes it a
+    // length, which is a value the handler chose rather than an emptiness.
+    expect(scan(`${PREAMBLE}export const e2 = read().catch(() => new Array<string>(5));`)).toEqual([]);
     // `.then` with ONE argument has no rejection handler to inspect.
     expect(scan(`${PREAMBLE}export const f = read().then(r => r);`)).toEqual([]);
     // Not a promise. A `catch` method of one's own is not a rejection handler,

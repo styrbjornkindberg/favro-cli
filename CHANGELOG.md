@@ -168,8 +168,9 @@ Issues #142/#143.
   `--dry-run` now warns on stderr and previews anyway, where before it did nothing.
 - `favro init` wrote a confident, wrong `.favro/context.json` when a read failed. Three of
   its four API reads answered a rejection with an empty value, and the schema has no field
-  for "unread" — so a 403 on `/customfields` wrote `"customFields": {}`, a 403 on `/users`
-  wrote `"team": {}`, and a failed `/columns` left a board with no `workflow` key, each
+  for "unread" — so a failed `/customfields` read wrote `"customFields": {}`, a failed
+  `/users` read wrote `"team": {}`, and a failed `/columns` read left a board with no
+  `workflow` key, each
   indistinguishable from the real finding in a file agents read later with no memory of the
   failure. All three now propagate: the error is reported, exit 1, and **no file is
   written** (#154).

@@ -18,6 +18,24 @@
  * cheap and idempotent to re-run, so it fails closed instead: the error
  * propagates, no file is written, and `favro init --refresh` is one command.
  *
+ * TWO EDGES OF THAT DECISION, both stated rather than implied.
+ *
+ * The 403 above is the MOTIVATING case, not a measured one: nothing in
+ * `docs/research/` records what `/columns`, `/customfields` or `/users` answer a
+ * permission-limited key on a LIST read — `scripts/probe-favro-errors.ts` probes
+ * bogus ids with a full-permission key, which is a different question. So the
+ * cost is real and unquantified: if a plan or a guest role cannot read one of the
+ * three, `favro init` now produces NO file where it used to produce a partial
+ * one. Measure it before narrowing the refusal; do not narrow it on a guess.
+ *
+ * And `collectionName` is the one value in the file that is NOT held to this. The
+ * `getCollection` catch below falls back to the locally-stored name, or to the
+ * raw id — a plausible value with no marker, which is the same shape of lie one
+ * field over. It is left because the name is display text and `collectionId`,
+ * which everything actually keys off, is always the real one; making it propagate
+ * too is a behaviour call for the owner, not a review edit. `docs/repo-context.md`
+ * says so in the table rather than claiming the file has no such value.
+ *
  * The errors propagate RAW rather than wrapped in a `RefusalError`, because a
  * 502 on a read is a wire failure and not a deterministic decline —
  * `retryAdvice` is right to call it retryable, and a `RefusalError` would

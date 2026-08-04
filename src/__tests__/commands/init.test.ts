@@ -136,6 +136,13 @@ describe('init — resolving the collection', () => {
     await runCli(['init']);
 
     expect(writtenContext().scope.collectionName).toBe('Fallback');
+    // The one value in the file that is NOT a measurement, and the reason
+    // `docs/repo-context.md`'s table has a row for it: the name is a local
+    // fallback and NOTHING in the file says so — no note, and the run succeeds.
+    // Pinned so the doc cannot go stale in either direction: add a marker and
+    // this goes red, which is the signal to update the table.
+    expect(Object.keys(writtenContext().notes).sort()).toEqual(['cardIds', 'moveCards']);
+    expect(process.exitCode).toBeUndefined();
   });
 });
 
@@ -332,7 +339,10 @@ describe('init — the file it writes', () => {
     await runCli(['init']);
 
     expect(writtenContext().team).toEqual({});
-    expect(writtenContext().notes.team).toBeUndefined();
+    // `in`, not `toBeUndefined` — the latter passes identically for a missing key
+    // and a key holding `undefined`, which is the trap #149 hit at eight sites
+    // and #154's acceptance criteria name by hand.
+    expect('team' in writtenContext().notes).toBe(false);
   });
 });
 
