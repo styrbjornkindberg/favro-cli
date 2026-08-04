@@ -177,6 +177,47 @@ describe('main menu — My Work', () => {
     expect(out).toContain('1 queued');
     expect(out).not.toContain('dependencies');
   });
+
+  /**
+   * The done half of this screen's stage filter was UNTESTED before #98.
+   *
+   * `queued` here is "assigned to me and neither active nor finished", and the
+   * finished half of that was the fifth copy of `['done','approved','archived']`
+   * — inlined and fused with the active list. Every existing case above feeds
+   * cards in stage `queued` only, so no card in a done stage ever reached the
+   * filter: deleting the three done strings from it passed all 3334 tests.
+   * Found by running the sibling-site mutation at all five call sites rather
+   * than the four that had coverage.
+   *
+   * Each done stage is a separate arm on purpose — asserted as a set, dropping
+   * one member would hide behind the other two.
+   */
+  it.each(['done', 'approved', 'archived'])(
+    'leaves a card in the finished stage `%s` out of the queued count',
+    async (stage) => {
+      const out = await runMenu('0', [
+        { id: 'c1', title: 'Finished', assignees: [USER], stage },
+        { id: 'c2', title: 'Queued clean', assignees: [USER], stage: 'queued' },
+      ]);
+
+      // Both cards are mine, so the total proves the finished one was present
+      // and filtered — not simply absent from the fixture.
+      expect(out).toContain('2 cards');
+      expect(out).toContain('1 queued');
+    },
+  );
+
+  it('counts an active card as active, not queued', async () => {
+    // The foreign arm for the same filter: without it, `other` returning
+    // everything-not-done would still pass the finished arms above.
+    const out = await runMenu('0', [
+      { id: 'c1', title: 'Working', assignees: [USER], stage: 'active' },
+      { id: 'c2', title: 'Queued clean', assignees: [USER], stage: 'queued' },
+    ]);
+
+    expect(out).toContain('1 active');
+    expect(out).toContain('1 queued');
+  });
 });
 
 describe('main menu — Team Dashboard', () => {
