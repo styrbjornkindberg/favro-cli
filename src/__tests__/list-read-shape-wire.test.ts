@@ -26,6 +26,10 @@ import {
   omittedFields,
   SWEEP_CAP,
 } from '../lib/read-shape';
+import { RefusalError } from '../lib/refusal';
+import { retryAdvice } from '../lib/dispatch';
+import { releaseCheckHandler } from '../commands/release-check';
+import { risksHandler } from '../commands/risks';
 
 const ORG = 'org-1';
 const BOARD = 'board-a';
@@ -168,6 +172,77 @@ describe('the fetch runs to completion (#44)', () => {
     const { client } = await startServer({ pages: 1, perPage: 0 });
 
     await expect(new CardsAPI(client).listCards({ boardId: BOARD })).resolves.toEqual([]);
+  });
+});
+
+/**
+ * An EMPTY board id is refused at the seam, not widened into a whole-org read.
+ *
+ * `boardIdOf('')` answers `undefined`, so the `if (boardId)` guard around
+ * `params.widgetCommonId` does not fire and the request goes out board-less —
+ * measured over this stand as byte-identical to `listCards()`, then paginated to
+ * completion. `favro release-check ""` and `favro risks ""` both hand a required
+ * `<board>` positional straight through, so each swept the whole organisation and
+ * scored a verdict over it. #107 closed the same hole on `TxCards.listCards`; this
+ * is the rule at the seam every CLI caller routes through.
+ *
+ * The arms are ordered so none of them can pass vacuously: the pass-through runs
+ * FIRST and leaves requests on the recorder, so the refusal arm asserting "no new
+ * request" fails if the guard lets `''` through. The OMISSION arm is what keeps
+ * the guard from being "refuse whenever there is no board" — `aggregate` reads a
+ * whole collection with no board on purpose, and that must still reach the wire.
+ */
+describe('an empty board id refuses rather than sweeping the organisation', () => {
+  it('refuses `\'\'` without a request, while omission still reaches the wire', async () => {
+    const { client, received } = await startServer({ pages: 3, perPage: 2 });
+    const api = new CardsAPI(client);
+
+    // Polarity 1: a real board reads, and leaves a mark to measure against.
+    await expect(api.listCards({ boardId: BOARD })).resolves.toHaveLength(6);
+    const afterRealBoard = cardsCalls(received).length;
+    expect(afterRealBoard).toBe(3);
+
+    // Polarity 2: the empty string refuses, and reaches nothing.
+    const refusal = await api.listCards('').then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(cardsCalls(received)).toHaveLength(afterRealBoard);
+
+    // `toThrow(RefusalError)` matches by constructor NAME up the chain, so a
+    // renamed bare `Error` would satisfy it. Assert the class and the property
+    // every reader actually keys on.
+    expect(refusal).toBeInstanceOf(RefusalError);
+    expect(retryAdvice('rolled-back', refusal)).toBe(false);
+    expect((refusal as Error).message).toContain('widgetCommonId');
+
+    // The object spelling of the same mistake refuses identically.
+    await expect(api.listCards({ boardId: '' })).rejects.toBeInstanceOf(RefusalError);
+    expect(cardsCalls(received)).toHaveLength(afterRealBoard);
+
+    // Polarity 3 — THE DISCRIMINATING ARM. An ABSENT board is a caller saying
+    // "not by board" and must still read: `aggregate` scopes by collection with
+    // no board at all. A guard that refused every board-less read would pass the
+    // two arms above and fail this one.
+    await expect(api.listCards({ collectionId: 'coll-a' })).resolves.toHaveLength(6);
+    expect(cardsCalls(received).length).toBeGreaterThan(afterRealBoard);
+  });
+
+  it('stops `release-check ""` and `risks ""` sweeping the whole organisation', async () => {
+    const { client, received } = await startServer({ pages: 3, perPage: 2 });
+    const ctx = { client, config: {}, verbose: false, api: { cards: new CardsAPI(client) } } as any;
+
+    // Both took the sweep before the guard: three board-less pages each, then a
+    // verdict scored over every card in the org.
+    await expect(releaseCheckHandler(ctx, '')).rejects.toBeInstanceOf(RefusalError);
+    await expect(risksHandler(ctx, '')).rejects.toBeInstanceOf(RefusalError);
+    expect(cardsCalls(received)).toEqual([]);
+
+    // The omit arm: a real board still works through the same two handlers, so
+    // the assertion above is about the empty id and not about the handlers.
+    await expect(releaseCheckHandler(ctx, BOARD)).resolves.toBeDefined();
+    expect(cardsCalls(received).length).toBeGreaterThan(0);
+    expect(cardsCalls(received)[0].url).toContain(`widgetCommonId=${BOARD}`);
   });
 });
 

@@ -352,9 +352,18 @@ const setDiff = (current: readonly string[], desired: readonly string[]) => ({
  * An INTERFACE rather than a base class. The ticket's shape was `TxCards extends
  * ReadTx`; `implements` buys the identical subtyping — a `TxCards` is a `ReadTx`
  * either way — without moving nine method bodies into a base or downgrading two
- * `private` fields to `protected` to keep them reachable. `implements` is what
- * keeps the two in step: a read whose signature drifts from this list stops
- * compiling on the class below.
+ * `private` fields to `protected` to keep them reachable.
+ *
+ * What `implements` buys, stated no wider than what it does. It catches drift in
+ * ONE direction: a read here whose signature no longer matches the class stops
+ * compiling, and it does so AT the class rather than remotely at `dispatch`'s two
+ * `tx` arguments — measured, both with the clause and without it, and the drift is
+ * caught either way because TypeScript is structural. It does NOT keep the two in
+ * step the other way: a read added to `TxCards` and not listed here compiles clean
+ * and is simply invisible to a `readOnly` intent (measured: zero errors). Six of
+ * the nine reads below can also be deleted from this list with `tsc` clean, since
+ * no intent reads them yet — narrowing, so fail-closed, but not guarded. Add a
+ * read to the class and it belongs here too; nothing will remind you.
  */
 export interface ReadTx {
   getCard(cardRef: string, options?: { include?: string[]; board?: string }): Promise<Card>;

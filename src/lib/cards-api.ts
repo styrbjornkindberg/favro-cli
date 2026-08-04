@@ -638,6 +638,34 @@ export class CardsAPI {
         ? optsOrBoardId
         : { boardId: optsOrBoardId ?? undefined };
 
+    // A board that was PROVIDED but EMPTY is refused, never widened. `boardIdOf`
+    // maps `''` to `undefined`, so `widgetCommonId` is omitted and `getAllPages`
+    // reads every card in the ORGANISATION to completion. Measured over a
+    // three-page stand: `listCards('')` goes out byte-identical to
+    // `listCards()` — `/cards?limit=100&archived=false&descriptionFormat=markdown`,
+    // no `widgetCommonId` — and both read all three pages. Two commands take a
+    // required `<board>` positional and hand it straight here, so
+    // `favro release-check ""` and `favro risks ""` each swept the whole
+    // organisation and reported a verdict over it.
+    //
+    // #107 closed this on `TxCards.listCards`, which one intent reaches. This is
+    // the same rule at the seam every CLI caller routes through, so the fix lands
+    // once instead of at seven call sites.
+    //
+    // Strictly `=== ''`, so an ABSENT board stays legal: `aggregate` reads a whole
+    // collection with `{ collectionId, unique }` and no board at all, on purpose.
+    // Omission is a caller saying "not by board"; an empty string is a caller
+    // that meant to name one and did not.
+    if (opts.boardId === '') {
+      throw new RefusalError(
+        `Refusing to list cards for an empty board id. An empty board omits widgetCommonId, which ` +
+          `reads every card in the organisation, paginated to completion — an unbounded sweep, and ` +
+          `every client-side filter downstream would then score a verdict over the whole org.\n` +
+          `Name the board: 'favro boards list' shows the ids. To read across boards on purpose, pass ` +
+          `a collection instead of a board.`,
+      );
+    }
+
     // Refused before any call: a column and a collection cannot both scope one
     // read, and the wire would silently answer about the column's own board.
     if (opts.status && opts.collectionId) {
