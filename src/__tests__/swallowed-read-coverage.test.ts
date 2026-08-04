@@ -714,7 +714,7 @@ describe('seed two — the try/catch statement, through the same scan (#153)', (
     expect(scan(inFn('c', 'const o: { v?: string[] } = {}; try { o.v = await read(); } catch { o.v = []; } return o.v ?? [];')))
       .toEqual(['src/__synthetic__.ts c() catch → []']);
     // The empty body — `catch { /* best effort */ }`, which is the single most
-    // common live spelling here (11 of the 19).
+    // common live spelling here (10 of the 19; the other nine are `return`s).
     expect(scan(inFn('d', 'const o: { v?: string[] } = {}; try { o.v = await read(); } catch { } return o.v ?? [];')))
       .toEqual(['src/__synthetic__.ts d() catch → undefined']);
     // A bare `return;`.
