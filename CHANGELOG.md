@@ -132,8 +132,9 @@ Issues #142/#143.
   costs no cards (#149).
 - A ratchet now walks every promise rejection handler in `src/` through the TypeScript
   checker and fails on one that both ignores its error and answers with emptiness, which
-  is the substitution behind #116, #148 and #149. Four live sites remain, all in `favro
-  init`, all listed with a reason.
+  is the substitution behind #116, #148 and #149. Five live sites remain, all in `favro
+  init`, all listed with a reason — three as debt and two as decisions the caller already
+  reports.
 
 ### Known gaps at release
 

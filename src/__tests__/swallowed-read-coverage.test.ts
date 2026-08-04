@@ -46,13 +46,28 @@
  * `.catch(_ => [])` is the same defect as `.catch(() => [])` and is one of the two
  * bypasses this file is tested against.
  *
- * ponytail: promise-callback shape only. A `try { x = await f() } catch { x = []
- * }` swallow is the same defect in a shape this does not walk. Deliberate: the
- * measured population of that shape in `src/` today is zero (`catch` clauses here
- * either bind and read the error or re-throw), and the emptiness test would need
- * assignment-target analysis to say anything true about it. The upgrade path is a
- * second seed over `ts.CatchClause` with the same `ignoresError` and `emptiness`
- * predicates, added the day one appears — not before.
+ * ponytail: promise-callback shape only. A `try { … } catch { return [] }` swallow
+ * is the same defect in a shape this does not walk, and that ceiling is real.
+ *
+ * The population is NOT zero, and an earlier version of this comment said it was
+ * — measured during #149's review by running these same two predicates over
+ * `ts.CatchClause` instead of `.catch`: of 159 `catch` clauses in non-test `src/`,
+ * **19** both decline to bind the error and answer with an emptiness token
+ * (`api/webhooks.ts:48`, `commands/browse.ts:253`, `commands/tasklists.ts:30`,
+ * `lib/cards-api.ts:721/726/735/744`, `lib/config.ts:178`,
+ * `lib/git-integration.ts:105/174`, `lib/http-client.ts:184`,
+ * `lib/name-cache.ts:70/81/97`, `lib/skill-store.ts:105/125`,
+ * `lib/todo-scanner.ts:79/110`, `mcp-http-server.ts:75`). Most are plausibly
+ * `DECIDED` — a cache miss, an "is this a git repo" probe — but that is a triage
+ * of nineteen call sites, not a line of predicate, and doing it blind inside this
+ * ticket is how an allowlist becomes a place to park a build. So the seed stays
+ * unwritten and the ceiling stays stated with its true number rather than a
+ * flattering one: what this file guards completely is the promise-callback shape,
+ * which is where #116, #148 and #149 all lived.
+ *
+ * The upgrade path is a second seed over `ts.CatchClause` with the same
+ * `ignoresError` and `emptinessToken` predicates, plus the nineteen-way triage —
+ * its own ticket, because the triage is the work.
  *
  * TWO LISTS, AND WHY THEY ARE NOT ONE
  *   - `DEBT` — a swallow that should record its hole and does not yet. Only ever
@@ -118,8 +133,11 @@ const DEBT: Record<string, string> = {
  * and this scan found it. `fs.access(f).then(() => true, () => false)` is an
  * existence probe: the rejection IS the answer being asked for, not a substitute
  * for one, so `false` is a measurement. An EACCES rather than an ENOENT takes the
- * same branch, and the `writeFile` that follows then fails on its own with the
- * real errno (`init.ts:334`), so nothing plausible-but-wrong reaches a caller.
+ * same branch, and the write this probe guards then fails on its own with the real
+ * errno — `fs.writeFile(contextFile, …)` at `init.ts:315`, which is unguarded and
+ * propagates to the error boundary — so nothing plausible-but-wrong reaches a
+ * caller. (Not `init.ts:334`, which an earlier version of this comment cited: that
+ * line is the `.gitignore` read's `err.code` catch, a different file entirely.)
  * Narrowing the predicate to let it through instead would blind the scan to
  * `.catch(() => false)` on a real read, which is not a trade worth making for one
  * line.
@@ -169,6 +187,16 @@ interface Finding {
 /** What a handler answered with, as a short token — the key's second half. */
 function emptinessToken(body: ts.Node): string | undefined {
   if (ts.isParenthesizedExpression(body)) return emptinessToken(body.expression);
+  // A TYPE ASSERTION is not a decision about the value — `[] as Column[]` is the
+  // same `[]`. This is not hypothetical politeness: `[] as Column[]` /
+  // `[] as Member[]` / `[] as Card[]` is what the four live `orElse` fallbacks in
+  // `aggregate.ts` and `context.ts` are literally spelled as, so
+  // `.catch(() => [] as Column[])` is a MORE likely spelling of this defect in
+  // this codebase than the bare one, and without this line the scan missed it
+  // while claiming spelling could not defeat it (found in review of #149).
+  if (ts.isAsExpression(body) || ts.isTypeAssertionExpression(body) || ts.isSatisfiesExpression(body)) {
+    return emptinessToken(body.expression);
+  }
   if (ts.isArrayLiteralExpression(body)) return body.elements.length === 0 ? '[]' : undefined;
   if (ts.isObjectLiteralExpression(body)) return body.properties.length === 0 ? '{}' : undefined;
   if (ts.isIdentifier(body) && body.text === 'undefined') return 'undefined';
@@ -399,6 +427,16 @@ describe('the predicate itself, run through the real scan in both polarities', (
     expect(scan(`${PREAMBLE}export const e = read().catch(function () { return []; });`))
       .toEqual(['src/__synthetic__.ts read() → []']);
     expect(scan(`${PREAMBLE}export const f = read().catch(async () => []);`))
+      .toEqual(['src/__synthetic__.ts read() → []']);
+    // A type assertion around the emptiness, in all three of its spellings. This
+    // is the shape the repo's own `orElse` fallbacks use (`[] as Column[]` at
+    // `aggregate.ts:262`), so it is the likeliest way this defect would next be
+    // written here — and the scan missed all three until #149's review.
+    expect(scan(`${PREAMBLE}export const f2 = read().catch(() => [] as string[]);`))
+      .toEqual(['src/__synthetic__.ts read() → []']);
+    expect(scan(`${PREAMBLE}export const f3 = read().catch(() => <string[]>[]);`))
+      .toEqual(['src/__synthetic__.ts read() → []']);
+    expect(scan(`${PREAMBLE}export const f4 = read().catch(() => ([] satisfies string[]));`))
       .toEqual(['src/__synthetic__.ts read() → []']);
     // Every other emptiness the fallback could be.
     expect(scan(`${PREAMBLE}export const g = read().catch(() => undefined);`))

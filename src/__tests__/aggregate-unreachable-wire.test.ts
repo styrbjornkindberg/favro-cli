@@ -75,6 +75,16 @@ interface Wire {
    * stageless card" — see the test that uses it. Off by default.
    */
   orphanColumn?: boolean;
+  /**
+   * Give the DARK board two facts a failed columns read cannot touch: one
+   * FINISHED card with `status: 'Blocked'`, and one FINISHED card due tomorrow.
+   * Both fields come straight off `GET /cards` (`normalizeToAggregateCard` reads
+   * `card.status` and `card.dueDate`), so unlike `stage` they still answer on a
+   * dark board — which is the only thing that makes `my-standup`'s ORDERING of
+   * its `stage-unknown` guard against `isBlocked` and `due-soon` observable. Off
+   * by default.
+   */
+  darkCardLevelFacts?: boolean;
 }
 
 /**
@@ -114,6 +124,13 @@ function startServer(wire: Wire = {}): Promise<FavroHttpClient> {
       ...Array.from({ length: 10 }, (_, i) => card(boardId, i, 'done', 60)),
       ...Array.from({ length: 3 }, (_, i) => card(boardId, 10 + i, 'doing', 0)),
     ];
+    if (wire.darkCardLevelFacts && boardId === DARK) {
+      // Both are cards[0..9], i.e. cards the `done` column finished 60 days ago —
+      // so each is a case where the ONLY honest answer depends on a stage the
+      // read never delivered.
+      cards[0] = { ...cards[0], status: 'Blocked' };
+      cards[1] = { ...cards[1], dueDate: new Date(Date.now() + 86400000).toISOString() };
+    }
     if (wire.orphanColumn && boardId === GOOD) {
       cards[12] = { ...cards[12], columnId: `${boardId}-deleted-column` };
     }
@@ -516,6 +533,39 @@ describe('my-standup does not report finished work as in progress (#149)', () =>
     const human = result.human(result.item);
     expect(human).toContain(`columns:${DARK}`);
     expect(human).toContain('Stage unknown — not assessed (13)');
+  });
+
+  /**
+   * The ORDER of the `stage-unknown` guard inside `classifyCard`, pinned.
+   *
+   * The guard is stated to sit AFTER `isBlocked` and BEFORE the due-soon arm, and
+   * both halves are decisions rather than accidents — but with every fixture card
+   * carrying only a column, neither could be observed: moving the guard above
+   * `isBlocked`, and moving it below the due-soon arm, each passed all 3186 tests.
+   * Found by mutation during review of #149.
+   *
+   * The two arms that CAN still answer on a dark board are exactly the two that
+   * read a card-level field: `isBlocked` reads `card.status` (`api/standup.ts:88`)
+   * and the due-soon arm reads `card.due`. Everything else needs the stage.
+   */
+  it('orders the guard after isBlocked and before due-soon, the two arms a dark board can still answer', async () => {
+    const client = await startServer({ failColumnsFor: [DARK], darkCardLevelFacts: true });
+    const result = await myStandupHandler(ctxFor(client), STANDUP_OPTS);
+
+    // AFTER `isBlocked`: the status came off the card, so "blocked" is a measured
+    // thing to say about it and a truer one than "we could not read the stage".
+    expect(result.item.blocked.map(c => c.id)).toEqual([`${DARK}-c0`]);
+
+    // BEFORE due-soon: this card was finished sixty days ago and only the columns
+    // read could have said so, so calling it due-this-week is #149's fabrication
+    // in a milder voice — a delivered card put on somebody's list of what needs
+    // attention. It goes to `stageUnknown` instead.
+    expect(result.item.dueSoon).toEqual([]);
+    expect(result.item.stageUnknown.map(c => c.id)).toContain(`${DARK}-c1`);
+
+    // The other eleven dark cards are unaffected, and nothing was dropped.
+    expect(result.item.stageUnknown).toHaveLength(12);
+    expect(result.item.total).toBe(26);
   });
 
   it('a clean read classifies every card and emits no unreachable key', async () => {
