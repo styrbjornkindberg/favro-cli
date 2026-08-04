@@ -41,9 +41,14 @@
  * and not destructured — takes the place of the handler's parameter list.
  *
  * Either seed counts as a SWALLOW when it both DECLINES TO TREAT THE ERROR AS A
- * VALUE — no binding, or one that is not destructured — and ANSWERS WITH
- * EMPTINESS: `[]`, `{}`, `undefined`, `null`, `0`, `''`, `false`, an empty body,
- * or a lone statement that RETURNS or ASSIGNS one of those. Both predicates
+ * VALUE — no binding, one that only names it, or one that destructures NOTHING —
+ * and ANSWERS WITH EMPTINESS: `[]`, `{}`, `undefined`, `null`, `0`, `''`,
+ * `false`, an empty body, or a lone statement that RETURNS or ASSIGNS (`=`, `??=`,
+ * `||=`, `&&=`) one of those. Each emptiness is read through any depth of
+ * TYPE-ONLY wrapper (`as`, `<T>`, `satisfies`, `!`) and in its second spelling
+ * (`void 0`, `new Array()`, `Array()`, an empty template literal), because a
+ * spelling the scan cannot see is a bypass — #149's review found one, #154's
+ * review found two, and #153's found five more, all closed here. Both predicates
  * (`ignoresError`, `emptinessToken`) are shared by the two seeds rather than
  * copied, so a spelling fix lands on both at once.
  *
@@ -59,7 +64,7 @@
  *
  * Both conjuncts are required, and the second carries most of the weight. A
  * handler that does something with the error is not answering with emptiness
- * anyway (`init.ts:334` inspects `err.code`, `auth.ts` reports it, the three
+ * anyway (`init.ts:381` inspects `err.code`, `auth.ts` reports it, the three
  * `boards-*.ts` writers re-throw a classified one), and a handler that ignores the
  * error but SAYS something — `board-tui.ts:103` prints "Refresh failed, retrying…"
  * — has a body the emptiness test rejects. Dropping the emptiness conjunct floods
@@ -77,6 +82,13 @@
  * today (measured), and the upgrade is "every statement is a return-or-assign of
  * an emptiness token" rather than "exactly one".
  *
+ * ponytail: so is a handful of emptiness spellings nobody writes — `[...[]]`,
+ * `{ ...{} }`, `Object.create(null)`, `Array.of()`, a `catch { ; }` whose one
+ * statement is the empty one, and a comma sequence. Each was CONSTRUCTED in review
+ * of #153, confirmed to pass, and measured at ZERO in `src/`. Closing them needs a
+ * constant folder, which is more machinery than the five plausible spellings that
+ * were closed instead.
+ *
  * FOUR LISTS, AND WHY THEY ARE NOT ONE
  *   - `DEBT` — a swallow that should record its hole and does not yet. Only ever
  *     shrinks.
@@ -90,10 +102,15 @@
  *     them for free.
  *
  *     #153 gave a second reason — that collapsing them would mean rewriting
- *     #149's "exactly the three init reads" assertion. That reason DIED in the
- *     merge: #154 discharged all three of those reads, `DEBT` is now `{}` and
- *     pinned empty, and the assertion it named no longer exists. The provenance
- *     argument above is the whole justification now.
+ *     #149's "exactly the three init reads" assertion. That ASSERTION did not
+ *     survive the merge (#154 discharged all three reads), but the REASON did, in
+ *     a stricter form: `DEBT` is now pinned EMPTY, and the arm that pins it claims
+ *     there is no swallowed read "IN THE SHAPE THIS SCAN WALKS" whose caller
+ *     cannot tell — a claim scoped to seed one. Folding seed two's ten debts into
+ *     `DEBT` breaks the pin and falsifies the claim, so a collapse still costs a
+ *     rewrite of the one line holding that population against growth. CORRECTED
+ *     in review of #153: the merge resolution recorded this reason as dead, and it
+ *     is not — only its wording moved.
  *
  * All four are checked for STALENESS, so none can rot: an entry that no longer
  * exists under its key fails the build. And the predicate itself is checked
@@ -110,7 +127,7 @@
  *     envelope to carry a marker and the artefact outlives the warning. That is
  *     how #154 discharged `init`'s three.
  *
- * For a `CATCH_DEBT` line, also drop the `9` in the count assertion to `8` — the
+ * For a `CATCH_DEBT` line, also drop the `10` in the count assertion to `9` — the
  * count is pinned in BOTH directions on purpose, because "moved it to
  * `CATCH_DECIDED`" is the cheap way to discharge a defect without fixing it, and a
  * shrink is a two-character edit next to the line you are already deleting.
@@ -160,10 +177,12 @@ const DEBT: Record<string, string> = {};
  * existence probe: the rejection IS the answer being asked for, not a substitute
  * for one, so `false` is a measurement. An EACCES rather than an ENOENT takes the
  * same branch, and the write this probe guards then fails on its own with the real
- * errno — `fs.writeFile(contextFile, …)` at `init.ts:315`, which is unguarded and
+ * errno — `fs.writeFile(contextFile, …)` at `init.ts:362`, which is unguarded and
  * propagates to the error boundary — so nothing plausible-but-wrong reaches a
- * caller. (Not `init.ts:334`, which an earlier version of this comment cited: that
- * line is the `.gitignore` read's `err.code` catch, a different file entirely.)
+ * caller. (Not the `.gitignore` read's `err.code` catch, which an earlier version
+ * of this comment cited and which lives at `init.ts:381`. Both line numbers were
+ * stale — they said `:315` and `:334`, neither of which is either read — and were
+ * re-measured in review of #153.)
  * Narrowing the predicate to let it through instead would blind the scan to
  * `.catch(() => false)` on a real read, which is not a trade worth making for one
  * line.
@@ -185,7 +204,7 @@ const DECIDED: Record<string, string> = {
  * Keyed `<file> <enclosing>() catch → <fallback>`, `#n` when one function has
  * several. NOT keyed on the line, which churns; see `enclosingName`.
  *
- * These NINE are triage, not a parking space. Each was read at its site under this
+ * These TEN are triage, not a parking space. Each was read at its site under this
  * commit and the reason states what a caller actually observes — not "looks
  * sloppy". Fixing them is #153's follow-up and deliberately not #153: four other
  * branches were live in these files when this landed, and the checker fix is what
@@ -210,16 +229,24 @@ const CATCH_DEBT: Record<string, string> = {
     '#153 — an unreadable directory is skipped and the scan still reports its TODO list as the answer; the fix is a skipped-paths count in the result, not a throw',
   'src/lib/todo-scanner.ts scanFile() catch → undefined':
     '#153 — same for a single unreadable file',
+  'src/lib/git-integration.ts isBranchMerged() catch → false':
+    '#153, RECLASSIFIED in review — `false` is not the conservative direction, because BOTH directions write. `analyzeBranches` turns it into status \'open\' and `favro git sync` then PATCHes every \'open\' card to "In Progress" (`git.ts:324` builds the target, `git.ts:355` sends it), so one failed `git branch --merged` moves finished work BACKWARDS, which is #148\'s exact harm rather than a passive report. `getDefaultBranch()` naming a ref this clone does not have fails every branch at once. There is no safe default; the read failure has to reach `git sync` instead of being spelled as a status',
 };
 
 /**
  * CATCH_DECIDED: the clause is real and the emptiness is the honest answer.
  *
- * TEN of them, and most are here because seed two has no `isPromise` gate to tell
+ * NINE of them, and most are here because seed two has no `isPromise` gate to tell
  * a read from a parse (see the header). A validator whose `throw` IS its answer,
  * and a cache miss, are not the substitution this file guards — but writing the
  * predicate so it never raises them would blind it to `.catch(() => false)` on a
  * real read, which is the trade #149 already refused once.
+ *
+ * There were TEN. `isBranchMerged` was moved to `CATCH_DEBT` in review of #153:
+ * its entry argued `false` was conservative because the caller only reports, and
+ * the caller writes. A wrong line HERE discharges a real defect permanently, since
+ * no arm can ever complain about it — so every entry names what a caller does with
+ * the fallback, not just what the fallback is.
  */
 const CATCH_DECIDED: Record<string, string> = {
   'src/api/webhooks.ts isValidWebhookUrl() catch → false':
@@ -228,8 +255,6 @@ const CATCH_DECIDED: Record<string, string> = {
     'the empty body leaves `boardName` as the board ID the user typed, which is a TRUTHFUL label; and the very next statement `browseCards(…, options.board, …)` reads the same board unguarded, so an unreachable board still fails loudly',
   'src/lib/config.ts resolveUserId() catch → undefined':
     'measured all five callers (`assignee.ts:48`, `my-cards.ts:152`, `my-standup.ts:156`, `next.ts:142`, `main-menu.ts:276`) — every one tests `!userId` and REFUSES with a remedy rather than proceeding on an empty identity; the refusal does misattribute a transient read failure to "not configured", which is wording, not a fabricated answer',
-  'src/lib/git-integration.ts isBranchMerged() catch → false':
-    "`false` means \"not merged\", the CONSERVATIVE direction: its one caller (`analyzeBranches`) reports the branch as 'open', so a failed `git branch --merged` never advertises a branch as safe to delete",
   'src/lib/git-integration.ts isGitRepo() catch → false':
     'a PROBE — `git rev-parse --git-dir` exiting non-zero is precisely how one asks "is this a git repo", so the throw is the answer',
   "src/lib/http-client.ts wirePath() catch → ''":
@@ -276,6 +301,20 @@ interface Finding {
   where: string;
 }
 
+/**
+ * Assignments a lone catch statement can carry. `=` was the only one until review
+ * of #153: `cards ??= []` is how the ticket's own `catch { cards = [] }` gets
+ * written the moment `cards` is optional, and the header already CLAIMED "returns
+ * or assigns", so the code was narrower than its own contract. `&&=` is here for
+ * completeness of the set, not because anyone would write it.
+ */
+const ASSIGNMENT_TOKENS: ReadonlySet<ts.SyntaxKind> = new Set([
+  ts.SyntaxKind.EqualsToken,
+  ts.SyntaxKind.QuestionQuestionEqualsToken,
+  ts.SyntaxKind.BarBarEqualsToken,
+  ts.SyntaxKind.AmpersandAmpersandEqualsToken,
+]);
+
 /** What a handler answered with, as a short token — the key's second half. */
 function emptinessToken(body: ts.Node): string | undefined {
   if (ts.isParenthesizedExpression(body)) return emptinessToken(body.expression);
@@ -286,7 +325,14 @@ function emptinessToken(body: ts.Node): string | undefined {
   // `.catch(() => [] as Column[])` is a MORE likely spelling of this defect in
   // this codebase than the bare one, and without this line the scan missed it
   // while claiming spelling could not defeat it (found in review of #149).
-  if (ts.isAsExpression(body) || ts.isTypeAssertionExpression(body) || ts.isSatisfiesExpression(body)) {
+  // `!` is the FOURTH type-only wrapper beside the three above and was the one
+  // left open — `return undefined!` typechecks and passed everything (review #153).
+  if (
+    ts.isAsExpression(body) ||
+    ts.isTypeAssertionExpression(body) ||
+    ts.isSatisfiesExpression(body) ||
+    ts.isNonNullExpression(body)
+  ) {
     return emptinessToken(body.expression);
   }
   if (ts.isArrayLiteralExpression(body)) return body.elements.length === 0 ? '[]' : undefined;
@@ -296,13 +342,23 @@ function emptinessToken(body: ts.Node): string | undefined {
   // both passed 9 of 9 when planted in `init.ts` during #154's review — the same
   // hole the `as` line above closed, one spelling further out.
   if (ts.isVoidExpression(body)) return 'undefined';
-  if (ts.isNewExpression(body) && ts.isIdentifier(body.expression) && body.expression.text === 'Array') {
+  // `Array()` as well as `new Array()`: same function, same `[]`, and closing only
+  // the `new` spelling in #154 left the shorter one open (review #153).
+  if (
+    (ts.isNewExpression(body) || ts.isCallExpression(body)) &&
+    ts.isIdentifier(body.expression) &&
+    body.expression.text === 'Array'
+  ) {
     return (body.arguments?.length ?? 0) === 0 ? '[]' : undefined;
   }
   if (body.kind === ts.SyntaxKind.NullKeyword) return 'null';
   if (body.kind === ts.SyntaxKind.FalseKeyword) return 'false';
   if (ts.isNumericLiteral(body) && body.text === '0') return '0';
-  if (ts.isStringLiteral(body) && body.text === '') return "''";
+  // An empty TEMPLATE literal is `''` in a second spelling, and `''` is what two
+  // live sites (`wirePath`, `boardOfTaskList`) already answer with (review #153).
+  if ((ts.isStringLiteral(body) || ts.isNoSubstitutionTemplateLiteral(body)) && body.text === '') {
+    return "''";
+  }
   if (ts.isBlock(body)) {
     // An empty body answers `undefined` just as loudly as writing it.
     if (body.statements.length === 0) return 'undefined';
@@ -313,10 +369,16 @@ function emptinessToken(body: ts.Node): string | undefined {
     // has no `return` anywhere, so a return-only test cannot see the ticket's own
     // example. Zero sites in `src/` are spelled this way today; the arm exists for
     // the next one, which is what a ratchet is.
+    //
+    // KNOWN PRECISION COST, measured and accepted: the TARGET is not checked
+    // against what the `try` assigned, so `catch { ok = false }` — a plain error
+    // flag, not a swallowed read — will be raised. Zero such sites exist in `src/`
+    // today; the first one belongs in `CATCH_DECIDED` with that one-line argument,
+    // which is cheaper than teaching this arm dataflow.
     if (
       ts.isExpressionStatement(only) &&
       ts.isBinaryExpression(only.expression) &&
-      only.expression.operatorToken.kind === ts.SyntaxKind.EqualsToken
+      ASSIGNMENT_TOKENS.has(only.expression.operatorToken.kind)
     ) {
       return emptinessToken(only.expression.right);
     }
@@ -341,17 +403,24 @@ function emptinessToken(body: ts.Node): string | undefined {
  * and answers with emptiness cannot be written. It is deleted rather than kept as
  * decoration, because an inert conjunct is how a ratchet stops being believed.
  *
- * What DOES change a verdict, and so stays, is a DESTRUCTURED parameter:
- * `.catch(({ message }) => [])` pulls the error apart before answering, which is a
- * decision about content rather than a swallow of a read.
+ * What DOES change a verdict, and so stays, is a DESTRUCTURED parameter that
+ * destructures SOMETHING: `.catch(({ message }) => [])` pulls the error apart
+ * before answering, which is a decision about content rather than a swallow of a
+ * read.
  *
  * A named-but-unused parameter is deliberately NOT an exemption — `_error => []`
  * is the first of the two bypasses at the bottom of this file, and treating a
- * parameter's mere presence as handling is what would let it through.
+ * parameter's mere presence as handling is what would let it through. Neither is a
+ * pattern that binds NOTHING: `catch ({})` and `.catch(({}) => [])` pull nothing
+ * apart, so they are `catch {` and `() =>` with punctuation, and they were the
+ * cheapest evasion of this whole file until review of #153 closed them. Zero live
+ * clauses in `src/` use a binding pattern at all (measured), so this narrowing
+ * cannot move the population.
  */
 function ignoresError(bound: ts.BindingName | undefined): boolean {
   if (!bound) return true;
-  return ts.isIdentifier(bound);
+  if (ts.isIdentifier(bound)) return true;
+  return bound.elements.length === 0;
 }
 
 /**
@@ -561,14 +630,14 @@ describe('no read answers a failure with emptiness, outside the two lists', () =
     expect(Object.keys(DEBT).sort()).toEqual([]);
   });
 
-  it('the catch lists hold the nineteen clauses they were triaged at, split 9/10', () => {
+  it('the catch lists hold the nineteen clauses they were triaged at, split 10/9', () => {
     // The exemption and exactly-once arms already pin the SET of catch keys. What
     // they cannot see is the SPLIT: silently moving a key from `CATCH_DEBT` to
     // `CATCH_DECIDED` would discharge a defect by relabelling it, and parking a
     // tenth build in `CATCH_DEBT` is the failure mode #149's header names. Both
     // move a count.
-    expect(Object.keys(CATCH_DEBT)).toHaveLength(9);
-    expect(Object.keys(CATCH_DECIDED)).toHaveLength(10);
+    expect(Object.keys(CATCH_DEBT)).toHaveLength(10);
+    expect(Object.keys(CATCH_DECIDED)).toHaveLength(9);
     // Disjoint, or `EXEMPT`'s spread would silently let the later list win and one
     // of the counts above would be describing a key nobody reads.
     expect(Object.keys(CATCH_DEBT).filter((k) => k in CATCH_DECIDED)).toEqual([]);
@@ -668,7 +737,7 @@ describe('the predicate itself, run through the real scan in both polarities', (
       .toEqual([]);
   });
 
-  it('catches the two bypasses a text scan invites', () => {
+  it('catches the bypasses a text scan invites', () => {
     // ONE — the named-but-unused parameter. This is the bypass #149's body
     // predicts by name, and the reason this file is not a grep.
     expect(scan(`${PREAMBLE}export const a = read().catch(_error => []);`))
@@ -686,6 +755,13 @@ describe('the predicate itself, run through the real scan in both polarities', (
     expect(scan(
       `${PREAMBLE}function swallow(): string[] { return []; }\nexport const c = read().catch(swallow);`,
     )).toEqual(['src/__synthetic__.ts read() → []']);
+
+    // …and the parameter that DESTRUCTURES NOTHING, which is the same trick as
+    // `_error` one step further: a pattern is present, so a rule that treats mere
+    // presence as handling lets it through, and nothing was pulled off the error.
+    // It passed until review of #153.
+    expect(scan(`${PREAMBLE}export const d = read().catch(({}) => []);`))
+      .toEqual(['src/__synthetic__.ts read() → []']);
   });
 
   it('the synthetic program resolves Promise for real', () => {
@@ -790,6 +866,73 @@ describe('seed two — the try/catch statement, through the same scan (#153)', (
         `  }\n` +
         `}`,
     )).toEqual(['src/__synthetic__.ts swallow() catch → []']);
+  });
+
+  it('catches the five more spellings review of #153 got through', () => {
+    // Each of these was CONSTRUCTED against this scan, PASSED, and is closed here.
+    // All five are second spellings of an emptiness the scan already knew, which is
+    // the exact family #149's review (`[] as T`) and #154's (`void 0`,
+    // `new Array()`) found — a ratchet is only as good as its spelling coverage.
+
+    // ONE and TWO — a LOGICAL assignment. `??=` is how the ticket's own
+    // `catch { cards = [] }` gets written once `cards` is optional, and the header
+    // already claimed "returns or ASSIGNS" while the code tested `=` alone.
+    expect(scan(inFn(
+      'lz1',
+      'let xs: string[] | undefined; try { xs = await read(); } catch { xs ??= []; } return xs ?? [];',
+    ))).toEqual(['src/__synthetic__.ts lz1() catch → []']);
+    expect(scan(inFn(
+      'lz2',
+      'let xs: string[] | undefined; try { xs = await read(); } catch { xs ||= []; } return xs ?? [];',
+    ))).toEqual(['src/__synthetic__.ts lz2() catch → []']);
+
+    // THREE — `Array()` without the `new`. #154 closed `new Array()` and left the
+    // shorter spelling of the same function open.
+    expect(scan(inFn('lz3', 'try { return await read(); } catch { return Array<string>(); }')))
+      .toEqual(['src/__synthetic__.ts lz3() catch → []']);
+
+    // FOUR — the non-null assertion, the fourth type-only wrapper beside `as`,
+    // `<T>` and `satisfies`, all three of which were already recursed through.
+    expect(scan(inFn('lz4', 'try { return await read(); } catch { return undefined!; }')))
+      .toEqual(['src/__synthetic__.ts lz4() catch → undefined']);
+
+    // FIVE — an empty TEMPLATE literal for `''`, which is what `wirePath` and
+    // `boardOfTaskList` both answer with today.
+    expect(scan(
+      'declare function rs(): Promise<string>;\n' +
+        'export async function lz5(): Promise<string> { try { return await rs(); } catch { return ``; } }',
+    )).toEqual(["src/__synthetic__.ts lz5() catch → ''"]);
+
+    // SIX — the clause-side twin of the seed-one bypass above: a binding that
+    // destructures nothing.
+    expect(scan(inFn('lz6', 'try { return await read(); } catch ({}) { return []; }')))
+      .toEqual(['src/__synthetic__.ts lz6() catch → []']);
+  });
+
+  it('and none of those five widened the predicate past emptiness', () => {
+    // The polarity for every arm above, one at a time. Without these, five arms
+    // that answer "empty" for anything at all would look identical to five that
+    // work — and one of them (`Array`) already has an argument form that MUST be
+    // read as a length the handler chose.
+    expect(scan(inFn('nz1', 'try { return await read(); } catch { return Array<string>(5); }')))
+      .toEqual([]);
+    expect(scan(inFn(
+      'nz2',
+      "let xs: string[] | undefined; try { xs = await read(); } catch { xs ??= ['fallback']; } return xs ?? [];",
+    ))).toEqual([]);
+    expect(scan(inFn(
+      'nz3',
+      "let xs: string[] = []; try { xs = await read(); } catch { xs = ['fallback']; } return xs;",
+    ))).toEqual([]);
+    expect(scan(
+      'declare function rs2(): Promise<string>;\n' +
+        'export async function nz4(): Promise<string> { try { return await rs2(); } catch { return `nope`; } }',
+    )).toEqual([]);
+    // A pattern that destructures SOMETHING is still a decision about content.
+    expect(scan(inFn('nz5', 'try { return await read(); } catch ({ message }) { return []; }')))
+      .toEqual([]);
+    // A non-null assertion around a NON-empty value is not emptiness either.
+    expect(scan(inFn('nz6', "try { return await read(); } catch { return ['x']!; }"))).toEqual([]);
   });
 
   it('two clauses in one function get distinct keys', () => {

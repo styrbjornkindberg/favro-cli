@@ -283,10 +283,16 @@ Issue #95, ADR-0006.
   non-test `src/` both decline to bind their error and answer with emptiness. A second
   seed over `ts.CatchClause` now walks them with the same two predicates, and the
   emptiness test learned the statement form (`catch { cards = [] }`), which no `return`
-  test could see. All 19 are listed with a measured reason — nine as debt, ten as
+  test could see. All 19 are listed with a measured reason — ten as debt, nine as
   decisions where the throw is the answer (a URL validator, a cache miss, a
   fail-closed refusal). No swallow was fixed here; the ratchet is what stops the count
   growing while they are (#153).
+  Review of #153 moved one line across that split and closed five more spellings: a
+  failed `git branch --merged` reads as "not merged", and `favro git sync` then moves
+  every affected card to "In Progress" — finished work walked backwards, so that
+  swallow is debt and not a decision. The five spellings that got past the scan
+  (`??=`/`||=`, `Array()`, `undefined!`, an empty template literal, and a `catch ({})`
+  that binds nothing) are now caught in both seeds.
 
 ### Known gaps at release
 
