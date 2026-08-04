@@ -759,26 +759,35 @@ export class CardsAPI {
     // `holeCollector` is the same mechanism `api/context.ts` uses for its
     // five-way fan-out; the marker rides on the entity because a single read has
     // no envelope to carry it (`read-shape.ts` rule 1).
+    //
+    // Each facet is `const` first and assigned only when it came back, so a
+    // failure leaves the KEY absent rather than present-and-`undefined`. Those
+    // two look identical through `JSON.stringify` and through every `??` here,
+    // but not to `Object.keys` — `query-parser.ts`'s `knownFields` reads exactly
+    // that — and "absent means we could not look" is the claim this whole change
+    // makes. It should be true of the object as well as of the bytes.
     const { unreachable, orElse } = holeCollector();
 
     // Hydrate board/collection if requested and not already present
     if (includes.includes('board') && card.boardId && !card.board) {
-      card.board = await orElse<Card['board']>(
+      const board = await orElse<Card['board']>(
         'board',
         new BoardsAPI(this.client)
           .getBoard(card.boardId)
-          .then((board) => board as unknown as Card['board']),
+          .then((raw) => raw as unknown as Card['board']),
         undefined,
       );
+      if (board !== undefined) card.board = board;
     }
     if (includes.includes('collection') && card.collectionId && !card.collection) {
-      card.collection = await orElse<Card['collection']>(
+      const collection = await orElse<Card['collection']>(
         'collection',
         new BoardsAPI(this.client)
           .getCollection(card.collectionId)
-          .then((collection) => collection as unknown as Card['collection']),
+          .then((raw) => raw as unknown as Card['collection']),
         undefined,
       );
+      if (collection !== undefined) card.collection = collection;
     }
     // Custom fields are returned inline on card responses from Favro API,
     // not via a separate endpoint.
@@ -789,24 +798,27 @@ export class CardsAPI {
       // the raw `dependencies` the card GET already carried". Writing `[]` here
       // would shadow real edges with a manufactured emptiness.
       // Favro: GET /cards/:cardId/dependencies
-      card.links = await orElse<CardLink[] | undefined>(
+      const links = await orElse<CardLink[] | undefined>(
         'links',
         this.client
           .get<{ dependencies: CardLink[] }>(`/cards/${cardId}/dependencies`)
           .then((lnk) => lnk.dependencies ?? []),
         undefined,
       );
+      if (links !== undefined) card.links = links;
     }
     if ((includes.includes('comments') || includes.includes('relations')) && !card.comments) {
-      // One facet id for both spellings — `relations` reads the same endpoint.
+      // One facet id for both spellings — `relations` reads the same endpoint,
+      // fills the same `comments` field, and so reports the same hole.
       // Favro: GET /comments?cardCommonId=<cardId>
-      card.comments = await orElse<CardComment[] | undefined>(
+      const comments = await orElse<CardComment[] | undefined>(
         'comments',
         this.client
           .get<{ entities: CardComment[] }>('/comments', { params: { cardCommonId: cardId } })
           .then((cmt) => cmt.entities ?? []),
         undefined,
       );
+      if (comments !== undefined) card.comments = comments;
     }
     // Set only when non-empty, so an absent marker stays distinguishable from an
     // empty one (`read-shape.ts` rule 3).

@@ -34,6 +34,7 @@ import * as path from 'path';
 import * as fsSync from 'fs';
 import { AddressInfo } from 'net';
 import FavroHttpClient from '../lib/http-client';
+import CardsAPI from '../lib/cards-api';
 import { invalidateCache } from '../lib/name-cache';
 
 // The only seam: the CLI builds its own client from real credentials, and this
@@ -262,6 +263,28 @@ describe('cards get --include: an empty facet and an unreadable one are distingu
     const alive = await getCard();
     expect(alive.payload.links).toEqual([]);
     expect(alive.raw).toContain('"links":[]');
+  });
+
+  it.each(FACETS)('%s: the unreached facet is off the OBJECT too, not only off the bytes', async (broken) => {
+    // `JSON.stringify` drops a key whose value is `undefined`, so the stdout arms
+    // above cannot tell "absent" from "present and undefined". `Object.keys` can,
+    // and `query-parser.ts`'s `knownFields` reads exactly that — a facet the read
+    // could not reach must not become a filterable field name either.
+    //
+    // Run at ALL FOUR sites: the guard is written once per facet, so an arm that
+    // only exercised one would leave three assignments free to regress.
+    await startServer(broken);
+    const dead = await new CardsAPI(injected!).getCard(CARD, { include: [broken] });
+
+    expect(Object.keys(dead)).not.toContain(broken);
+    expect(dead.unreachable).toEqual([{ id: broken, reason: REASON }]);
+
+    // The polarity: a facet that ANSWERED does become a key, `[]` included.
+    await startServer();
+    const read = await new CardsAPI(injected!).getCard(CARD, { include: [broken] });
+    expect(Object.keys(read)).toContain(broken);
+    expect(read[broken]).not.toBeUndefined();
+    expect('unreachable' in read).toBe(false);
   });
 
   it('the four facets are four separate reads, so one failure is one hole', async () => {
