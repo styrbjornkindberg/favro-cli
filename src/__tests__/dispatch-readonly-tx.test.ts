@@ -80,6 +80,24 @@ const NO_WRITES: [WritesOn<ReadOnlyTx>] extends [never] ? true : false = true;
  */
 const EVERY_WRITE: [Exclude<Writes, WritesOn<WritingTx>>] extends [never] ? true : false = true;
 
+/**
+ * `board()` gets `ReadTx` on BOTH arms, `readOnly` or not, and that arm needs its
+ * own assertion: widening it back to `TxCards` broke nothing else in the suite —
+ * mutated, tsc clean, 3159 passed — so without this line the claim in
+ * `IntentCore.board` was untested. It is not a style claim. `board()` runs before
+ * `assertScope`, so a write made from there is the one write in the table the
+ * mandatory scope lock structurally cannot see.
+ */
+type BoardTxOf<Arm> = Arm extends { board: (...args: never[]) => unknown }
+  ? Parameters<Arm['board']>[1]
+  : never;
+const NO_WRITES_IN_BOARD: [
+  | WritesOn<BoardTxOf<Extract<Intent<unknown, unknown>, { readOnly: true }>>>
+  | WritesOn<BoardTxOf<Extract<Intent<unknown, unknown>, { readOnly?: undefined }>>>,
+] extends [never]
+  ? true
+  : false = true;
+
 /** And the reads ARE reachable, or `ReadTx` would be trivially write-free. */
 const READS_REACHABLE: [Exclude<'getCard' | 'listCards' | 'tracker', keyof ReadOnlyTx>] extends [never]
   ? true
@@ -158,7 +176,7 @@ describe('readOnly narrows the tx an intent receives', () => {
   it('holds every type-level arm, and the four declarations they are read off', () => {
     // The `const`s carry the assertions; referencing them here is what keeps the
     // declarations from being dead code a future cleanup deletes.
-    expect([NO_WRITES, EVERY_WRITE, READS_REACHABLE]).toEqual([true, true, true]);
+    expect([NO_WRITES, NO_WRITES_IN_BOARD, EVERY_WRITE, READS_REACHABLE]).toEqual([true, true, true, true]);
     expect(readOnlyIntentThatWrites.readOnly).toBe(true);
     expect(readOnlyIntentThatReads.readOnly).toBe(true);
     expect(writingIntent.readOnly).toBeUndefined();
