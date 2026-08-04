@@ -75,10 +75,30 @@ const NO_WRITES: [WritesOn<ReadOnlyTx>] extends [never] ? true : false = true;
 /**
  * The opposite polarity, same expression: a WRITING intent's tx has all eight.
  * Without this, `NO_WRITES` would pass vacuously against a `Writes` union of
- * names nothing has — and would also pass against a `ReadOnlyTx` of `any`
- * (`keyof any` includes every string, so `NO_WRITES` catches that one too).
+ * names nothing has.
+ *
+ * This arm also covers `any` on its OWN side: `WritesOn<any>` is `never` (see
+ * below), so `Exclude<Writes, never>` is all eight and this line fails if a
+ * writing intent's tx is widened to `any`.
  */
 const EVERY_WRITE: [Exclude<Writes, WritesOn<WritingTx>>] extends [never] ? true : false = true;
+
+/**
+ * `ReadOnlyTx` is not `any`, and `NO_WRITES` cannot tell.
+ *
+ * Measured, correcting the claim this comment used to make: widening the
+ * `readOnly` arm's `tx` to `any` leaves line 73 GREEN. `keyof any` is
+ * `string | number | symbol`, and `Extract` distributes — none of those three is
+ * assignable to a union of eight string literals, so `WritesOn<any>` collapses to
+ * `never` and the write-free assertion passes vacuously against the widest type
+ * there is. `Exclude`'s polarity in `EVERY_WRITE` saves the writing arm; the
+ * read-only arm has no such luck, because "no writes" is exactly what `any`
+ * degenerates to here.
+ *
+ * `0 extends (1 & T)` is true for `any` and for nothing else: the intersection
+ * absorbs to `any` only in that case. This is the one arm that bites.
+ */
+const READ_TX_IS_NOT_ANY: 0 extends 1 & ReadOnlyTx ? false : true = true;
 
 /**
  * `board()` gets `ReadTx` on BOTH arms, `readOnly` or not, and that arm needs its
@@ -176,7 +196,13 @@ describe('readOnly narrows the tx an intent receives', () => {
   it('holds every type-level arm, and the four declarations they are read off', () => {
     // The `const`s carry the assertions; referencing them here is what keeps the
     // declarations from being dead code a future cleanup deletes.
-    expect([NO_WRITES, NO_WRITES_IN_BOARD, EVERY_WRITE, READS_REACHABLE]).toEqual([true, true, true, true]);
+    expect([NO_WRITES, NO_WRITES_IN_BOARD, EVERY_WRITE, READS_REACHABLE, READ_TX_IS_NOT_ANY]).toEqual([
+      true,
+      true,
+      true,
+      true,
+      true,
+    ]);
     expect(readOnlyIntentThatWrites.readOnly).toBe(true);
     expect(readOnlyIntentThatReads.readOnly).toBe(true);
     expect(writingIntent.readOnly).toBeUndefined();
