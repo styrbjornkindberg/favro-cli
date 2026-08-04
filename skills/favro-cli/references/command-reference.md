@@ -831,9 +831,18 @@ No flags. The board is read to completion; the `--limit` this used to accept was
 discarded downstream and is removed, so passing it exits 1.
 
 ### `query <board> <query...>` 📖 READ
-Semantic card search with natural language.
+Filter one board with the SAME fail-closed grammar `cards list --filter` takes.
+There is one grammar (#95) — an unknown field, an unparseable token, a tag
+outside the org or a column the board lacks all REFUSE, naming what they
+refused. None of them answers zero rows.
 
-Query patterns: `status:done`, `assigned:@alice`, `blocked`, `priority:high`, `tag:bug`, `due:overdue`, free text.
+Query patterns: `status:done`, `assignee:alice`, `tag:bug`, `due_date:overdue`,
+`customField:Priority=high`, `title~"login"`, `blocks:<ref>`,
+`blocked-by:<ref>`, and `AND`/`OR`/parentheses.
+
+Free text is `title~"…"` and nothing else. `assigned:`, `owner:`, `priority:`,
+`due:` and bare words were the deleted parser's inventions and refuse.
+`unblocked` is not answered here — ask `cards list <board> --filter "unblocked"`.
 
 | Flag | Description |
 |------|-------------|

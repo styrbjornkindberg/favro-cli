@@ -10,7 +10,7 @@ and streams are real and no request reached a live org.
 
 ## 3.0.0 — unreleased
 
-Three breaking changes, all in how the CLI is *called* and how it *answers*. The library
+Four breaking changes, all in how the CLI is *called* and how it *answers*. The library
 entry point is untouched: `src/index.ts` still exports `FavroHttpClient`, `CardsAPI` and
 `BoardsAPI` with unchanged signatures.
 
@@ -85,6 +85,47 @@ $ favro cards list board-1 --limit banana
 
 Issues #142/#143.
 
+#### 4. `favro query` speaks the `--filter` grammar, and refuses what it cannot resolve.
+
+`favro query` ran a second, regex-based parser of its own. It scraped the patterns it
+recognised, swept the remainder into a free-text title search, and printed a confident
+paragraph explaining why there were no results — so a typo *answered* where
+`cards list --filter` refused.
+
+```
+# 2.4.1
+$ favro query <board> "statuz:done"     # 0 rows, plus "No cards match …"
+
+# 3.0.0
+$ favro query <board> "statuz:done"
+{"error":{"message":"Unknown filter field 'statuz' at position 0 — refusing to run a query that cannot mean what you asked. Known fields: …","retryable":false}}
+```
+
+Every pattern that parser invented refuses now, and free text is `title~"…"` and nothing
+else:
+
+| Was | Say |
+|-----|-----|
+| `assigned:@alice`, `owner:bob` | `assignee:alice` |
+| `priority:high`, `high priority` | `customField:Priority=high` |
+| `due:overdue` | `due_date:overdue` |
+| `pricing page` (bare words) | `title~"pricing page"` |
+
+`unblocked` is refused and points at `cards list <board> --filter "unblocked"`, which
+judges each blocker and reports the ones it could not read. `blocks:<ref>` and
+`blocked-by:<ref>` are answered. An empty query refuses instead of widening to the whole
+board.
+
+The result shape changed with the parser: `matches` is a flat card list (the per-row
+`matchReason` was the old matcher's running commentary), `filter` is the parsed query with
+its values already settled, and `noResultsExplanation` is gone — the explanation is now a
+refusal, raised before any card is read.
+
+**Migration:** nothing that now refuses used to answer *correctly*. Re-spell it from the
+table above, or run `favro cards list --help` for the whole grammar.
+
+Issue #95, ADR-0005.
+
 ### Added
 
 - `--human` and `--pretty` on the root program, resolved in one place for every command.
@@ -96,6 +137,12 @@ Issues #142/#143.
   collection unless `--force` is passed.
 
 ### Fixed
+
+- `favro standup --help` pointed at an `unblocked` command — a top-level command that has
+  never existed. Its help now says `favro cards list <board> --filter "unblocked"`. The
+  drift test covered help *topics* and tracked `.md` files, not `.description()` strings;
+  it now walks the live command tree's descriptions, summaries and option help too, so the
+  class is closed and not just the instance (#95).
 
 - A scope violation under the JSON default wrote **nothing** to stdout. It now writes the
   refusal envelope, exit 1. `checkScope` / `checkCollectionScope` used to swallow their

@@ -87,21 +87,40 @@ Bring them back with `--body` and `--include custom-fields`. There is no
 It returns the cards this card *blocks*, exactly as its own help string always
 said. `blockers` named the other end; `cards blocked-by` is unchanged.
 
-### `favro query` no longer takes blocking predicates
+### `favro query` speaks the `--filter` grammar, and only that
 
-`blocked`, `blocking` and `relates:`/`relates to` are gone from the natural-
-language `query` command. All three read `card.links`, which was never populated
-for them, so every one of them answered about an empty array on every card. Ask
-`cards list --filter` instead, where the grammar fails closed:
+There is one grammar for filtering cards. `favro query` used to run a second,
+regex-based one of its own: it scraped what it recognised, swept the remainder
+into a title search, and printed a confident explanation of why there were no
+results. So `favro query <board> "statuz:done"` answered **zero rows** while
+`favro cards list <board> --filter "statuz:done"` refused.
+
+Every input that parser invented now refuses, naming the token:
+
+| Was | Say |
+|-----|-----|
+| `assigned:@alice`, `owner:bob` | `assignee:alice` |
+| `priority:high`, `high priority` | `customField:Priority=high` |
+| `due:overdue` | `due_date:overdue` |
+| `pricing page` (free text) | `title~"pricing page"` |
+| `done`, `overdue`, `assigned to bob` | name the field |
+
+Nothing that refuses used to answer *correctly* — an unrecognised token became a
+title search, and a plausible empty result is indistinguishable from a genuinely
+empty board.
+
+`blocks:<ref>` and `blocked-by:<ref>` are answered on `query`. `unblocked` is
+not: it has to judge each blocker, which takes reads `query` does not make and
+cannot report on. Ask the frontier where it is answered:
 
 ```
 favro cards list <board> --filter "unblocked"
-favro cards list <board> --filter "blocked-by:CLA-1804"
-favro cards list <board> --filter "blocks:CLA-1804"
 ```
 
-`favro next` also stopped scoring blocking, rather than keep a penalty that
-could never fire.
+`blocked`, `blocking` and `relates:`/`relates to` were removed earlier, for a
+different reason: all three read `card.links`, which was never populated for
+them, so every one answered about an empty array on every card. `favro next`
+also stopped scoring blocking, rather than keep a penalty that could never fire.
 
 ---
 

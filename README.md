@@ -38,7 +38,7 @@ Cards grow. Long descriptions, ten comment threads, status changes nobody docume
 
   llm  Let me pull that card up.
 
-       $ favro query "Sprint Board" "Migrate auth service to OAuth2"
+       $ favro query "Sprint Board" "title~\"Migrate auth service\""
        $ favro cards get <id>
        $ favro comments list <id>
 
@@ -197,7 +197,7 @@ You have meeting notes, a spec doc, or a list of action items. Instead of manual
 + you  Use "Q2 Backlog". Tags for the groups. Pricing page card already exists.
 
   llm  $ favro boards list
-       $ favro query "Q2 Backlog" "pricing page update"   # find existing card id
+       $ favro query "Q2 Backlog" "title~\"pricing page\""   # find existing card id
 
        Found the pricing page card. Here's what I'll create — 8 cards with tags,
        Sarah assigned to onboarding, mobile beta due May 31, SSO linked to pricing.

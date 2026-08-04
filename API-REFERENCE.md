@@ -2350,7 +2350,7 @@ jobs:
 | Error | Cause | Solution |
 |-------|-------|----------|
 | `Board '<id>' not found` | Board ID is invalid or inaccessible | Run `favro boards list` to find correct ID |
-| `Card '<id>' not found` | Card was deleted or ID is wrong | Use `favro query` to search by name |
+| `Card '<id>' not found` | Card was deleted or ID is wrong | Search by name: `favro query <board> 'title~"part of the name"'` |
 | `Status '<status>' not found` | Status name doesn't exist on board | List valid statuses: `favro boards get <id> \| jq '.columns'` |
 | `User '<email>' not found` | Email doesn't match any board member | List members: `favro members list --board <id>` |
 

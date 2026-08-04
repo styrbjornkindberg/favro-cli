@@ -651,7 +651,7 @@ Automatically assign code review cards based on sprint status:
 favro context sprint-42 > board-snapshot.json
 
 # 2. Query for "In Progress" code review cards
-favro query sprint-42 "status:In Progress label:code-review"
+favro query sprint-42 "status:\"In Progress\" AND tag:code-review"
 
 # 3. Preview assigning the unassigned code reviews to alice
 favro batch assign --board sprint-42 \
@@ -700,7 +700,7 @@ echo "Renovate kitchen,Garden fence repair,Paint basement" | \
   done
 
 # 3. Semantic search: find overdue tasks
-favro query $board_id "due:<today"
+favro query $board_id "due_date<today"
 
 # 4. Batch close done items
 favro batch-smart $board_id --goal "close all Done cards"
@@ -721,8 +721,8 @@ debt_board=$(favro boards create "$collection_id" --name "Tech Debt Q1 2026" | j
 # 2. Get board context for analysis
 favro context $debt_board > debt-snapshot.json
 
-# 3. Query for high-priority items without owners
-favro query $debt_board "priority:high status:Backlog owner:none"
+# 3. Query for high-priority backlog items
+favro query $debt_board "customField:Priority=high AND status:Backlog"
 
 # 4. Preview assigning that debt to the platform owner (drop --dry-run to apply)
 favro batch assign --board $debt_board \
@@ -788,7 +788,7 @@ Error: Card '<card-id>' not found. May have been deleted or is on a different bo
 **Fix:**
 ```bash
 # Search for the card by name
-favro query <board-id> "title:partial card name"
+favro query <board-id> "title~\"partial card name\""
 ```
 
 ---
