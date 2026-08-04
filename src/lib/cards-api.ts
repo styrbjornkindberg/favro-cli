@@ -9,6 +9,7 @@ import { invalidateCache } from './name-cache';
 import { isUserId } from './users-api';
 import { resolveAssignee } from './assignee';
 import { RefusalError } from './refusal';
+import { holeCollector, Unreachable } from './read-shape';
 
 /**
  * The one wording for "the workspace holds no tag by that name". Shared by the
@@ -189,6 +190,15 @@ export interface Card {
   links?: CardLink[];
   comments?: CardComment[];
   relations?: CardRelation[];
+  /**
+   * The `--include` facets this read asked for and could not reach — `{id,
+   * reason}` objects under the one key every producer uses (#86). Present only
+   * when there are any, so an absent marker with `links: []` means the card
+   * genuinely has no dependencies rather than unreadable (`read-shape.ts`
+   * rule 3, #116/#153). A single read has no envelope, so the marker rides on
+   * the entity — the same place `context`'s snapshot puts its own.
+   */
+  unreachable?: Unreachable[];
   /**
    * Every other field Favro sends passes through untouched — `position`,
    * `tasksDone`/`tasksTotal`, `completed`, `timeOnBoard`/`timeOnColumns`,
@@ -742,35 +752,65 @@ export class CardsAPI {
     const card = normalizeCard(rawCard);
     await this.hydrateNames([card]);
 
+    // Each facet read RECORDS its hole instead of answering with emptiness
+    // (#153). A `catch { /* best effort */ }` here left the field absent, which
+    // is exactly what "this card has no board / no links / no comments" looks
+    // like — so a caller that ASKED for the facet got a card quietly missing it.
+    // `holeCollector` is the same mechanism `api/context.ts` uses for its
+    // five-way fan-out; the marker rides on the entity because a single read has
+    // no envelope to carry it (`read-shape.ts` rule 1).
+    const { unreachable, orElse } = holeCollector();
+
     // Hydrate board/collection if requested and not already present
     if (includes.includes('board') && card.boardId && !card.board) {
-      try {
-        card.board = await new BoardsAPI(this.client).getBoard(card.boardId) as unknown as typeof card.board;
-      } catch { /* best effort */ }
+      card.board = await orElse<Card['board']>(
+        'board',
+        new BoardsAPI(this.client)
+          .getBoard(card.boardId)
+          .then((board) => board as unknown as Card['board']),
+        undefined,
+      );
     }
     if (includes.includes('collection') && card.collectionId && !card.collection) {
-      try {
-        card.collection = await new BoardsAPI(this.client).getCollection(card.collectionId) as unknown as typeof card.collection;
-      } catch { /* best effort */ }
+      card.collection = await orElse<Card['collection']>(
+        'collection',
+        new BoardsAPI(this.client)
+          .getCollection(card.collectionId)
+          .then((collection) => collection as unknown as Card['collection']),
+        undefined,
+      );
     }
     // Custom fields are returned inline on card responses from Favro API,
     // not via a separate endpoint.
     if (includes.includes('links') && !card.links) {
-      try {
-        // Favro: GET /cards/:cardId/dependencies
-        const lnk = await this.client.get<{ dependencies: CardLink[] }>(`/cards/${cardId}/dependencies`);
-        card.links = lnk.dependencies ?? [];
-      } catch { /* best effort */ }
+      // The fallback stays ABSENT rather than `[]`, and that asymmetry is on
+      // purpose: `[]` is what a card with no dependencies answers, and
+      // `query-parser.ts`'s `linksOf` reads an absent `links` as "fall through to
+      // the raw `dependencies` the card GET already carried". Writing `[]` here
+      // would shadow real edges with a manufactured emptiness.
+      // Favro: GET /cards/:cardId/dependencies
+      card.links = await orElse<CardLink[] | undefined>(
+        'links',
+        this.client
+          .get<{ dependencies: CardLink[] }>(`/cards/${cardId}/dependencies`)
+          .then((lnk) => lnk.dependencies ?? []),
+        undefined,
+      );
     }
     if ((includes.includes('comments') || includes.includes('relations')) && !card.comments) {
-      try {
-        // Favro: GET /comments?cardCommonId=<cardId>
-        const cmt = await this.client.get<{ entities: CardComment[] }>('/comments', {
-          params: { cardCommonId: cardId }
-        });
-        card.comments = cmt.entities ?? [];
-      } catch { /* best effort */ }
+      // One facet id for both spellings — `relations` reads the same endpoint.
+      // Favro: GET /comments?cardCommonId=<cardId>
+      card.comments = await orElse<CardComment[] | undefined>(
+        'comments',
+        this.client
+          .get<{ entities: CardComment[] }>('/comments', { params: { cardCommonId: cardId } })
+          .then((cmt) => cmt.entities ?? []),
+        undefined,
+      );
     }
+    // Set only when non-empty, so an absent marker stays distinguishable from an
+    // empty one (`read-shape.ts` rule 3).
+    if (unreachable.length > 0) card.unreachable = unreachable;
     return card;
   }
 

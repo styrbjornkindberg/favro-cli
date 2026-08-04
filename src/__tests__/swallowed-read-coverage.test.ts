@@ -35,7 +35,7 @@
  * SEED TWO — the `try`/`catch` STATEMENT (#153). `try { cards = await
  * listCards(b) } catch { cards = [] }` is the identical substitution in a shape
  * seed one does not walk at all, and #149 shipped asserting that population was
- * zero. It is not zero: 19 of the 160 `catch` clauses in non-test `src/` match,
+ * zero. It is not zero: 15 of the 156 `catch` clauses in non-test `src/` match,
  * re-measured under this commit and triaged into `CATCH_DEBT`/`CATCH_DECIDED`
  * below. The seed is `ts.CatchClause`, and the error binding — absent, or present
  * and not destructured — takes the place of the handler's parameter list.
@@ -106,7 +106,7 @@
  *     survive the merge (#154 discharged all three reads), but the REASON did, in
  *     a stricter form: `DEBT` is now pinned EMPTY, and the arm that pins it claims
  *     there is no swallowed read "IN THE SHAPE THIS SCAN WALKS" whose caller
- *     cannot tell — a claim scoped to seed one. Folding seed two's ten debts into
+ *     cannot tell — a claim scoped to seed one. Folding seed two's six debts into
  *     `DEBT` breaks the pin and falsifies the claim, so a collapse still costs a
  *     rewrite of the one line holding that population against growth. CORRECTED
  *     in review of #153: the merge resolution recorded this reason as dead, and it
@@ -127,11 +127,11 @@
  *     envelope to carry a marker and the artefact outlives the warning. That is
  *     how #154 discharged `init`'s three.
  *
- * For a `CATCH_DEBT` line, also drop the `10` in the count assertion to `9` — the
+ * For a `CATCH_DEBT` line, also drop the `6` in the count assertion to `5` — the
  * count is pinned in BOTH directions on purpose, because "moved it to
  * `CATCH_DECIDED`" is the cheap way to discharge a defect without fixing it, and a
  * shrink is a two-character edit next to the line you are already deleting.
- * Discharging a `cards-api.ts` or `skill-store.ts` line renumbers its `#n`
+ * Discharging ONE of a `skill-store.ts` pair renumbers its `#n`
  * siblings; the staleness arm will tell you, and the new numbers are in the
  * failure message.
  */
@@ -204,23 +204,21 @@ const DECIDED: Record<string, string> = {
  * Keyed `<file> <enclosing>() catch → <fallback>`, `#n` when one function has
  * several. NOT keyed on the line, which churns; see `enclosingName`.
  *
- * These TEN are triage, not a parking space. Each was read at its site under this
+ * These SIX are triage, not a parking space. Each was read at its site under this
  * commit and the reason states what a caller actually observes — not "looks
  * sloppy". Fixing them is #153's follow-up and deliberately not #153: four other
  * branches were live in these files when this landed, and the checker fix is what
  * stops the count growing while that is scheduled.
+ *
+ * There were TEN. `cards-api.ts getCardById()`'s FOUR are discharged — the
+ * `--include board/collection/links/comments` reads now record an `unreachable`
+ * hole on the card they return, the QUERY route of the two below, because
+ * `cards get` answers a query. The whole `#1`–`#4` family went at once, so
+ * nothing renumbered.
  */
 const CATCH_DEBT: Record<string, string> = {
   'src/commands/tasklists.ts boardOfTaskList() catch → \'\'':
     "#153 — fails CLOSED (`assertScope` refuses on `''`, and `--force` does not rescue it), but SILENTLY: the refusal it produces says \"the underlying error is reported separately\" and on this path nothing reported it, unlike `boardOfCard` two hops down which console.errors first",
-  'src/lib/cards-api.ts getCardById() catch → undefined':
-    '#153 — `--include board` failing leaves `card.board` absent, which is exactly what "this card has no board" looks like; the caller asked for the facet and gets a card quietly missing it',
-  'src/lib/cards-api.ts getCardById() catch → undefined #2':
-    '#153 — same for `--include collection`',
-  'src/lib/cards-api.ts getCardById() catch → undefined #3':
-    '#153 — same for `--include links`; the `card.links = …` assignment is INSIDE the try, so a failed `/dependencies` read leaves the field undefined where a successful empty one writes `[]` — a distinction no caller is told about and no schema states',
-  'src/lib/cards-api.ts getCardById() catch → undefined #4':
-    '#153 — same for `--include comments` off `/comments?cardCommonId=`',
   'src/lib/skill-store.ts listSkills() catch → undefined':
     '#153 — a builtin skill file that exists but will not parse is dropped from `skills list` with no warning, so a broken skill and an uninstalled one read identically',
   'src/lib/skill-store.ts listSkills() catch → undefined #2':
@@ -429,10 +427,10 @@ function ignoresError(bound: ts.BindingName | undefined): boolean {
  *
  * A `catch` clause has no read to name the way a promise handler's receiver does:
  * its `try` block can hold several calls, and naming the first one misnames 5 of
- * the 19 live sites (`isValidWebhookUrl/trim`, `writeFile/cacheFilePath`,
+ * the 15 live sites (`isValidWebhookUrl/trim`, `writeFile/cacheFilePath`,
  * `parseBasicAuth/toString`, `isBranchMerged/filter`, and `wirePath`, which has no
  * call at all). The enclosing declaration is stable under edits above it, unique
- * for 13 of the 19 on its own, and actually findable by a human — which the key's
+ * for 13 of the 15 on its own, and actually findable by a human — which the key's
  * whole job is.
  */
 function enclosingName(node: ts.Node): string {
@@ -625,18 +623,18 @@ describe('no read answers a failure with emptiness, outside the two lists', () =
     // exemption above. It held the three `init` reads until #154 made them
     // propagate, so there is now no swallowed read IN THE SHAPE THIS SCAN WALKS
     // that its caller cannot tell about — not the same thing as none in `src/`,
-    // which the header's nineteen untriaged `ts.CatchClause` sites forbid saying.
+    // which the header's fifteen untriaged `ts.CatchClause` sites forbid saying.
     // A new line here would be a regression rather than a record of one.
     expect(Object.keys(DEBT).sort()).toEqual([]);
   });
 
-  it('the catch lists hold the nineteen clauses they were triaged at, split 10/9', () => {
+  it('the catch lists hold the fifteen clauses they were triaged at, split 6/9', () => {
     // The exemption and exactly-once arms already pin the SET of catch keys. What
     // they cannot see is the SPLIT: silently moving a key from `CATCH_DEBT` to
     // `CATCH_DECIDED` would discharge a defect by relabelling it, and parking a
-    // tenth build in `CATCH_DEBT` is the failure mode #149's header names. Both
+    // seventh build in `CATCH_DEBT` is the failure mode #149's header names. Both
     // move a count.
-    expect(Object.keys(CATCH_DEBT)).toHaveLength(10);
+    expect(Object.keys(CATCH_DEBT)).toHaveLength(6);
     expect(Object.keys(CATCH_DECIDED)).toHaveLength(9);
     // Disjoint, or `EXEMPT`'s spread would silently let the later list win and one
     // of the counts above would be describing a key nobody reads.
@@ -786,11 +784,12 @@ describe('seed two — the try/catch statement, through the same scan (#153)', (
     // `return` in the catch at all.
     expect(scan(inFn('b', 'let out: string[] = []; try { out = await read(); } catch { out = []; } return out;')))
       .toEqual(['src/__synthetic__.ts b() catch → []']);
-    // A property target, which is how `cards-api.ts` spells its four.
+    // A property target, which is how `cards-api.ts` spelled its four before they
+    // were discharged — the shape is still the likeliest next one here.
     expect(scan(inFn('c', 'const o: { v?: string[] } = {}; try { o.v = await read(); } catch { o.v = []; } return o.v ?? [];')))
       .toEqual(['src/__synthetic__.ts c() catch → []']);
     // The empty body — `catch { /* best effort */ }`, which is the single most
-    // common live spelling here (10 of the 19; the other nine are `return`s).
+    // common live spelling here (6 of the 15; the other nine are `return`s).
     expect(scan(inFn('d', 'const o: { v?: string[] } = {}; try { o.v = await read(); } catch { } return o.v ?? [];')))
       .toEqual(['src/__synthetic__.ts d() catch → undefined']);
     // A bare `return;`.
@@ -844,8 +843,8 @@ describe('seed two — the try/catch statement, through the same scan (#153)', (
       'bypassOne',
       'let out: string[] = []; try { out = await read(); } catch { out = [] as string[]; } return out;',
     ))).toEqual(['src/__synthetic__.ts bypassOne() catch → []']);
-    // …and the double assertion, which is exactly how `cards-api.ts:749` spells
-    // its own value (`as unknown as typeof card.board`).
+    // …and the double assertion, which is exactly how `cards-api.ts`'s
+    // `getCardById` spells its board facet (`as unknown as Card['board']`).
     expect(scan(inFn(
       'bypassOneB',
       'let out: string[] = []; try { out = await read(); } catch { out = ([] as unknown) as string[]; } return out;',
@@ -936,9 +935,10 @@ describe('seed two — the try/catch statement, through the same scan (#153)', (
   });
 
   it('two clauses in one function get distinct keys', () => {
-    // The `#n` ordinal. Without it `cards-api.ts`'s four collapse onto one key and
-    // three of them hide inside the fourth's exemption — the same collapse the
-    // exactly-once arm exists to prevent for seed one.
+    // The `#n` ordinal. Without it `skill-store.ts`'s two collapse onto one key
+    // and one hides inside the other's exemption — the same collapse the
+    // exactly-once arm exists to prevent for seed one. It held `cards-api.ts`'s
+    // four the same way until they were discharged.
     expect(scan(inFn(
       'twice',
       'try { return await read(); } catch { return []; } finally { }',

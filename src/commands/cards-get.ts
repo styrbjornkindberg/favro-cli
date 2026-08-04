@@ -34,7 +34,10 @@ export function registerCardsGetCommand(cardsCmd: Command): void {
       '  favro cards get <card>\n' +
       '  favro cards get <card> --include board,collection\n' +
       '  favro cards get <card> --include board,collection,custom-fields,links,comments\n\n' +
-      `Valid includes: ${VALID_INCLUDES.join(', ')}`
+      `Valid includes: ${VALID_INCLUDES.join(', ')}\n\n` +
+      'A facet that could not be read is reported on the card as\n' +
+      'unreachable: [{id, reason}] — an absent marker is what makes an empty\n' +
+      'links or comments list mean "none" and not "unreadable".'
     )
     .option(
       '--include <items>',

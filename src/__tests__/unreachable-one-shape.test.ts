@@ -14,7 +14,10 @@
  *
  * A NEW producer must be added to the list below in the same change that adds
  * it. #116 made `getSnapshot` the fourth, and the shared reader is the only
- * thing that would have caught it shipping a fifth shape.
+ * thing that would have caught it shipping a fifth shape. `cards get --include`
+ * is the FIFTH (#153): its four facet reads used to swallow their failures, and
+ * discharging them put the marker on a `Card` — the second producer to ride on a
+ * bare entity rather than an envelope, so the shared reader has to reach it too.
  */
 import * as http from 'http';
 import * as os from 'os';
@@ -182,13 +185,56 @@ async function fromContext(cardsRefuse = true): Promise<BoardContextSnapshot> {
   return snapshot;
 }
 
+/**
+ * What `cards get <card> --include comments` puts on stdout, minus everything but
+ * the marker — the FIFTH producer (#153).
+ *
+ * The holes are `--include` FACETS, like `context`'s, and they ride on the card
+ * itself: a single read has no envelope (rule 1), so the entity carries its own.
+ * The card GET answers; only the `/comments?cardCommonId=` facet refuses, so the
+ * marker has to describe a partial read of a card that WAS fetched.
+ */
+async function fromCardsGet(): Promise<unknown> {
+  const CARD = '117a0f59f4145c41747b32dc';
+  const server = http.createServer((req, res) => {
+    req.on('data', () => { /* no bodies on this path */ });
+    req.on('end', () => {
+      const url = req.url ?? '';
+      const send = (status: number, body: unknown): void => {
+        res.writeHead(status, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(body));
+      };
+      if (url.includes('cardCommonId=')) return send(403, { message: 'Access denied' });
+      if (url.split('?')[0].endsWith(`/cards/${CARD}`)) {
+        return send(200, { cardId: CARD, cardCommonId: 'common-1', name: 'a card' });
+      }
+      return send(200, { entities: [] });
+    });
+  });
+  running.push(server);
+
+  const client = await new Promise<FavroHttpClient>((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      const { port } = server.address() as AddressInfo;
+      resolve(new FavroHttpClient({
+        baseURL: `http://127.0.0.1:${port}/api/v1`,
+        auth: { organizationId: ORG },
+      }));
+    });
+  });
+
+  // The card IS what stdout carries, so there is nothing to reshape here.
+  return new CardsAPI(client).getCard(CARD, { include: ['comments'] });
+}
+
 describe('the unreachable marker reads the same from every producer (#86)', () => {
-  it('parses identically from cards list, overview, risks and context', async () => {
+  it('parses identically from cards list, overview, risks, context and cards get', async () => {
     const produced = [
       ['cards list', await fromCardsList()],
       ['overview', await fromOverview()],
       ['risks', fromRisks()],
       ['context', await fromContext()],
+      ['cards get', await fromCardsGet()],
     ] as const;
 
     for (const [command, payload] of produced) {
