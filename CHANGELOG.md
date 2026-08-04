@@ -102,6 +102,16 @@ Issues #142/#143.
   own throw and call `process.exit(1)` directly, which made the refusal invisible to
   every caller (#133). Acceptance holds on 12 of 38 guarded write paths; the remaining 26
   need the #115–#119 migration first.
+- `tasks update/complete/delete` under a scope lock, with `--card` omitted, refused with a
+  remedy that could not be run. The message was `assertScope`'s generic boardless one:
+  it offered two causes that are both false in this case (nothing was read, so no card
+  failed to read and none was found forkless) and told the user to run `favro cards get
+  <cardCommonId>`, which needs the cardCommonId they do not have — the id in hand is a
+  taskId. It never named `--card`. It now does, and says why the CLI cannot infer the card
+  and why `--force` does not stand in for the flag (#126). Measured on all three: exit 1,
+  stderr, stdout empty, before and after. The generic wording is unchanged wherever it is
+  true — `--card` given but unreadable, or given for a card with no board instance.
+
 - `--dry-run` no longer demands credentials for a preview that never touches the wire.
   Commands whose preview *is* a wire-derived scope verdict (`comments add/update/delete`,
   `members add --board-target`, and `boards update/delete` under a lock — see below) still

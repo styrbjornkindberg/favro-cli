@@ -552,6 +552,7 @@ Mark a task as completed.
 
 | Flag | Description |
 |------|-------------|
+| `--card <cardCommonId>` | The card the task belongs to. **Required under a scope lock** — a taskId names no board, so the lock has nothing to check without it |
 | `-y, --yes` | Skip confirmation |
 | `--json` | Output raw JSON |
 
@@ -565,6 +566,7 @@ Update a task's name, completed state, or position.
 | `--completed` | Mark as completed |
 | `--not-completed` | Mark as not completed |
 | `--position <n>` | New position (0-based) |
+| `--card <cardCommonId>` | The card the task belongs to. **Required under a scope lock** — a taskId names no board, so the lock has nothing to check without it |
 | `--dry-run` | Preview only |
 | `-y, --yes` | Skip confirmation |
 | `--json` | Output raw JSON |
@@ -575,6 +577,7 @@ Delete a task.
 
 | Flag | Description |
 |------|-------------|
+| `--card <cardCommonId>` | The card the task belongs to. **Required under a scope lock** — a taskId names no board, so the lock has nothing to check without it |
 | `--dry-run` | Preview only |
 | `-y, --yes` | Skip confirmation |
 

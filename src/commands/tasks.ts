@@ -9,11 +9,66 @@ import { Command } from 'commander';
 import TasksAPI from '../lib/tasks-api';
 import TaskListsAPI from '../lib/tasklists-api';
 import CardsAPI from '../lib/cards-api';
+import type FavroHttpClient from '../lib/http-client';
 import { createFavroClient } from '../lib/client-factory';
 import { readConfig } from '../lib/config';
 import { logError } from '../lib/error-handler';
-import { boardOfCard, checkResolvedScope, confirmAction, dryRunLog } from '../lib/safety';
+import { boardOfCard, checkResolvedScope, confirmAction, dryRunLog, ScopeError } from '../lib/safety';
 import { capRows, noteTruncation, writeEnvelope } from '../lib/read-shape';
+
+/**
+ * The shared scope check for the three writes named only by a `taskId`, plus the
+ * one remedy only these three know (#126).
+ *
+ * `assertScope`'s boardless refusal offers two causes and one remedy: the card
+ * could not be read, or it has no board instance, so run `favro cards get`. That
+ * is right for every other caller, and NEITHER cause is true here when `--card`
+ * was omitted — `boardOfCard('')` returns `''` before it spends a request, so no
+ * card was read and none was found forkless. The remedy is wrong too: the only id
+ * the caller has is a taskId, and `favro cards get` cannot take one. What they
+ * need is `--card`, which the generic wording never mentions.
+ *
+ * So the WORDING is replaced for that one case, and nothing else is. This is not
+ * a second refusal path. It cannot refuse a write the shared check would allow —
+ * with no lock configured `checkResolvedScope` returns and there is no throw to
+ * catch, so the omitted flag stays a no-op exactly as before. It cannot allow one
+ * the shared check would refuse — the only statement here is `throw`, and the
+ * decision, the `ScopeError` type (so `retryable: false`, #120), the fail-closed
+ * `''`, the `--force`-does-not-rescue rule and the exit code all still come from
+ * `assertScope`.
+ *
+ * Gated on `!card`, not on the refusal's empty `boardId`, because `!card` is what
+ * makes the new wording TRUE. A caller who passes `--card` at an unreadable or
+ * board-less card lands on the same empty `boardId` and keeps the generic message
+ * verbatim: there both of its causes are live, its "reported separately" promise
+ * is kept by `boardOfCard`, and `cards get` is the right next command. So the
+ * out-of-lock refusal — which needs `--card` to have resolved at all — is
+ * untouched by construction.
+ */
+async function checkTaskScope(
+  client: FavroHttpClient,
+  card: string | undefined,
+  force: boolean | undefined,
+): Promise<void> {
+  try {
+    await checkResolvedScope(client, () => boardOfCard(client, card ?? ''), force);
+  } catch (error) {
+    if (card || !(error instanceof ScopeError)) throw error;
+
+    const config = await readConfig();
+    const locked = config?.scopeCollectionName ?? config?.scopeCollectionId ?? error.scopeCollectionId;
+    throw new ScopeError(
+      `Scope violation: this write names no card, so the scope lock ("${locked}") has no board to check.\n` +
+        `  Pass --card <cardCommonId> — the card the task belongs to — and the lock checks its board.\n` +
+        `  It cannot be inferred: the id given is a taskId, and Favro's 'GET /tasks/:taskId' is\n` +
+        `  UNMEASURED, so this CLI has no verified way to read a task's card (#126).\n` +
+        `  --force does not stand in for it: force means "this board is outside the lock, proceed",\n` +
+        `  and with no card named there is no board to say that about.`,
+      error.boardId,
+      error.scopeCollectionId,
+    );
+  }
+}
 
 export function registerTasksCommands(program: Command): void {
   const tasksCommand = program.command('tasks').description('Manage granular checklists inside a single card');
@@ -116,7 +171,8 @@ export function registerTasksCommands(program: Command): void {
     // Favro's `GET /tasks/:taskId` is UNMEASURED — this repo does not guess at
     // wire behaviour, so the card comes from the caller instead. Omitted, the
     // board resolves to '' and the shared check refuses under a lock: the write
-    // is uncheckable, not exempt. Without a lock it stays a no-op.
+    // is uncheckable, not exempt. Without a lock it stays a no-op. `checkTaskScope`
+    // is that shared check; it only rewords the refusal to name this flag (#126).
     //
     // KNOWN CEILING (#104): the taskId is never verified to belong to the card
     // named by `--card`, because verifying it is exactly the read that does not
@@ -142,7 +198,7 @@ export function registerTasksCommands(program: Command): void {
         }
 
         const client = await createFavroClient();
-        await checkResolvedScope(client, () => boardOfCard(client, options.card), options.force);
+        await checkTaskScope(client, options.card, options.force);
 
         if (options.dryRun) {
           dryRunLog('updating', 'task', taskId, updateData);
@@ -179,7 +235,7 @@ export function registerTasksCommands(program: Command): void {
       const verbose = tasksCommand.opts()?.verbose ?? false;
       try {
         const client = await createFavroClient();
-        await checkResolvedScope(client, () => boardOfCard(client, options.card), options.force);
+        await checkTaskScope(client, options.card, options.force);
 
         if (options.dryRun) {
           dryRunLog('completing', 'task', taskId);
@@ -215,7 +271,7 @@ export function registerTasksCommands(program: Command): void {
       const verbose = tasksCommand.opts()?.verbose ?? false;
       try {
         const client = await createFavroClient();
-        await checkResolvedScope(client, () => boardOfCard(client, options.card), options.force);
+        await checkTaskScope(client, options.card, options.force);
 
         if (options.dryRun) {
           dryRunLog('deleting', 'task', taskId);
