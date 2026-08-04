@@ -25,6 +25,10 @@ import { healthHandler } from '../commands/health';
 import { workloadHandler } from '../commands/workload';
 import { teamHandler } from '../commands/team';
 import { staleHandler } from '../commands/stale';
+import { myStandupHandler } from '../commands/my-standup';
+import { nextHandler } from '../commands/next';
+import { overviewHandler } from '../commands/overview';
+import { myCardsHandler } from '../commands/my-cards';
 
 const ORG = 'org-1';
 const COLL = 'coll-1';
@@ -174,6 +178,12 @@ beforeEach(async () => {
   // reads or clobbers the developer's own ~/.favro cache.
   tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'favro-aggregate-hole-test-'));
   process.env.FAVRO_CONFIG_DIR = tmpDir;
+  // `my-cards`, `my-standup` and `next` resolve the caller through
+  // `resolveUserId()`, which reads this file rather than the `Ctx` (#149's four
+  // consumers are personal commands; the #148 four are not). A real file, in the
+  // per-test dir, so nothing is stubbed and the identity is the cards' own
+  // `user-1`.
+  await fs.writeFile(path.join(tmpDir, 'config.json'), JSON.stringify({ userId: 'user-1' }));
 });
 
 afterEach(async () => {
@@ -372,5 +382,200 @@ describe('the other three snapshot consumers state what they do with a hole (#14
     expect('unreachable' in (await workloadHandler(ctx, NO_OPTS)).item).toBe(false);
     expect('unreachable' in (await teamHandler(ctx, NO_OPTS)).item).toBe(false);
     expect('unreachable' in (await staleHandler(ctx, { days: '0' })).item).toBe(false);
+  });
+});
+
+/**
+ * The FOUR PERSONAL consumers (#149) — the ones #148 deliberately left, because
+ * for these the answer is not "drop the board's cards".
+ *
+ * Same server, same two boards, same thirteen cards each: ten finished long ago
+ * and three actively in progress. So on the DARK board the finished ten are the
+ * cards every assertion below is really about — with no columns they have no
+ * `stage`, and a stage predicate that reads a missing stage as "not done" is the
+ * defect this ticket is filed for.
+ *
+ * Each command states a DIFFERENT decision, and the tests pin the difference
+ * rather than a shared shape:
+ *
+ *   - `my-standup` keeps the card and puts it in `stageUnknown` — never in
+ *     `inProgress`, which is what it used to do to finished work.
+ *   - `next` does not rank it, and says the pool shrank.
+ *   - `overview` counts it under stage `unknown` and now merges the snapshot's
+ *     hole into its own `unreachable`, which is what its #86 promise requires.
+ *   - `my-cards` lists it like any other card of mine; only `suggestedNext`
+ *     degrades.
+ */
+const STANDUP_OPTS = { days: '3' };
+const NEXT_OPTS = { count: '5' };
+
+describe('my-standup does not report finished work as in progress (#149)', () => {
+  it('puts the dark board\'s cards in stageUnknown, and NOT in inProgress', async () => {
+    const client = await startServer({ failColumnsFor: [DARK] });
+    const result = await myStandupHandler(ctxFor(client), STANDUP_OPTS);
+
+    // THE regression. Before the fix `inProgress` held sixteen cards — the three
+    // that really are active plus all thirteen of the dark board's, ten of them
+    // finished. A standup read out loud off that claims work in flight that was
+    // delivered weeks ago.
+    expect(result.item.inProgress.map(c => c.id).sort())
+      .toEqual([`${GOOD}-c10`, `${GOOD}-c11`, `${GOOD}-c12`]);
+    expect(result.item.inProgress.some(c => c.id.startsWith(DARK))).toBe(false);
+
+    // Kept, not dropped: they are my cards, on my standup. `total` counts all 26.
+    expect(result.item.stageUnknown).toHaveLength(13);
+    expect(result.item.stageUnknown.every(c => c.id.startsWith(DARK))).toBe(true);
+    expect(result.item.stageUnknown.every(c => c.group === 'stage-unknown')).toBe(true);
+    expect(result.item.total).toBe(26);
+
+    // The readable board is judged exactly as before — ten done, three active.
+    expect(result.item.completed.map(c => c.id).sort())
+      .toEqual(Array.from({ length: 10 }, (_, i) => `${GOOD}-c${i}`).sort());
+
+    expect(result.item.unreachable?.map(h => h.id)).toEqual([`columns:${DARK}`]);
+    const human = result.human(result.item);
+    expect(human).toContain(`columns:${DARK}`);
+    expect(human).toContain('Stage unknown — not assessed (13)');
+  });
+
+  it('a clean read classifies every card and emits no unreachable key', async () => {
+    const client = await startServer();
+    const result = await myStandupHandler(ctxFor(client), STANDUP_OPTS);
+
+    expect(result.item.stageUnknown).toEqual([]);
+    expect(result.item.completed).toHaveLength(20);
+    expect(result.item.inProgress).toHaveLength(6);
+    // `'unreachable' in`, not `toBeUndefined`: absent must stay distinguishable
+    // from empty, so the KEY has to be missing.
+    expect('unreachable' in result.item).toBe(false);
+    expect(result.human(result.item)).not.toContain('Stage unknown');
+  });
+});
+
+describe('next says the pool it ranked over shrank (#149)', () => {
+  it('ranks none of the dark board\'s cards, and names the hole', async () => {
+    const client = await startServer({ failColumnsFor: [DARK] });
+    const result = await nextHandler(ctxFor(client), NEXT_OPTS);
+
+    // The stage gate already kept them out — that half was never wrong. What was
+    // wrong is that it happened in silence.
+    expect(result.item.suggestions.some(s => s.id.startsWith(DARK))).toBe(false);
+    expect(result.item.suggestions.map(s => s.id).sort())
+      .toEqual([`${GOOD}-c10`, `${GOOD}-c11`, `${GOOD}-c12`]);
+    expect(result.item.total).toBe(3);
+
+    expect(result.item.unreachable?.map(h => h.id)).toEqual([`columns:${DARK}`]);
+    const human = result.human(result.item);
+    expect(human).toContain(`columns:${DARK}`);
+    expect(human).toContain('Not considered');
+  });
+
+  it('a clean read ranks both boards\' active cards and emits no unreachable key', async () => {
+    const client = await startServer();
+    const result = await nextHandler(ctxFor(client), NEXT_OPTS);
+
+    // Six active cards across the two boards; `--count 5` is the horizon, so
+    // `total` is the honest six and `suggestions` is the top five.
+    expect(result.item.total).toBe(6);
+    expect(result.item.suggestions).toHaveLength(5);
+    expect('unreachable' in result.item).toBe(false);
+    expect(result.human(result.item)).not.toContain('Not considered');
+  });
+
+  it('recommends nothing at all, and says why, when the only populated board is dark', async () => {
+    // The sharp case: with no marker an empty `suggestions` reads as "you have
+    // nothing queued", which is a statement about the user's backlog rather than
+    // about a failed HTTP call.
+    const client = await startServer({ failColumnsFor: [DARK], cardsOnlyFor: [DARK] });
+    const result = await nextHandler(ctxFor(client), NEXT_OPTS);
+
+    expect(result.item.suggestions).toEqual([]);
+    expect(result.item.total).toBe(0);
+    expect(result.item.unreachable?.map(h => h.id)).toEqual([`columns:${DARK}`]);
+  });
+});
+
+describe('overview\'s envelope stops contradicting its own #86 promise (#149)', () => {
+  it('merges the snapshot\'s hole into unreachable, ahead of the blocker holes', async () => {
+    const client = await startServer({ failColumnsFor: [DARK] });
+    const result = await overviewHandler(ctxFor(client), NO_OPTS);
+
+    // The cards stay counted — `overview` is a census and `unknown` is an honest
+    // bucket. That half was already right.
+    expect(result.item.totalCards).toBe(26);
+    expect(result.item.stageDistribution.unknown).toBe(13);
+
+    // …and the hole is now IN the envelope. Before the fix this key was absent
+    // while `unknown` held thirteen cards, so an agent reading an absent marker
+    // as "nothing was missed" — which this field's own doc tells it to do — was
+    // being lied to.
+    expect(result.item.unreachable?.map(h => h.id)).toEqual([`columns:${DARK}`]);
+    const human = result.human(result.item);
+    expect(human).toContain(`columns:${DARK}`);
+    expect(human).toContain('Not covered');
+  });
+
+  it('a clean read counts no unknown stage and emits no unreachable key', async () => {
+    const client = await startServer();
+    const result = await overviewHandler(ctxFor(client), NO_OPTS);
+
+    expect(result.item.stageDistribution.unknown).toBeUndefined();
+    expect(result.item.totalCards).toBe(26);
+    expect('unreachable' in result.item).toBe(false);
+  });
+});
+
+describe('my-cards keeps the cards and degrades only the suggestion (#149)', () => {
+  it('lists every one of my cards, dark board included, and names the hole', async () => {
+    const client = await startServer({ failColumnsFor: [DARK] });
+    const result = await myCardsHandler(ctxFor(client), NO_OPTS);
+
+    // The decision the ticket insists on: a card whose stage is unknown is still
+    // a real card assigned to me, so it is still listed. Dropping it here would
+    // delete a user's own work from their own list.
+    expect(result.item.total).toBe(26);
+    const listed = result.item.collections
+      .flatMap(c => c.boards)
+      .flatMap(b => b.cards)
+      .map(c => c.id);
+    expect(listed).toHaveLength(26);
+    expect(listed.filter(id => id.startsWith(DARK))).toHaveLength(13);
+    // …and they are listed WITHOUT a stage, rather than with an invented one.
+    const darkBoard = result.item.collections.flatMap(c => c.boards).find(b => b.name === DARK)!;
+    expect(darkBoard.cards.every(c => c.stage === undefined)).toBe(true);
+
+    // Only the ranking degraded: the pick is off the readable board.
+    expect(result.item.suggestedNext?.id.startsWith(GOOD)).toBe(true);
+    expect(result.item.unreachable?.map(h => h.id)).toEqual([`columns:${DARK}`]);
+    const human = result.human(result.item);
+    expect(human).toContain(`columns:${DARK}`);
+    expect(human).toContain('Not ranked');
+  });
+
+  it('an absent suggestion with a marker is not the same as an absent one without', async () => {
+    // Absent + marker: "the ranking had nothing it could rank". The thirteen
+    // cards are still listed, which is what makes the pair readable at all.
+    const dark = await startServer({ failColumnsFor: [DARK], cardsOnlyFor: [DARK] });
+    const partial = await myCardsHandler(ctxFor(dark), NO_OPTS);
+    expect(partial.item.suggestedNext).toBeUndefined();
+    expect(partial.item.total).toBe(13);
+    expect(partial.item.unreachable?.map(h => h.id)).toEqual([`columns:${DARK}`]);
+
+    // Absent + NO marker: there is genuinely nothing queued to pick up.
+    const empty = await startServer({ noCards: true });
+    const nothing = await myCardsHandler(ctxFor(empty), NO_OPTS);
+    expect(nothing.item.suggestedNext).toBeUndefined();
+    expect(nothing.item.total).toBe(0);
+    expect('unreachable' in nothing.item).toBe(false);
+  });
+
+  it('a clean read suggests off the whole pool and emits no unreachable key', async () => {
+    const client = await startServer();
+    const result = await myCardsHandler(ctxFor(client), NO_OPTS);
+
+    expect(result.item.total).toBe(26);
+    expect(result.item.suggestedNext).toBeDefined();
+    expect('unreachable' in result.item).toBe(false);
+    expect(result.human(result.item)).not.toContain('Not ranked');
   });
 });

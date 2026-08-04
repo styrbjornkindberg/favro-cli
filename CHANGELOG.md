@@ -107,6 +107,33 @@ Issues #142/#143.
   preview *is* a wire-derived scope verdict (`comments add/update/delete`,
   `members add --board-target`) still require them, deliberately — a credential-free
   preview there would print a plan the lock was never asked about (#135).
+- A board whose `/columns` read fails leaves every card on it with no workflow stage, and
+  four more commands were reading that absence as a stage. Each now states its own answer
+  rather than inventing one (#149):
+  - `my-standup` put those cards in `inProgress` — so a card **finished** weeks ago on
+    such a board was read out as work in flight. They now go in a new `stageUnknown`
+    group and stay counted in `total`; the cards are never dropped, because they are the
+    caller's own cards.
+  - `next` and `my-cards` never ranked them (a recommendation has to know a card is not
+    already done), but shrank their pool in silence. Both now carry `unreachable`, so an
+    empty `suggestions` / absent `suggestedNext` is distinguishable from "nothing queued".
+  - `overview` already bucketed them under stage `unknown`, honestly, but its
+    `unreachable` key carried only blocker holes — so an absent marker claimed nothing was
+    missed while `unknown` held a whole board. The two lists are now merged, snapshot
+    holes first. Its human header reads `Not covered — N item(s) this report could not
+    reach` in place of `N blocker(s) outside this scope`.
+- `favro stale --board <board>` and `favro workload --board <board>` fabricated on the same
+  failure. Those two arms read a single-board snapshot, whose columns hole is recorded as
+  a bare `columns` rather than `columns:<boardId>`, so the exclusion added in #148 matched
+  nothing on them: `stale --board` listed the board's finished cards as stale and
+  `workload --board` reported its whole team at zero WIP with every overload alert
+  suppressed. The exclusion now understands both hole shapes, and drops only the cards the
+  failure actually left stageless — a hole the board-metadata column fallback repaired
+  costs no cards (#149).
+- A ratchet now walks every promise rejection handler in `src/` through the TypeScript
+  checker and fails on one that both ignores its error and answers with emptiness, which
+  is the substitution behind #116, #148 and #149. Four live sites remain, all in `favro
+  init`, all listed with a reason.
 
 ### Known gaps at release
 

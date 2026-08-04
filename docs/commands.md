@@ -171,6 +171,24 @@ per-item calls. Ids past the cap come back as `unreachable` with a reason of
 "not attempted", so "we stopped counting" is never printed as "there was nothing
 there".
 
+Reporting the hole is only half of it. The consumer then has to decide what it
+*does* with the data behind the hole, and the cross-board commands do not all
+answer the same way — because a missing workflow stage is not the same problem in
+a census as it is in a recommendation:
+
+| Command | On a board whose `/columns` read failed |
+|---------|----------------------------------------|
+| `health` | the board is **omitted** from scoring; every board in scope dark is a refusal, because an empty `boards[]` rolls up to 100/green |
+| `workload`, `team`, `stale` | the board's cards are **dropped**, so nobody is reported at a fabricated zero WIP and no finished card is reported stale |
+| `my-standup` | the cards are **kept**, in a `stageUnknown` group — they are your cards, and a finished one must not be read out as in progress |
+| `my-cards` | the cards are **kept and listed**; only `suggestedNext` degrades, since it cannot rank what it cannot stage |
+| `next` | the cards are **not ranked**, and `unreachable` says the pool shrank |
+| `overview` | the cards are **counted** under stage `unknown`, which is honest for a census |
+
+No command applies the exclusion at the producer. A card whose stage is unknown is
+still a real card assigned to a real person, so dropping it there would delete
+work from `my-cards` and `my-standup` to fix a bug in `health`.
+
 ---
 
 ## Global Options
@@ -535,7 +553,7 @@ These commands work across boards via `--collection <name>` or the scoped collec
 | Command | Persona | Description |
 |---------|---------|-------------|
 | `my-cards` | Developer | Your cards grouped by collection/board/stage |
-| `my-standup` | Developer | Personal standup: done/active/blocked/due. *Blocked* is the card's column (`Blocked`, `On Hold`), not its dependency edges — see below |
+| `my-standup` | Developer | Personal standup: done/active/blocked/due, plus `stageUnknown` for a card whose workflow stage could not be read. *Blocked* is the card's column (`Blocked`, `On Hold`), not its dependency edges — see below |
 | `next` | Developer | AI-scored "what should I work on next?" |
 | `workload` | PM | Per-member card distribution + overload alerts |
 | `stale` | PM | Cards inactive N days or more (`--days`, inclusive; default 14 — the same threshold `health` scores against) |

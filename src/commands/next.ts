@@ -13,6 +13,7 @@ import { Command } from 'commander';
 import { resolveUserId } from '../lib/config';
 import { AggregateCard } from '../api/aggregate';
 import { extractEffort } from '../api/context';
+import { Unreachable } from '../lib/read-shape';
 import { Ctx, run } from '../lib/run';
 
 const CANDIDATE_STAGES = ['queued', 'backlog', 'active'];
@@ -35,6 +36,12 @@ interface NextResult {
   userId: string;
   suggestions: ScoredCard[];
   total: number;
+  /**
+   * Parts of the read that failed, and therefore cards this ranking never
+   * considered (#149). Present only when non-empty, so an absent marker means
+   * `suggestions` was ranked over the whole candidate pool.
+   */
+  unreachable?: Unreachable[];
   generatedAt: string;
 }
 
@@ -115,6 +122,13 @@ function formatHuman(data: NextResult): string {
     lines.push(`     Why: ${s.reasons.join(', ')}`);
   }
 
+  // Off `unreachable` itself, so human mode cannot present a ranking as complete
+  // that the JSON marks partial (#117's half).
+  if (data.unreachable?.length) {
+    lines.push(`\n  Not considered — ${data.unreachable.length} part(s) of this scope could not be read:`);
+    for (const hole of data.unreachable) lines.push(`     ${hole.id} — ${hole.reason}`);
+  }
+
   return lines.join('\n');
 }
 
@@ -139,6 +153,25 @@ export async function nextHandler(ctx: Ctx, options: NextOptions) {
   } else {
     snapshot = await ctx.api.aggregate.getMultiBoardSnapshot({});
   }
+
+  // What a hole does to `next`: the card is NOT ranked, and the hole is named
+  // beside the ranking (#149).
+  //
+  // Not ranking it is already what the filter below does — a card whose board's
+  // columns read failed has no `stage`, so `CANDIDATE_STAGES.includes('')` is
+  // false — and it is the right answer: a recommendation needs to know the card
+  // is not already finished, and this pool cannot say. There is deliberately no
+  // `excludeUnreadableBoards` call, because it would drop exactly the cards this
+  // filter has already dropped and would read as a second, different rule.
+  //
+  // What was missing is the saying-so. The pool shrank silently and `next` then
+  // recommended off the remainder with the same confidence as off a whole one,
+  // so an agent could not tell "nothing else is worth picking up" from "the board
+  // holding your real next task went dark". The marker below is that difference.
+  //
+  // No exit code, for the reason `workload` and `stale` have none: `next` states
+  // a suggestion, not a verdict, so its exit code has never carried an answer and
+  // making it one would be a new claim rather than a fix.
 
   // Filter to my cards in candidate stages
   const myCards = snapshot.allCards.filter(c =>
@@ -170,6 +203,7 @@ export async function nextHandler(ctx: Ctx, options: NextOptions) {
     userId,
     suggestions: scored.slice(0, count),
     total: myCards.length,
+    ...(snapshot.unreachable?.length ? { unreachable: snapshot.unreachable } : {}),
     generatedAt: new Date().toISOString(),
   };
 

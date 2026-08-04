@@ -139,7 +139,10 @@ describe('formatHuman — the unreachable list', () => {
     const out = formatHuman(overview(['g-0', 'g-1', 'g-2']));
 
     expect(bullets(out)).toHaveLength(3);
-    expect(out).toContain('3 blocker(s) outside this scope');
+    // Wording changed with #149, not weakened: this list now also carries the
+    // snapshot's own failed facets, so a header calling every entry a blocker
+    // would describe a dark board as one. The COUNT is still what is asserted.
+    expect(out).toContain('3 item(s) this report could not reach');
     expect(out).not.toContain('more');
   });
 
@@ -148,7 +151,7 @@ describe('formatHuman — the unreachable list', () => {
 
     // The total is never lost — it is on the header line, which is what tells a
     // reader the ranking above is incomplete.
-    expect(out).toContain('147 blocker(s) outside this scope');
+    expect(out).toContain('147 item(s) this report could not reach');
     expect(bullets(out)).toHaveLength(5);
     expect(out).toContain('… +142 more (use --json for all)');
     // First named, last only counted.

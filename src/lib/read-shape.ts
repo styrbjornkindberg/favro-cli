@@ -127,12 +127,25 @@ export function holeCollector(): {
 }
 
 /**
+ * The `unreachable.id` a failed columns read records when the snapshot covers
+ * ONE board — `ContextAPI.getSnapshot`'s bare facet name. There is no board to
+ * name because there is only one, so the bare form is correct there.
+ *
+ * Imported by `context.ts` rather than spelled `'columns'` at the `orElse` call,
+ * because the producer and the matcher below have to agree and a string literal
+ * in two files is exactly how #148's `--board` arm came to miss (the aggregate
+ * side wrote `columns:<id>`, the matcher tested for that prefix, and the
+ * single-board side's bare `columns` matched neither).
+ */
+export const COLUMNS_FACET = 'columns';
+
+/**
  * Prefix of the `unreachable.id` a failed per-board columns read records.
  *
  * `AggregateAPI` fans out over boards, so unlike `getSnapshot`'s five bare
  * facet names its hole ids have to say WHICH board — `columns:<boardId>`.
  */
-export const COLUMNS_HOLE = 'columns:';
+export const COLUMNS_HOLE = `${COLUMNS_FACET}:`;
 
 /**
  * Drop the cards whose `stage` is unknown because their board's columns read
@@ -146,11 +159,23 @@ export const COLUMNS_HOLE = 'columns:';
  * stale, and `workload`/`team` reported everyone on it at zero WIP. Zero is a
  * measurement; these were not.
  *
- * Structurally typed so the `--board` arms of `workload` and `stale` — which
- * carry a `ContextSnapshot`'s facet-named holes (`columns`, not
- * `columns:<id>`) — go through the same call. Those ids do not match the
- * prefix, so nothing is excluded and the holes are still reported, which is
- * the right answer for a snapshot that only ever covered one board.
+ * TWO ARMS, because the two producers name their holes differently and both are
+ * right to. `AggregateAPI` reads columns once per board, so its ids must say
+ * WHICH board (`columns:<boardId>`) and the board id is what selects the cards.
+ * `ContextAPI.getSnapshot` covers ONE board, so its id is the bare facet name
+ * `columns` and there is no board id on its cards to match — `ContextCard` has
+ * no `boardId` field at all. #148 only built the first arm, so `stale --board X`
+ * and `workload --board X` matched nothing, excluded nothing, and went on
+ * reporting the board's finished cards as stale off a columns read that failed
+ * (#149). The bare-id arm is the second one below.
+ *
+ * The single-board arm drops the cards the failed read left STAGELESS, not every
+ * card in the snapshot. `getSnapshot` falls back to `extendedBoard.boardColumns`
+ * when `listColumns` returns nothing, so a columns hole does not always cost the
+ * cards their stage — and dropping a card that was staged from the fallback would
+ * be its own fabricated zero, one the hole is not evidence for. Measured, not
+ * assumed: `boardColumns` is a real field on `/widgets/{id}` in this codebase
+ * (`boards-api.ts:86`) and `api/context.test.ts` drives that fallback.
  *
  * Lives HERE and not next to `AggregateSnapshot`, for two reasons that agree:
  * it is a rule about reading an `Unreachable`, which is this module's whole
@@ -159,10 +184,18 @@ export const COLUMNS_HOLE = 'columns:';
  * comes back as a `jest.fn()` returning `undefined` and every destructuring
  * call site throws. Nothing mocks `read-shape`.
  */
-export function excludeUnreadableBoards<T extends { boardId?: string }>(
+export function excludeUnreadableBoards<T extends { boardId?: string; stage?: string }>(
   snapshot: { allCards: T[]; unreachable?: Unreachable[] },
 ): { cards: T[]; unreachable: Unreachable[] } {
   const unreachable = snapshot.unreachable ?? [];
+
+  // The single-board arm. A bare `columns` id — the facet name with no
+  // `:<boardId>` after it — can only have come from a snapshot covering one
+  // board, so every stageless card in it is stageless BECAUSE of this hole.
+  if (unreachable.some(h => h.id === COLUMNS_FACET)) {
+    return { cards: snapshot.allCards.filter(c => c.stage !== undefined), unreachable };
+  }
+
   const dark = new Set(
     unreachable
       .filter(h => h.id.startsWith(COLUMNS_HOLE))

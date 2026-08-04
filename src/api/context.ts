@@ -13,7 +13,7 @@ import { CustomFieldsAPI, CustomFieldDefinition } from '../lib/custom-fields-api
 import { ColumnsAPI } from '../lib/columns-api';
 import { detectStage, WorkflowStage } from '../lib/workflow-stage';
 import { blockingEdges } from '../lib/blocking';
-import { holeCollector, Unreachable } from '../lib/read-shape';
+import { COLUMNS_FACET, holeCollector, Unreachable } from '../lib/read-shape';
 
 export { WorkflowStage };
 
@@ -291,7 +291,10 @@ export class ContextAPI {
       orElse('cards', this.cardsApi.listCards(boardId), [] as Card[]),
       orElse('members', this.membersApi.getMembers({ boardId }), []),
       orElse('customFields', this.customFieldsApi.listFields(boardId), [] as CustomFieldDefinition[]),
-      orElse('columns', this.columnsApi.listColumns(boardId), []),
+      // `COLUMNS_FACET`, not `'columns'`: `excludeUnreadableBoards` matches this
+      // exact id to know a single-board snapshot went dark, and a literal spelled
+      // in both files is how that match came to be missing for two tickets (#149).
+      orElse(COLUMNS_FACET, this.columnsApi.listColumns(boardId), []),
     ]);
 
     // Extract columns — prefer dedicated columns API, fall back to extended board

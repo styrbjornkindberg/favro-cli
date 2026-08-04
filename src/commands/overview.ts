@@ -28,10 +28,21 @@ export interface OverviewResult {
   stageDistribution: Record<string, number>;
   topBlockers: Array<{ id: string; title: string; board?: string; blockingCount: number }>;
   /**
-   * Blockers named by a fetched card that are not themselves in the fetched
-   * set, so their rank could not be judged. Present only when there are any:
-   * an absent `unreachable` with an empty `topBlockers` means there genuinely
-   * are none, which is the distinction `read-shape.ts` exists to keep.
+   * Everything this report could not reach, from BOTH sources, in one list:
+   *
+   *   - blockers named by a fetched card that are not themselves in the fetched
+   *     set, so their rank could not be judged (`findTopBlockers`);
+   *   - facets of the snapshot itself that failed to read (#148), which is why a
+   *     board's cards can be counted under stage `unknown` below.
+   *
+   * The second used to be dropped on the floor here (#149). That made this key's
+   * own promise false: an absent `unreachable` is documented to mean "there
+   * genuinely are none", and a collection with a dark board emitted no marker
+   * while `stageDistribution.unknown` quietly held thirteen cards. Bucketing them
+   * as `unknown` was already the honest half — the envelope was the dishonest one.
+   *
+   * Present only when there are any, so absent stays distinguishable from empty
+   * (`read-shape.ts` rule 3).
    *
    * The KEY is `unreachable`, not `unreachableBlockers` (#86): an agent parses
    * one marker across every command, and this shipped under a name none of them
@@ -171,7 +182,11 @@ export function formatHuman(data: OverviewResult): string {
     // of five. Shown at the ranking's own horizon; the rest is a remainder, and
     // `--json` still carries every one for a machine reader.
     const all = data.unreachable;
-    lines.push(`\n  Not ranked — ${all.length} blocker(s) outside this scope:`);
+    // "item(s) this report could not reach", not "blocker(s) outside this
+    // scope": since #149 this list also carries the snapshot's own failed
+    // facets, and the old header would have described a dark board as a
+    // blocker. Each entry states its own kind in its `reason`.
+    lines.push(`\n  Not covered — ${all.length} item(s) this report could not reach:`);
     for (const u of all.slice(0, UNREACHABLE_HUMAN_LIMIT)) {
       lines.push(`    • ${u.id} — ${u.reason}`);
     }
@@ -227,6 +242,26 @@ export async function overviewHandler(ctx: Ctx, options: OverviewOptions) {
 
   const blockers = findTopBlockers(snapshot.allCards);
 
+  // What a hole does to `overview`: the cards STAY and are counted under stage
+  // `unknown`, and the hole is now named in the envelope (#149).
+  //
+  // Keeping them is right and was never the defect: `overview` is a census, its
+  // buckets are `Record<string, number>` and `unknown` is an honest bucket name,
+  // so unlike `health`/`workload`/`stale` nothing here silently re-reads a
+  // missing stage as "not done". Dropping them would make `totalCards` disagree
+  // with the collection for no gain.
+  //
+  // The defect was the envelope: this key already existed, already meant "and
+  // here is what we could not reach", and carried only the blocker holes — so an
+  // agent that correctly read an absent marker as "nothing was missed" was told
+  // that while `unknown` held every card of a board whose columns read had failed.
+  //
+  // Snapshot holes go FIRST. `formatHuman` prints five entries and summarises the
+  // rest, and a cross-board blocker list runs to hundreds — appending would have
+  // pushed the one hole that explains the `unknown` bucket past the horizon in
+  // human mode, which is the same JSON-only reporting #117 measured on `risks`.
+  const unreachable = [...(snapshot.unreachable ?? []), ...blockers.unreachable];
+
   const result: OverviewResult = {
     scope,
     boardCount: boards.length,
@@ -234,7 +269,7 @@ export async function overviewHandler(ctx: Ctx, options: OverviewOptions) {
     boards,
     stageDistribution,
     topBlockers: blockers.topBlockers,
-    ...(blockers.unreachable.length > 0 ? { unreachable: blockers.unreachable } : {}),
+    ...(unreachable.length > 0 ? { unreachable } : {}),
     dueSummary: computeDueSummary(snapshot.allCards),
     generatedAt: new Date().toISOString(),
   };
