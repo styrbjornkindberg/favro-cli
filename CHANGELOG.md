@@ -124,7 +124,7 @@ refusal, raised before any card is read.
 **Migration:** nothing that now refuses used to answer *correctly*. Re-spell it from the
 table above, or run `favro cards list --help` for the whole grammar.
 
-Issue #95, ADR-0005.
+Issue #95, ADR-0006.
 
 ### Added
 
@@ -143,6 +143,26 @@ Issue #95, ADR-0005.
   drift test covered help *topics* and tracked `.md` files, not `.description()` strings;
   it now walks the live command tree's descriptions, summaries and option help too, so the
   class is closed and not just the instance (#95).
+
+- Date filters compared the wrong things. Three defects in one predicate, all in
+  `lib/query-parser.ts`, so all four `--filter` surfaces plus `favro query` carried them:
+
+  - `due_date:overdue` matched **no card on any board, ever**. `:` is `=`, and the keyword
+    resolves to today, so the filter every doc describes as "past their due date" asked for
+    "due exactly today" — and did not answer that either (see below). The keyword now
+    carries its own `<`.
+  - Every ordering operator on a date compared **years**. `compareValues` routes `<`, `<=`,
+    `>`, `>=` through `parseFloat`, and `parseFloat('2026-08-07')` is `2026`, so
+    `due_date<today` admitted nothing due earlier in the current year while `due_date<=today`
+    admitted everything due later in it. Date predicates now compare the ISO day strings
+    they already build.
+  - The target day was off by one east of UTC. The keyword resolves to *local* midnight and
+    was read back with `toISOString()`, which names the previous calendar day at any positive
+    offset — so `due_date:today` matched no card due today.
+
+  `skills/builtin/daily-digest.yaml` ships a `due_date:overdue` step, so the shipped digest
+  reported no overdue cards on any board. Found reviewing #95, which is what introduced that
+  spelling into the skill and into the migration table above.
 
 - A scope violation under the JSON default wrote **nothing** to stdout. It now writes the
   refusal envelope, exit 1. `checkScope` / `checkCollectionScope` used to swallow their

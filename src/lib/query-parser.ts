@@ -428,7 +428,18 @@ class Parser {
       return {
         kind: 'date',
         field: fieldRaw.toLowerCase(),
-        operator,
+        // `overdue` is not a date, it is a COMPARISON — "before today". It
+        // resolves to today (`resolveRelativeKeyword`, whose own comment says
+        // `// date < today`), so the `:` a caller types would compare EQUAL to
+        // today and `due_date:overdue` matched nothing on any board, ever: not
+        // the past cards it advertises, and not even the ones due today, because
+        // the target is a local-midnight `Date` read back through
+        // `toISOString()`. Measured before this line existed — every doc,
+        // the `favro query` help and `skills/builtin/daily-digest.yaml` promised
+        // "past their due date" against a filter that is a plausible zero rows,
+        // which is the exact defect #95 exists to abolish. The keyword carries
+        // its own operator.
+        operator: dateValue.keyword === 'overdue' ? '<' : operator,
         dateValue,
       } as DatePredicate;
     }
@@ -642,12 +653,24 @@ export function evaluateNode(
         cardDateStr = d.toISOString().split('T')[0];
       }
 
-      // Convert target date to YYYY-MM-DD for day-level comparison
+      // Convert target date to YYYY-MM-DD for day-level comparison.
+      //
+      // `ymd`, not `toISOString()`: `resolveDateValue` builds LOCAL midnight, and
+      // reading a local-midnight Date back through `toISOString()` names the
+      // PREVIOUS calendar day everywhere east of UTC. Measured in
+      // Europe/Stockholm: `due_date:today` matched no card due today, and
+      // `due_date<today` skipped the cards due yesterday — which are overdue.
       const target = resolveDateValue(node.dateValue);
-      const targetDateStr = target.toISOString().split('T')[0];
+      const targetDateStr = ymd(target);
 
-      // Compare as date strings (YYYY-MM-DD), not timestamps
-      return compareValues(cardDateStr, node.operator, targetDateStr);
+      // Compare as date strings (YYYY-MM-DD), not timestamps — and NOT through
+      // `compareValues`, which routes every ordering operator through
+      // `parseFloat`. `parseFloat('2026-08-07')` is `2026`, so every date in the
+      // same YEAR compared equal: measured, `due_date<today` admitted nothing
+      // due earlier this year and `due_date<=today` admitted everything due
+      // later in it. An ISO day string is already lexicographically ordered,
+      // which is the whole reason this branch built one.
+      return compareDayStrings(cardDateStr, node.operator, targetDateStr);
     }
 
     case 'customField': {
@@ -786,6 +809,26 @@ function compareValues(cardValue: any, op: Operator, queryValue: string): boolea
   if (op === '<=') return strCard <= strQuery;
 
   return false;
+}
+
+/** The local calendar day of a Date, as `YYYY-MM-DD`. */
+function ymd(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** Two `YYYY-MM-DD` day strings, compared as the ordered strings they are. */
+function compareDayStrings(card: string, op: Operator, target: string): boolean {
+  switch (op) {
+    case '=': return card === target;
+    case '~': return card.includes(target);
+    case 'in': return target.split(',').map(v => v.trim()).includes(card);
+    case '>': return card > target;
+    case '<': return card < target;
+    case '>=': return card >= target;
+    case '<=': return card <= target;
+    default: return false;
+  }
 }
 
 function compareNumbers(a: number, op: Operator, b: number): boolean {

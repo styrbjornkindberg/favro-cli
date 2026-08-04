@@ -7,10 +7,11 @@ steps:
     args:
       board: "{{board}}"
   # Both filters are the `cards list --filter` grammar, the only one there is (#95).
-  # They were `due:overdue` and `blocked`: the first named no field the CLI has, and
-  # the second was deleted by #47 and had been answering about an empty array on
-  # every card ever since. The re-pointed `query` refuses both by name rather than
-  # returning a plausible zero rows, so they are spelled properly here.
+  # They were `due:overdue` and `blocked`. `due:` was an alias the deleted parser
+  # minted for itself and it did mean "past its due date", so `due_date:overdue` is
+  # that same question re-spelled in the one grammar — not the repair of a dead
+  # filter. `blocked` named no field at all: it was swept into a title search for
+  # the word, and it has been a plausible zero rows since #47 deleted the predicate.
   - command: query
     args:
       board: "{{board}}"

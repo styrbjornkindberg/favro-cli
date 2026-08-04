@@ -314,24 +314,35 @@ describe('every built-in skill is runnable against the code that ships with it',
    *
    * `daily-digest.yaml` shipped two `query` steps reading `due:overdue` and
    * `blocked`. Both named a `query` command that exists, so the arm above was
-   * green — and both were dead: `due` is not a field this CLI has, and `blocked`
-   * was deleted by #47, after which it answered about an empty array on every
-   * card. The old fail-open parser is what hid them, by sweeping each into a
-   * title search and returning a plausible zero rows. Re-pointing `favro query`
-   * at the real grammar turns them into refusals, which is how they surfaced.
+   * green, and neither says in the one grammar what it was written to ask:
+   * `blocked` names no field at all and was swept into a title search for the
+   * word, and `due` is an alias the deleted parser minted for itself — measured
+   * at `8754500`, `parseQueryFilter('due:overdue')` DID mean "past its due
+   * date", so re-spelling it `due_date:overdue` is a translation, not the repair
+   * of a dead filter. (The `due_date:overdue` it was translated to was itself
+   * broken until the operator fix in `query-parser.ts`: `:` compared EQUAL to
+   * today, so it matched no card on any board. A filter that parses is not a
+   * filter that means something, which is the limit of this arm — see below.)
    *
-   * So the filter strings get parsed here, offline. `parseQuery` alone is
+   * So the filter strings get parsed here, offline, and checked against the one
+   * refusal `QueryAPI.execute` adds on top of the grammar. `parseQuery` alone is
    * deliberate: it settles field NAMES and syntax with no network, which is the
    * half that can be checked from a test. The VALUES (`tag:`, `status:`,
    * `assignee:`) belong to a live org and cannot be — a shipped skill naming a
    * tag some org does not have is that org's refusal at run time, not a defect
    * in the file.
+   *
+   * WHAT THIS ARM STILL CANNOT SEE, stated so the next reader does not trust it
+   * further than it goes: a filter that parses, resolves and evaluates to `false`
+   * on every card forever. `due_date:overdue` was exactly that and passed here.
+   * Catching that class needs cards to evaluate against, which a shipped skill
+   * does not carry.
    */
   it.each(files)('%s: every query step parses under the real grammar', (file) => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { loadSkillFromFile } = require('../lib/skill-store') as typeof import('../lib/skill-store');
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { parseQuery } = require('../lib/query-parser') as typeof import('../lib/query-parser');
+    const { parseQuery, queryNames } = require('../lib/query-parser') as typeof import('../lib/query-parser');
     const skill = loadSkillFromFile(path.join(BUILTIN_DIR, file));
 
     for (const step of skill.steps) {
@@ -341,12 +352,19 @@ describe('every built-in skill is runnable against the code that ships with it',
       // rather than passing it to a parser that would report a syntax error.
       expect(filter.trim()).not.toBe('');
       expect(() => parseQuery(filter)).not.toThrow();
+      // Parsing is not the whole refusal surface: `QueryAPI.execute` refuses
+      // `unblocked` ON TOP of the grammar (#47's carve-out), and `parseQuery`
+      // accepts it happily. Measured — a builtin whose step read `unblocked`
+      // passed this arm and aborted every run of that skill. A ratchet that
+      // stops one step short of the command it guards is the hole it was
+      // written to close.
+      expect(queryNames(parseQuery(filter), 'unblocked')).toBe(false);
     }
   });
 
   it('that arm would have caught both filters #95 found, and passes the ones that replaced them', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { parseQuery, ParseError } = require('../lib/query-parser') as typeof import('../lib/query-parser');
+    const { parseQuery, queryNames, ParseError } = require('../lib/query-parser') as typeof import('../lib/query-parser');
 
     // Verbatim from `8754500:skills/builtin/daily-digest.yaml`.
     for (const dead of ['due:overdue', 'blocked']) {
@@ -359,7 +377,16 @@ describe('every built-in skill is runnable against the code that ships with it',
     // everything.
     for (const live of ['due_date:overdue', 'blocked-by:true']) {
       expect(() => parseQuery(live)).not.toThrow();
+      expect(queryNames(parseQuery(live), 'unblocked')).toBe(false);
     }
+
+    // The third thing a `query` step can be, and the one the parse check alone
+    // waves through: a filter the GRAMMAR accepts and the COMMAND refuses.
+    expect(() => parseQuery('unblocked')).not.toThrow();
+    expect(queryNames(parseQuery('unblocked'), 'unblocked')).toBe(true);
+    // Buried in a conjunction too, since that is how it would actually be
+    // written and a substring check on the filter string is not what runs.
+    expect(queryNames(parseQuery('tag:bug AND unblocked'), 'unblocked')).toBe(true);
   });
 });
 

@@ -758,13 +758,51 @@ describe('filterCards', () => {
     expect(result.map(c => c.cardId).sort()).toEqual(['1', '4']);
   });
 
-  test('date predicate: due_date overdue (past dates match)', () => {
-    const q = parseQuery('due_date<today');
-    const result = filterCards(q, cards);
-    // cardId 1 (2026-01-01) and 3 (2025-01-01) are in the past
-    // cardId 2 (2099-01-01) and 4 (2026-06-01) depend on "today"
-    // Since we can't control "today" in tests, just verify it runs without error
-    expect(Array.isArray(result)).toBe(true);
+  /**
+   * `due_date:overdue` and `due_date<today` are the SAME predicate, and both are
+   * sensitive to which side of today a card falls on.
+   *
+   * The test this replaced parsed `due_date<today` against a fixture whose dates
+   * straddle an uncontrollable "today" and asserted `Array.isArray(result)` — a
+   * shape, which `() => []` and `() => cards` satisfy alike, so it could not
+   * fail. Under it, `due_date:overdue` matched NOTHING on any board: `:` is `=`,
+   * the keyword resolves to today, and the target is a local-midnight `Date` read
+   * back through `toISOString()`, so it did not even match a card due today. The
+   * dates here are built relative to now, so the membership is knowable.
+   */
+  describe('overdue is a comparison, not a date', () => {
+    const day = (offset: number): string => {
+      const d = new Date();
+      d.setUTCDate(d.getUTCDate() + offset);
+      return `${d.toISOString().split('T')[0]}T09:00:00Z`;
+    };
+    // Four cards, one on each side of today plus one carrying no due date at
+    // all — the omit arm. `() => true` admits `none`, `() => false` admits
+    // nothing, and a predicate that drifted a day admits `today`.
+    const dated = [
+      { cardId: 'past', name: 'a', dueDate: day(-3) },
+      { cardId: 'today', name: 'b', dueDate: day(0) },
+      { cardId: 'future', name: 'c', dueDate: day(3) },
+      { cardId: 'none', name: 'd' },
+    ];
+
+    test.each(['due_date:overdue', 'due_date<today'])('%s is past-due only', (filter) => {
+      expect(filterCards(parseQuery(filter), dated).map(c => c.cardId)).toEqual(['past']);
+    });
+
+    test('the keyword carries `<`, so a typed `:` cannot make it mean "due today"', () => {
+      const q = parseQuery('due_date:overdue');
+      expect((q.ast as DatePredicate).operator).toBe('<');
+      expect((q.ast as DatePredicate).dateValue.keyword).toBe('overdue');
+    });
+
+    test('every other date keyword keeps the operator the caller typed', () => {
+      // The rewrite is scoped to `overdue`. `due_date:today` still means the
+      // equality it reads as, and still admits the card due today.
+      const q = parseQuery('due_date:today');
+      expect((q.ast as DatePredicate).operator).toBe('=');
+      expect(filterCards(parseQuery('due_date<=today'), dated).map(c => c.cardId)).toEqual(['past', 'today']);
+    });
   });
 });
 

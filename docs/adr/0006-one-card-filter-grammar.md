@@ -1,4 +1,4 @@
-# ADR-0005: One card-filter grammar — `favro query` is re-pointed, not deleted
+# ADR-0006: One card-filter grammar — `favro query` is re-pointed, not deleted
 
 Status: accepted (#95, decision recorded on the ticket 2026-08-04)
 
