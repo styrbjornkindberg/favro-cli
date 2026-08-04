@@ -161,6 +161,33 @@ describe.each(WRITES)('tasks %s under a lock with --card omitted', (_name, argv,
     expect(message).not.toContain('cards get');
   });
 
+  it('names the lock that is refusing, by name and not by id', async () => {
+    // The generic message names it, and a refusal that will not say WHICH lock
+    // stopped the write is a refusal the user cannot act on. Survived a mutation
+    // that replaced the interpolation with a literal until this arm existed.
+    await runCli(argv);
+
+    expect(refusal().message).toContain('("Locked")');
+  });
+
+  it('describes itself the way every other scope refusal does', async () => {
+    // `error-handler.ts` heads the line off `.name` AND de-duplicates the
+    // message's own prefix, on the documented assumption that the two agree. A
+    // message that dropped the prefix would still render almost identically here
+    // — `tasks` is unmigrated — and then reach a migrated caller's envelope as
+    // the one `ScopeError` in the codebase that does not name itself.
+    //
+    // Compared against the shared guard's own prefix rather than a literal, so
+    // this asserts agreement rather than a spelling.
+    await runCli(argv);
+
+    const heading = (m: string) => m.slice(0, m.indexOf(':') + 1);
+    expect(heading(refusal().message)).toBe(heading(await sharedGuardSays('')));
+    // And printed once, not twice, because the de-duplication depends on it.
+    const rendered = consoleError.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(rendered.match(/Scope violation:/g)).toHaveLength(1);
+  });
+
   it('is not the shared guard\'s generic boardless wording', async () => {
     // THE DISCRIMINATING ASSERTION. Arm 4 proves that wording still ships where
     // it is true; this proves the reword actually happened rather than the two
@@ -192,6 +219,25 @@ describe.each(WRITES)('tasks %s under a lock with --card omitted', (_name, argv,
     // the same mock IS called — so neither reading is unfalsifiable.
     expect(writeFn()).not.toHaveBeenCalled();
     expect(MockCardsAPI.prototype.getCard).not.toHaveBeenCalled();
+  });
+});
+
+describe('the lock the refusal names falls back the way the shared guard does', () => {
+  // The other polarity of the assertion above: with no friendly name configured,
+  // `scopeCollectionName ?? scopeCollectionId` has to reach the id rather than
+  // print `undefined`. Both arms, so neither reading is unfalsifiable.
+  it.each(WRITES)('tasks %s names the collection id when the lock has no name', async (_name, argv) => {
+    (config.readConfig as jest.Mock).mockResolvedValue({
+      apiKey: 'k',
+      email: 'a@b.c',
+      organizationId: 'org-1',
+      scopeCollectionId: 'coll-locked',
+    });
+
+    await runCli(argv);
+
+    expect(refusal().message).toContain('("coll-locked")');
+    expect(refusal().message).not.toContain('undefined');
   });
 });
 
