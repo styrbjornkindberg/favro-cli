@@ -254,21 +254,29 @@ describe.each(WRITES)('tasks %s with --card at a card that cannot be read', (_na
 
 describe('a non-ScopeError raised inside the guard is not dressed up as one', () => {
   it.each(WRITES)('tasks %s rethrows it untouched', async (_name, argv) => {
-    // `createFavroClient` reads config first, the guard reads it second. Only the
-    // second read fails, so the throw happens INSIDE `checkResolvedScope` — which
-    // is the only place the rethrow gate can be reached.
+    // `createFavroClient` reads config first (1), the guard reads it second (2).
+    // Only the second read fails, so the throw happens INSIDE
+    // `checkResolvedScope` — the one place the rethrow gate can be reached.
+    //
+    // The THIRD read resolves, and that is load-bearing rather than tidy: the
+    // reword needs a config read of its own for the lock's name. With a blanket
+    // `mockRejectedValue` that third read rejects too, so a build with the type
+    // gate DELETED still ends up propagating an `Error('config read failed')` and
+    // every assertion below passes against it. Mutation testing found exactly
+    // that — this arm was unfalsifiable until the third read was made to succeed.
     (config.readConfig as jest.Mock)
       .mockResolvedValueOnce(LOCK)
-      .mockRejectedValue(new Error('config read failed'));
+      .mockRejectedValueOnce(new Error('config read failed'))
+      .mockResolvedValue(LOCK);
 
     await runCli(argv);
 
-    // Pins the throw to the second read. Had the first one failed instead, the
-    // error would have escaped `createFavroClient` and never met the gate.
-    expect((config.readConfig as jest.Mock).mock.calls.length).toBeGreaterThanOrEqual(2);
     const error = refusal();
     expect(error).not.toBeInstanceOf(ScopeError);
     expect(error.name).toBe('Error');
     expect(error.message).toBe('config read failed');
+    // Exactly two: the gate rethrew without reading config for a lock name it was
+    // never going to print. A third read means the reword ran on a non-refusal.
+    expect((config.readConfig as jest.Mock).mock.calls.length).toBe(2);
   });
 });
