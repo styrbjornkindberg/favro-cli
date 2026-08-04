@@ -62,6 +62,12 @@ interface Wire {
    * with 403.
    */
   status?: number;
+  /**
+   * Give one card of the GOOD board this many blocking edges to cards outside the
+   * fetch, so `overview.findTopBlockers` produces that many holes of its OTHER
+   * kind. Off by default, so every test above sees byte-identical cards.
+   */
+  ghostBlockers?: number;
 }
 
 /**
@@ -96,10 +102,22 @@ function startServer(wire: Wire = {}): Promise<FavroHttpClient> {
     assignments: [{ userId: 'user-1' }],
     createdAt: new Date(Date.now() - ageDays * 86400000).toISOString(),
   });
-  const cardsOf = (boardId: string) => [
-    ...Array.from({ length: 10 }, (_, i) => card(boardId, i, 'done', 60)),
-    ...Array.from({ length: 3 }, (_, i) => card(boardId, 10 + i, 'doing', 0)),
-  ];
+  const cardsOf = (boardId: string) => {
+    const cards: Array<Record<string, unknown>> = [
+      ...Array.from({ length: 10 }, (_, i) => card(boardId, i, 'done', 60)),
+      ...Array.from({ length: 3 }, (_, i) => card(boardId, 10 + i, 'doing', 0)),
+    ];
+    if (wire.ghostBlockers && boardId === GOOD) {
+      cards[0] = {
+        ...cards[0],
+        links: Array.from({ length: wire.ghostBlockers }, (_, i) => ({
+          cardCommonId: `ghost-${i}`,
+          isBefore: true,
+        })),
+      };
+    }
+    return cards;
+  };
 
   const ok = (res: http.ServerResponse, entities: unknown[]) => {
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -513,6 +531,28 @@ describe('overview\'s envelope stops contradicting its own #86 promise (#149)', 
     const human = result.human(result.item);
     expect(human).toContain(`columns:${DARK}`);
     expect(human).toContain('Not covered');
+  });
+
+  it('names the snapshot hole in HUMAN mode even behind more blocker holes than it prints', async () => {
+    // The order claim, measured rather than asserted in a comment. `formatHuman`
+    // names five holes and summarises the rest, and a real workspace has hundreds
+    // of cross-board blocker edges — so appending the snapshot's holes would put
+    // the ONE entry that explains the `unknown` bucket past the horizon, and
+    // human mode would go quiet on it exactly as `risks --human` did (#117).
+    const client = await startServer({ failColumnsFor: [DARK], ghostBlockers: 8 });
+    const result = await overviewHandler(ctxFor(client), NO_OPTS);
+
+    // Both kinds are in the list, and the count in the header covers both.
+    expect(result.item.unreachable).toHaveLength(9);
+    expect(result.item.unreachable?.[0].id).toBe(`columns:${DARK}`);
+
+    const human = result.human(result.item);
+    expect(human).toContain('Not covered — 9 item(s)');
+    expect(human).toContain(`columns:${DARK}`);
+    // …and the horizon really is in force, so this is not passing because
+    // everything happens to be printed.
+    expect(human).toContain('… +4 more (use --json for all)');
+    expect(human).not.toContain('ghost-7');
   });
 
   it('a clean read counts no unknown stage and emits no unreachable key', async () => {
