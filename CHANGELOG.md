@@ -111,6 +111,15 @@ Issues #142/#143.
   and why `--force` does not stand in for the flag (#126). Measured on all three: exit 1,
   stderr, stdout empty, before and after. The generic wording is unchanged wherever it is
   true — `--card` given but unreadable, or given for a card with no board instance.
+- An empty board argument no longer reads the whole organisation. `favro release-check ""`
+  and `favro risks ""` passed the empty id straight to `GET /cards`, which omits
+  `widgetCommonId` when the board is falsy — so both paginated every card in the org to
+  completion and then scored a verdict over all of them, with no refusal and no truncation
+  marker. `CardsAPI.listCards` now refuses an id that was *provided* and empty; an absent
+  board stays legal, because a collection-scoped read names no board on purpose. Measured
+  on a `node:http` stand rather than the two built CLIs — reaching this code needs
+  credentials, and the whole-org read is the failure being deleted: three board-less
+  paginated requests before, zero and a `retryable: false` refusal after (#107).
 - `--dry-run` no longer demands credentials for a preview that never touches the wire.
   Commands whose preview *is* a wire-derived scope verdict (`comments add/update/delete`,
   `members add --board-target`, and `boards update/delete` under a lock — see below) still
