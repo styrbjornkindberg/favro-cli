@@ -166,6 +166,26 @@ Issues #142/#143.
   unchanged and still preview with no credentials at all. The `collections` pair needs
   nothing either way — its check is a comparison against local config. `--force` on a
   `--dry-run` now warns on stderr and previews anyway, where before it did nothing.
+- `favro init` wrote a confident, wrong `.favro/context.json` when a read failed. Three of
+  its four API reads answered a rejection with an empty value, and the schema has no field
+  for "unread" — so a 403 on `/customfields` wrote `"customFields": {}`, a 403 on `/users`
+  wrote `"team": {}`, and a failed `/columns` left a board with no `workflow` key, each
+  indistinguishable from the real finding in a file agents read later with no memory of the
+  failure. All three now propagate: the error is reported, exit 1, and **no file is
+  written** (#154).
+
+  The schema is unchanged — deliberately, rather than growing an "unread" marker. Every
+  other consumer of a failed read in this codebase records one (#116, #148, #149), but
+  those answer a *query* and hand back what they did read; `init` produces a durable
+  artefact that outlives the warning, and it is cheap and idempotent to re-run. The
+  membership read is the one facet that still falls back, because it already states its
+  third state in `notes.team` and on stderr. `docs/repo-context.md` now documents the whole
+  absent-vs-empty table, and its File Format block has been corrected — it described a
+  different shape on every key.
+
+  **Behaviour change worth knowing:** a key that cannot read every facet now gets exit 1
+  and no file, where it used to get a partial one at exit 0. `favro init --refresh` is the
+  retry.
 
 ### Known gaps at release
 

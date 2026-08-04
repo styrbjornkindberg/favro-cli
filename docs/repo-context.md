@@ -7,11 +7,15 @@ The repo context file gives AI tools (and humans) a local snapshot of your Favro
 ## Quick Start
 
 ```bash
-favro init                           # Interactive — pick a collection
-favro init --collection <id>         # Non-interactive
+favro init                           # Uses the locked scope collection
+favro init --collection <id>         # Overrides the lock
 favro init --refresh                 # Re-fetch and overwrite
-favro init --json                    # Output context as JSON (no file write)
+favro init --json                    # Print the context to stdout, write nothing
 ```
+
+There is no interactive picker: with no `--collection` and no scope locked,
+`favro init` refuses and points at `favro scope set`. Without `--refresh` it also
+refuses to overwrite an existing `context.json`.
 
 This creates `.favro/context.json` in your project root and adds `.favro/` to `.gitignore`.
 
@@ -19,83 +23,115 @@ This creates `.favro/context.json` in your project root and adds `.favro/` to `.
 
 ## File Format
 
+`boards`, `customFields` and `team` are **maps, not arrays** — keyed by board
+slug, custom-field name and userId respectively.
+
 ```jsonc
 {
-  "generated": "2025-01-15T10:30:00Z",
-  "collection": {
+  "_description": "Favro context for <repo> repo. …",
+  "_updated": "2025-01-15",                     // date only, not a timestamp
+  "scope": {
     "collectionId": "abc123",
-    "name": "My Product"
+    "collectionName": "My Product"
   },
-  "boards": [
-    {
+  "boards": {
+    "sprint-42": {                              // slug of the board name, max 30 chars
       "boardId": "board-1",
       "name": "Sprint 42",
-      "slug": "sprint-42",
-      "columns": [
-        { "columnId": "col-1", "name": "To Do" },
-        { "columnId": "col-2", "name": "In Progress" },
-        { "columnId": "col-3", "name": "Review" },
-        { "columnId": "col-4", "name": "Done" }
-      ],
-      "workflow": {
-        "backlog": ["To Do"],
-        "active": ["In Progress"],
-        "review": ["Review"],
-        "done": ["Done"]
-      }
+      "type": "backlog",                        // omitted when Favro sends none
+      "workflow": [                             // omitted when the board has NO columns
+        { "columnId": "col-1", "name": "To Do",       "stage": "backlog", "next": "In Progress" },
+        { "columnId": "col-2", "name": "In Progress", "stage": "active",  "next": "Done" },
+        { "columnId": "col-3", "name": "Done",        "stage": "done",    "next": null }
+      ]
     }
-  ],
-  "customFields": [
-    {
+  },
+  "customFields": {
+    "Priority": {                               // keyed by field NAME
       "fieldId": "cf-1",
-      "name": "Priority",
-      "type": "single_select",
-      "options": ["Critical", "High", "Medium", "Low"]
+      "type": "<Favro's own type string, passed through verbatim>",
+      "options": { "Critical": "opt-1", "High": "opt-2" }   // name → optionId
     }
-  ],
-  "members": [
-    {
-      "userId": "user-1",
-      "name": "Alice",
-      "email": "alice@example.com"
-    }
-  ]
+  },
+  "team": {
+    "user-1": { "name": "Alice", "email": "alice@example.com", "role": "member" }
+  },
+  "notes": {
+    "cardIds": "…",
+    "moveCards": "…",
+    "team": "…"                                 // present ONLY when the membership filter could not run
+  }
 }
 ```
+
+Only board-local custom fields belonging to a board in `boards` are kept;
+org-wide shared fields are dropped as noise.
+
+---
+
+## What the File Says About a Facet It Could Not Read
+
+**Nothing — the file is not written.** There is no "unread" state in the schema,
+and `favro init` does not invent one (#154).
+
+If `/columns`, `/customfields` or `/users` fails, the command reports the error,
+exits non-zero, and writes no `context.json` at all. An earlier version turned
+each of those failures into an empty value, which is indistinguishable from the
+real finding — so a 403 on `/users` produced `"team": {}`, and every agent
+reading the file afterwards concluded the collection had no members.
+
+So every value in a `context.json` that exists is a measurement:
+
+| You see | It means |
+|---------|----------|
+| no `workflow` key on a board | `/columns` answered, and that board has none |
+| `"customFields": {}` | `/customfields` answered, and no board-local field belongs to these boards |
+| `"team": {}` **and no** `notes.team` | the membership filter ran, and matched nobody |
+| `"team": {}` **with** `notes.team` | the collection's `sharedToUsers` could not be read, so `team` fails closed to nobody rather than opening to the whole org. This is the one facet with a third state, and it is stated in the file because a privacy filter that cannot run must not be skipped. |
+
+The one thing this costs: a partially-readable workspace produces no file until
+the key can read every facet. `favro init --refresh` is the retry.
 
 ---
 
 ## Workflow Stage Detection
 
-`favro init` maps column names to workflow stages using keyword matching:
+`favro init` maps column names to workflow stages using keyword matching, in
+Swedish and English (`detectStage` in `src/lib/workflow-stage.ts` is the one
+implementation — these are its branches, in the order it tests them):
 
 | Stage | Column name patterns |
 |-------|---------------------|
-| `backlog` | backlog, to do, todo, icebox, inbox |
-| `active` | in progress, doing, development, working |
-| `review` | review, testing, qa, verify, staging |
-| `done` | done, complete, closed, shipped, released |
+| `done` | done, klar, färdig, complete, closed, released, shipped, deploy, live, finished, avslut |
+| `archived` | archive, archived, arkiver |
+| `approved` | approv, godkän, accept, verified, sign-off |
+| `active` | progress, develop, pågå, aktiv, doing, working, implement, bygg, coding, current |
+| `testing` | test, qa, kvalit, verif |
+| `review` | review, gransk, feedback, pending |
+| `queued` | select, vald, ready, next, sprint, priorit, planned, schedul, redo |
+| `backlog` | backlog, inbox, new, ny, todo, to do, icke, idea, wish, önskelista, triage, incoming |
 
-Columns that don't match any pattern are omitted from the workflow map.
+**Every column gets a stage.** A name matching nothing — and a column Favro sends
+with no name at all — falls through to `queued`; no column is ever dropped from
+`workflow`. The stage is a keyword *guess*, so treat it as a display hint, never
+as the open/closed axis: `favro tracker init` stores two `columnId`s for that.
 
 ---
 
 ## Using Context in Commands
 
-Several commands auto-detect `.favro/context.json` from your working directory (walking up to 10 parent directories):
+Nothing in the CLI reads `.favro/context.json`. It is written for **agents and
+humans** to read directly; there is no auto-detection and no walk-up of parent
+directories. Commands that need a collection take `--collection` or use the
+scope lock (`favro scope set`), and the tracker mapping lives in
+`docs/agents/issue-tracker.md` with `~/.favro/config.json` as the fallback —
+`context.json` was deliberately rejected for that, because a cwd walk-up answers
+by whatever directory the process happens to sit in.
 
-```bash
-# All three are collection-scoped; without --collection they fall back to the
-# scope collection recorded in context.json
-favro my-cards --collection sprint-42
-favro overview --collection sprint-42
-favro health --collection sprint-42
-```
-
-The context file enables:
+The file enables, for whoever is reading it:
 - **Board resolution** by slug or name (no need to remember IDs)
-- **Workflow-aware queries** (what stage is a card in?)
-- **Offline reference** for column names, fields, and members
+- **Column and stage reference** without a `/columns` call
+- **Offline reference** for custom fields, their option ids, and members
 
 ---
 
@@ -103,11 +139,12 @@ The context file enables:
 
 If you're building tools that read this file:
 
-1. **Always check `generated` timestamp** — if older than 7 days, suggest `favro init --refresh`
-2. **Resolve boards by slug first**, then name, then ID
-3. **Use `workflow` map** for stage-aware operations (e.g., "active cards" = cards in `workflow.active` columns)
+1. **Check `_updated`** — a date, not a timestamp. Older than 7 days, suggest `favro init --refresh`
+2. **Resolve boards by the slug key first**, then `name`, then `boardId`
+3. **Use each board's `workflow` array** for stage-aware operations (e.g. "active cards" = cards in the columns whose `stage` is `active`)
 4. **Never modify `context.json` directly** — always use `favro init --refresh`
-5. **Custom field types** determine how to set values:
+5. **Trust every value as a measurement** — see *What the File Says About a Facet It Could Not Read*. A missing or empty facet is a finding, not a failed read; the one exception announces itself in `notes.team`
+6. **Custom field types** determine how to set values:
    - `single_select` / `multiple_select` → use option values
    - `text` / `number` / `date` → use raw values
    - `members` → use userId array
