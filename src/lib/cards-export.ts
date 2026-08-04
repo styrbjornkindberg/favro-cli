@@ -27,7 +27,7 @@ export type ExportFormat = 'json' | 'csv';
  * back to the half-protocol, which is the bug this signature exists to prevent.
  *
  * @throws ParseError on any refusal — the caller lets it reach `logError`, so
- *         the wording and the structured `detail` match `cards list` exactly.
+ *         the wording matches `cards list` exactly.
  */
 export async function applyFilter(
   cards: Card[],
@@ -52,7 +52,6 @@ export async function applyFilter(
       `"unblocked" is not available on export: it has to judge each blocker, and an ` +
         `export has no way to tell you which ones it could not reach. ` +
         `Ask the frontier instead: favro cards list <board> --filter "unblocked"`,
-      { kind: 'unsupported-here', field: 'unblocked', value: 'unblocked' },
     );
   }
 

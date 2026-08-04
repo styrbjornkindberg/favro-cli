@@ -39,7 +39,7 @@ export interface ValueContext {
  * unskippable: `src/__tests__/filter-fail-closed-coverage.test.ts` fails the
  * build if any command reaches for `parseQuery` directly again.
  *
- * @throws ParseError — carrying `detail`, for every refusal either half raises.
+ * @throws ParseError for every refusal either half raises.
  */
 export async function resolveQuery(filter: string, ctx: ValueContext): Promise<Query> {
   return validateQueryValues(parseQuery(filter), ctx);
@@ -139,8 +139,7 @@ export function refuseEmpty(field: string, value: string | undefined): void {
   if (value === undefined || value.trim() !== '') return;
   throw new ParseError(
     `--${field} was passed with an empty value — it narrows nothing, and ignoring ` +
-      `it would answer the whole board. Pass a value, or drop the flag.`,
-    { kind: 'unknown-value', field, value }
+      `it would answer the whole board. Pass a value, or drop the flag.`
   );
 }
 
@@ -148,7 +147,8 @@ export function refuseEmpty(field: string, value: string | undefined): void {
  * Check every closed-vocabulary value in a query, and rewrite it to the form the
  * cards carry — `assignee:` to a `userId`, `status:` to the column's own name.
  *
- * @throws ParseError with `detail.kind` `unknown-value` or `missing-board`.
+ * @throws ParseError on a value outside its vocabulary, or on `status:` with no
+ *         board to settle it against.
  */
 export async function validateQueryValues(query: Query, ctx: ValueContext): Promise<Query> {
   if (!query.ast) return query;
@@ -230,8 +230,7 @@ async function checkTag(value: string, ctx: ValueContext, operator: Operator): P
   throw new ParseError(
     `No tag matching "${value}" — it is missing or not visible to your key. ` +
       `Run 'favro tags list' to see them. The org's tags:\n` +
-      names.sort().map((n) => `  ${n}`).join('\n'),
-    { kind: 'unknown-value', field: 'tag', value, candidates: names.sort() }
+      names.sort().map((n) => `  ${n}`).join('\n')
   );
 }
 
@@ -243,8 +242,7 @@ async function resolveStatus(value: string, ctx: ValueContext): Promise<string> 
   if (!ctx.boardId) {
     throw new ParseError(
       `'status:${value}' needs a board — a column name is only unique within one. ` +
-        `Pass --board <board>, or filter on 'columnId:' instead.`,
-      { kind: 'missing-board', field: 'status', value }
+        `Pass --board <board>, or filter on 'columnId:' instead.`
     );
   }
   const directory = new ColumnDirectory(ctx.client, ctx.client.organizationId);

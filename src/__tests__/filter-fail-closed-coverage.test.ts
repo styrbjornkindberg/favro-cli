@@ -121,7 +121,6 @@ async function refusalFrom(run: () => Promise<unknown>) {
       refused: true as const,
       name: e.constructor.name,
       message: e.message,
-      detail: (e as ParseError).detail,
     };
   }
 }
@@ -129,16 +128,25 @@ async function refusalFrom(run: () => Promise<unknown>) {
 /**
  * Every shape of bad input the two commands must agree about, with the token
  * the refusal has to name — "Error" is not a refusal.
+ *
+ * `reason` is the WORDING each arm must produce, and it is what discriminates
+ * the arms from each other. It replaces a `detail.kind` assertion deleted with
+ * the discriminants in #140 — and it discriminates strictly better, because
+ * `kind` was `unknown-value` for BOTH the tag and the status arm, so a refusal
+ * that fired the wrong one of those two satisfied it. The prose is the contract;
+ * a refusal that changes which sentence it produces has changed behaviour.
  */
-const BAD_INPUTS: Array<[label: string, filter: string, unresolvable: string, kind: string]> = [
-  ['an unknown field', 'bogusfield:x', 'bogusfield', 'unknown-field'],
-  ['an unknown bare token', 'typoo', 'typoo', 'unknown-token'],
-  ['an unknown tag value', 'tag:typoo', 'typoo', 'unknown-value'],
-  ['an unknown status value', 'status:Shipped', 'Shipped', 'unknown-value'],
+const BAD_INPUTS: Array<
+  [label: string, filter: string, unresolvable: string, reason: RegExp]
+> = [
+  ['an unknown field', 'bogusfield:x', 'bogusfield', /^Unknown filter field 'bogusfield' at position 0 —/],
+  ['an unknown bare token', 'typoo', 'typoo', /^Unrecognised filter token 'typoo' at position 0 —/],
+  ['an unknown tag value', 'tag:typoo', 'typoo', /^No tag matching "typoo" —/],
+  ['an unknown status value', 'status:Shipped', 'Shipped', /^No column named "Shipped" on board board-1 —/],
 ];
 
 describe('cards list and cards export refuse the same filter identically', () => {
-  test.each(BAD_INPUTS)('%s', async (_label, filter, unresolvable, kind) => {
+  test.each(BAD_INPUTS)('%s', async (_label, filter, unresolvable, reason) => {
     const ctx = { client: makeClient(), boardId: BOARD };
 
     // `cards list` — the command #46 made fail closed.
@@ -153,11 +161,14 @@ describe('cards list and cards export refuse the same filter identically', () =>
     expect(exported.refused).toBe(true);
     expect(exported).toEqual(list);
 
-    // A refusal names the token it could not resolve. `status:` is settled by
-    // ColumnDirectory, which raises its own class, so the KIND is only asserted
-    // where the parse protocol owns the refusal.
+    // A refusal names the token it could not resolve, AND says the one thing
+    // this arm is about — so an arm that starts firing another arm's refusal
+    // fails here instead of passing on "it threw".
     expect(list.message).toContain(unresolvable);
-    if (list.name === 'ParseError') expect(list.detail?.kind).toBe(kind);
+    expect(list.message).toMatch(reason);
+    // `status:` is settled by ColumnDirectory, which raises its own class; every
+    // other arm is the parse protocol's own.
+    expect(list.name).toBe(filter.startsWith('status:') ? 'ColumnResolutionError' : 'ParseError');
   });
 
   test('a filter the vocabulary accepts still exports its rows', async () => {
@@ -187,8 +198,13 @@ describe('cards list and cards export refuse the same filter identically', () =>
     );
     expect(refusal.refused).toBe(true);
     if (!refusal.refused) return;
-    expect(refusal.detail?.candidates).toEqual(['backend', 'bug']);
-    expect(refusal.message).toContain('bug');
+    // The whole org vocabulary, sorted, in the message — this is where the
+    // candidate list has always had to be, since nothing ever read the
+    // `detail.candidates` copy of it (#140).
+    expect(refusal.message).toBe(
+      `No tag matching "typoo" — it is missing or not visible to your key. ` +
+        `Run 'favro tags list' to see them. The org's tags:\n  backend\n  bug`
+    );
   });
 });
 

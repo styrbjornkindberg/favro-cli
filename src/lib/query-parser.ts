@@ -389,8 +389,7 @@ class Parser {
       // nothing else.
       throw new ParseError(
         `Unrecognised filter token '${raw}' at position ${pos} — it names no field and carries no operator. ` +
-          `Filters are field:value (see 'favro cards list --help'). For free text, say it: title~"${raw}".`,
-        { kind: 'unknown-token', value: raw, position: pos }
+          `Filters are field:value (see 'favro cards list --help'). For free text, say it: title~"${raw}".`
       );
     }
 
@@ -456,8 +455,7 @@ class Parser {
     const known = [...this.fields].sort().join(', ');
     throw new ParseError(
       `Unknown filter field '${field}' at position ${pos} — refusing to run a query that cannot mean what you asked. ` +
-        `Known fields: ${known}.`,
-      { kind: 'unknown-field', value: field, position: pos, candidates: [...this.fields].sort() }
+        `Known fields: ${known}.`
     );
   }
 }
@@ -534,45 +532,23 @@ function parseDateValue(raw: string, pos: number): DateValue {
 // ParseError
 // ---------------------------------------------------------------------------
 
-export type ParseFailure =
-  /** The token names no field this parser knows. */
-  | 'unknown-field'
-  /** The token carries no operator at all — the old `title~` degrade path. */
-  | 'unknown-token'
-  /** The value is not in the closed vocabulary its field draws from. */
-  | 'unknown-value'
-  /** `status:` was asked without the board whose columns settle it. */
-  | 'missing-board'
-  /**
-   * The predicate is well-formed and this command still cannot answer it.
-   * `unblocked` on `cards export` is the one: judging a blocker takes extra
-   * reads, and a file has no `unreachable` to report the ones it missed.
-   */
-  | 'unsupported-here'
-  /** Anything structural: unclosed parens, bad dates, limits. */
-  | 'syntax';
-
 /**
- * The machine-readable half of a refusal. Replaces `Query.warnings`, which had
- * no production reader and so notified nobody.
+ * A refusal from the filter grammar or from the vocabularies behind it.
+ *
+ * The MESSAGE is the whole contract. It carried a `ParseErrorDetail` of six
+ * `kind` discriminants alongside — `unknown-field`, `unknown-token`,
+ * `unknown-value`, `missing-board`, `unsupported-here`, `syntax` — plus
+ * `value`/`position`/`field`/`candidates`, and nothing in `src/` outside the
+ * throw sites ever read one (#140). Every refusal already names its offending
+ * token, its position and its candidate list in the prose, so the payload was a
+ * second copy of the message with no reader and a seventh kind always pending.
+ *
+ * ponytail: if an agent ever needs to branch on WHY a filter failed rather than
+ * parse the prose, the place for it is the `{error:{message,retryable}}`
+ * envelope #133 settled (ADR-0002) — added there, with a reader, in one change.
  */
-export interface ParseErrorDetail {
-  kind: ParseFailure;
-  /** The offending text — the field name, the token, or the value. */
-  value?: string;
-  /** Character offset into the filter string, when known. */
-  position?: number;
-  /** The field whose value was refused (`unknown-value` only). */
-  field?: string;
-  /** What the vocabulary actually holds, when it is closed and in hand. */
-  candidates?: string[];
-}
-
 export class ParseError extends Error {
-  constructor(
-    message: string,
-    readonly detail: ParseErrorDetail = { kind: 'syntax' }
-  ) {
+  constructor(message: string) {
     super(message);
     this.name = 'ParseError';
   }
@@ -914,7 +890,7 @@ export interface ParseOptions {
  *
  * @param filter  The query string, e.g. "status:in-progress AND assignee:john"
  * @returns       A Query object with the parsed AST.
- * @throws        ParseError, carrying a structured `detail`, on any refusal.
+ * @throws        ParseError on any refusal, naming the token it refused.
  *
  * @example
  * const q = parseQuery('status:done AND due_date<=today');

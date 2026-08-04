@@ -72,16 +72,23 @@ describe('tag: against the org tag list', () => {
       .rejects.toThrow(/No tag matching "urgnt"/);
   });
 
-  test('the refusal carries a structured payload', async () => {
+  test('the refusal names the tag list, and `label:` refuses as `tag:`', async () => {
     const { client } = makeClient();
     try {
       await validateQueryValues(parseQuery('label:nope'), { client });
       throw new Error('expected a refusal');
     } catch (err) {
-      const e = err as ParseError;
-      expect(e.detail.kind).toBe('unknown-value');
-      expect(e.detail.field).toBe('tag');
-      expect(e.detail.candidates).toEqual(['backend', 'urgent']);
+      const e = err as Error;
+      expect(e).toBeInstanceOf(ParseError);
+      expect(e.name).toBe('ParseError');
+      // `label:` is the tag vocabulary under another spelling — the refusal has
+      // to be the TAG one, word for word, including the sorted org list. This
+      // replaces the `detail.kind`/`field`/`candidates` assertions #140 deleted;
+      // the message is where all three were readable all along.
+      expect(e.message).toBe(
+        `No tag matching "nope" — it is missing or not visible to your key. ` +
+          `Run 'favro tags list' to see them. The org's tags:\n  backend\n  urgent`
+      );
     }
   });
 
@@ -137,7 +144,12 @@ describe('tag: against the org tag list', () => {
         await validateQueryValues(parseQuery('tag:ghost'), { client });
         throw new Error('expected a refusal');
       } catch (err) {
-        expect((err as ParseError).detail.candidates).toEqual([NFD]);
+        // Byte-for-byte: the message lists the org's DECOMPOSED spelling, and
+        // must not have normalised it into the precomposed one on the way out.
+        // (`detail.candidates` used to carry this; nothing read it — #140.)
+        const message = (err as Error).message;
+        expect(message).toContain(NFD);
+        expect(message).not.toContain(NFC);
       }
     });
   });
@@ -150,9 +162,16 @@ describe('status: against the board’s columns', () => {
       await validateQueryValues(parseQuery('status:Doing'), { client });
       throw new Error('expected a refusal');
     } catch (err) {
-      const e = err as ParseError;
-      expect(e.detail.kind).toBe('missing-board');
-      expect(e.message).toMatch(/--board/);
+      const e = err as Error;
+      expect(e).toBeInstanceOf(ParseError);
+      expect(e.name).toBe('ParseError');
+      // The `status:`-with-no-board refusal specifically, not merely "it threw":
+      // ColumnDirectory has a --board refusal of its own, and reaching THAT one
+      // would mean a read was attempted before the board was known.
+      expect(e.message).toBe(
+        `'status:Doing' needs a board — a column name is only unique within one. ` +
+          `Pass --board <board>, or filter on 'columnId:' instead.`
+      );
     }
   });
 

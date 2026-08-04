@@ -567,16 +567,25 @@ describe('parseQuery — fails closed on the field list', () => {
     expect(parseQuery('status:done').ast).toMatchObject({ kind: 'field', field: 'status' });
   });
 
-  test('an unknown field REFUSES, with a structured payload', () => {
+  test('an unknown field REFUSES, naming the field and the whole known list', () => {
     expect(() => parseQuery('invalidfield:value')).toThrow(ParseError);
     try {
       parseQuery('invalidfield:value');
       throw new Error('expected a refusal');
     } catch (err) {
-      const e = err as ParseError;
-      expect(e.detail.kind).toBe('unknown-field');
-      expect(e.detail.value).toBe('invalidfield');
-      expect(e.detail.candidates).toContain('status');
+      const e = err as Error;
+      // `toThrow(ParseError)` above matches by constructor NAME, so it is
+      // satisfied by any error that happens to be called that. These pin the
+      // class and the wording, which is what #140 left as the whole contract
+      // once the unread `detail.kind`/`value`/`candidates` payload went.
+      expect(e).toBeInstanceOf(ParseError);
+      expect(e.name).toBe('ParseError');
+      expect(e.message).toMatch(
+        /^Unknown filter field 'invalidfield' at position 0 — refusing to run a query that cannot mean what you asked\. Known fields: /
+      );
+      // The candidate list is IN the prose — that is where it always had to be.
+      expect(e.message).toContain('status');
+      expect(e.message).toContain('title');
     }
   });
 
@@ -1022,10 +1031,15 @@ describe('parseQuery — additional branch coverage', () => {
       parseQuery('status:done AND bugfix');
       throw new Error('expected a refusal');
     } catch (err) {
-      const e = err as ParseError;
-      expect(e.detail.kind).toBe('unknown-token');
-      expect(e.detail.value).toBe('bugfix');
-      expect(e.message).toContain('title~"bugfix"');
+      const e = err as Error;
+      expect(e).toBeInstanceOf(ParseError);
+      expect(e.name).toBe('ParseError');
+      // Names the token, its position, and the spelling that WOULD have meant a
+      // title search — the three things the deleted `detail` duplicated (#140).
+      expect(e.message).toBe(
+        `Unrecognised filter token 'bugfix' at position 16 — it names no field and carries no operator. ` +
+          `Filters are field:value (see 'favro cards list --help'). For free text, say it: title~"bugfix".`
+      );
     }
   });
 
