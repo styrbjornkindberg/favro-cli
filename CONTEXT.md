@@ -196,39 +196,57 @@ board it cannot resolve is *uncheckable*, not exempt. `--force` is the only esca
 hatch, and it does not rescue the no-board case. `assertScope` in `src/lib/safety.ts`.
 
 `--dry-run` is a preview, never a safety wall, and it is not a way around the lock —
-because a preview writes nothing for the lock to guard. Across the **migrated** writes
-(the `.action(run(…))` ones) the lock runs **before** the preview, so a preview carries
-the verdict: `boards create`, `members add` and `comments add/update/delete` always did,
-and `boards update/delete` and `collections update/delete` joined them in #152 — they
-returned from the preview first, so a target outside the lock previewed at exit 0 while
-the real run refused. (`collections create` and `webhooks create` are org-scoped, below —
-there is no lock to run.) Measured against a built CLI, not assumed, in both directions:
-a target outside the lock exits 1 with the refusal envelope on stdout, and a target
-inside it still previews at exit 0.
+because a preview writes nothing for the lock to guard. The lock runs **before** the
+preview, so a preview carries the verdict rather than contradicting it. Migrated writes
+(the `.action(run(…))` ones): `boards create`, `members add` and `comments
+add/update/delete` always did, and `boards update/delete` and `collections update/delete`
+joined them in #152. Unmigrated ones (still `catch { logError; process.exit(1) }`):
+`dependencies delete`, `dependencies delete-all`, `custom-fields set`, `git todos` and
+`git sync` joined in #155. All nine returned from the preview first, so a target outside
+the lock previewed at exit 0 while the real run refused. (`collections create` and
+`webhooks create` are org-scoped, below — there is no lock to run.)
 
-It is **not** yet true of every command in the CLI, and stating it as a whole-CLI rule
-would be the third false version of this paragraph. The unmigrated commands — still on
-the pre-#114 `catch { logError; process.exit(1) }` pattern — kept the old order, measured
-on the built CLI under a lock and a config whose target sits outside it: `dependencies
-delete` (exit 0, 55 B preview, **zero** requests), `dependencies delete-all` (exit 0,
-61 B), `custom-fields set` (exit 0, 64 B) and `git todos --dry-run` (exit 0, previews
-`Would create 2 cards on board <outside-the-lock>`) all preview without ever consulting
-the lock; `git sync` is the same shape by inspection (`src/commands/git.ts:302` returns,
-`:349` checks) and was not driven. Their guards sit below the preview exactly as the four
-in #152 did. Fixing them means moving credential resolution ahead of their previews,
-which is a #135 pricing decision per command and not a reordering — so it is a gap, named
-here rather than generalised over.
+Measured on a built CLI against a local stand, not assumed, in both directions for all
+nine: a target outside the lock exits 1 with the refusal, a target inside it still
+previews at exit 0, and with no lock configured the preview is unchanged and asks for no
+credential. The **shape** of the refusal still differs by migration state, and that is
+#119's half, not the lock's: the four migrated ones put the
+`{"error":{"message",…}}` envelope on stdout, the five unmigrated ones write
+`✗ Scope violation: …` to stderr with stdout empty.
 
-This paragraph has now claimed something false twice: that the lock always ran first
-(#135 corrected it for four commands), then that those four were permanently different
-(#152 made it true for them).
+Stated as a whole-CLI rule this time, because it is now **checkable** rather than
+generalised: `dry-run-scope-order-wire.test.ts` scans every `.command(…)` registration in
+`src/commands` that calls a scope guard — 33 of them, 29 with an `if (options.dryRun)`
+preview — and fails on any whose preview precedes its guard. Falsifiable in both
+polarities: the same predicate run against `src/commands` at `8754500` reports exactly the
+five gaps #155 closed, at the five lines the ticket named. It is a text scan and therefore
+blind to a preview spelled some third way, which is why the nine behavioural subjects sit
+beside it rather than being replaced by it.
 
-The ORDER has a price on the two `boards` commands, paid deliberately: their guard
-resolves the board over the wire, so `boards update/delete --dry-run` now needs a
-credential *when a lock is configured*. Both call sites therefore gate on the lock —
-with nothing locked there is no verdict to produce, the client is never touched, and the
-credential-free preview #135 measured is unchanged. `collections update/delete` pay
-nothing either way: `checkCollectionScope` is a comparison against local config.
+This paragraph has claimed something false twice — that the lock always ran first (#135
+corrected it for four commands), then that those four were permanently different (#152
+made it true for them) — and generalised once off four commands' evidence over five that
+still had the bug (#155 is those five). The ratchet is there so a fourth version does not
+have to be trusted.
+
+The ORDER has a price, paid deliberately, on every command whose guard resolves its target
+over the wire: `boards update/delete`, `dependencies delete/delete-all`, `custom-fields
+set`, `git todos` and `git sync` need a credential for `--dry-run` *when a lock is
+configured*, and refuse without one. Every one of those call sites therefore gates on
+`config.scopeCollectionId` — with nothing locked there is no verdict to produce, the client
+is never constructed, and the credential-free preview #135 measured is unchanged. The gate
+is not tidiness: `ctx.client` / `createFavroClient()` is evaluated before the guard can
+decide it has nothing to do, and `checkResolvedScope` cannot absorb it because its own
+`client` parameter is eager too. `collections update/delete` pay nothing either way:
+`checkCollectionScope` is a comparison against local config.
+
+Two consequences of the gate on the five unmigrated sites, stated rather than discovered
+later. With **no lock configured**, `dependencies delete/delete-all` and `custom-fields
+set` no longer read the card on the REAL run either — that GET only ever fed a check that
+returns immediately, which is the waste `checkResolvedScope`'s own docstring calls out. And
+`git sync`/`git todos` still print their local report (the branch → card mapping, the TODO
+listing) before refusing: that output describes the repo, not the write, and it is printed
+identically on the real run.
 
 Its remit has an edge, decided rather than implied (#104): a write to an **org-scoped**
 entity — a tag, a group, a webhook, a collection being created — lands on no board at

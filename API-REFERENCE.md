@@ -508,7 +508,7 @@ favro boards update <id> [--name "NEW"] [--description "DESC"] [--human] [--dry-
 | `--name <name>` | New board name |
 | `--description <text>` | New board description |
 | `--human` | Print the `✓ Board updated` lines instead of JSON (root flag) |
-| `--dry-run` | Preview without making API calls |
+| `--dry-run` | Preview the update. Reads the board first to check the scope lock |
 
 **Notes:** At least one of `--name` or `--description` must be provided.
 

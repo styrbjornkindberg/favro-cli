@@ -187,6 +187,27 @@ Issues #142/#143.
   **Behaviour change worth knowing:** a key that cannot read every facet now gets exit 1
   and no file, where it used to get a partial one at exit 0. `favro init --refresh` is the
   retry.
+- The same defect at five more commands, the ones #152 generalised its fix over instead of
+  fixing: `dependencies delete`, `dependencies delete-all`, `custom-fields set`, `git
+  todos` and `git sync` all returned from their `--dry-run` preview before consulting the
+  lock. `git todos --board <outside-the-lock> --dry-run` was the worst — it named a board
+  the lock forbids and listed every card it would create there, at exit 0. All five now
+  take the lock **before** the preview, so `--dry-run` refuses exactly where the real run
+  does; a target *inside* the lock previews as before, and `--force` warns and previews
+  anyway (#155).
+
+  **Behaviour change worth knowing:** all five resolve their target over the wire, so their
+  `--dry-run` now needs working credentials **when a scope lock is configured**, and refuses
+  without them rather than previewing. With no lock configured all five are unchanged and
+  still preview with no credentials and no requests. One further saving on that path: with
+  no lock, `dependencies delete/delete-all` and `custom-fields set` no longer read the card
+  on the real run either, since that read only ever fed a check that returns immediately.
+  These five are unmigrated, so their refusal goes to **stderr** as `✗ Scope violation: …`
+  rather than into the stdout envelope — #119 moves the shape, not this fix.
+- A ratchet now walks every `.command(…)` registration that calls a scope guard and fails on
+  one whose `--dry-run` preview precedes it. `scope-lock-coverage.test.ts` only ever checked
+  *whether* a guard exists, never its order, which is why the same defect shipped three
+  times (#135, #152, #155).
 
 ### Known gaps at release
 

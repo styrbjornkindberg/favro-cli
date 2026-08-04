@@ -546,6 +546,112 @@ The `boards update/delete` `--dry-run` help strings said `Preview without making
 the same reason #135 corrected the `comments` trio's, so both are reworded rather than left to
 mislead. The `collections` pair's are untouched and still true.
 
+### Amendment (#155): the five UNMIGRATED sites, and what each one's preview now pays
+
+The amendment above was reviewed and its `CONTEXT.md` paragraph found to have generalised
+#152's four-command fix into a whole-CLI rule that five more commands falsified. #155 is
+those five: `dependencies delete`, `dependencies delete-all`, `custom-fields set`,
+`git todos` and `git sync`. Measured on the built CLI at `8754500` against a local stand
+(no request left the machine), `FAVRO_CONFIG_DIR` on a throwaway config with
+`scopeCollectionId: coll-locked`, target outside it:
+
+```
+dependencies delete card-1 card-2 --dry-run    exit=0   55 B     0 requests
+dependencies delete-all card-1 --dry-run       exit=0   61 B     0 requests
+custom-fields set card-1 field-1 v --dry-run   exit=0   64 B     0 requests
+git todos --board brd-other --dry-run          exit=0   `Would create N cards on board brd-other`
+git sync --dry-run                             exit=0   4678 B   0 requests
+```
+
+`git sync` is the one #155 filed as "stated unverified"; it is driven here and it has the
+defect, ending `dry-run Would move cards "56 card(s) to \"Done\""` at exit 0 with the lock
+never consulted. After the fix each of the five exits 1 with the refusal and no preview.
+
+**The #135 pricing decision, per command, because it is not a blanket one.** The rule is
+that a dry run pays for exactly what its own preview reaches for. All five previews now
+reach for the wire, so all five pay — but they pay differently, and each is a decision:
+
+| command | what its guard resolves | `--dry-run` under a lock costs |
+|---|---|---|
+| `dependencies delete` | the source card → its board | credential + `GET /cards/{id}` + `GET /widgets/{board}` |
+| `dependencies delete-all` | the card → its board | credential + `GET /cards/{id}` + `GET /widgets/{board}` |
+| `custom-fields set` | the card → its board | credential + `GET /cards/{id}` + `GET /widgets/{board}` |
+| `git todos` | a `--board` name-or-id → a boardId | credential + `GET /widgets/{board}` (plus one `GET /widgets` list on a cold name cache) |
+| `git sync` | every DISTINCT branch-mapped card → its board | credential + one `GET /cards/{id}` per distinct card + one `GET /widgets/{board}` per distinct board |
+
+`git sync` is the expensive one and deliberately so: its preview claims a sweep across N
+cards, and a verdict on a sweep is a verdict on all of it. The guard is gated on there
+being targets as well as on the lock, so a repo with nothing to move still costs nothing.
+
+**Each of the five gates on `config.scopeCollectionId`, and the gate is load-bearing.**
+Same reason as the `boards` pair above, in a different shape: these are unmigrated, so
+there is no lazy `ctx.client` getter — `createFavroClient()` resolves credentials eagerly
+and rejects without them, and the card/board read is a request. Neither can be deferred
+behind `checkScope`'s own "no lock, no-op" return, and `checkResolvedScope` cannot absorb
+it because its `client` parameter is eager too. Ungated, a `--dry-run` for a user with **no
+lock** would be charged a credential and a GET for a verdict there is no lock to produce.
+Measured, with no lock configured, all five: exit 0, the same preview byte-for-byte, zero
+requests, and no credential resolvable in the environment at all.
+
+**They FAIL CLOSED on a missing credential — this is #135's fail-open, not repeated.**
+Measured under a lock, two distinct absences, because `resolveApiKey` treats them
+differently and only one of them is a `RefusalError`:
+
+```
+# FAVRO_API_KEY set but EMPTY — a bare `Error` from resolveApiKey
+$ favro dependencies delete card-1 card-2 --dry-run
+exit=1   stderr: ✗ Error: FAVRO_API_KEY is set but empty. Unset it or provide a valid key.
+stdout: 0 B — no preview
+
+# no credential resolvable at all — a RefusalError from createFavroClient
+$ favro custom-fields set card-1 field-1 v --dry-run
+exit=1   stderr: ✗ Error: ✗ API key not found. Run 'favro auth login' first
+stdout: 0 B — no preview
+```
+
+Both are exit 1 at all five sites. The distinction matters because #135's own reviewer
+caught the opposite: deferring every credential error behind a lazy getter turned
+`FAVRO_API_KEY= favro boards delete board-1 --dry-run` from exit 1 into exit 0 previewing
+the delete. Note for the measured example in the #135 amendment above, which writes
+`FAVRO_API_KEY=` and reports `exit=0`: that holds for a credential that is **absent**, and
+not for one that is set-and-empty, which is exit 1 today at every site including the
+`boards` pair. With **no lock** and an absent credential, all five preview at exit 0 —
+that is the arm ADR-0002's example is about, and it is unchanged.
+
+**The refusal reaches the wrong stream, knowingly.** These five end in
+`catch { logError; process.exit(1) }`, so the refusal lands on stderr as
+`✗ Scope violation: …` and stdout carries no envelope. Fixing the ordering here gives a
+correct refusal in the wrong shape; #119 owns the shape. The tests therefore assert the
+stderr render exactly rather than an envelope — and exactly, because `logError` renders a
+bare `Error` carrying the identical message as `✗ Error: Scope violation: …`, so a
+`toContain('Scope violation:')` cannot tell the two apart. That is the assertion shape
+#152's own test used, and #155 does not copy it: the thrown object is recorded off the
+reader and pinned `instanceof ScopeError` with `.name === 'ScopeError'` and the full
+message by `toBe`.
+
+**What is NOT hoisted, decided rather than left implicit.** `git todos` prints its TODO
+listing and `git sync` prints its branch → card mapping before the guard. Both describe the
+local repository rather than the write, both are printed identically on the real run, and
+`git todos` with neither `--create` nor `--dry-run` is purely that listing. The same
+reasoning keeps argument validation ahead of the guard on `boards update` above. What moved
+is the part that plans a write: `Would create N cards on board X` and
+`Would move cards "N card(s) to \"Done\""`.
+
+**And the rule is now checkable instead of generalised.** The same paragraph of
+`CONTEXT.md` has been false twice and over-general once, and `scope-lock-coverage.test.ts`
+ratchets only *whether* a guard exists. `dry-run-scope-order-wire.test.ts` now scans every
+`.command(…)` registration in `src/commands` that calls a scope guard — 33, of which 29
+have an `if (options.dryRun)` preview — and fails on any whose preview precedes its guard.
+Falsifiable rather than asserted: the same predicate run against `src/commands` at
+`8754500` reports exactly five gaps at `dependencies.ts:129`, `:162`,
+`custom-fields.ts:174`, `git.ts:302` and `:436` — the five lines #155 named.
+
+The three `--dry-run` help strings that said "without making API calls" on
+`dependencies delete/delete-all` and `custom-fields set` are false under a lock for exactly
+the reason #135 corrected the `comments` trio's and #152 the `boards` pair's, and are
+reworded with the behaviour. `git todos`' and `git sync`' strings never made the claim and
+are untouched.
+
 ## Consequences
 
 - **#99 is re-scoped.** "Route every list read through the envelope" stops being a migration
