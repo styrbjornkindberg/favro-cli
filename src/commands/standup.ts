@@ -98,7 +98,8 @@ export function registerStandupCommand(program: Command): void {
       '  ⏰ Due Soon    — due within 3 days\n\n' +
       'Cards carrying dependency edges show a `deps:` count. That is an edge\n' +
       'count, not a blocked state — a Favro edge is never cleared when the\n' +
-      'blocker finishes. Use `favro unblocked` to see which edges are live.\n\n' +
+      'blocker finishes. Ask the frontier for the live ones:\n' +
+      '  favro cards list <board> --filter "unblocked"\n\n' +
       'Examples:\n' +
       '  favro standup --board "Sprint 42"\n' +
       '  favro standup --board boards-1234 --human'

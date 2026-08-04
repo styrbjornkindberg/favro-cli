@@ -6,15 +6,24 @@ steps:
   - command: standup
     args:
       board: "{{board}}"
+  # Both filters are the `cards list --filter` grammar, the only one there is (#95).
+  # They were `due:overdue` and `blocked`: the first named no field the CLI has, and
+  # the second was deleted by #47 and had been answering about an empty array on
+  # every card ever since. The re-pointed `query` refuses both by name rather than
+  # returning a plausible zero rows, so they are spelled properly here.
   - command: query
     args:
       board: "{{board}}"
-      query: "due:overdue"
+      query: "due_date:overdue"
     continueOnError: true
+  # `blocked-by:true` is "carries any blocker edge at all" — an EDGE COUNT, not a
+  # blocked state. Nothing clears a Favro edge when the blocker finishes, so a
+  # digest must not read these as blocked work; `unblocked` is the predicate that
+  # judges doneness and it is answered by `cards list --filter`, not here.
   - command: query
     args:
       board: "{{board}}"
-      query: "blocked"
+      query: "blocked-by:true"
     continueOnError: true
 variables:
   board:

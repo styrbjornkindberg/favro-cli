@@ -307,6 +307,119 @@ describe('every built-in skill is runnable against the code that ships with it',
       expect([...READ_COMMANDS, ...intentNames()]).toContain(step.command);
     }
   });
+
+  /**
+   * A step's command existing is not the same as its ARGUMENTS meaning something
+   * (#95).
+   *
+   * `daily-digest.yaml` shipped two `query` steps reading `due:overdue` and
+   * `blocked`. Both named a `query` command that exists, so the arm above was
+   * green — and both were dead: `due` is not a field this CLI has, and `blocked`
+   * was deleted by #47, after which it answered about an empty array on every
+   * card. The old fail-open parser is what hid them, by sweeping each into a
+   * title search and returning a plausible zero rows. Re-pointing `favro query`
+   * at the real grammar turns them into refusals, which is how they surfaced.
+   *
+   * So the filter strings get parsed here, offline. `parseQuery` alone is
+   * deliberate: it settles field NAMES and syntax with no network, which is the
+   * half that can be checked from a test. The VALUES (`tag:`, `status:`,
+   * `assignee:`) belong to a live org and cannot be — a shipped skill naming a
+   * tag some org does not have is that org's refusal at run time, not a defect
+   * in the file.
+   */
+  it.each(files)('%s: every query step parses under the real grammar', (file) => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { loadSkillFromFile } = require('../lib/skill-store') as typeof import('../lib/skill-store');
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { parseQuery } = require('../lib/query-parser') as typeof import('../lib/query-parser');
+    const skill = loadSkillFromFile(path.join(BUILTIN_DIR, file));
+
+    for (const step of skill.steps) {
+      if (step.command !== 'query') continue;
+      const filter = String(step.args?.query ?? '');
+      // An absent or empty filter is its own refusal at run time — say so here
+      // rather than passing it to a parser that would report a syntax error.
+      expect(filter.trim()).not.toBe('');
+      expect(() => parseQuery(filter)).not.toThrow();
+    }
+  });
+
+  it('that arm would have caught both filters #95 found, and passes the ones that replaced them', () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { parseQuery, ParseError } = require('../lib/query-parser') as typeof import('../lib/query-parser');
+
+    // Verbatim from `8754500:skills/builtin/daily-digest.yaml`.
+    for (const dead of ['due:overdue', 'blocked']) {
+      const thrown = (() => { try { parseQuery(dead); } catch (e) { return e; } })();
+      expect(thrown).toBeInstanceOf(ParseError);
+      expect((thrown as Error).name).toBe('ParseError');
+    }
+
+    // …and the replacements are accepted, so the arm is not simply refusing
+    // everything.
+    for (const live of ['due_date:overdue', 'blocked-by:true']) {
+      expect(() => parseQuery(live)).not.toThrow();
+    }
+  });
+});
+
+describe('no command’s own --help names a command the CLI does not have', () => {
+  /**
+   * The same `favro audit` class, one layer in (#95).
+   *
+   * `standup`'s `.description()` told the user to run `favro unblocked`, which
+   * has never existed. Nothing caught it: this file's other arms read the help
+   * TOPIC and two shipped `.md` files, and `documented-commands-coverage.test.ts`
+   * reads tracked `*.md`. A `.description()` string is neither — so the one
+   * piece of prose the CLI prints on demand, in the terminal, was the one piece
+   * nothing checked. That was the second stale-guidance bug found on this map,
+   * which is what makes it a class rather than a typo.
+   *
+   * The whole live tree, and its option descriptions too: `--tag`'s help says
+   * `Same as --filter "tag:…"`, and the next one like it may well name a command.
+   *
+   * ponytail: `.description()`, `.summary()` and option help — the surfaces
+   * commander exposes as public API. `addHelpText` blobs are private state
+   * (`cli.ts` has one, naming `favro help issue-tracker`, which is real). Reach
+   * for the private field only when a lie lands in one; until then this covers
+   * every string a user reads without a private-API dependency that a commander
+   * upgrade can break silently.
+   */
+  const helpTexts = (cmd: Command): string[] => [
+    cmd.description(),
+    cmd.summary(),
+    ...cmd.options.map((o) => o.description),
+  ].map((t) => String(t ?? ''));
+
+  /** Every command in the tree, addressed the way a user types it. */
+  const everyCommand = (cmd: Command, label = '<root>'): Array<[string, Command]> => [
+    [label, cmd],
+    ...cmd.commands.flatMap((sub) =>
+      everyCommand(sub, label === '<root>' ? sub.name() : `${label} ${sub.name()}`)
+    ),
+  ];
+
+  it.each(everyCommand(program))('%s', (_label, cmd) => {
+    const dead = helpTexts(cmd)
+      .flatMap((text) => invocations(text))
+      .filter((tokens) => !invocationExists(tokens))
+      .map((tokens) => `favro ${tokens.join(' ')}`);
+    expect([...new Set(dead)]).toEqual([]);
+  });
+
+  it('the scan reads a real tree and would see the bug it was written for', () => {
+    // Both halves, because either alone can pass for the wrong reason: a probe
+    // over an empty tree finds no lies, and a probe that flags nothing is not a
+    // probe. `favro unblocked` is the exact string #95 deleted from `standup`.
+    const commands = everyCommand(program);
+    expect(commands.length).toBeGreaterThan(100);
+    expect(commands.map(([label]) => label)).toContain('standup');
+    expect(helpTexts(commands.find(([l]) => l === 'standup')![1]).join('\n')).not.toContain('favro unblocked');
+
+    const wouldSee = invocations('Use `favro unblocked` to see which edges are live.');
+    expect(wouldSee).toEqual([['unblocked']]);
+    expect(invocationExists(wouldSee[0])).toBe(false);
+  });
 });
 
 describe('shipped prose never names a command the CLI does not have', () => {
