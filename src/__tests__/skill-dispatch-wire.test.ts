@@ -733,3 +733,84 @@ describe('--dry-run is a preview of the run, never its safety', () => {
     expect(result.steps[0].error).toContain('Scope violation');
   });
 });
+
+describe('the query step fails closed, and the unwind that follows is shown, not assumed', () => {
+  // #95 asked whether the fail-closed refusal should reach the skill engine's
+  // `query` step, "where a refusal aborts a run and unwinds the compensation
+  // log". Fail-closed says yes — and the ticket's own condition was that the
+  // unwind be DEMONSTRATED rather than taken on trust, because a read step that
+  // aborts a write transaction is the one place where refusing costs more than
+  // answering wrong appears to.
+  //
+  // It costs less. A `query` step that silently matched zero cards would carry
+  // on: the steps after it would filter an empty list, write nothing, and the
+  // run would report `completed` over a board it never touched. That is a
+  // successful run that did nothing, indistinguishable from a successful run
+  // that had nothing to do.
+
+  it('a bad filter in step 2 aborts the run and undoes what step 1 wrote', async () => {
+    const stand = await startServer();
+
+    const result = await runSkill(
+      skill(
+        { command: 'create', args: { name: 'first', board: BOARD } },
+        { command: 'query', args: { board: BOARD, query: 'statuz:done' } },
+      ),
+      opts(stand),
+    );
+
+    expect(result.status).toBe('failed');
+    // The refusal names the token, and reaches the caller as the step's error —
+    // it is not swallowed into "the query found nothing".
+    expect(result.steps[1].error).toContain(`Unknown filter field 'statuz' at position 0`);
+
+    // The unwind, read back off the stand's real state rather than counted off a
+    // mock: Favro answers 200 for writes it does not perform.
+    expect(stand.cards.size).toBe(0);
+    expect(stand.received.some((r) => r.method === 'DELETE' && r.path === '/cards/new-card-1')).toBe(true);
+    expect(result.rollback?.outcome).toBe('rolled-back');
+    expect(result.rollback?.orphans).toEqual([]);
+  });
+
+  it('a filter the grammar accepts runs the step and leaves step 1 written', async () => {
+    // The positive control. Without it the arm above passes just as well against
+    // a `query` step that refuses everything, or one that throws on being
+    // reached at all — which is not "fails closed", it is broken.
+    const stand = await startServer();
+
+    const result = await runSkill(
+      skill(
+        { command: 'create', args: { name: 'first', board: BOARD } },
+        { command: 'query', args: { board: BOARD, query: 'title~"first"' } },
+      ),
+      opts(stand),
+    );
+
+    expect(result.status).toBe('completed');
+    expect(result.steps[1].output).toContain('Found 1 cards:');
+    expect(result.steps[1].output).toContain('first');
+    // Nothing unwound: the card step 1 made is still there.
+    expect(stand.cards.size).toBe(1);
+    expect(stand.received.some((r) => r.method === 'DELETE')).toBe(false);
+  });
+
+  it('a filter that matches nothing is an ANSWER, and the run carries on', async () => {
+    // The distinction the whole ticket is about: a valid query over a board with
+    // no matching card is zero rows and a completed run. Only an UNRESOLVABLE
+    // query refuses. Without this arm, "fails closed" could be satisfied by a
+    // step that treats every empty result as an error.
+    const stand = await startServer();
+
+    const result = await runSkill(
+      skill(
+        { command: 'create', args: { name: 'first', board: BOARD } },
+        { command: 'query', args: { board: BOARD, query: 'title~"nothing-is-called-this"' } },
+      ),
+      opts(stand),
+    );
+
+    expect(result.status).toBe('completed');
+    expect(result.steps[1].output).toContain('Found 0 cards:');
+    expect(stand.cards.size).toBe(1);
+  });
+});
