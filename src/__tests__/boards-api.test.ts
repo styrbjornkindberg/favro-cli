@@ -690,4 +690,36 @@ describe('boards-api counts done through the one judge (#157)', () => {
     ] as any);
     expect(velocity.reduce((n, v) => n + v.completed, 0)).toBe(1);
   });
+
+  // --- what the ONLY live caller actually passes -----------------------------
+  //
+  // Every arm above hands these counters a card with a column NAME on `status`.
+  // `getBoardWithIncludes` does not: it passes `board.cards` off the raw
+  // `/widgets/{id}` payload, and Favro sends no `status` field — the column is
+  // the status, and the name is filled in by `CardsAPI.hydrateNames` from
+  // `columnId`, which that path never reaches (`cards-api.ts` normalizeCard,
+  // CONTEXT.md "column-as-status").
+  //
+  // So the widening the arms above pin is LATENT on the live path, not printed.
+  // This pins that honestly rather than letting the ADR and CHANGELOG imply a
+  // user-visible number changed. If someone later hydrates the cards in
+  // `getBoardWithIncludes`, this test fails — which is the correct signal that
+  // the printed counts have started to move for real.
+  it('reads a RAW wire card — columnId, no status — as open, so the reroute is latent', () => {
+    const raw = [
+      { columnId: 'col-klar', dueDate: PAST },
+      { columnId: 'col-pagar', dueDate: PAST },
+      { columnId: 'col-klar' },
+    ];
+    const s = stats(raw as any);
+    expect(s.totalCards).toBe(3);
+    expect(s.doneCards).toBe(0);
+    expect(s.openCards).toBe(3);
+    expect(s.overdueCards).toBe(2);
+
+    const velocity = calculateVelocity(
+      raw.map(c => ({ ...c, updatedAt: new Date(Date.now() - 86_400_000).toISOString() })) as any,
+    );
+    expect(velocity.reduce((n, v) => n + v.completed, 0)).toBe(0);
+  });
 });

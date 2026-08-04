@@ -206,11 +206,32 @@ and a neutering mutation.
 
 ## Amendment (#157): the two `boards-api` counters, and what their numbers did
 
-`aggregateBoardStats` and `calculateVelocity` now read `isDoneStage(detectStage(c.status))`.
-`status` **is** the column name — `cards-api.ts` says so at the field: *"Favro has no `status`
-field — the column IS the status"* — so this is the same composition `isCompleted` performs, not a
-stage judgement forced onto a status by a cast. `detectStage` already accepts
-`string | null | undefined`, so nothing was widened to fit.
+`aggregateBoardStats` and `calculateVelocity` now read `isDoneStage(detectStage(c.status))` —
+the same composition `isCompleted` performs, not a stage judgement forced onto a status by a
+cast. `detectStage` already accepts `string | null | undefined`, so nothing was widened to fit
+and `workflow-stage.ts` was not touched.
+
+**What `status` is, and where it comes from — the first draft of this amendment got this wrong.**
+`status` is not a wire field. `cards-api.ts` says so at `normalizeCard`: *"`status` is deliberately
+NOT read off the raw card: Favro sends no such field. It is the column name, filled in by the
+caller from `columnId`."* CONTEXT.md says the same under "column-as-status". The filler is
+`CardsAPI.hydrateNames`, which resolves `columnId` → column name through `ColumnDirectory`.
+`isCompleted` therefore gets a real column name because its input arrived via `CardsAPI` →
+`normalizeCard` (`api/context.ts`). **`getBoardWithIncludes` does not.** It passes `board.cards`
+off the raw `/widgets/{id}` payload — no `normalizeCard`, no `hydrateNames` — so on the only live
+path that supplies cards at all, `c.status` is `undefined`, `detectStage` falls through to
+`queued`, and both counters answer exactly as they did before the reroute.
+
+**So the reroute is correct and latent, not printed.** The 25 movers below are what the judge
+answers *given a column name*; they are not a change any user can currently observe. And whether
+`/widgets?include=cards` returns a `cards` array in the first place is **unmeasured** — the only
+thing in this repo that says it does is a hand-written test stand in `boards-api.test.ts` that
+invents both the array and a `status` field on its members. Per ADR-0003 that is a hint, not a
+measurement, and this records the open edge rather than asserting either answer. The declared
+`ExtendedBoard.cards` shape (`status?: string`) is the same hint in type form; the `(board as any)`
+cast that read it has been removed, since a cast is how an unmeasured shape gets asserted.
+Making the widening visible is a separate change — it needs hydrated cards, which means a column
+lookup this class does not have — and it was not approved here.
 
 **Measured over 49 column names** (every name this ADR and #157 quote, plus this org's Swedish and
 English column vocabulary). 25 move open → done. **Nothing moves done → open** — `Unresolved` was
@@ -231,12 +252,24 @@ tested before `pending`, and an unanchored `live` matching inside "de**live**ry"
 `boards get --include stats` too. Not tuned here for the reason §"What is *not* consolidated" gives:
 tuning a shared regex to suit one consumer is how one judge becomes five. #158 owns the term list.
 
-**`overdueCards` goes down, and that is a measurement users read.** The expression is *past due*
+**`overdueCards` goes down wherever a column name reaches it.** The expression is *past due*
 **and** *not done*, so widening "done" narrows overdue by exactly the past-due cards sitting in any
 of the 25 columns above. It also fixes an inconsistency inside the old pair: the overdue conjunct
 tested `!== 'done'` and not `=== 'completed'`, so a past-due card in a `Completed` column counted as
 done **and** overdue simultaneously. 27 of the 49 names are now excluded from overdue where they
-were eligible before.
+were eligible before (29 read as done; only `Done` and `done` were excluded before).
+
+**Not all 27 exclusions are right, and the wrong ones are the inherited quirks.** `Archived`,
+`Arkiverad`, `Klar`, `Färdig`, `Avslutad`, `Closed`, `Released`, `Shipped`, `Deployed`, `Finished`,
+`Complete`, `Resolved`, `Done ✅`, `Ready to Deploy` and the five real approval columns are correct
+exclusions — finished work with a due date last year is not overdue, it is finished. **`Pending
+Approval`, `Delivery`, `Deliverables` and `Livestream` are artefacts**: a card in any of them is
+unfinished, and suppressing it from `overdueCards` hides work that is genuinely late. They are
+wrong today and right after #158 anchors `live` and orders `pending` before `approv`. `Delivered`
+is the one honest member of that group. Nothing here tunes the term list, for the reason
+§"What is *not* consolidated" gives — tuning a shared regex to suit one consumer is how one judge
+becomes five — and the artefacts are invisible on the live path anyway, since it supplies no
+column names at all.
 
 **`calculateVelocity` is a rate, but there is no series to distort.** Nothing caches, persists or
 compares a velocity across runs — the only readers are the two formatters in
@@ -251,14 +284,30 @@ fetch cards at all, and it was not approved as part of this reroute.
 
 The counters were mutation-tested at **both** sites, since a counter fed a fixture where every card
 is done cannot tell a real judge from `() => true` — it reports the array length either way.
-Fifteen mutations, fourteen killed: neutering and inverting the judge at each of the three call
-sites, deleting each conjunct of the overdue and velocity filters separately, and **reverting each
-site to the old exact `=== 'done' || === 'completed'` test**, which is the mutation that matters
-most and fails 19 assertions at the stats site and 12 at the velocity site.
+Sixteen mutations, fourteen killed, each typechecked before its result was recorded (deleting a
+guard makes TS lose a narrowing and jest then reports a bogus mass failure, which is not a kill).
 
-The one survivor is semantically equivalent and is recorded rather than tested around. Deleting
-`if (!c.dueDate) return false` from the overdue filter does not fail `tsc` *by luck* — it fails it
-outright, because `new Date(string | undefined)` matches no overload, so the type system is the
-guard's real defence. Forced past that with a cast, no count changes: `new Date(undefined)` is an
-Invalid Date and `InvalidDate < now` is already `false`. No test can kill it, which is the correct
-outcome for a mutant that changes nothing.
+| mutation | failures |
+|---|---|
+| revert stats site to the old exact test | 19 |
+| revert velocity site to the old exact test | 12 |
+| revert overdue conjunct to `!== 'done'` | 2 |
+| stats judge → `true` / → `false` | 28 / 28 |
+| overdue judge neutered → `true` / → `false` | 4 / 4 |
+| velocity judge → `true` / → `false` | 10 / 13 |
+| delete overdue's `dueDate < now` conjunct | 1 |
+| delete overdue's not-done conjunct | 4 |
+| delete velocity's `>= weekStart` / `< weekEnd` conjunct | 1 / 2 |
+| delete velocity's judge conjunct | 10 |
+| delete `if (!c.dueDate) return false` (cast past `tsc`) | **survives** |
+| delete `if (!c.updatedAt) return false` (cast past `tsc`) | **survives** |
+
+**Two survivors, both semantically equivalent, recorded rather than tested around.** Neither guard
+deletion fails `tsc` by luck — each fails it outright, because `new Date(string | undefined)`
+matches no overload, so the type system is the real defence. Forced past that with a cast, no count
+changes: `new Date(undefined)` is an Invalid Date, and `NaN` makes **every** relational comparison
+false — `<`, `>`, `>=` and `<=` alike — so the overdue filter's `InvalidDate < now` and velocity's
+`InvalidDate >= weekStart` both short-circuit to `false` exactly as the guards did. No comparison in
+either expression reads `NaN` any other way, and neither uses `!==` or `isNaN`. No test can kill
+these, which is the correct outcome for mutants that change nothing. The first draft of this
+amendment reported only the `dueDate` one; the sibling site's identical mutant was not run.

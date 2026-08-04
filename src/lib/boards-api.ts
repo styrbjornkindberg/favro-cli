@@ -119,24 +119,41 @@ export interface Collection {
  * Aggregate board stats from board data.
  * If raw card data is provided, compute from cards; otherwise use board metadata.
  *
- * `status` IS the column name — Favro has no status field (see `cards-api.ts`) —
- * so "is this card finished" is the question `isDoneStage(detectStage(name))`
- * exists to answer, and this counter no longer answers it itself (#157). It used
- * to test `status === 'done' || status === 'completed'` **exactly**, which #98's
- * census of eight judges missed and ADR-0005 recorded as deliberately left
- * behind. Two consequences of the reroute, both measured:
+ * Where a card carries a column name under `status`, "is this card finished" is
+ * the question `isDoneStage(detectStage(name))` exists to answer, and this
+ * counter no longer answers it itself (#157). It used to test
+ * `status === 'done' || status === 'completed'` **exactly**, which #98's census
+ * of eight judges missed and ADR-0005 recorded as deliberately left behind.
+ * Given a column name, the reroute:
  *
- *   - **`doneCards` widens, `openCards` narrows by the same amount.** A board
- *     whose closing column is `Klar`, `Färdig`, `Avslutad`, `Approved`,
- *     `Archived`, `Closed`, `Released`, `Shipped`, `Deployed` or `Done ✅`
- *     reported ZERO done cards before, because none of those strings is
- *     literally `done` or `completed`. That is the defect, not a preference:
- *     `boards get --include stats` and `standup` disagreed about one board.
- *   - **`overdueCards` narrows.** Widening "done" narrows overdue, because the
+ *   - **widens `doneCards` and narrows `openCards` by the same amount.** A
+ *     closing column named `Klar`, `Färdig`, `Avslutad`, `Approved`, `Archived`,
+ *     `Closed`, `Released`, `Shipped`, `Deployed` or `Done ✅` counted as OPEN
+ *     before, because none of those strings is literally `done` or `completed` —
+ *     so `standup` and `boards get --include stats` answered differently about
+ *     the same column. Measured over 49 names: 25 move open → done, none moves
+ *     done → open.
+ *   - **narrows `overdueCards`.** Widening "done" narrows overdue, because the
  *     expression below excludes finished work from it. The old expression tested
  *     `!== 'done'` and so did not even exclude `completed` — a past-due card in a
  *     column named `Completed` counted as both done AND overdue. Now it counts as
  *     neither.
+ *
+ * **`status` IS NOT A WIRE FIELD, and on the only live caller it is absent.**
+ * Favro sends no `status` on a card — `cards-api.ts` says so at `normalizeCard`,
+ * CONTEXT.md says so under "column-as-status", and the open/closed axis on the
+ * wire is `columnId` and nothing else. The field is filled in by
+ * `CardsAPI.hydrateNames`, which resolves `columnId` → column name. That is why
+ * `isCompleted` (`api/standup.ts`) gets a real name: its input came through
+ * `CardsAPI`. `getBoardWithIncludes` does NOT — it hands over
+ * `board.cards` straight off the raw `/widgets/{id}` payload, unnormalised and
+ * unhydrated. So on that path `c.status` is `undefined`, `detectStage` falls
+ * through to `queued`, and every count below reads exactly as it did before the
+ * reroute. The widening above is **correct and latent, not printed**: it becomes
+ * visible only once something hands this function hydrated cards. Whether
+ * `/widgets?include=cards` returns a `cards` array at all is **unmeasured** —
+ * per ADR-0003 this records the open edge rather than asserting either answer.
+ * The one fixture that says it does is a hand-written test stand.
  */
 export function aggregateBoardStats(board: ExtendedBoard, cards?: Array<{ status?: string; dueDate?: string }>): BoardStats {
   if (cards && cards.length > 0) {
@@ -171,8 +188,12 @@ export function aggregateBoardStats(board: ExtendedBoard, cards?: Array<{ status
  * `aggregateBoardStats` does (#157) — it carried a byte-identical exact-match
  * copy of the same test. Nothing caches or persists a velocity series: all four
  * weeks are recomputed from `updatedAt` on every invocation, so the reroute
- * changes the whole printed series at once rather than grafting a wider week onto
+ * changes the whole series at once rather than grafting a wider week onto
  * narrower history. There is no stored series for it to disagree with.
+ *
+ * Same caveat as `aggregateBoardStats`: `status` is not a wire field, and the
+ * only caller that passes cards passes unhydrated ones, so the widening is
+ * latent until something hands this function cards with column names on them.
  */
 export function calculateVelocity(cards?: Array<{ status?: string; updatedAt?: string }>): VelocityData[] {
   const velocity: VelocityData[] = [];
@@ -281,12 +302,18 @@ export class BoardsAPI {
     const raw = await this.byBoard(boardOrName, id => this.client.get<any>(`/widgets/${id}`, { params }));
     const board: ExtendedBoard = { ...raw, ...normalizeWidget(raw) };
 
-    // Stats and velocity are computed client-side if requested
+    // Stats and velocity are computed client-side if requested.
+    //
+    // `board.cards` is read off the RAW `/widgets/{id}` payload, so its members
+    // never went through `normalizeCard` or `CardsAPI.hydrateNames` and carry no
+    // `status` — Favro sends none, the column IS the status, and only hydration
+    // fills the name in. Both counters below therefore judge `undefined` on this
+    // path, whatever a column is actually called. That `/widgets?include=cards`
+    // returns this array at all is unmeasured (ADR-0003); the declared shape on
+    // `ExtendedBoard.cards` is a hint, not a measurement. Cast removed: the field
+    // is declared, so `as any` was asserting a shape the type already claims.
     if (include?.includes('stats') || include?.includes('velocity')) {
-      let cards: Array<{ status?: string; dueDate?: string; updatedAt?: string }> | undefined;
-      if (Array.isArray((board as any).cards)) {
-        cards = (board as any).cards;
-      }
+      const cards = Array.isArray(board.cards) ? board.cards : undefined;
       if (include?.includes('stats')) {
         board.stats = aggregateBoardStats(board, cards);
       }
