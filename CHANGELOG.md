@@ -278,6 +278,15 @@ Issue #95, ADR-0006.
   *whether* a guard exists, never its order, which is why the same defect shipped three
   times (#135, #152, #155). It is a text scan with a named ceiling, not an AST walk — four
   constructed bypasses still evade it and are listed in the test's own header.
+- That swallowed-read ratchet only walked promise callbacks, and shipped stating the
+  `try`/`catch` population was zero. It is not zero: 19 of the 160 `catch` clauses in
+  non-test `src/` both decline to bind their error and answer with emptiness. A second
+  seed over `ts.CatchClause` now walks them with the same two predicates, and the
+  emptiness test learned the statement form (`catch { cards = [] }`), which no `return`
+  test could see. All 19 are listed with a measured reason — nine as debt, ten as
+  decisions where the throw is the answer (a URL validator, a cache miss, a
+  fail-closed refusal). No swallow was fixed here; the ratchet is what stops the count
+  growing while they are (#153).
 
 ### Known gaps at release
 
