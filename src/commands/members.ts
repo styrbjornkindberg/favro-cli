@@ -83,7 +83,14 @@ export function registerMembersCommand(program: Command): void {
     .requiredOption('--to <target-id>', 'Board or collection ID to add member to')
     .option('--board-target', 'Target is a board (default)')
     .option('--collection-target', 'Target is a collection')
-    .option('--dry-run', 'Print what would be added without making API calls')
+    // The fourth wire-touching preview, and NOT "without making API calls" —
+    // measured the same way the `comments` trio was (#135). See the scope-check
+    // comment in the action: `--board-target` (the DEFAULT) reads `ctx.client`,
+    // so that preview needs credentials; `--collection-target` does not.
+    .option(
+      '--dry-run',
+      'Preview the add. --board-target (the default) reads the board first to check the scope lock',
+    )
     .option('--force', 'Bypass scope check')
     .action(run(async (
       ctx: Ctx,

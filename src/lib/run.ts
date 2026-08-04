@@ -30,6 +30,7 @@ import { reportDispatch } from './report-dispatch';
 import { DispatchResult, retryAdvice } from './dispatch';
 import { isVerbose, logError } from './error-handler';
 import { classifyThrownError } from './favro-error';
+import { RefusalError } from './refusal';
 
 import { CardsAPI } from './cards-api';
 import { BoardsAPI } from './boards-api';
@@ -346,10 +347,15 @@ export function run(
  * hand those four an absent `ctx.client` and break them, which is why the arm
  * moved here and not ahead of it.
  *
- * Not narrowed to `RefusalError`: `readConfig()` already ran and threw in `run()`
- * before this, so the only failures left are the two missing-credential declines
- * `createFavroClient` raises. A discriminator for a case that cannot arrive is a
- * branch nothing exercises.
+ * Narrowed to `RefusalError`, because a THIRD failure reaches this catch and it
+ * is not a decline: `resolveApiKey` throws a bare `Error` for a `FAVRO_API_KEY`
+ * that is set but EMPTY (`config.ts`) — a malformed environment, not an absent
+ * credential, and the one thing that throw exists to be loud about. Measured
+ * against the built CLI: without the narrowing, `FAVRO_API_KEY= favro boards
+ * delete board-1 --dry-run` previewed at exit 0 and said nothing, while the real
+ * run refused. `readConfig()`'s own throws genuinely cannot arrive — `run()` read
+ * the same file successfully before this — but "only refusals reach here" was the
+ * wrong reading, and a bug of ours must never become a silent preview.
  */
 async function withClient(
   base: AnonymousCtx,
@@ -363,9 +369,10 @@ async function withClient(
     });
     return { ...base, client, api: apiNamespace(client) };
   } catch (error) {
-    if (!opts.dryRun) throw error;
+    if (!opts.dryRun || !(error instanceof RefusalError)) throw error;
     // Deferred, not discarded. A preview that reaches for either member meets
-    // the same refusal, at the same boundary, with the same wording.
+    // the same refusal, at the same boundary, with the same wording — the SAME
+    // object, so it is still a `RefusalError` when the boundary classifies it.
     const unresolved = (): never => {
       throw error;
     };

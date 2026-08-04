@@ -390,9 +390,14 @@ was never gated. Of the eleven:
 - **Eight preview arms are derived entirely from argv and `ctx.config` and consume nothing
   off the wire**: `boards create/update/delete`, `collections create/update/delete`,
   `webhooks create`, and `members add --collection-target`. Proven rather than read: the
-  pre-#114 CLI (`6db4e36^`, built and driven) prints byte-identical previews with no
-  credentials in the environment at all. `[dry-run] Would delete board board-1` is an echo
-  of argv.
+  pre-#114 CLI (`6db4e36^`, built and driven) prints the same previews with no credentials in
+  the environment at all. `[dry-run] Would delete board board-1` is an echo of argv.
+  **Byte-identical for six of the eight**, re-measured on review: `webhooks create` and
+  `members add --collection-target` differ, because #116 moved them to the `item:` arm and
+  JSON is the default — `{"dryRun":true,"event":…}` against the old prose line. Under
+  `--human` those two are byte-identical too, which is where the claim holds. The evidence is
+  about the WIRE, and the shape change is #116's and intended; an earlier draft of this
+  bullet said "byte-identical" of all eight, which is false in the default mode (ADR-0003).
 - **Four reach for the wire before their preview exists**: `comments add/update/delete` call
   `checkResolvedScope(ctx.client, () => boardOfCard/boardOfComment(…))`, and on a target
   they cannot read the preview is *replaced* by a scope refusal — measured, off a 403. Their
@@ -431,15 +436,39 @@ re-throw the same error at the same boundary with the same wording.
   concern #114's ticket anticipated: `boards create col-1 --type bogus --dry-run` now
   answers `Invalid board type: "bogus"` instead of `API key not found`.
 
-**Not narrowed to `RefusalError`.** `readConfig()` already ran and threw in `run()` before
-this point, so the only failures reaching the catch are the two missing-credential declines
-`createFavroClient` raises. A discriminator for a case that cannot arrive is a branch nothing
-exercises.
+**Narrowed to `RefusalError`, on review.** The first draft was not, on the reading that
+`readConfig()` had already run and thrown in `run()` so the only failures reaching the catch
+were the two missing-credential declines. `readConfig()` is right, but the enumeration was
+not: `resolveApiKey` throws a bare `Error` for a `FAVRO_API_KEY` that is **set but empty**,
+which is a malformed environment, not an absent credential, and is the one thing that throw
+exists to be loud about. Measured on the built CLI before the narrowing —
 
-Two documentation claims the measurement falsified, corrected with it: `CONTEXT.md` said the
-lock always runs before the preview (false for four commands), and `comments`' three
-`--dry-run` help strings said "without making API calls" (false for all three — they issue
-the resolving GET).
+```
+$ FAVRO_API_KEY= favro boards delete board-1 --dry-run
+exit=0   stdout: [dry-run] Would delete board board-1          # 57f503d: exit=1, envelope
+$ FAVRO_API_KEY= favro boards delete board-1 --yes
+exit=1   stdout: {"error":{"message":"FAVRO_API_KEY is set but empty. …","retryable":false}}
+```
+
+— so a preview swallowed a misconfiguration the real run refuses on, and the bullet above
+("nothing that previously refused now proceeds") was false by one case. The deferral now
+carries `error instanceof RefusalError`; everything else refuses up front, which is the
+fail-closed side and keeps a bug of ours from ever surfacing as a successful preview.
+
+**The deferred throw's TYPE is pinned, for #133's reason at a second site.** `unresolved()` in
+`withClient` is a funnel that re-throws a captured error, which is exactly the shape #133's
+last bullet pinned in `checkScope`. The same mutation lands here: rewriting `throw error` as
+`throw new Error((error as Error).message)` — same wording, and `retryable: false` either way
+because `retryAdvice` gates on `isWireFailure` first — passed 163 suites / 3132 tests on the
+first draft. `run.test.ts` now asserts `instanceof RefusalError` on what a handler catches off
+`ctx.client`, with the malformed-environment arm as the opposite polarity.
+
+Three documentation claims the measurement falsified, corrected with it: `CONTEXT.md` said the
+lock always runs before the preview (false for four commands); `comments`' three `--dry-run`
+help strings said "without making API calls" (false for all three — they issue the resolving
+GET); and `members add`'s said the same, which is false for its DEFAULT `--board-target` arm
+and was missed in the first draft even though it is the fourth wire-touching preview this
+amendment names.
 
 ## Consequences
 

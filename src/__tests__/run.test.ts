@@ -861,6 +861,77 @@ describe('--dry-run defers the credential refusal, it does not skip it', () => {
     expect(reached).toBe(false);
   });
 
+  it('defers the SAME error object, so it is still a RefusalError at the boundary', async () => {
+    // Pins the TYPE, not the message. `toThrow(RefusalError)` matches by
+    // constructor name up the chain, and the envelope's `retryable: false` is
+    // what a bare `Error` gets too — so neither discriminates. A getter that
+    // re-wrapped the refusal (`throw new Error(error.message)`) passes every
+    // other arm in this describe block.
+    const { root, leaf } = dryRunProgram();
+    let caught: unknown;
+    leaf.action(
+      run(async (ctx) => {
+        try {
+          void ctx.client;
+        } catch (error) {
+          caught = error;
+        }
+        return { item: { caught: (caught as Error).name } };
+      }),
+    );
+
+    await parse(root, ['thing', '--dry-run']);
+
+    expect(caught).toBeInstanceOf(RefusalError);
+    expect((caught as Error).name).toBe('RefusalError');
+    // The second touch hands back that same object rather than a fresh one.
+    expect(stdout()).toEqual(['{"caught":"RefusalError"}']);
+  });
+
+  it('does NOT defer a malformed environment — only a RefusalError is deferred', async () => {
+    // The third failure `createFavroClient` can raise, and it is not a decline:
+    // `resolveApiKey` throws a bare `Error` for a key that is SET but empty. That
+    // is the one thing that throw exists to be loud about, so a preview must not
+    // swallow it. Measured against the built CLI before the narrowing landed:
+    // `FAVRO_API_KEY= favro boards delete board-1 --dry-run` printed the preview
+    // at exit 0 and never mentioned the broken variable.
+    const { root, leaf } = dryRunProgram();
+    process.env.FAVRO_API_KEY = '';
+    let ran = false;
+    leaf.action(run(async () => void (ran = true)));
+
+    await parse(root, ['thing', '--dry-run']);
+
+    expect(stdout()).toEqual([
+      JSON.stringify({
+        error: {
+          message:
+            'FAVRO_API_KEY is set but empty. Unset it or provide a valid key.\n' +
+            '  Run `favro auth login` to configure a key.',
+          retryable: false,
+        },
+      }),
+    ]);
+    expect(process.exitCode).toBe(1);
+    // The other polarity of the same arm: the preview did not run either.
+    expect(ran).toBe(false);
+  });
+
+  it('the same malformed environment refuses without --dry-run too — unchanged', async () => {
+    // The foreign arm for the narrowing: it must not have changed the non-dry-run
+    // path, which already refused here.
+    const { root, leaf } = dryRunProgram();
+    process.env.FAVRO_API_KEY = '';
+    let ran = false;
+    leaf.action(run(async () => void (ran = true)));
+
+    await parse(root, ['thing']);
+
+    expect(stdout()[0]).toContain('FAVRO_API_KEY is set but empty');
+    expect(process.exitCode).toBe(1);
+    expect(ran).toBe(false);
+  });
+
   it('still builds a real client on a dry run when credentials DO resolve', async () => {
     // The foreign arm for the deferral: `--dry-run` must not become a way to get
     // a poisoned context when there was nothing wrong. Credentials are restored
