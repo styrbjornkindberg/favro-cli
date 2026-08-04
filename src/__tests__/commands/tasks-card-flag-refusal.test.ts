@@ -15,21 +15,25 @@
  * it is asking which board reached the lock — so the wording it would have to
  * assert is asserted here instead, against the real `assertScope`.
  *
- * Four arms, because a message test is the easiest unfalsifiable test to write
+ * Five arms, because a message test is the easiest unfalsifiable test to write
  * and `toContain('--card')` alone would pass on a `--help` dump:
  *
  *   1. FLAG      — lock, no `--card`: the new wording, pinned to the error object
  *                  that actually reached the reporter, and NOT equal to the shared
- *                  guard's own boardless message.
- *   2. OMIT      — no lock, no `--card`: no refusal at all, and the write runs.
+ *                  guard's own boardless message. Every claim the message makes is
+ *                  asserted, because each one is also a CHANGELOG claim.
+ *   2. FORCE     — lock, no `--card`, `--force`: still refuses, no warning-only
+ *                  pass-through. The message says force is no substitute; this is
+ *                  what measures it.
+ *   3. OMIT      — no lock, no `--card`: no refusal at all, and the write runs.
  *                  The other polarity of arm 1's "the write did not happen".
- *   3. FOREIGN   — lock, `--card` at an out-of-lock board: the real out-of-lock
+ *   4. FOREIGN   — lock, `--card` at an out-of-lock board: the real out-of-lock
  *                  refusal, byte for byte.
- *   4. UNREADABLE— lock, `--card` at a card that cannot be read: the GENERIC
+ *   5. UNREADABLE— lock, `--card` at a card that cannot be read: the GENERIC
  *                  boardless refusal, byte for byte. Both of its causes are live
  *                  here, so this is the arm the new wording must stay out of.
  *
- * Arms 3 and 4 compare against what `assertScope` itself returns for the same
+ * Arms 4 and 5 compare against what `assertScope` itself returns for the same
  * input rather than against a copied string literal. Byte-for-byte either way,
  * but drift-proof: `safety.ts` may reword freely and these keep asserting the
  * claim that matters — the CLI's refusal IS the shared guard's refusal.
@@ -82,6 +86,7 @@ const WRITES: Array<[string, string[], () => jest.Mock]> = [
 
 let consoleLog: jest.SpyInstance;
 let consoleError: jest.SpyInstance;
+let consoleWarn: jest.SpyInstance;
 let exit: jest.SpyInstance;
 
 async function runCli(args: string[]): Promise<void> {
@@ -112,6 +117,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   consoleLog = jest.spyOn(console, 'log').mockImplementation(() => {});
   consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
+  consoleWarn = jest.spyOn(console, 'warn').mockImplementation(() => {});
   exit = jest.spyOn(process, 'exit').mockImplementation((() => {}) as any);
 
   (config.resolveApiKey as jest.Mock).mockResolvedValue('test-token');
@@ -161,6 +167,19 @@ describe.each(WRITES)('tasks %s under a lock with --card omitted', (_name, argv,
     expect(message).not.toContain('cards get');
   });
 
+  it('states WHY the card cannot be inferred, and that --force is not a substitute', async () => {
+    // The message makes four claims and only two of them were pinned. A mutation
+    // that deleted lines 3–5 — the `GET /tasks/:taskId` reason and the whole
+    // `--force` rule, three of five lines — left every assertion in this file
+    // passing with `tsc` clean. Both claims are CHANGELOG'd, so an unpinned one
+    // is a documented promise nothing keeps.
+    await runCli(argv);
+
+    const message = refusal().message;
+    expect(message).toContain("Favro's 'GET /tasks/:taskId' is\n  UNMEASURED");
+    expect(message).toContain('--force does not stand in for it');
+  });
+
   it('names the lock that is refusing, by name and not by id', async () => {
     // The generic message names it, and a refusal that will not say WHICH lock
     // stopped the write is a refusal the user cannot act on. Survived a mutation
@@ -189,7 +208,7 @@ describe.each(WRITES)('tasks %s under a lock with --card omitted', (_name, argv,
   });
 
   it('is not the shared guard\'s generic boardless wording', async () => {
-    // THE DISCRIMINATING ASSERTION. Arm 4 proves that wording still ships where
+    // THE DISCRIMINATING ASSERTION. Arm 5 proves that wording still ships where
     // it is true; this proves the reword actually happened rather than the two
     // messages having quietly converged.
     await runCli(argv);
@@ -241,7 +260,26 @@ describe('the lock the refusal names falls back the way the shared guard does', 
   });
 });
 
-// ─── arm 2: the omit arm — no lock, so no refusal at all ──────────────────────
+// ─── the force arm: --force is not a substitute for --card ────────────────────
+
+describe.each(WRITES)('tasks %s under a lock, --card omitted, --force given', (_name, argv, writeFn) => {
+  it('still refuses, because there is no board for force to overrule', async () => {
+    // The message claims this in as many words and nothing measured it. It holds
+    // because `assertScope` tests `!boardId` BEFORE it tests `force`; reorder
+    // those two and the sentence becomes a lie with every other arm still green.
+    await runCli([...argv, '--force']);
+
+    const error = refusal();
+    expect(error).toBeInstanceOf(ScopeError);
+    expect(error.message).toContain('--force does not stand in for it');
+    // Not the warning-only pass-through `--force` buys on a resolved board.
+    expect(consoleWarn).not.toHaveBeenCalled();
+    expect(writeFn()).not.toHaveBeenCalled();
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+});
+
+// ─── arm 3: the omit arm — no lock, so no refusal at all ──────────────────────
 
 describe.each(WRITES)('tasks %s with no lock configured and --card omitted', (_name, argv, writeFn) => {
   it('does not refuse, and performs the write', async () => {
@@ -260,7 +298,7 @@ describe.each(WRITES)('tasks %s with no lock configured and --card omitted', (_n
   });
 });
 
-// ─── arm 3: the foreign arm — --card given, board outside the lock ────────────
+// ─── arm 4: the foreign arm — --card given, board outside the lock ────────────
 
 describe.each(WRITES)('tasks %s with --card at a board outside the lock', (_name, argv, writeFn) => {
   it('gets the real out-of-lock refusal, byte for byte', async () => {
@@ -278,7 +316,7 @@ describe.each(WRITES)('tasks %s with --card at a board outside the lock', (_name
   });
 });
 
-// ─── arm 4: --card given but unreadable — the generic wording is right here ───
+// ─── arm 5: --card given but unreadable — the generic wording is right here ───
 
 describe.each(WRITES)('tasks %s with --card at a card that cannot be read', (_name, argv, writeFn) => {
   it('keeps the generic boardless refusal, byte for byte', async () => {
