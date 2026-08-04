@@ -251,6 +251,9 @@ describe.each(WRITES)('tasks %s with no lock configured and --card omitted', (_n
 
     expect(reported).not.toHaveBeenCalled();
     expect(writeFn()).toHaveBeenCalled();
+    // The opposite polarity of arm 1's "nothing on stdout". Without this, that
+    // assertion would hold against a build that never printed anything at all.
+    expect(consoleLog).toHaveBeenCalled();
     expect(exit).not.toHaveBeenCalledWith(1);
     // #102/#104's criterion: no lock means no extra request on that path.
     expect(MockCardsAPI.prototype.getCard).not.toHaveBeenCalled();
@@ -293,6 +296,27 @@ describe.each(WRITES)('tasks %s with --card at a card that cannot be read', (_na
     // The "reported separately" promise the generic message makes, kept.
     expect(consoleError).toHaveBeenCalledWith(expect.stringContaining('404 Not Found'));
     expect(writeFn()).not.toHaveBeenCalled();
+  });
+});
+
+describe.each(WRITES)('tasks %s with --card at a card that has no board instance', (_name, argv, writeFn) => {
+  it('keeps the generic boardless refusal, byte for byte', async () => {
+    // The OTHER way `boardOfCard` reaches `''` — a readable card whose `boardId`
+    // is absent, which is what an assignment fork looks like. The gate does not
+    // care WHY the board is empty, only whether a card was named, so this must
+    // land on the generic wording too. Asserted rather than reasoned: the
+    // assignment-fork sentence exists because an absent `boardId` once produced
+    // a Critical, and this is the arm that sentence is FOR.
+    MockCardsAPI.prototype.getCard = jest.fn().mockResolvedValue({ cardId: 'fork', boardId: undefined });
+
+    await runCli([...argv, '--card', 'fork']);
+
+    const error = refusal();
+    expect(error.message).toBe(await sharedGuardSays(''));
+    expect(error.message).toContain('assignment fork');
+    expect(error.message).not.toContain('--card <cardCommonId>');
+    expect(writeFn()).not.toHaveBeenCalled();
+    expect(exit).toHaveBeenCalledWith(1);
   });
 });
 
