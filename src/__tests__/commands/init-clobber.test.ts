@@ -170,3 +170,19 @@ test('--refresh overwrites the real file on disk', async () => {
   expect(fs.readFileSync(contextFile, 'utf-8')).not.toBe(SENTINEL);
   expect(exitSpy).not.toHaveBeenCalled();
 });
+
+test('a --refresh whose read fails leaves the existing file byte-for-byte intact (#154)', async () => {
+  // The property the whole fail-closed choice rests on, and the one the docs now
+  // promise: `favro init --refresh` is the retry, so a retry against a key that
+  // still cannot read a facet must not destroy the good file it is retrying
+  // against. It holds because the single `writeFile` comes after every read —
+  // and the test above is its polarity: the same command with the reads healthy
+  // DOES replace the sentinel, so "intact" here is the failure stopping the
+  // write and not `--refresh` having quietly stopped working.
+  MockColumns.prototype.listColumns = jest.fn().mockRejectedValue(new Error('403 columns forbidden'));
+
+  await runInit('--refresh');
+
+  expect(fs.readFileSync(contextFile, 'utf-8')).toBe(SENTINEL);
+  expect(process.exitCode).toBe(1);
+});
