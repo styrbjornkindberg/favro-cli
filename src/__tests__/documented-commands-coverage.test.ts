@@ -157,6 +157,18 @@ const ALLOWLIST: Record<string, { count: number; why: string }> = {
     count: 2,
     why: 'the ADR that deleted it; naming it is the point',
   },
+  // DECISION — same category as the two ADR entries above: a CHANGELOG entry
+  // announcing that 3.0.0 removed `--json` has to show the flag it removed. Both
+  // occurrences sit in the "before / after" block of Breaking #1, where `--json`
+  // appears as the 2.4.1 spelling beside the 3.0.0 replacement. A CHANGELOG is
+  // the one document whose job is to name what no longer works.
+  //
+  // Count is exactly 2, so a third occurrence — someone teaching `--json` in a
+  // later entry as though it still worked — fails here.
+  'CHANGELOG.md  boards list --json': {
+    count: 2,
+    why: 'the release note that removed it; showing the old spelling is the point',
+  },
   // DEBT, and bigger than a flag rename. `--parent` was added to `cards update`
   // in 3239633 and is gone now; §2.2's corollary and §4.6 are built on it, and
   // both cite `src/commands/cards-update.ts`, a file that no longer exists.
