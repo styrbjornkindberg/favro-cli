@@ -196,15 +196,32 @@ board it cannot resolve is *uncheckable*, not exempt. `--force` is the only esca
 hatch, and it does not rescue the no-board case. `assertScope` in `src/lib/safety.ts`.
 
 `--dry-run` is a preview, never a safety wall, and it is not a way around the lock —
-because a preview writes nothing for the lock to guard. The lock runs **before** the
-preview on every command that has one, so a preview always carries the verdict:
-`boards create`, `members add` and `comments add/update/delete` always did, and
-`boards update/delete` and `collections update/delete` joined them in #152 — they
+because a preview writes nothing for the lock to guard. Across the **migrated** writes
+(the `.action(run(…))` ones) the lock runs **before** the preview, so a preview carries
+the verdict: `boards create`, `members add` and `comments add/update/delete` always did,
+and `boards update/delete` and `collections update/delete` joined them in #152 — they
 returned from the preview first, so a target outside the lock previewed at exit 0 while
 the real run refused. (`collections create` and `webhooks create` are org-scoped, below —
 there is no lock to run.) Measured against a built CLI, not assumed, in both directions:
 a target outside the lock exits 1 with the refusal envelope on stdout, and a target
 inside it still previews at exit 0.
+
+It is **not** yet true of every command in the CLI, and stating it as a whole-CLI rule
+would be the third false version of this paragraph. The unmigrated commands — still on
+the pre-#114 `catch { logError; process.exit(1) }` pattern — kept the old order, measured
+on the built CLI under a lock and a config whose target sits outside it: `dependencies
+delete` (exit 0, 55 B preview, **zero** requests), `dependencies delete-all` (exit 0,
+61 B), `custom-fields set` (exit 0, 64 B) and `git todos --dry-run` (exit 0, previews
+`Would create 2 cards on board <outside-the-lock>`) all preview without ever consulting
+the lock; `git sync` is the same shape by inspection (`src/commands/git.ts:302` returns,
+`:349` checks) and was not driven. Their guards sit below the preview exactly as the four
+in #152 did. Fixing them means moving credential resolution ahead of their previews,
+which is a #135 pricing decision per command and not a reordering — so it is a gap, named
+here rather than generalised over.
+
+This paragraph has now claimed something false twice: that the lock always ran first
+(#135 corrected it for four commands), then that those four were permanently different
+(#152 made it true for them).
 
 The ORDER has a price on the two `boards` commands, paid deliberately: their guard
 resolves the board over the wire, so `boards update/delete --dry-run` now needs a
@@ -212,9 +229,6 @@ credential *when a lock is configured*. Both call sites therefore gate on the lo
 with nothing locked there is no verdict to produce, the client is never touched, and the
 credential-free preview #135 measured is unchanged. `collections update/delete` pay
 nothing either way: `checkCollectionScope` is a comparison against local config.
-This paragraph twice claimed something false — that the lock always ran first (#135
-corrected it for four commands) and then that those four were permanently different
-(#152 made the first claim true instead).
 
 Its remit has an edge, decided rather than implied (#104): a write to an **org-scoped**
 entity — a tag, a group, a webhook, a collection being created — lands on no board at

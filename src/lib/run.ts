@@ -331,6 +331,14 @@ export function run(
  * in the CLI. `[dry-run] Would delete board board-1` is an echo of argv; it should
  * not need an API key.
  *
+ * **#152 moved two of those eight, conditionally.** `boards update/delete` now take the
+ * scope lock BEFORE their preview, and `checkScope` resolves the board over the wire, so
+ * under a configured lock they touch `ctx.client` and refuse here like the four below —
+ * measured, one `GET /widgets/{id}`. Both call sites gate on `ctx.config.scopeCollectionId`,
+ * so with no lock they are still argv-only and still credential-free, which is the arm the
+ * paragraph above measured. Nothing here changed to accommodate them; that is the point of
+ * keying on the touch rather than on a list.
+ *
  * The other four — `comments add/update/delete` and `members add --board-target`
  * — reach for `ctx.client` BEFORE their preview, because the scope check resolves
  * the target's board over the wire and that verdict IS most of their preview.

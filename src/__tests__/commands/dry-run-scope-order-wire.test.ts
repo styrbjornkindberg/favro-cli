@@ -339,6 +339,31 @@ describe.each(SUBJECTS)('$label --dry-run takes the scope lock first', (s: Subje
     expect(stderr).toBe('');
   });
 
+  it('a lock with NO scopeCollectionName still refuses — the gate keys on the id', async () => {
+    // The `boards` gate is a SECOND copy of the guard's own "is a lock configured"
+    // test, and nothing else pinned that the copy is faithful. Measured on review:
+    // `if (ctx.config?.scopeCollectionName)` in place of `scopeCollectionId` passed
+    // 164 suites / 3193 tests at both `boards` sites — a silent fail-open for any
+    // config carrying an id and no name, which is a supported shape (the name is
+    // optional in `FavroConfig`, every reader spells it
+    // `scopeCollectionName ?? scopeCollectionId`, and `scope set` only gets one if
+    // the collection payload had a `name`). This arm is what fails on that drift.
+    await stand({ scopeCollectionId: LOCKED });
+
+    const { code, stdout, stderr } = await drive(s.outside);
+
+    expect(code).toBe(1);
+    // Same refusal, labelled with the id because there is no name to label it with.
+    expect(JSON.parse(stdout)).toEqual({
+      error: {
+        message: expect.stringContaining(s.refusal.replace('"Locked"', `"${LOCKED}"`)),
+        retryable: false,
+      },
+    });
+    expect(stdout).not.toContain('[dry-run]');
+    expect(stderr).toBe('');
+  });
+
   it('the REAL run still refuses, and issues no write', async () => {
     const { served } = await stand(LOCK);
 
