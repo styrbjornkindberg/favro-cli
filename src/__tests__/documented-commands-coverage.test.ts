@@ -91,10 +91,32 @@
  *   ponytail: a row is read only when its first cell IS a flag declaration —
  *   code spans, commas and slashes, no prose. That is what separates an option
  *   table from README's troubleshooting table, whose first column holds
- *   `` `--column` not working ``. The ceiling: a flag documented in prose inside
- *   the cell, or in the SECOND column, is not read. Both would be new
- *   conventions; the row floor in the self-check is what notices if the docs
- *   convert wholesale.
+ *   `` `--column` not working ``. The ceiling: a flag written anywhere but the
+ *   first cell of a row is a MENTION, not a declaration, and is not read.
+ *
+ *   That ceiling is load-bearing rather than hypothetical, and the numbers say so
+ *   in both directions. Measured over the tracked docs: 15 flag-shaped code spans
+ *   sit in a second or third column today, and every one is a cross-reference —
+ *   `` requires `--board` ``, `` same as `--filter "tag:…"` ``, `` Kanban view
+ *   (`--compact`, `--watch`, `--ids`) ``. All 15 name real flags, so nothing is
+ *   hidden behind the ceiling right now; four of them are in rows the first cell
+ *   already scopes and checks. Reading them as declarations is the loosening the
+ *   header warns about — it is the same claim as reading a flag out of a
+ *   paragraph, which is where the prose line is drawn. One row in README has the
+ *   two mixed in the first cell and is the reason the residue check exists;
+ *   deleting that check reports `--column` against whatever heading precedes it.
+ *
+ *   Five further shapes were constructed as bypasses and all five get through: a
+ *   GFM table written with no leading `|`, a double-backtick code span, a
+ *   `<value>` placeholder written outside the span, a bold `**`--flag`**` first
+ *   cell, and an HTML `<table>`. A sixth mis-scopes: a setext-underlined heading
+ *   is not a heading to this walker, so its section's rows fall to the previous
+ *   scope or to the root program. Measured: zero occurrences of any of the six in
+ *   the tracked docs, which is why they are recorded rather than handled — the
+ *   row floor above is what notices if a doc converts wholesale. The scope-bleed
+ *   shape is the one worth watching: `example` is reset only by an ATX heading, so
+ *   two commands' tables under one prose heading both take the FIRST fenced
+ *   example's scope.
  *
  * ARITY DOES NOT SUBSUME OPTION, WHICH IS WHY BOTH ARE HERE
  * It looks as though arity already covers #127's headline `--offset`, because
@@ -548,6 +570,15 @@ function scopeOf(positional: string[]): Scope | undefined {
  * spans and fall out here, as does README's `` | `--column` not working | `` —
  * see the `ponytail:` note in the header for that boundary. `-y, --yes` is two
  * flags in one span; `--limit <n>` is one flag and its value placeholder.
+ *
+ * TWO OF THE FOUR LINES BELOW ARE LOAD-BEARING, MEASURED SEPARATELY. Deleting the
+ * leading-`|` test, or the residue test, each fails the suite — the residue test
+ * against a real document, `README.md:424`, which reports `--column` against the
+ * root program without it. `!spans.length` and `!spans.every(startsWith('-'))` are
+ * both EQUIVALENT MUTANTS: an empty first cell yields no flags anyway, and a cell
+ * mixing a command span with a flag span is already emptied by the trailing
+ * `.filter`. They are kept as one readable "is this a flag declaration" statement,
+ * not as the protection; do not read them as load-bearing.
  */
 function tableRowFlags(line: string): string[] {
   if (!/^\s*\|/.test(line)) return [];
@@ -640,6 +671,28 @@ const FINDINGS = [
   ),
 ];
 
+/**
+ * THE REAL DOCUMENTS' COUNTS, FROZEN BEFORE ANY SELF-CHECK CAN PAD THEM.
+ *
+ * `ROWS_READ`, `ROWS_SCOPED` and `CONTINUED` are module-level counters that
+ * `readOptionTables` and `readBody` increment — and the self-check tests below
+ * call BOTH of those functions on synthetic Markdown. Asserting the floors
+ * against the live counters therefore counts roughly twenty synthetic rows and a
+ * handful of synthetic joins as though the docs had supplied them, which is
+ * exactly enough slack to hide a real drop: delete every option table from
+ * `command-reference.md` and the floor still passes on the self-check's own
+ * contributions. That is the "module-level state satisfying a counter" trap, and
+ * a floor that its own prover can satisfy is not a floor.
+ *
+ * It happens to be harmless today only because jest runs `it` bodies in
+ * declaration order and the floor arm is declared first. That is an ordering
+ * accident, not a property — `-t`, `.only`, a reorder or a future `--randomize`
+ * all break it. Freezing here makes the floors a fact about the tracked docs.
+ */
+const DOC_ROWS_READ = ROWS_READ;
+const DOC_ROWS_SCOPED = ROWS_SCOPED;
+const DOC_CONTINUED = CONTINUED;
+
 /** How many times each allowlist key actually occurs right now. */
 const LIVE_COUNTS = FINDINGS.reduce(
   (counts, f) => counts.set(f.key, (counts.get(f.key) ?? 0) + 1),
@@ -671,26 +724,29 @@ describe('every command the docs teach is a command the binary answers to', () =
     // purpose, the way `verbose-coverage.test.ts:128-132` argues: a floor with
     // heavy slack stops gripping while #80 keeps deleting commands.
     // The four counts below carried `35`, `631`, `601` and `24` as their "today"
-    // numbers, measured when #127 was written. Re-measured on this branch against
-    // the same scanner: 38, 680, 650 and 28. The docs grew; the floors did not
-    // move, so the comments were the only wrong part — corrected rather than left,
-    // because a floor annotated with a number nobody re-measures is how a floor
-    // stops being evidence (ADR-0003).
+    // numbers, measured when #127 was written. Re-measured against the same
+    // scanner: 38, 681, 651 and 28. The docs grew; the floors did not move, so the
+    // comments were the only wrong part — corrected rather than left, because a
+    // floor annotated with a number nobody re-measures is how a floor stops being
+    // evidence (ADR-0003). `681`/`651` and not `680`/`650`: the #158 ADR amendment
+    // on this same branch wrote `favro init` in an inline code span, which is one
+    // more documented invocation, and one that resolves.
     expect(DOC_FILES.length).toBeGreaterThan(30); // 38 today
     expect(SURFACE.size).toBeGreaterThan(140); // 148 today: 125 actions + groups
-    expect(INVOCATIONS.length).toBeGreaterThan(600); // 680 today
+    expect(INVOCATIONS.length).toBeGreaterThan(600); // 681 today
     // …and almost all of them met the real surface. See RESOLVED above: this is
     // the assertion a silently-matching-nothing walker cannot pass.
-    expect(RESOLVED).toBeGreaterThan(570); // 650 today; the rest are `<placeholder>` and bare `favro --help`
+    expect(RESOLVED).toBeGreaterThan(570); // 651 today; the rest are `<placeholder>` and bare `favro --help`
     expect(new Set(INVOCATIONS.map((i) => i.file)).size).toBeGreaterThan(22); // 28 today
     // …and the option tables were read at all. `readOptionTables` matching
     // nothing is the #156 bug restored, and it would restore it silently: the
     // arms above never touched a table row, so every one of them stays green.
-    expect(ROWS_READ).toBeGreaterThan(370); // 391 today, over 5 files
-    expect(ROWS_SCOPED).toBeGreaterThan(370); // 385 today; the other 6 are `## Global Options`
+    // The frozen counters, not the live ones — see DOC_ROWS_READ.
+    expect(DOC_ROWS_READ).toBeGreaterThan(370); // 391 today, over 5 files
+    expect(DOC_ROWS_SCOPED).toBeGreaterThan(370); // 385 today; the other 6 are `## Global Options`
     // …and the `\`-continued commands were joined rather than read one line at a
     // time. Zero here means every flag past the first line went unchecked again.
-    expect(CONTINUED).toBeGreaterThan(45); // 55 joins across 22 commands today
+    expect(DOC_CONTINUED).toBeGreaterThan(45); // 55 joins across 22 commands today
   });
 
   it('every doc closes the fences it opens', () => {
@@ -792,11 +848,42 @@ describe('every command the docs teach is a command the binary answers to', () =
     // 9. The header and separator rows of the table itself.
     expect(detect(table('### `cards list`', '`--board <board>`'))).toEqual([]);
 
-    // STILL GETS THROUGH, measured and accepted:
-    //  a. a flag in the SECOND column. Nothing in the docs is written that way.
+    // STILL GETS THROUGH, measured and accepted. See the ponytail note in the
+    // header for why a MENTION is not a declaration, and for the live counts.
+    //  a. a flag in the SECOND column. 15 live instances, all cross-references,
+    //     all naming real flags.
     expect(detect('### `cards list`\n\n| What | Flag |\n|---|---|\n| nonsense | `--nonsense` |\n')).toEqual([]);
     //  b. a table INSIDE a fence, which is a code sample of a table, not a table.
     expect(detect('### `cards list`\n\n```\n| `--nonsense` | why |\n```\n')).toEqual([]);
+    //  c. a GFM table written with no leading `|`. Zero live instances.
+    expect(detect('### `cards list`\n\nFlag | Description\n-----|---\n`--nonsense` | why\n')).toEqual([]);
+    //  d. a double-backtick code span — the residue check sees the leftover
+    //     backticks and reads the cell as prose. Zero live instances.
+    expect(detect(table('### `cards list`', '``--nonsense``'))).toEqual([]);
+    //  e. a `<value>` placeholder written OUTSIDE the span. Zero live instances.
+    expect(detect(table('### `cards list`', '`--nonsense` <v>'))).toEqual([]);
+    //  f. a bold first cell — `**` is residue. Zero live instances.
+    expect(detect(table('### `cards list`', '**`--nonsense`**'))).toEqual([]);
+    //  g. an HTML table. The header's prose rule already covers HTML blocks.
+    expect(detect('### `cards list`\n\n<table><tr><td><code>--nonsense</code></td></tr></table>\n')).toEqual([]);
+    //  h. MIS-SCOPED, not missed: a setext-underlined heading is not a heading
+    //     here, so the row falls to the previous scope — the root program in this
+    //     case, which still reports, but against `favro` rather than `cards list`.
+    //     A flag that is real on the fallback scope and phantom on the setext one
+    //     would go quiet. Zero live setext headings.
+    expect(detect('## Prose\n\n`cards list`\n-----------\n' + table('', '`--nonsense`'))).toEqual([
+      expect.stringContaining('`favro` has no `--nonsense` option'),
+    ]);
+    //  i. SCOPE BLEED, the one to watch: `example` is reset only by an ATX
+    //     heading, so a second command's table under the same prose heading takes
+    //     the FIRST fenced example's scope. `--create` is real on `git todos` and
+    //     phantom on `git link`, and this reports nothing.
+    expect(
+      detect(
+        '## How linking works\n\n```bash\nfavro git todos --create\n```\n\nOptions for `git link`:\n' +
+          table('', '`--create`'),
+      ),
+    ).toEqual([]);
   });
 
   it('reads tilde-fenced blocks, not just backtick-fenced ones', () => {

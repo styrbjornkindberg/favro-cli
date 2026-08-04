@@ -155,10 +155,61 @@ describe('a column that is waiting is not a column that is finished (#158)', () 
 
   // THE POLARITY ARM. Deleting `approved` from the approved branch, or moving the
   // wait branch above nothing at all, has to fail here.
-  it.each(['Approved', 'Godkänd', 'Accepted', 'Verified', 'Sign-off'])(
+  //
+  // `Godkänt` is here because the first draft of the `godkän` → `godkänd`
+  // narrowing lost it: Swedish inflects the participle for gender, so `Godkänd`
+  // and `Godkänt` are the SAME decision, and `godkänd` matched only the first.
+  // `Godkänt` fell past every branch to the `queued` default — a column literally
+  // named "Approved" reading as not-started. That is the mirror of the bug #158
+  // was opened about and it shrinks done counts instead of growing them, which is
+  // the direction nothing else in this file would have noticed.
+  //
+  // `Signed Off` is here for the other half of the `sign.?off` split: it matched
+  // NOTHING before and fell to `queued` while the gate noun `Sign-off` read
+  // `approved`. Restore `sign.?off` to this branch and the `Sign-off` arm below
+  // fails; delete `signed.?off` from it and this one does.
+  it.each(['Approved', 'Godkänd', 'Godkänt', 'Godkända', 'Accepted', 'Accepterad', 'Verified', 'Signed Off', 'Signed-off'])(
     'still reads the decided `%s` as approved, and approved is finished',
     (name) => {
       expect(detectStage(name)).toBe('approved');
+      expect(isDoneStage(detectStage(name))).toBe(true);
+    },
+  );
+
+  // THE GATE NOUNS, which is where `Sign-off` belongs and where it was not.
+  // `Sign-off` is a noun naming the gate, exactly like `Approval`; the participle
+  // test the amendment argues for puts it here, and the old ladder had the pair
+  // exactly backwards — `Sign-off` read done, `Signed Off` read queued.
+  it.each(['Sign-off', 'Sign off', 'Signoff'])('reads the gate `%s` as review, not as approved', (name) => {
+    expect(detectStage(name)).toBe('review');
+    expect(isDoneStage(detectStage(name))).toBe(false);
+  });
+
+  // The third instance of gate-read-as-decision, and the only one that lands in a
+  // branch BELOW `approved`: `accept` ran before `testing`, so an `Acceptance
+  // Testing` column — plainly a testing column — read `approved` and therefore
+  // done. `accept(?!ance)` is what separates the two, and `Accepted` above is the
+  // polarity arm that stops it being narrowed to nothing.
+  it('reads `Acceptance Testing` as testing, not as approved', () => {
+    expect(detectStage('Acceptance Testing')).toBe('testing');
+    expect(isDoneStage(detectStage('Acceptance Testing'))).toBe(false);
+    expect(detectStage('Acceptance')).toBe('queued');
+  });
+
+  // `Oklar` is Swedish for UNCLEAR and read `done` off the `klar` inside it —
+  // the same negating-prefix shape `(?<!un)resolv` already guards, so it needed
+  // no anticipation-prefix rule. Paired with the words that MUST keep matching,
+  // because a bare `(?<!o)` is one character away from deleting `klar` outright.
+  it('does not read the Swedish `Oklar` as finished work', () => {
+    expect(detectStage('Oklar')).toBe('queued');
+    expect(isDoneStage(detectStage('Oklar'))).toBe(false);
+    expect(isCompleted(card('Oklar'))).toBe(false);
+  });
+
+  it.each(['Klar', 'Klart', 'Klara', 'Produktionsklar', 'Klar för deploy'])(
+    'still reads `%s` as done',
+    (name) => {
+      expect(detectStage(name)).toBe('done');
       expect(isDoneStage(detectStage(name))).toBe(true);
     },
   );

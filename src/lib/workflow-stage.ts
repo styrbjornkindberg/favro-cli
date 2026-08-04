@@ -96,16 +96,40 @@ export function detectStage(name: string | null | undefined): WorkflowStage {
   // work (#158). It was presumably written for a `Live` column, which still
   // matches. `delivered` is spelled out beside it — the past participle IS
   // finished work, and anchoring `live` would otherwise have silently demoted it.
-  if (/done|klar|färdig|complete|closed|released|shipped|deploy|\blive\b|delivered|finished|avslut|(?<!un)resolv/i.test(n)) return 'done';
+  //
+  // `(?<!o)klar` is the same lookbehind as `(?<!un)resolv`, for the same reason:
+  // `Oklar` is Swedish for UNCLEAR and read `done` off the `klar` inside it. It
+  // needs no anticipation-prefix rule — it is a negating prefix on a single word,
+  // which is exactly the shape already guarded here. `Klar`, `Klart`, `Klar för
+  // deploy` and compounds like `Produktionsklar` all still match.
+  if (/done|(?<!o)klar|färdig|complete|closed|released|shipped|deploy|\blive\b|delivered|finished|avslut|(?<!un)resolv/i.test(n)) return 'done';
   if (/archived?|arkiver/i.test(n)) return 'archived';
 
   // Approved / accepted.
   //
-  // `approved`, not `approv`, and `godkänd`, not `godkän` (#158): the shorter
+  // `approved`, not `approv`, and `godkän[dt]`, not `godkän` (#158): the shorter
   // stems also match `Approval` and `godkännande` — the NAME OF THE GATE, which
   // is a column of work waiting for a decision, not work that got one. Both now
   // fall to the `review` branch below, where the gate belongs.
-  if (/approved|godkänd|accept|verified|sign.?off/i.test(n)) return 'approved';
+  //
+  // `godkän[dt]` and not `godkänd`, because Swedish inflects the participle for
+  // gender: `Godkänd` (utrum) and `Godkänt` (neutrum) are the SAME decision, and
+  // a bare `godkänd` matched only the first. `Godkänt` fell all the way to the
+  // `queued` default — a column literally named "Approved" reading as not-started,
+  // which shrinks every done count instead of growing it. `godkännande` still
+  // misses: the letter after `godkän` there is `n`, not `d` or `t`.
+  //
+  // `signed.?off` and not `sign.?off`, and `sign.?off` moved DOWN to `review`, on
+  // the same participle line: `Sign-off` is a noun naming the gate, exactly like
+  // `Approval`, while `Signed off` is the decision. The old spelling had them
+  // backwards — `Sign-off` read `approved` (done) while `Signed Off` matched
+  // nothing at all and fell to `queued`.
+  //
+  // `accept(?!ance)` for the third instance of the same thing: `Acceptance` is the
+  // gate and `Acceptance Testing` is a TESTING column, and both read `approved` —
+  // done — off a bare `accept`, because this branch runs before `testing`.
+  // `Accepted` and the Swedish `Accepterad` both still match.
+  if (/approved|godkän[dt]|accept(?!ance)|verified|signed.?off/i.test(n)) return 'approved';
 
   // Active / in progress / developing — check BEFORE testing so "Developing" isn't caught by "test"
   if (/progress|develop|pågå|aktiv|doing|working|implement|bygg|coding|current/i.test(n)) return 'active';
@@ -113,8 +137,8 @@ export function detectStage(name: string | null | undefined): WorkflowStage {
   // Testing / QA
   if (/test|qa|kvalit|verif/i.test(n)) return 'testing';
 
-  // Review / code review — and the approval GATE, see the branch above.
-  if (/review|gransk|feedback|pending|approval|godkännande/i.test(n)) return 'review';
+  // Review / code review — and the approval GATES, see the branch above.
+  if (/review|gransk|feedback|pending|approval|godkännande|sign.?off/i.test(n)) return 'review';
 
   // Queued / selected / ready / next
   if (/select|vald|ready|next|sprint|priorit|planned|schedul|redo/i.test(n)) return 'queued';
