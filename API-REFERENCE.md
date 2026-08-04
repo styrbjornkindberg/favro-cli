@@ -385,7 +385,6 @@ favro boards get <id> [--include custom-fields,cards,members,stats,velocity] [--
 | Option | Description |
 |---|---|
 | `--include <options>` | Comma-separated: `custom-fields`, `cards`, `members`, `stats`, `velocity` |
-| `--json` | Output as JSON |
 
 **Include values:**
 
@@ -534,7 +533,7 @@ List cards from a board with optional filtering.
 **Syntax:**
 ```
 favro cards list [--board <id>] [--status <status>] [--assignee <user>] [--tag <tag>]
-                 [--filter <expression>] [--limit <n>] [--json] [--csv]
+                 [--filter <expression>] [--limit <n>] [--json]
 ```
 
 **Options:**
@@ -548,7 +547,6 @@ favro cards list [--board <id>] [--status <status>] [--assignee <user>] [--tag <
 | `--filter <expression>` | — | Enhanced query filter (repeatable); overrides legacy flags |
 | `--limit <number>` | `25` | Cap how many cards are **printed**; sets `truncated`. The board is always fetched to completion. Whole digits of 1 or more — anything else is refused, exit 1 |
 | `--json` | — | Output as JSON |
-| `--csv` | — | Output as CSV |
 
 **Enhanced filter syntax:**
 
@@ -1157,7 +1155,6 @@ favro members add <email> --to <target-id> [--board-target] [--collection-target
 | `--to <target-id>` | ✓ | Board or collection ID |
 | `--board-target` | — | Target is a board (default) |
 | `--collection-target` | — | Target is a collection |
-| `--json` | — | Output as JSON |
 
 **Notes:** Defaults to board target. Use `--collection-target` to add to a collection instead.
 
@@ -1234,7 +1231,6 @@ favro members permissions <member-id> --board <board-id> [--human]
 | Option | Required | Description |
 |---|---|---|
 | `--board <board-id>` | ✓ | Board ID to check permissions on |
-| `--json` | — | Output as JSON |
 
 **Permission levels:** `viewer`, `editor`, `admin`
 
@@ -1282,7 +1278,6 @@ favro comments list <cardId> [--limit <n>] [--human]
 | Option | Default | Description |
 |---|---|---|
 | `--limit <number>` | `100` | Maximum number of comments to **print**. The fetch always runs to completion; when the cap cuts rows the output says so |
-| `--json` | — | Output as JSON |
 
 **Output:**
 ```
@@ -1338,7 +1333,6 @@ favro comments add <cardId> --text "COMMENT" [--human]
 | Option | Required | Description |
 |---|---|---|
 | `--text <comment>` | ✓ | Comment text (cannot be empty or whitespace) |
-| `--json` | — | Output as JSON |
 
 **Output:**
 ```

@@ -23,6 +23,9 @@
  *     backtick, em dash), the fragment STARTS with `favro` — optionally behind a
  *     `$ ` prompt, an `npx `, or an environment prefix (`DEBUG=favro:* favro …`).
  *
+ * A fenced command written across a trailing `\` is joined into one line first
+ * (#156) — see `readBody`. Without that only its first line was ever scanned.
+ *
  * Prose is deliberately out. "the favro binary path (same package)" inside a
  * code comment is not a command, and a scanner that flagged it would be loosened
  * by the next person until it flagged nothing — the over-eager regex dies the
@@ -58,6 +61,40 @@
  *   4. OPTION     — the invocation passes a flag the command and its ancestors
  *      do not declare. `--help`/`-h` are exempt: commander adds them itself, so
  *      they are absent from `.options` while every command answers to them.
+ *
+ * ARM 4 ALSO READS OPTION TABLES, WHICH IT USED NOT TO (#156)
+ * The four arms above all begin with a fragment that starts with `favro`. An
+ * options TABLE ROW is a `| \`--json\` | Output raw JSON |` — an inline code span
+ * holding a flag and nothing else — so it built no fragment and no arm ever ran
+ * on it. Every option table in every doc was invisible. Measured at the time:
+ * `command-reference.md` gave a `--json` row to 19 commands that have no `--json`
+ * option, and a reader copying it out of the table gets `unknown option '--json'`
+ * — the exact failure this file exists to stop, one column over.
+ *
+ * `readOptionTables` closes that. It walks the table STRUCTURE (row → cells →
+ * code spans in the first cell) rather than matching a line shape, and asks the
+ * SAME question arm 4 asks, through the same `walkTokens`, so the answer cannot
+ * drift from the invocation arm's. What a row is attributed to:
+ *
+ *   - the nearest preceding heading, when its first code span names a registered
+ *     command (`### \`collections list\``) — this is 385 of the 391 rows today;
+ *   - failing that, the first `favro …` example FENCED under that heading, which
+ *     is how `docs/git-integration.md` documents `git link` and `git commit`
+ *     under prose headings. A prose MENTION does not count and must not: a
+ *     `` use `favro cards find` to get one `` inside an argument table hijacked the
+ *     scope of `activity`'s option table and reported three of its real flags as
+ *     phantom — measured, which is why the heading wins and the example must be
+ *     inside a fence;
+ *   - failing both, the root program, which is exactly right for the six
+ *     `## Global Options` rows (`--verbose`, `--help`).
+ *
+ *   ponytail: a row is read only when its first cell IS a flag declaration —
+ *   code spans, commas and slashes, no prose. That is what separates an option
+ *   table from README's troubleshooting table, whose first column holds
+ *   `` `--column` not working ``. The ceiling: a flag documented in prose inside
+ *   the cell, or in the SECOND column, is not read. Both would be new
+ *   conventions; the row floor in the self-check is what notices if the docs
+ *   convert wholesale.
  *
  * ARITY DOES NOT SUBSUME OPTION, WHICH IS WHY BOTH ARE HERE
  * It looks as though arity already covers #127's headline `--offset`, because
@@ -122,9 +159,10 @@
  * or that no longer exists under that key in that number, fails the build. A
  * list nobody prunes turns into a permanent exemption that reads like debt.
  *
- * TODAY: 35 tracked docs, 631 documented invocations across 24 files, 601 of
- * them naming a real command, against 148 argv paths. The floors below are kept
- * near those numbers on purpose — see the self-check test.
+ * TODAY: 38 tracked docs, 680 documented invocations across 28 files, 650 of
+ * them naming a real command, against 148 argv paths — plus 391 option-table
+ * rows carrying 438 flags, 385 of the rows attributed to a named command. The
+ * floors below are kept near those numbers on purpose — see the self-check test.
  */
 import { execSync } from 'child_process';
 import * as fs from 'fs';
@@ -198,12 +236,14 @@ const PROPOSALS = /^specs\//;
  * subcommand as "not a subcommand". If an alias is ever added, a doc using it
  * fails loudly here and this walker learns about aliases then.
  */
+const PROGRAM = buildProgram();
+
 function indexSurface(): Map<string, Command> {
   const byPath = new Map<string, Command>();
   (function walk(cmd: Command, prefix: string[]) {
     if (prefix.length) byPath.set(prefix.join(' '), cmd);
     for (const sub of cmd.commands) walk(sub, [...prefix, sub.name()]);
-  })(buildProgram(), []);
+  })(PROGRAM, []);
   // Commander adds `help [command]` lazily, so it is absent from `.commands`
   // above while `favro help issue-tracker` works. Registered by hand rather
   // than special-cased at the call site.
@@ -304,29 +344,62 @@ interface Invocation {
 /** Files whose fence markers do not pair up — see UNBALANCED below. */
 const unbalanced: string[] = [];
 
+/** How many fenced commands were joined across a trailing `\` — see readDocs. */
+let CONTINUED = 0;
+
+/**
+ * Every `favro …` invocation in one document, plus whether its fences balanced.
+ *
+ * A named function and not a loop body inside `readDocs`, because the tests below
+ * run THIS on synthetic Markdown. The tilde-fence arm used to keep its own copy
+ * of this walk, which proved the copy read tildes.
+ */
+function readBody(file: string, body: string): { found: Invocation[]; open: boolean } {
+  const found: Invocation[] = [];
+  let inFence = false;
+  {
+    const lines = body.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      // `~~~` is the standard escape when a block must contain backticks; a
+      // file written that way would otherwise be scanned as pure prose.
+      if (/^\s*(```|~~~)/.test(lines[i])) {
+        inFence = !inFence;
+        continue;
+      }
+      let line = lines[i];
+      const at = i + 1;
+      // A SHELL LINE CONTINUATION IS ONE COMMAND (#156).
+      //
+      // `invocations` already knew a trailing lone `\` is not an argument — but
+      // nothing joined the lines, so every flag after the first line of a
+      // `favro cards export … \` block was invisible to arm 4. Measured over the
+      // tracked docs: 22 fenced commands are written this way, carrying flags on
+      // lines that no arm ever read. They all check out today; that is luck, not
+      // a property, and it is the same shape as the option-table hole above.
+      //
+      // ponytail: only inside a fence, and never across a fence marker. A prose
+      // line ending in `\` is not a continuation of anything.
+      while (inFence && /\\\s*$/.test(line) && !/^\s*(```|~~~)/.test(lines[i + 1] ?? '```')) {
+        line = `${line.replace(/\\\s*$/, ' ')}${lines[++i].trim()}`;
+        CONTINUED++;
+      }
+      // In a fence the whole line is code; outside it, only the code spans are.
+      const segments = inFence ? [line] : [...line.matchAll(/`([^`]+)`/g)].map((m) => m[1]);
+      for (const segment of segments) {
+        for (const tokens of invocations(segment)) found.push({ file, line: at, tokens });
+      }
+    }
+  }
+  return { found, open: inFence };
+}
+
 /** Every `favro …` invocation in every tracked doc, with where it was written. */
 function readDocs(): Invocation[] {
   const found: Invocation[] = [];
   for (const file of DOC_FILES) {
-    let inFence = false;
-    fs.readFileSync(`${__dirname}/../../${file}`, 'utf8')
-      .split('\n')
-      .forEach((line, i) => {
-        // `~~~` is the standard escape when a block must contain backticks; a
-        // file written that way would otherwise be scanned as pure prose.
-        if (/^\s*(```|~~~)/.test(line)) {
-          inFence = !inFence;
-          return;
-        }
-        // In a fence the whole line is code; outside it, only the code spans are.
-        const segments = inFence
-          ? [line]
-          : [...line.matchAll(/`([^`]+)`/g)].map((m) => m[1]);
-        for (const segment of segments) {
-          for (const tokens of invocations(segment)) found.push({ file, line: i + 1, tokens });
-        }
-      });
-    if (inFence) unbalanced.push(file);
+    const read = readBody(file, fs.readFileSync(`${__dirname}/../../${file}`, 'utf8'));
+    found.push(...read.found);
+    if (read.open) unbalanced.push(file);
   }
   return found;
 }
@@ -451,7 +524,121 @@ function inspect(inv: Invocation): Finding | undefined {
   return undefined;
 }
 
-const FINDINGS = INVOCATIONS.map(inspect).filter((f): f is Finding => !!f);
+// ─── reading option TABLES (#156) ────────────────────────────────────────────
+
+/** A registered command plus the argv path it was named by. */
+interface Scope {
+  cmd: Command;
+  path: string;
+}
+
+/** The command a heading's or an example's leading words name, if any. */
+function scopeOf(positional: string[]): Scope | undefined {
+  const resolved = resolve(positional);
+  return resolved
+    ? { cmd: resolved.cmd, path: positional.slice(0, resolved.depth).join(' ') }
+    : undefined;
+}
+
+/**
+ * The flags a table row declares, or nothing.
+ *
+ * Structural: a row is its cells, and the first cell of an option table holds
+ * code spans and nothing else. `| Flag | Description |` and `|---|---|` have no
+ * spans and fall out here, as does README's `` | `--column` not working | `` —
+ * see the `ponytail:` note in the header for that boundary. `-y, --yes` is two
+ * flags in one span; `--limit <n>` is one flag and its value placeholder.
+ */
+function tableRowFlags(line: string): string[] {
+  if (!/^\s*\|/.test(line)) return [];
+  const first = line.replace(/^\s*\|/, '').split('|')[0].trim();
+  const spans = [...first.matchAll(/`([^`]+)`/g)].map((m) => m[1].trim());
+  if (!spans.length || !spans.every((s) => s.startsWith('-'))) return [];
+  if (first.replace(/`[^`]+`/g, '').replace(/[\s,/]+/g, '')) return [];
+  return spans
+    .flatMap((s) => s.split(','))
+    .map((s) => s.trim().split(/[\s=]/)[0])
+    .filter((s) => s.startsWith('-'));
+}
+
+/** Rows read, for the self-check floor — a reader that matched nothing passes everything. */
+let ROWS_READ = 0;
+/** Rows attributed to a real command rather than falling back to the root program. */
+let ROWS_SCOPED = 0;
+
+/**
+ * Every phantom flag an option table in `body` attributes to a command.
+ *
+ * Exported shape, not inlined into the file loop, because the self-check below
+ * runs THIS function on synthetic Markdown. A self-check that re-implemented the
+ * predicate would only ever prove the copy works, which is how the nine blind
+ * ratchets before this one passed their own tests.
+ */
+function readOptionTables(file: string, body: string): Finding[] {
+  const out: Finding[] = [];
+  let inFence = false;
+  let heading: Scope | undefined;
+  let example: Scope | undefined;
+  body.split('\n').forEach((line, i) => {
+    if (/^\s*(```|~~~)/.test(line)) {
+      inFence = !inFence;
+      return;
+    }
+    if (inFence) {
+      // THE `if (inFence)` IS THE GUARD THAT DOES THE WORK. Measured by mutation:
+      // letting a code span on a PROSE line set the scope immediately reports
+      // `cards find --since/--until/--limit` as phantom, because `activity`'s
+      // argument table says `` use `favro cards find` to get one ``. Reordering
+      // `heading ?? example`, or dropping the `!heading` guard below, are BOTH
+      // equivalent mutants — they survive the whole suite. They are kept as
+      // defence in depth, not as the protection; do not read them as load-bearing.
+      if (!heading && !example) {
+        for (const tokens of invocations(line)) {
+          const found = scopeOf(tokens.filter((t) => !t.startsWith('-')));
+          if (found) {
+            example = found;
+            break;
+          }
+        }
+      }
+      return;
+    }
+    const atx = /^\s*#{1,6}\s+(.*)$/.exec(line);
+    if (atx) {
+      const span = /`([^`]+)`/.exec(atx[1]);
+      heading = span ? scopeOf(span[1].trim().split(/\s+/)) : undefined;
+      example = undefined;
+      return;
+    }
+    const flags = tableRowFlags(line);
+    if (!flags.length) return;
+    ROWS_READ++;
+    const scope = heading ?? example;
+    if (scope) ROWS_SCOPED++;
+    const cmd = scope?.cmd ?? PROGRAM;
+    const claimed = scope?.path ?? 'favro';
+    for (const flag of flags) {
+      // The SAME resolver arm 4 uses, so a table row and an invocation can never
+      // disagree about whether a command declares a flag.
+      const { unknownFlag } = walkTokens(cmd, [flag], 0);
+      if (!unknownFlag) continue;
+      out.push({
+        key: `${file}  ${claimed} ${unknownFlag}`,
+        report: `${file}:${i + 1}  option table under \`${claimed}\` lists \`${unknownFlag}\`  — \`${claimed}\` has no \`${unknownFlag}\` option`,
+      });
+    }
+  });
+  return out;
+}
+
+const FINDINGS = [
+  ...INVOCATIONS.map(inspect).filter((f): f is Finding => !!f),
+  // Flags in `specs/` are the proposal, not instructions — the same scope the
+  // invocation arm applies. No `specs/` file holds an option table today.
+  ...DOC_FILES.filter((f) => !PROPOSALS.test(f)).flatMap((f) =>
+    readOptionTables(f, fs.readFileSync(`${__dirname}/../../${f}`, 'utf8')),
+  ),
+];
 
 /** How many times each allowlist key actually occurs right now. */
 const LIVE_COUNTS = FINDINGS.reduce(
@@ -483,13 +670,27 @@ describe('every command the docs teach is a command the binary answers to', () =
     // passes forever. These are floors kept close to the real numbers on
     // purpose, the way `verbose-coverage.test.ts:128-132` argues: a floor with
     // heavy slack stops gripping while #80 keeps deleting commands.
-    expect(DOC_FILES.length).toBeGreaterThan(30); // 35 today
+    // The four counts below carried `35`, `631`, `601` and `24` as their "today"
+    // numbers, measured when #127 was written. Re-measured on this branch against
+    // the same scanner: 38, 680, 650 and 28. The docs grew; the floors did not
+    // move, so the comments were the only wrong part — corrected rather than left,
+    // because a floor annotated with a number nobody re-measures is how a floor
+    // stops being evidence (ADR-0003).
+    expect(DOC_FILES.length).toBeGreaterThan(30); // 38 today
     expect(SURFACE.size).toBeGreaterThan(140); // 148 today: 125 actions + groups
-    expect(INVOCATIONS.length).toBeGreaterThan(600); // 631 today
+    expect(INVOCATIONS.length).toBeGreaterThan(600); // 680 today
     // …and almost all of them met the real surface. See RESOLVED above: this is
     // the assertion a silently-matching-nothing walker cannot pass.
-    expect(RESOLVED).toBeGreaterThan(570); // 601 today; the rest are `<placeholder>` and bare `favro --help`
-    expect(new Set(INVOCATIONS.map((i) => i.file)).size).toBeGreaterThan(22); // 24 today
+    expect(RESOLVED).toBeGreaterThan(570); // 650 today; the rest are `<placeholder>` and bare `favro --help`
+    expect(new Set(INVOCATIONS.map((i) => i.file)).size).toBeGreaterThan(22); // 28 today
+    // …and the option tables were read at all. `readOptionTables` matching
+    // nothing is the #156 bug restored, and it would restore it silently: the
+    // arms above never touched a table row, so every one of them stays green.
+    expect(ROWS_READ).toBeGreaterThan(370); // 391 today, over 5 files
+    expect(ROWS_SCOPED).toBeGreaterThan(370); // 385 today; the other 6 are `## Global Options`
+    // …and the `\`-continued commands were joined rather than read one line at a
+    // time. Zero here means every flag past the first line went unchecked again.
+    expect(CONTINUED).toBeGreaterThan(45); // 55 joins across 22 commands today
   });
 
   it('every doc closes the fences it opens', () => {
@@ -536,22 +737,110 @@ describe('every command the docs teach is a command the binary answers to', () =
     expect(detect('DEBUG=favro:* favro nonsense foo')).toContain('no such command');
   });
 
+  it('catches a phantom flag written as an option TABLE row (#156)', () => {
+    // The other self-check, and it runs the REAL `readOptionTables` on synthetic
+    // Markdown rather than a re-implementation of it. Every case below was
+    // constructed as an attempted BYPASS of the predicate first and is recorded
+    // here with its verdict — including the two that still get through, because a
+    // named ceiling is a decision and an unnamed one is the next #156.
+    const detect = (body: string): string[] =>
+      readOptionTables('synthetic.md', body).map((f) => f.report);
+
+    const table = (heading: string, cell: string) =>
+      `${heading}\n\n| Flag | Description |\n|------|-------------|\n| ${cell} | why |\n`;
+
+    // 1. The shape the whole ticket is about: a bare flag under a command heading.
+    expect(detect(table('### `cards list`', '`--nonsense`'))).toEqual([
+      expect.stringContaining('`cards list` has no `--nonsense` option'),
+    ]);
+    // 2. Two flags in one cell. Checking only the long one lets `-Z` through, and
+    //    `-y, --yes` is how this repo writes every confirmation flag.
+    expect(detect(table('### `cards list`', '`-Z, --nonsense`')).sort()).toEqual([
+      expect.stringContaining('has no `--nonsense`'),
+      expect.stringContaining('has no `-Z`'),
+    ]);
+    // 3. A flag with a value placeholder — the token is `--nonsense`, not
+    //    `--nonsense <v>`, or every valued row in the docs reads as a phantom.
+    expect(detect(table('### `cards list`', '`--nonsense <v>`'))).toEqual([
+      expect.stringContaining('has no `--nonsense`'),
+    ]);
+    // 4. A heading that names no command, with the command in a FENCED example —
+    //    `docs/git-integration.md`'s shape. Bypassed the first draft, which only
+    //    looked at headings.
+    expect(
+      detect(`## Link it up\n\n\`\`\`bash\nfavro git link --board abc\n\`\`\`\n${table('', '`--nonsense`')}`),
+    ).toEqual([expect.stringContaining('`git link` has no `--nonsense` option')]);
+    // 5. No command in scope at all: the row is the ROOT program's, which is what
+    //    `## Global Options` is. Bypassed a draft that fed `inspect` a synthesised
+    //    `favro …` invocation, because a lone flag has no positional and
+    //    `inspect` returns early on it — 6 real rows would have gone unchecked.
+    expect(detect(table('## Global Options', '`--nonsense`'))).toEqual([
+      expect.stringContaining('`favro` has no `--nonsense` option'),
+    ]);
+    expect(detect(table('## Global Options', '`--verbose`'))).toEqual([]);
+    // 6. A heading naming a two-word command whose GROUP declares the flag: the
+    //    ancestor walk in `walkTokens` has to be reached, or every inherited flag
+    //    reports as a phantom.
+    expect(detect(table('### `git sync`', '`--dry-run`'))).toEqual([]);
+    expect(detect(table('### `git sync`', '`--pretty`'))).toEqual([]); // root's
+    // 7. `--help` is commander's. A doc listing it is not a lie.
+    expect(detect(table('### `cards list`', '`--help`, `-h`'))).toEqual([]);
+    // 8. Prose in the first cell is not an option declaration. README's
+    //    troubleshooting table is `` `--column` not working ``, and reading it as
+    //    a row reported `--column` against whatever command came last.
+    expect(detect(table('### `cards list`', '`--column` not working'))).toEqual([]);
+    // 9. The header and separator rows of the table itself.
+    expect(detect(table('### `cards list`', '`--board <board>`'))).toEqual([]);
+
+    // STILL GETS THROUGH, measured and accepted:
+    //  a. a flag in the SECOND column. Nothing in the docs is written that way.
+    expect(detect('### `cards list`\n\n| What | Flag |\n|---|---|\n| nonsense | `--nonsense` |\n')).toEqual([]);
+    //  b. a table INSIDE a fence, which is a code sample of a table, not a table.
+    expect(detect('### `cards list`\n\n```\n| `--nonsense` | why |\n```\n')).toEqual([]);
+  });
+
   it('reads tilde-fenced blocks, not just backtick-fenced ones', () => {
     // `~~~` is what a doc reaches for when the block must contain backticks.
     // Zero occurrences today, so this is the only thing holding the branch open.
-    const read = (body: string): string[][] => {
-      let inFence = false;
-      const out: string[][] = [];
-      for (const line of body.split('\n')) {
-        if (/^\s*(```|~~~)/.test(line)) {
-          inFence = !inFence;
-          continue;
-        }
-        if (inFence) out.push(...invocations(line));
-      }
-      return out;
-    };
+    // Runs the REAL `readBody`; it used to run a private copy of the fence walk,
+    // which proved the copy read tildes and nothing about the scanner.
+    const read = (body: string): string[][] =>
+      readBody('synthetic.md', body).found.map((i) => i.tokens);
     expect(read('~~~bash\nfavro nonsense foo\n~~~')).toEqual([['nonsense', 'foo']]);
+  });
+
+  it('joins a fenced shell line continuation into one command (#156)', () => {
+    // 22 fenced commands in the tracked docs are written across a trailing `\`.
+    // Before this, only their FIRST line was scanned, so a flag on any later line
+    // was invisible to arm 4 — the option-table hole in a second costume.
+    const read = (body: string): string[][] =>
+      readBody('synthetic.md', body).found.map((i) => i.tokens);
+    const inspectAll = (body: string): string[] =>
+      readBody('synthetic.md', body)
+        .found.map((i) => inspect(i)?.report)
+        .filter((r): r is string => !!r);
+
+    // It bites: the phantom flag is on the continuation line, not the first.
+    expect(
+      inspectAll('```bash\nfavro git todos \\\n  --all\n```'),
+    ).toEqual([expect.stringContaining('has no `--all`')]);
+    // …and it stays quiet on the real form, which is what the docs actually hold.
+    expect(inspectAll('```bash\nfavro git sync \\\n  --dry-run\n```')).toEqual([]);
+    // The join itself, so a `\` that silently ate the next line would show up.
+    expect(read('```bash\nfavro cards list \\\n  --board abc \\\n  --limit 5\n```')).toEqual([
+      ['cards', 'list', '--board', 'abc', '--limit', '5'],
+    ]);
+    // It must not run off the end of the block. A `\` on the last line of a fence
+    // has nothing to continue into, and swallowing the ``` would invert the fence
+    // toggle for the rest of the file — the failure `unbalanced` exists to catch.
+    const runaway = readBody('synthetic.md', '```bash\nfavro cards list \\\n```\n\nprose\n');
+    expect(runaway.found.map((i) => i.tokens)).toEqual([['cards', 'list']]);
+    expect(runaway.open).toBe(false);
+    // A prose line ending in `\` is not a continuation of anything.
+    expect(read('see `favro git todos` \\\nand `favro git sync`')).toEqual([
+      ['git', 'todos'],
+      ['git', 'sync'],
+    ]);
   });
 
   it('resolves every documented invocation outside the allowlist', () => {

@@ -83,16 +83,8 @@ nothing confirmed. Re-run or verify with the named command; do not treat an
 ### `collections list`
 List all collections in the organization.
 
-| Flag | Description |
-|------|-------------|
-| `--json` | Output raw JSON |
-
 ### `collections get <id>`
 Get a single collection by ID.
-
-| Flag | Description |
-|------|-------------|
-| `--json` | Output raw JSON |
 
 ### `collections create` ⚠️ WRITE
 Create a new collection.
@@ -101,7 +93,6 @@ Create a new collection.
 |------|-------------|
 | `--name <name>` | **Required.** Collection name |
 | `--description <text>` | Collection description |
-| `--json` | Output raw JSON |
 | `--dry-run` | Preview only |
 
 ### `collections update <id>` ⚠️ WRITE
@@ -111,7 +102,6 @@ Update collection properties.
 |------|-------------|
 | `--name <name>` | New name |
 | `--description <text>` | New description |
-| `--json` | Output raw JSON |
 | `-y, --yes` | Skip confirmation |
 | `--force` | Bypass scope check |
 
@@ -124,9 +114,7 @@ Retrieve a card by ID.
 
 | Flag | Description |
 |------|-------------|
-| `--json` | Output raw JSON |
-| `--include <fields>` | Include extra data: `board`, `collection` |
-| `--board <boardId>` | Board context for the card |
+| `--include <items>` | Comma-separated: `board`, `collection`, `custom-fields`, `links`, `comments`, `relations` |
 
 ### `cards list`
 List cards on a board.
@@ -145,9 +133,8 @@ Create a new card.
 |------|-------------|
 | `--board <boardId>` | **Required.** Target board |
 | `--status <status>` | Initial status/column |
-| `--assignees <users>` | Comma-separated assignees |
-| `--tags <tags>` | Comma-separated tags |
-| `--due-date <date>` | Due date (ISO 8601) |
+| `--assignee <user>` | Assignee by name, email, userId or `@me` (repeatable) |
+| `--tag <name>` | Tag by name (repeatable) — an unknown name is refused, never created |
 | `--description <text>` | Card description (literal `\n` converted to newlines) |
 | `--json` | Output raw JSON |
 | `--dry-run` | Preview only |
@@ -157,7 +144,7 @@ Create a new card.
 Also supports bulk CSV import:
 | Flag | Description |
 |------|-------------|
-| `--from-csv <file>` | Create cards from CSV file |
+| `--csv <file>` | Create cards from a CSV file — at most 20, as ONE transaction |
 
 ### `cards update <cardId>` ⚠️ WRITE
 Update an existing card.
@@ -169,9 +156,7 @@ Update an existing card.
 | `--status <status>` | New status |
 | `--assignees <users>` | New assignees |
 | `--tags <tags>` | New tags |
-| `--due-date <date>` | New due date |
 | `--description <text>` | New description (literal `\n` converted to newlines) |
-| `--append-description <text>` | Append to description (literal `\n` → newlines). **⚠️ Lossy if card has checklists** |
 | `--comment <text>` | Add a comment to the card (non-destructive, literal `\n` → newlines) |
 | `--json` | Output raw JSON |
 | `--dry-run` | Preview only |
@@ -232,17 +217,12 @@ Delete a collection permanently.
 ### `boards list [collectionId]`
 List boards, optionally filtered by collection.
 
-| Flag | Description |
-|------|-------------|
-| `--json` | Output raw JSON |
-
 ### `boards get <id>`
 Get board details including columns, members, and stats.
 
 | Flag | Description |
 |------|-------------|
-| `--json` | Output raw JSON |
-| `--columns` | Include column definitions |
+| `--include <options>` | Comma-separated: `custom-fields`, `cards`, `members`, `stats`, `velocity` |
 
 ### `boards create <collectionId>` ⚠️ WRITE
 Create a new board.
@@ -251,7 +231,6 @@ Create a new board.
 |------|-------------|
 | `--name <name>` | **Required.** Board name |
 | `--type <type>` | Board type: `board` or `backlog` |
-| `--json` | Output raw JSON |
 | `--dry-run` | Preview only |
 | `--force` | Bypass scope check |
 
@@ -261,7 +240,6 @@ Update board properties.
 | Flag | Description |
 |------|-------------|
 | `--name <name>` | New name |
-| `--json` | Output raw JSON |
 | `-y, --yes` | Skip confirmation |
 | `--force` | Bypass scope check |
 
@@ -283,15 +261,10 @@ List all comments on a card.
 
 | Flag | Description |
 |------|-------------|
-| `--limit <n>` | Max comments **printed** (default: 100). The fetch always runs to completion, so a filter never sees a partial set |
-| `--json` | Output the list envelope — `{"rows":[...]}`, plus `"truncated":true` when `--limit` cut rows. Check `truncated` before treating `rows.length` as the total |
+| `--limit <n>` | Max comments **printed** (default: 100). The fetch always runs to completion, so a filter never sees a partial set. The JSON envelope is `{"rows":[...]}` and carries `"truncated":true` when the cap cut rows — check it before treating `rows.length` as the total |
 
 ### `comments get <commentId>` 📖 READ
 Get a single comment by ID.
-
-| Flag | Description |
-|------|-------------|
-| `--json` | Output raw JSON |
 
 ### `comments add <cardId>` ⚠️ WRITE
 Add a comment to a card.
@@ -299,7 +272,6 @@ Add a comment to a card.
 | Flag | Description |
 |------|-------------|
 | `--text <comment>` | **Required.** Comment body |
-| `--json` | Output raw JSON |
 | `--dry-run` | Preview only |
 | `--force` | Bypass scope check |
 
@@ -309,7 +281,6 @@ Update an existing comment.
 | Flag | Description |
 |------|-------------|
 | `--text <text>` | **Required.** New comment body |
-| `--json` | Output raw JSON |
 | `--dry-run` | Preview only |
 | `-y, --yes` | Skip confirmation |
 
@@ -354,7 +325,6 @@ List workspace members.
 |------|-------------|
 | `--board <boardId>` | Filter by board |
 | `--collection <collectionId>` | Filter by collection |
-| `--json` | Output raw JSON |
 
 ### `members add <email>` ⚠️ WRITE
 Add a member to a board or collection.
@@ -364,7 +334,6 @@ Add a member to a board or collection.
 | `--to <targetId>` | **Required.** Board or collection ID |
 | `--board-target` | Target is a board (default) |
 | `--collection-target` | Target is a collection |
-| `--json` | Output raw JSON |
 | `--dry-run` | Preview only |
 | `--force` | Bypass scope check |
 
@@ -385,7 +354,6 @@ Check member's permission level on a board.
 | Flag | Description |
 |------|-------------|
 | `--board <boardId>` | **Required.** Board ID |
-| `--json` | Output raw JSON |
 
 ---
 
@@ -844,17 +812,12 @@ Free text is `title~"…"` and nothing else. `assigned:`, `owner:`, `priority:`,
 `due:` and bare words were the deleted parser's inventions and refuse.
 `unblocked` is not answered here — ask `cards list <board> --filter "unblocked"`.
 
-| Flag | Description |
-|------|-------------|
-| `--json` | Output raw JSON |
-
 ### `standup` 📖 READ
 Daily standup view — groups cards by status category.
 
 | Flag | Description |
 |------|-------------|
 | `--board <board>` | Board to report on |
-| `--json` | Output raw JSON |
 
 ### `sprint-plan` 📖 READ
 Sprint planning — suggests backlog cards sorted by priority×effort.
@@ -863,7 +826,6 @@ Sprint planning — suggests backlog cards sorted by priority×effort.
 |------|-------------|
 | `--board <board>` | Board to plan from |
 | `--budget <n>` | Max effort budget |
-| `--json` | Output raw JSON |
 
 ### `batch-smart <board>` ⚠️ WRITE — HIGH BLAST RADIUS
 Natural language batch operations.

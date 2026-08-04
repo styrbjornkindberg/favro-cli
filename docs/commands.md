@@ -271,10 +271,6 @@ See [Repo Context Guide](./repo-context.md) for the full format.
 ### `collections list`
 List all collections in the organization.
 
-| Flag | Description |
-|------|-------------|
-| `--json` | Output raw JSON |
-
 ### `collections get <id>`
 Get a single collection by ID.
 
@@ -315,8 +311,7 @@ Get board details including columns, members, and stats.
 
 | Flag | Description |
 |------|-------------|
-| `--json` | Output raw JSON |
-| `--columns` | Include column definitions |
+| `--include <options>` | Comma-separated: `custom-fields`, `cards`, `members`, `stats`, `velocity` |
 
 ### `boards create <collectionId>` ⚠️ WRITE
 
@@ -351,9 +346,7 @@ Get board details including columns, members, and stats.
 
 | Flag | Description |
 |------|-------------|
-| `--json` | Output raw JSON |
-| `--include <fields>` | Include extra data: `board`, `collection` |
-| `--board <boardId>` | Board context for the card |
+| `--include <items>` | Comma-separated: `board`, `collection`, `custom-fields`, `links`, `comments`, `relations` |
 
 ### `cards list`
 
