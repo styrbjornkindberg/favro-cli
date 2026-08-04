@@ -1,30 +1,21 @@
 /**
- * Semantic Query CLI Command
- * CLA-1798 / FAVRO-036: Semantic Query Command
+ * `favro query <board> <query…>` — the CLI leaf.
  *
- * Usage:
- *   favro query <board> <natural language query>
- *   favro query "Sprint 42" "status:done"
- *   favro query boards-1234 "blocked cards"
- *   favro query "My Board" "assigned to @alice and status:In Progress"
- *
- * Returns matching cards with a human-readable summary.
- * If no cards match, explains why.
- *
- * The grammar is a FAIL-OPEN parser and #95's business, not this file's — #116
- * migrated the plumbing around it and left `parseQueryFilter` untouched.
+ * The grammar is the one `cards list --filter` speaks, and it FAILS CLOSED:
+ * #95 deleted the second, regex-based parser this command used to run. See
+ * `api/query.ts` for what that changes and why.
  */
 import { Command } from 'commander';
 import type { QueryResult } from '../types/query';
 import { Ctx, run } from '../lib/run';
 
-/** The result, as it reads to a person. Byte-identical to the pre-#116 render. */
+/** The result, as it reads to a person. */
 function formatHuman(result: QueryResult): string {
   const lines: string[] = [result.summary];
 
   if (result.matches.length > 0) {
     lines.push('');
-    for (const { card, matchReason } of result.matches) {
+    for (const card of result.matches) {
       const status = card.status ? ` [${card.status}]` : '';
       const assignees = card.assignees && card.assignees.length > 0
         ? ` — ${card.assignees.join(', ')}`
@@ -33,12 +24,11 @@ function formatHuman(result: QueryResult): string {
         ? ` #${card.tags.join(' #')}`
         : '';
       lines.push(`  • ${card.title}${status}${assignees}${tags}`);
-      lines.push(`    (${matchReason})`);
     }
   }
 
-  // A hole in the snapshot makes "no cards match" a claim about what we could
-  // see, not about the board (#116). Never let the summary above stand alone.
+  // A hole in the read makes "no cards match" a claim about what we could see,
+  // not about the board (#116). Never let the summary above stand alone.
   if (result.unreachable?.length) {
     lines.push('');
     lines.push(`  Searched an incomplete board — ${result.unreachable.length} part(s) could not be read:`);
@@ -67,22 +57,33 @@ export function registerQueryCommand(program: Command): void {
   program
     .command('query <board> <query...>')
     .description(
-      'Semantic query — search cards on a board with natural language.\n\n' +
-      'Supported query patterns:\n' +
-      '  status:done                  Cards with a specific status\n' +
-      '  assigned:@alice              Cards assigned to a user\n' +
-      '  priority:high                Cards with a priority custom field\n' +
-      '  label:bug / tag:bug          Cards with a specific tag/label\n' +
-      '  due:overdue                  Cards past their due date\n' +
-      '  Free text                    Title/tag search\n\n' +
-      'Blocking is NOT asked here. Use the fail-closed filter grammar:\n' +
-      '  favro cards list <board> --filter "unblocked"\n' +
-      '  favro cards list <board> --filter "blocked-by:CLA-1804"\n\n' +
+      'Filter one board with the fail-closed query grammar.\n\n' +
+      'The expression is the same one `cards list --filter` takes, and the whole\n' +
+      'grammar is documented there — run `favro cards list --help`. A field this\n' +
+      'CLI does not have, a token carrying no operator, a tag outside the org, a\n' +
+      'column the board lacks: each REFUSES and names what it refused. None of\n' +
+      'them answers zero rows.\n\n' +
+      'Common shapes:\n' +
+      '  status:done                  Cards in a column, by its real name\n' +
+      '  assignee:alice               By name, email, userId or @me\n' +
+      '  tag:bug                      By exact tag name\n' +
+      '  due_date:overdue             Past their due date\n' +
+      '  title~"login"                Free text — this is the ONLY spelling of it\n' +
+      '  customField:Priority=high    Any custom field on the board\n' +
+      '  status:done AND tag:bug      AND / OR / parentheses\n\n' +
+      'Free text is `title~"…"` and nothing else (#95). This command used to sweep\n' +
+      'anything it could not parse into a title search, so `"statuz:done"` answered\n' +
+      'a confident zero rows; it now refuses. `assigned:`, `owner:`, `priority:`,\n' +
+      '`due:` and bare words were that parser\'s inventions and refuse too — say\n' +
+      '`assignee:`, `customField:Priority=`, `due_date:`.\n\n' +
+      'Blocking: `blocks:<ref>` and `blocked-by:<ref>` are answered here.\n' +
+      '`unblocked` is NOT — it has to judge each blocker, and this command makes\n' +
+      'no reads to report on. Ask the frontier where it is answered:\n' +
+      '  favro cards list <board> --filter "unblocked"\n\n' +
       'Examples:\n' +
       '  favro query boards-1234 "status:done"\n' +
-      '  favro query "Sprint 42" "assigned:@alice"\n' +
-      '  favro query boards-1234 "high priority status:In Progress"\n\n' +
-      'If no results are found, an explanation is provided.\n' +
+      '  favro query "Sprint 42" "assignee:alice AND tag:bug"\n' +
+      '  favro query boards-1234 "title~\\"login\\" OR customField:Priority=high"\n\n' +
       'Use --human for the summary view; JSON is the default.'
     )
     .action(run(queryHandler));

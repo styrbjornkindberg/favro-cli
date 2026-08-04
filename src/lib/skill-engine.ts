@@ -262,9 +262,15 @@ async function executeStep(
       if (!board || !q) throw new Error('Step requires "board" and "query" arguments');
       const { QueryAPI } = await import('../api/query');
       const queryApi = new QueryAPI(client);
+      // The grammar FAILS CLOSED here too (#95). A step whose filter names a
+      // field this CLI does not have raises `ParseError`, which aborts the run
+      // and unwinds every write the steps before it made — the same treatment
+      // any other failing step gets, and the answer #95 asked for: a step that
+      // silently matched zero cards would carry on and write nothing, leaving
+      // the run "successful" and the board untouched with no way to tell.
       const result = await queryApi.execute(board, q);
       const output = `Found ${result.matches.length} cards:\n` +
-        result.matches.map((m: any) => `  - [${m.card.id}] ${m.card.title} (${m.card.status ?? 'no status'})`).join('\n');
+        result.matches.map((c) => `  - [${c.id}] ${c.title} (${c.status ?? 'no status'})`).join('\n');
       return { output, value: result };
     }
 

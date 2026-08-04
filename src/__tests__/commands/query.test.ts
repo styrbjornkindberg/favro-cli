@@ -42,19 +42,19 @@ const output = () => logSpy.mock.calls.map((c) => String(c[0])).join('\n');
 const errors = () => errorSpy.mock.calls.map((c) => String(c[0])).join('\n');
 
 const result = (over: Record<string, unknown> = {}) => ({
+  // A `ContextCard`, not a `{ card, matchReason }` wrapper: #95 deleted
+  // `QueryMatch` with the parser that produced the reason string.
   matches: [
     {
-      card: {
-        title: 'Fix login',
-        status: 'In Progress',
-        assignees: ['alice', 'bob'],
-        tags: ['bug', 'urgent'],
-      },
-      matchReason: 'status matches "In Progress"',
+      id: 'c-1',
+      title: 'Fix login',
+      status: 'In Progress',
+      assignees: ['alice', 'bob'],
+      tags: ['bug', 'urgent'],
     },
   ],
   total: 12,
-  filter: {},
+  filter: { ast: null, raw: 'status:done' },
   summary: '1 of 12 cards match',
   ...over,
 });
@@ -83,22 +83,29 @@ describe('query', () => {
     expect(MockQueryAPI.prototype.execute).toHaveBeenCalledWith('Sprint 42', 'high priority status:In Progress');
   });
 
-  test('renders the summary, then one line per match with its reason', async () => {
+  test('renders the summary, then one line per match', async () => {
     await runCli(['query', 'Sprint 42', 'status:done', '--human']);
 
     expect(output()).toContain('1 of 12 cards match');
     expect(output()).toContain('• Fix login [In Progress] — alice, bob #bug #urgent');
-    expect(output()).toContain('(status matches "In Progress")');
+    // The per-row `matchReason` line is GONE (#95). Under one fail-closed
+    // grammar the reason every row matched is the query, which the summary
+    // states once — a per-row copy of the same sentence is not information, and
+    // the old parser's reason string was assembled as it scraped.
+    expect(output()).not.toMatch(/^\s+\(.*\)$/m);
   });
 
   test('omits the bracket, the dash and the hashes when the card carries none of them', async () => {
     MockQueryAPI.prototype.execute = jest.fn().mockResolvedValue(
-      result({ matches: [{ card: { title: 'Bare card' }, matchReason: 'title match' }] }),
+      result({ matches: [{ id: 'c-2', title: 'Bare card' }] }),
     );
 
     await runCli(['query', 'Sprint 42', 'bare', '--human']);
 
-    expect(output()).toContain('• Bare card\n');
+    // The whole line, so a stray bracket, dash or hash after the title fails.
+    // `toContain('• Bare card\n')` used to say this and stopped once the
+    // `matchReason` line below it went away (#95) — the title is now last.
+    expect(output()).toMatch(/^ {2}• Bare card$/m);
     expect(output()).not.toContain('undefined');
   });
 
@@ -160,12 +167,16 @@ describe('query', () => {
     expect(output()).toContain('cards — Request timed out');
   });
 
-  test('points at the fail-closed filter grammar for blocking, which it does not answer', async () => {
+  test('the help says free text is title~"…" and points at the one grammar', async () => {
     const program = new Command();
     registerQueryCommand(program);
     const query = program.commands.find((c) => c.name() === 'query')!;
 
-    expect(query.description()).toContain('Blocking is NOT asked here');
+    // #95's headline, which the old help contradicted by advertising "Free text
+    // — Title/tag search" as a supported pattern.
+    expect(query.description()).toContain('Free text is `title~"…"` and nothing else');
+    expect(query.description()).toContain('favro cards list --help');
+    // `unblocked` is still not answered here, and the help still names where it is.
     expect(query.description()).toContain('--filter "unblocked"');
   });
 });

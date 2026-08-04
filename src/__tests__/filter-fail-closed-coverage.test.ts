@@ -89,6 +89,9 @@ function makeClient() {
     // One real user, so `batch assign --to alice` gets past its own resolution
     // and the FILTER is what the parity arm below is comparing.
     if (url === '/users') return { entities: [{ userId: 'u-alice', name: 'alice', email: 'alice@example.com' }] };
+    // `favro query` settles the board before the filter, the same order
+    // `cards list` uses (#82) — so its arm needs the single-board read too.
+    if (url === `/widgets/${BOARD}`) return WIDGETS[0];
     throw new Error(`unexpected GET ${url}`);
   });
   return { get, organizationId: 'org-a' } as any;
@@ -336,6 +339,99 @@ describe('the live cards export refuses a filter it cannot settle', () => {
   });
 });
 
+// ─── arm four-and-a-half: the live `favro query` speaks the same grammar ─────
+
+/**
+ * `favro query <board> "<filter>"` was the FOURTH surface filtering cards, and
+ * until #95 it ran a second, regex-based parser of its own: it scraped what it
+ * recognised, swept the remainder into a title search, and answered a confident
+ * zero rows with a paragraph explaining why. So `favro query <board>
+ * "statuz:done"` ANSWERED where `cards list --filter "statuz:done"` refused.
+ *
+ * This arm drives the real program and compares the refusal a user reads to the
+ * one `cards export` prints for the same input. It is a separate arm from the
+ * live-parity one above, and it has to be, for a reason worth writing down:
+ *
+ *   `favro query` is migrated to the ADR-0002 runner and the three `--filter`
+ *   commands are NOT (#119 owns that). So query writes
+ *   `{"error":{"message,retryable"}}` to **stdout** while the other three write
+ *   `✗ Error: …` to **stderr**. A byte comparison of the two channels would
+ *   fail on the envelope rather than on the grammar, and weakening the
+ *   comparison to make it pass is how a parity arm stops proving parity.
+ *   The MESSAGE is what has to be identical, and that is what is compared.
+ */
+describe('the live favro query refuses a filter in the same words cards export does', () => {
+  const listCards = jest.fn(async () => CARDS);
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (clientFactory.createFavroClient as jest.Mock).mockImplementation(async () => makeClient());
+    (CardsAPI as jest.MockedClass<typeof CardsAPI>).mockImplementation(() => ({ listCards } as any));
+  });
+
+  /** Drive one command and collect BOTH channels — the point is which is used. */
+  async function driven(argv: string[]) {
+    const out: string[] = [];
+    const err: string[] = [];
+    const said = jest.spyOn(console, 'log').mockImplementation((...a) => { out.push(String(a[0])); });
+    const alsoSaid = jest.spyOn(console, 'error').mockImplementation((...a) => { err.push(String(a[0])); });
+    const exit = jest.spyOn(process, 'exit').mockImplementation(((c?: number) => {
+      throw new Error(`process.exit:${c}`);
+    }) as never);
+    const before = process.exitCode;
+    try {
+      await buildProgram().parseAsync(['node', 'favro', ...argv]);
+    } catch (error) {
+      if (!/^process\.exit:/.test((error as Error).message)) throw error;
+      err.push((error as Error).message);
+    }
+    const code = process.exitCode;
+    process.exitCode = before;
+    said.mockRestore();
+    alsoSaid.mockRestore();
+    exit.mockRestore();
+    return { stdout: out.join('\n'), stderr: err.join('\n'), code };
+  }
+
+  test.each(BAD_INPUTS)('%s refuses on query with export’s wording', async (_label, filter, unresolvable) => {
+    const query = await driven(['query', BOARD, filter]);
+    const exported = await driven(['cards', 'export', BOARD, '--filter', filter, '--out', 'unused.json']);
+
+    // Query is migrated: the machine-readable refusal is on STDOUT (ADR-0002).
+    const envelope = JSON.parse(query.stdout);
+    expect(envelope.error.message).toContain(unresolvable);
+    expect(query.code).toBe(1);
+
+    // …and it is the SAME sentence the unmigrated command puts on stderr. Not a
+    // substring of it: the whole message, which is what makes a second grammar
+    // reappearing here fail rather than pass on "it also said typoo".
+    expect(exported.stderr).toContain(envelope.error.message);
+  });
+
+  test('a refusal never pages the board, and a filter it accepts does', async () => {
+    await driven(['query', BOARD, 'tag:typoo']);
+    expect(listCards).not.toHaveBeenCalled();
+
+    // The positive control. Without it, `not.toHaveBeenCalled` above would pass
+    // against a command that never reached the fetch for any reason at all.
+    const answered = await driven(['query', BOARD, 'tag:bug']);
+    expect(listCards).toHaveBeenCalled();
+    expect(JSON.parse(answered.stdout).matches.map((c: any) => c.id)).toEqual(['c1']);
+  });
+
+  test('free text is refused and pointed at title~"…" — the #95 headline', async () => {
+    const { stdout, code } = await driven(['query', BOARD, 'authentication', 'refactor']);
+
+    expect(code).toBe(1);
+    // The old parser answered this: `{ text: 'authentication refactor' }`, a
+    // title search over a board, and zero rows read as "no such card".
+    expect(JSON.parse(stdout).error.message).toBe(
+      `Unrecognised filter token 'authentication' at position 0 — it names no field and carries no operator. ` +
+        `Filters are field:value (see 'favro cards list --help'). For free text, say it: title~"authentication".`,
+    );
+  });
+});
+
 // ─── arm five: every live --filter command refuses in the SAME words ─────────
 
 /**
@@ -485,8 +581,12 @@ const SUBSTRING_OVER_VOCABULARY = new RegExp(
  * surface answering the same question a different way, which is the defect.
  */
 const SUBSTRING_DEBT: Record<string, string> = {
-  [path.join('api', 'query.ts')]:
-    '#95 — the second, regex-based grammar behind `favro query`; re-pointed or deleted there',
+  // `api/query.ts` was here until #95. `parseQueryFilter` and `matchCard` are
+  // deleted, not repaired: `favro query` runs `resolveQuery` + `filterCards`,
+  // the same two calls `cards list --filter` makes, so `statuz:done` refuses
+  // there exactly as it always did here. Its `foldName(tag).includes(typed)`
+  // died with the matcher — the last surface deciding tag membership by
+  // substring.
   // `commands/batch.ts` was here until #138. `parseFilterExpression` is deleted,
   // not repaired: `batch move` and `batch assign` run `applyFilters`, and the
   // `cards update --board --label` path in `cli.ts` that shared its

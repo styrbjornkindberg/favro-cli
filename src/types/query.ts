@@ -1,71 +1,41 @@
 /**
- * Semantic Query Command — Types
- * CLA-1798 / FAVRO-036: Semantic Query Command
+ * `favro query` — result types.
  *
- * Defines types for the query result returned by QueryAPI.execute().
+ * `QueryFilter` and `QueryMatch` are GONE (#95). Both were artefacts of the
+ * second, fail-open parser this command used to run:
+ *
+ *   - `QueryFilter` was that parser's bag of scraped fields (`owner`, `priority`,
+ *     `text`, `due`) — a vocabulary no other surface spoke. The filter a query
+ *     runs is now a `Query`, the same parsed AST `cards list --filter` gets, and
+ *     its `raw` is the expression as typed while its `ast` carries the values
+ *     already SETTLED (`assignee:` as a userId, `status:` as the column's own
+ *     name).
+ *   - `QueryMatch` wrapped each card with a `matchReason` string the old matcher
+ *     assembled as it scraped. With one fail-closed grammar the reason every row
+ *     matched is the query, which the summary states once; a per-row copy of the
+ *     same sentence is not information.
  */
 
 import type { ContextCard } from '../api/context';
+import type { Query } from '../lib/query-parser';
 import type { Unreachable } from '../lib/read-shape';
 
-// ─── Query Filter ─────────────────────────────────────────────────────────────
-
 /**
- * Parsed query filter extracted from natural language.
- * Each field is optional — unspecified means "match anything".
- */
-export interface QueryFilter {
-  /** Filter by status (e.g. "done", "In Progress") */
-  status?: string;
-  /** Filter by assignee name, email, or @-handle */
-  owner?: string;
-  /** Filter by label/tag */
-  label?: string;
-  // `blocked` / `blocking` / `relatesTo` are GONE (#47). They read `card.links`,
-  // which `normalizeCard` never populated, so all three answered about an empty
-  // array on every card. Blocking lives on `cards list --filter` — `unblocked`,
-  // `blocks:`, `blocked-by:` — where it reads the real `isBefore` edge and where
-  // a mistyped predicate is a refusal instead of a free-text title search.
-  /** Filter by priority custom field value */
-  priority?: string;
-  /** Free-text search across title and tags */
-  text?: string;
-  /** Filter by due date (ISO string or human term like "overdue") */
-  due?: string;
-  /** Raw query string (for "no results" messages) */
-  rawQuery?: string;
-}
-
-// ─── Query Result ─────────────────────────────────────────────────────────────
-
-/**
- * A single card in the query result, with a human-readable reason it matched.
- */
-export interface QueryMatch {
-  card: ContextCard;
-  /** Brief human-readable reason why this card matched (for "explains why" feature) */
-  matchReason: string;
-}
-
-/**
- * Result of executing a semantic query.
+ * Result of running a filter expression against one board.
  */
 export interface QueryResult {
-  /** Matching cards */
-  matches: QueryMatch[];
-  /** Total cards searched */
+  /** The cards that matched, normalised the way `favro context` renders them. */
+  matches: ContextCard[];
+  /** Total cards searched. */
   total: number;
-  /** Parsed filter that was applied */
-  filter: QueryFilter;
-  /** Human-readable summary line (e.g. "Found 3 matching cards: …") */
+  /** The parsed, value-settled query that was applied. */
+  filter: Query;
+  /** The one line every run prints — the match list, or the empty answer. */
   summary: string;
-  /** If no results, explanation of why (e.g. "No cards have status 'done' in this board") */
-  noResultsExplanation?: string;
   /**
-   * Facets of the board snapshot this query could not read (#116). Present only
-   * when there are any. `noResultsExplanation` is a claim about the board; with
-   * a hole in the snapshot it is only a claim about what we managed to see, and
-   * this is what says so.
+   * Facets of the board this query could not read (#116). Present only when
+   * there are any, so `matches: []` with no marker means the board genuinely
+   * holds no matching card rather than that the fetch died.
    */
   unreachable?: Unreachable[];
 }

@@ -1,572 +1,361 @@
 /**
- * Semantic Query API — Unit Tests
- * CLA-1798 / FAVRO-036: Semantic Query Command
+ * `favro query` runs the ONE grammar, and fails closed (#95).
  *
- * 50+ tests covering:
- *  - parseQueryFilter: all supported query patterns
- *  - matchCard: all filter fields
- *  - explainNoResults: various no-result scenarios
- *  - buildSummary: output formatting
- *  - QueryAPI.execute: integration with mocked ContextAPI
+ * WHAT THIS REPLACED
+ * This file used to be ~120 tests of `parseQueryFilter` / `matchCard` /
+ * `explainNoResults` — the second, regex-based parser. Every one of them passed,
+ * and the thing they pinned was the defect: `parseQueryFilter('statuz:done')`
+ * returned `{ text: 'statuz:done' }`, a title search, and `favro query <board>
+ * "statuz:done"` answered a confident zero rows with a paragraph explaining why.
+ * A test that pins a plausible wrong answer is worse than no test, so they are
+ * gone with the parser and what is pinned here is the refusal.
+ *
+ * NOTHING IS MOCKED BUT THE WIRE
+ * One fake `get` serves the routes these paths make, and throws on anything
+ * else. `BoardsAPI`, `CardsAPI`, `ColumnDirectory`, `cachedTags` and
+ * `resolveAssignee` are all the real thing, so the value-settling this file's
+ * headline depends on is actually running. A class mock in its place would let
+ * `resolveQuery` be skipped entirely and every arm below would still be green.
+ *
+ * THE CARD STAND DISCRIMINATES ON EACH CONJUNCT SEPARATELY
+ * `status:done AND tag:bug` is run against a board holding a card that satisfies
+ * BOTH, one that satisfies only the status, one that satisfies only the tag, and
+ * one that satisfies neither and carries neither field at all. Deleting either
+ * conjunct from the query admits a different, named card — which is what makes
+ * the assertion sensitive to each half rather than to the pair.
  */
-
+import { ParseError, knownFields } from '../../lib/query-parser';
+import { QueryAPI, buildSummary } from '../../api/query';
+import type { Card } from '../../lib/cards-api';
+import type { ContextCard } from '../../api/context';
 import {
-  parseQueryFilter,
-  matchCard,
-  explainNoResults,
-  buildSummary,
-  QueryAPI,
-} from '../../api/query';
-import type { BoardContextSnapshot, ContextCard } from '../../api/context';
-import type { QueryFilter, QueryMatch } from '../../types/query';
+  STUB_BOARD,
+  STUB_TAGS,
+  STUB_USER_IDS,
+  stubVocabularyClient,
+  useTempConfigDir,
+} from '../../test-support/filter-vocabulary';
 
-// ─── Fixtures ─────────────────────────────────────────────────────────────────
+useTempConfigDir();
 
-function makeCard(overrides: Partial<ContextCard> = {}): ContextCard {
-  return {
-    id: 'card-1',
-    title: 'Test Card',
-    status: 'In Progress',
-    assignees: ['alice@example.com'],
-    tags: ['bug', 'frontend'],
-    blockedBy: [],
-    blocking: [],
-    customFields: { priority: 'high' },
-    due: '2025-01-01T00:00:00Z',
-    ...overrides,
+// ─── the board ───────────────────────────────────────────────────────────────
+
+/**
+ * Four cards, chosen so that no single predicate in `status:done AND tag:bug`
+ * can carry the answer on its own.
+ *
+ * `tags` and `status` are set directly while `tagIds`/`columnId` are absent on
+ * purpose: `CardsAPI.listCards` hydrates those two fields from the column and
+ * tag directories when the ids are present, and a stand that went through the
+ * hydration would be asserting the hydration rather than the filter.
+ */
+const card = (fields: Partial<Card> & Pick<Card, 'cardId' | 'name'>): Card =>
+  ({ createdAt: '2026-01-01T00:00:00Z', ...fields }) as Card;
+
+const CARDS: Card[] = [
+  card({ cardId: 'c-both', name: 'Fix login', status: 'done', tags: ['bug'], assignees: ['alice@example.com'] }),
+  card({ cardId: 'c-status-only', name: 'Ship docs', status: 'done', tags: ['docs'], assignees: ['bob@example.com'] }),
+  card({ cardId: 'c-tag-only', name: 'Triage crash', status: 'todo', tags: ['bug'], assignees: [] }),
+  // Carries NEITHER field — the omit arm. An absent value must fail a predicate,
+  // never pass it.
+  card({ cardId: 'c-bare', name: 'Nothing set' }),
+];
+
+/**
+ * The wire. A handful of routes and a throw, so an arm cannot pass because the
+ * stand answered a call it was never meant to receive.
+ *
+ * `served` records the paths, which is how the "a refusal costs no card read"
+ * arm is checked — and that arm carries a POSITIVE control, because
+ * `not.toContain` alone would pass against a probe that records nothing at all.
+ */
+function makeWire(opts: { opaqueIds?: boolean; cardsFail?: string } = {}) {
+  const vocabulary = stubVocabularyClient({ opaqueIds: opts.opaqueIds });
+  const served: string[] = [];
+  const get = async (url: string, config?: any) => {
+    served.push(url);
+    if (url === `/widgets/${STUB_BOARD}`) {
+      return { widgetCommonId: STUB_BOARD, name: 'Stub', type: 'board' };
+    }
+    if (url === '/cards') {
+      if (opts.cardsFail) throw new Error(opts.cardsFail);
+      return { entities: CARDS };
+    }
+    return vocabulary.get(url, config);
   };
+  return { client: { get, organizationId: 'org-stub' } as any, served };
 }
 
-function makeContext(cards: ContextCard[] = []): BoardContextSnapshot {
-  return {
-    board: { id: 'b-1', name: 'Sprint 42', members: [], description: '' },
-    columns: [],
-    customFields: [],
-    members: [
-      { id: 'm-1', name: 'Alice Smith', email: 'alice@example.com', role: 'member' },
-      { id: 'm-2', name: 'Bob Jones', email: 'bob@example.com', role: 'member' },
-    ],
-    cards,
-    workflow: [],
-    stats: { total: cards.length, by_status: {}, by_owner: {} },
-    generatedAt: new Date().toISOString(),
-  };
-}
-
-// ─── parseQueryFilter Tests ───────────────────────────────────────────────────
-
-describe('parseQueryFilter', () => {
-  it('parses status:done', () => {
-    const f = parseQueryFilter('status:done');
-    expect(f.status).toBe('done');
-  });
-
-  it('parses status:In Progress with spaces', () => {
-    const f = parseQueryFilter('status:In Progress');
-    expect(f.status).toBe('In Progress');
-  });
-
-  it('parses assigned:@alice', () => {
-    const f = parseQueryFilter('assigned:@alice');
-    expect(f.owner).toBe('alice');
-  });
-
-  it('parses assigned:alice without @', () => {
-    const f = parseQueryFilter('assigned:alice');
-    expect(f.owner).toBe('alice');
-  });
-
-  it('parses owner:bob', () => {
-    const f = parseQueryFilter('owner:bob');
-    expect(f.owner).toBe('bob');
-  });
-
-  it('parses assignee:charlie', () => {
-    const f = parseQueryFilter('assignee:charlie');
-    expect(f.owner).toBe('charlie');
-  });
-
-  it('parses priority:high', () => {
-    const f = parseQueryFilter('priority:high');
-    expect(f.priority).toBe('high');
-  });
-
-  it('parses priority:low', () => {
-    const f = parseQueryFilter('priority:low');
-    expect(f.priority).toBe('low');
-  });
-
-  it('parses label:bug', () => {
-    const f = parseQueryFilter('label:bug');
-    expect(f.label).toBe('bug');
-  });
-
-  it('parses tag:frontend', () => {
-    const f = parseQueryFilter('tag:frontend');
-    expect(f.label).toBe('frontend');
-  });
-
-  it('parses overdue shorthand', () => {
-    const f = parseQueryFilter('overdue');
-    expect(f.due).toBe('overdue');
-  });
-
-  it('parses due:overdue', () => {
-    const f = parseQueryFilter('due:overdue');
-    expect(f.due).toBe('overdue');
-  });
-
-  it('parses "assigned to @alice" natural language', () => {
-    const f = parseQueryFilter('assigned to @alice');
-    expect(f.owner).toBe('alice');
-  });
-
-  it('parses "with status In Progress"', () => {
-    const f = parseQueryFilter('with status In Progress');
-    expect(f.status).toBe('In Progress');
-  });
-
-  it('parses "in status done"', () => {
-    const f = parseQueryFilter('in status done');
-    expect(f.status).toBe('done');
-  });
-
-  it('parses "high priority"', () => {
-    const f = parseQueryFilter('high priority');
-    expect(f.priority).toBe('high');
-  });
-
-  it('parses "critical priority"', () => {
-    const f = parseQueryFilter('critical priority');
-    expect(f.priority).toBe('critical');
-  });
-
-  it('parses "done" naked status', () => {
-    const f = parseQueryFilter('done');
-    expect(f.status).toBe('done');
-  });
-
-  it('parses compound: status:done assigned:@alice', () => {
-    const f = parseQueryFilter('status:done assigned:@alice');
-    expect(f.status).toBe('done');
-    expect(f.owner).toBe('alice');
-  });
-
-  it('sets rawQuery on all filters', () => {
-    const query = 'status:done';
-    const f = parseQueryFilter(query);
-    expect(f.rawQuery).toBe(query);
-  });
-
-  it('returns text filter for free-form query', () => {
-    const f = parseQueryFilter('authentication refactor');
-    expect(f.text).toBe('authentication refactor');
-  });
-
-  it('does not set text for very short remaining', () => {
-    const f = parseQueryFilter('status:done a');
-    expect(f.text).toBeUndefined();
-  });
-
-  it('parses due:2025-01-15', () => {
-    const f = parseQueryFilter('due:2025-01-15');
-    expect(f.due).toBe('2025-01-15');
-  });
-});
-
-// ─── matchCard Tests ──────────────────────────────────────────────────────────
-
-describe('matchCard', () => {
-  const ctx = makeContext();
-
-  it('matches card with correct status', () => {
-    const card = makeCard({ status: 'done' });
-    const result = matchCard(card, { status: 'done' }, ctx);
-    expect(result).not.toBeNull();
-    expect(result).toContain('done');
-  });
-
-  it('rejects card with wrong status', () => {
-    const card = makeCard({ status: 'todo' });
-    const result = matchCard(card, { status: 'done' }, ctx);
-    expect(result).toBeNull();
-  });
-
-  it('matches status case-insensitively', () => {
-    const card = makeCard({ status: 'In Progress' });
-    const result = matchCard(card, { status: 'in progress' }, ctx);
-    expect(result).not.toBeNull();
-  });
-
-  it('matches card with correct owner', () => {
-    const card = makeCard({ assignees: ['alice@example.com'] });
-    const result = matchCard(card, { owner: 'alice' }, ctx);
-    expect(result).not.toBeNull();
-  });
-
-  it('rejects card not assigned to owner', () => {
-    const card = makeCard({ assignees: ['bob@example.com'] });
-    const result = matchCard(card, { owner: 'alice' }, ctx);
-    expect(result).toBeNull();
-  });
-
-  it('does not match every assignee when the matched member has no email', () => {
-    // FAIL-OPEN, and the code produces the input itself: `context.ts:345`
-    // normalises a board-member fallback with `email: m.email ?? ''`. The
-    // owner filter falls back to the context member list, and it used to probe
-    // each assignee with `includes(member.email)` — an empty email is an empty
-    // needle, and `''` is a substring of EVERY string, so one member without
-    // an address made `--owner <that member>` match the whole board.
-    //
-    // Carol is found by name; the card is Dave's. Without the empty-needle
-    // guard this returns a match.
-    const withCarol: BoardContextSnapshot = {
-      ...ctx,
-      members: [...ctx.members, { id: 'm-3', name: 'Carol Danvers', email: '', role: 'member' }],
-    };
-    const card = makeCard({ assignees: ['dave@example.com'] });
-
-    expect(matchCard(card, { owner: 'carol' }, withCarol)).toBeNull();
-  });
-
-  it('matches @me to any assigned card', () => {
-    const card = makeCard({ assignees: ['anyone@example.com'] });
-    const result = matchCard(card, { owner: 'me' }, ctx);
-    expect(result).not.toBeNull();
-  });
-
-  it('rejects @me for unassigned card', () => {
-    const card = makeCard({ assignees: [] });
-    const result = matchCard(card, { owner: 'me' }, ctx);
-    expect(result).toBeNull();
-  });
-
-  it('matches card with correct label', () => {
-    const card = makeCard({ tags: ['bug', 'frontend'] });
-    const result = matchCard(card, { label: 'bug' }, ctx);
-    expect(result).not.toBeNull();
-  });
-
-  it('rejects card without the label', () => {
-    const card = makeCard({ tags: ['backend'] });
-    const result = matchCard(card, { label: 'frontend' }, ctx);
-    expect(result).toBeNull();
-  });
-
-  it('matches card with correct priority custom field', () => {
-    const card = makeCard({ customFields: { priority: 'high' } });
-    const result = matchCard(card, { priority: 'high' }, ctx);
-    expect(result).not.toBeNull();
-    expect(result).toContain('priority');
-  });
-
-  it('rejects card with wrong priority', () => {
-    const card = makeCard({ customFields: { priority: 'low' } });
-    const result = matchCard(card, { priority: 'high' }, ctx);
-    expect(result).toBeNull();
-  });
-
-  it('rejects card with no priority field', () => {
-    const card = makeCard({ customFields: {} });
-    const result = matchCard(card, { priority: 'high' }, ctx);
-    expect(result).toBeNull();
-  });
-
-  it('matches overdue card', () => {
-    const card = makeCard({ due: '2020-01-01T00:00:00Z' });
-    const result = matchCard(card, { due: 'overdue' }, ctx);
-    expect(result).not.toBeNull();
-    expect(result).toContain('overdue');
-  });
-
-  it('rejects future card for overdue filter', () => {
-    const card = makeCard({ due: '2099-01-01T00:00:00Z' });
-    const result = matchCard(card, { due: 'overdue' }, ctx);
-    expect(result).toBeNull();
-  });
-
-  it('rejects card with no due date for overdue filter', () => {
-    const card = makeCard({ due: undefined });
-    const result = matchCard(card, { due: 'overdue' }, ctx);
-    expect(result).toBeNull();
-  });
-
-  it('matches free-text in title', () => {
-    const card = makeCard({ title: 'Fix authentication bug' });
-    const result = matchCard(card, { text: 'authentication' }, ctx);
-    expect(result).not.toBeNull();
-  });
-
-  it('matches free-text in tags', () => {
-    const card = makeCard({ tags: ['authentication', 'security'] });
-    const result = matchCard(card, { text: 'authentication' }, ctx);
-    expect(result).not.toBeNull();
-  });
-
-  it('rejects card not matching free text', () => {
-    const card = makeCard({ title: 'Unrelated card', tags: [] });
-    const result = matchCard(card, { text: 'authentication' }, ctx);
-    expect(result).toBeNull();
-  });
-
-  it('matches all cards with empty filter', () => {
-    const card = makeCard();
-    const result = matchCard(card, {}, ctx);
-    expect(result).not.toBeNull();
-  });
-
-  it('matches compound filter: status + owner', () => {
-    const card = makeCard({ status: 'done', assignees: ['alice@example.com'] });
-    const result = matchCard(card, { status: 'done', owner: 'alice' }, ctx);
-    expect(result).not.toBeNull();
-  });
-
-  it('rejects on compound filter if one condition fails', () => {
-    const card = makeCard({ status: 'todo', assignees: ['alice@example.com'] });
-    const result = matchCard(card, { status: 'done', owner: 'alice' }, ctx);
-    expect(result).toBeNull();
-  });
-
-  it('matches Priority with capital P', () => {
-    const card = makeCard({ customFields: { Priority: 'urgent' } });
-    const result = matchCard(card, { priority: 'urgent' }, ctx);
-    expect(result).not.toBeNull();
-  });
-
-  it('matches Urgency custom field as priority', () => {
-    const card = makeCard({ customFields: { urgency: 'high' } });
-    const result = matchCard(card, { priority: 'high' }, ctx);
-    expect(result).not.toBeNull();
-  });
-});
-
-// ─── explainNoResults Tests ───────────────────────────────────────────────────
-
-describe('explainNoResults', () => {
-  it('explains empty board', () => {
-    const ctx = makeContext([]);
-    const explanation = explainNoResults({ rawQuery: 'status:done' }, ctx);
-    expect(explanation).toContain('no cards');
-  });
-
-  it('explains missing status', () => {
-    const cards = [makeCard({ status: 'todo' }), makeCard({ status: 'in-progress' })];
-    const ctx = makeContext(cards);
-    const explanation = explainNoResults({ status: 'done', rawQuery: 'status:done' }, ctx);
-    expect(explanation).toContain('done');
-    expect(explanation).toContain('Available statuses');
-  });
-
-  it('explains unassigned owner', () => {
-    const cards = [makeCard({ assignees: ['bob@example.com'] })];
-    const ctx = makeContext(cards);
-    const explanation = explainNoResults({ owner: 'alice' }, ctx);
-    expect(explanation).toContain('alice');
-  });
-
-  it('explains missing priority field', () => {
-    const ctx = makeContext([makeCard({ customFields: {} })]);
-    const explanation = explainNoResults({ priority: 'high' }, ctx);
-    expect(explanation).toContain('high');
-    expect(explanation).toContain('Priority');
-  });
-
-  it('explains missing label', () => {
-    const ctx = makeContext([makeCard({ tags: ['backend', 'api'] })]);
-    const explanation = explainNoResults({ label: 'frontend' }, ctx);
-    expect(explanation).toContain('frontend');
-    expect(explanation).toContain('Available tags');
-  });
-
-  it('explains no overdue cards', () => {
-    const ctx = makeContext([makeCard({ due: '2099-01-01T00:00:00Z' })]);
-    const explanation = explainNoResults({ due: 'overdue' }, ctx);
-    expect(explanation).toContain('overdue');
-  });
-
-  it('explains no text match', () => {
-    const ctx = makeContext([makeCard({ title: 'Different Card' })]);
-    const explanation = explainNoResults({ text: 'authentication' }, ctx);
-    expect(explanation).toContain('authentication');
-  });
-
-  it('uses generic message as fallback', () => {
-    const ctx = makeContext([makeCard()]);
-    const explanation = explainNoResults({ rawQuery: 'exotic query' }, ctx);
-    expect(explanation).toContain('exotic query');
-  });
-});
-
-// ─── buildSummary Tests ───────────────────────────────────────────────────────
-
-describe('buildSummary', () => {
-  it('returns empty string for no matches', () => {
-    expect(buildSummary([], {})).toBe('');
-  });
-
-  it('formats single match', () => {
-    const match: QueryMatch = { card: makeCard({ title: 'My Card' }), matchReason: 'status: done' };
-    const summary = buildSummary([match], {});
-    expect(summary).toContain('1');
-    expect(summary).toContain('My Card');
-    expect(summary).toContain('Found');
-  });
-
-  it('formats 3 matches in-line', () => {
-    const matches = ['Card A', 'Card B', 'Card C'].map(t =>
-      ({ card: makeCard({ title: t }), matchReason: 'test' })
-    );
-    const summary = buildSummary(matches, {});
-    expect(summary).toContain('3');
-    expect(summary).toContain('Card A');
-    expect(summary).toContain('Card C');
-  });
-
-  it('truncates at 5+ matches with ellipsis', () => {
-    const matches = ['A', 'B', 'C', 'D', 'E', 'F'].map(t =>
-      ({ card: makeCard({ title: t }), matchReason: 'test' })
-    );
-    const summary = buildSummary(matches, {});
-    expect(summary).toContain('6');
-    expect(summary).toContain('…');
-    expect(summary).toContain('3 more');
-  });
-
-  it('uses "card" singular for 1 result', () => {
-    const match: QueryMatch = { card: makeCard({ title: 'My Card' }), matchReason: '' };
-    const summary = buildSummary([match], {});
-    expect(summary).toMatch(/1 matching card:/);
-  });
-
-  it('uses "cards" plural for 2+ results', () => {
-    const matches = ['A', 'B'].map(t =>
-      ({ card: makeCard({ title: t }), matchReason: '' })
-    );
-    const summary = buildSummary(matches, {});
-    expect(summary).toMatch(/2 matching cards:/);
-  });
-});
-
-// ─── QueryAPI.execute Tests ───────────────────────────────────────────────────
-
-const mockGetSnapshot = jest.fn();
-
-jest.mock('../../api/context', () => {
-  return {
-    __esModule: true,
-    default: function MockContextAPI() {
-      return { getSnapshot: mockGetSnapshot };
-    },
-  };
-});
-
-describe('QueryAPI.execute', () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
-  });
-
-  function makeSnapshot(cards: ContextCard[]): BoardContextSnapshot {
-    return makeContext(cards);
+const idsOf = (matches: ContextCard[]) => matches.map((c) => c.id).sort();
+
+/** Run something that must refuse, and hand back the refusal. */
+async function refusalFrom(run: () => Promise<unknown>): Promise<Error> {
+  try {
+    await run();
+  } catch (error) {
+    return error as Error;
   }
+  throw new Error('expected a refusal, got an answer');
+}
 
-  it('returns matching cards for status query', async () => {
-    const cards = [
-      makeCard({ id: 'c1', title: 'Done Card', status: 'done' }),
-      makeCard({ id: 'c2', title: 'Todo Card', status: 'todo' }),
-    ];
-    mockGetSnapshot.mockResolvedValue(makeSnapshot(cards));
+// ─────────────────────────────────────────────────────────────────────────────
 
-    const api = new QueryAPI({} as any);
-    const result = await api.execute('board-1', 'status:done');
+describe('favro query refuses what the deleted parser used to answer', () => {
+  /**
+   * The inputs the old parser INVENTED a meaning for. Each one answered a
+   * plausible zero rows; each one now names the token it refused.
+   *
+   * `knownFields()` builds the candidate list rather than a pasted literal:
+   * pasting it would pin today's field set, and the set is DERIVED on purpose
+   * (#46) — a legitimately added field would fail this arm and the cheapest fix
+   * for that red is to edit the literal, which teaches that these strings are
+   * decoration. The PROSE either side of it is asserted verbatim.
+   */
+  const KNOWN = [...knownFields()].sort().join(', ');
+  const unknownField = (field: string, pos: number) =>
+    `Unknown filter field '${field}' at position ${pos} — refusing to run a query that cannot mean what you asked. ` +
+    `Known fields: ${KNOWN}.`;
+
+  const INVENTED: Array<[input: string, message: string]> = [
+    // The ticket's headline: a typo'd field name.
+    ['statuz:done', unknownField('statuz', 0)],
+    // `priority:` was never a Favro field — the old parser read a custom field
+    // called Priority or Urgency and called it a grammar keyword.
+    ['priority:high', unknownField('priority', 0)],
+    // `due:` is not the date field. `due_date:` is.
+    ['due:overdue', unknownField('due', 0)],
+    // `assigned:`/`owner:` were aliases the old parser minted for `assignee:`.
+    ['assigned:@alice', unknownField('assigned', 0)],
+    ['owner:bob', unknownField('owner', 0)],
+  ];
+
+  it.each(INVENTED)('%s refuses instead of answering zero rows', async (input, message) => {
+    const { client } = makeWire();
+    const error = await refusalFrom(() => new QueryAPI(client).execute(STUB_BOARD, input));
+
+    // `instanceof` AND `.name`: `toThrow(ParseError)` matches by constructor name
+    // up the chain, so a renamed bare `Error` satisfies it.
+    expect(error).toBeInstanceOf(ParseError);
+    expect(error.name).toBe('ParseError');
+    expect(error.message).toBe(message);
+  });
+
+  it('free text is title~"…" and nothing else — a bare word refuses and says so', async () => {
+    const { client } = makeWire();
+    const error = await refusalFrom(() =>
+      new QueryAPI(client).execute(STUB_BOARD, 'authentication refactor'),
+    );
+
+    expect(error).toBeInstanceOf(ParseError);
+    expect(error.name).toBe('ParseError');
+    expect(error.message).toBe(
+      `Unrecognised filter token 'authentication' at position 0 — it names no field and carries no operator. ` +
+        `Filters are field:value (see 'favro cards list --help'). For free text, say it: title~"authentication".`,
+    );
+  });
+
+  it('a tag outside the org refuses with the org’s real tags', async () => {
+    const { client } = makeWire();
+    const error = await refusalFrom(() => new QueryAPI(client).execute(STUB_BOARD, 'tag:typoo'));
+
+    expect(error).toBeInstanceOf(ParseError);
+    expect(error.name).toBe('ParseError');
+    expect(error.message).toBe(
+      `No tag matching "typoo" — it is missing or not visible to your key. ` +
+        `Run 'favro tags list' to see them. The org's tags:\n` +
+        [...STUB_TAGS].sort().map((n) => `  ${n}`).join('\n'),
+    );
+  });
+
+  it('a column the board does not have refuses with that board’s columns', async () => {
+    const { client } = makeWire();
+    const error = await refusalFrom(() => new QueryAPI(client).execute(STUB_BOARD, 'status:nonesuch'));
+
+    expect(error.name).toBe('ColumnResolutionError');
+    expect(error.message).toBe(
+      `No column named "nonesuch" on board ${STUB_BOARD} — it is missing or not visible to your key. ` +
+        `That board's columns:\n  col-0  todo\n  col-1  in-progress\n  col-2  done`,
+    );
+  });
+
+  it('an empty query refuses rather than widening to the whole board', async () => {
+    const { client, served } = makeWire();
+    const error = await refusalFrom(() => new QueryAPI(client).execute(STUB_BOARD, '   '));
+
+    expect(error).toBeInstanceOf(ParseError);
+    expect(error.name).toBe('ParseError');
+    expect(error.message).toBe(
+      `The query is empty — it narrows nothing, and ignoring it would answer the whole board. ` +
+        `Pass a filter expression, or ask for the board: favro cards list <board>.`,
+    );
+    // Nothing at all was read: an empty query cannot be made to mean something
+    // by anything on the wire.
+    expect(served).toEqual([]);
+  });
+
+  it('unblocked is refused here and names the command that answers it', async () => {
+    const { client } = makeWire();
+    const error = await refusalFrom(() => new QueryAPI(client).execute(STUB_BOARD, 'unblocked'));
+
+    expect(error).toBeInstanceOf(ParseError);
+    expect(error.name).toBe('ParseError');
+    expect(error.message).toBe(
+      `"unblocked" is not available here: it has to judge each blocker, which takes ` +
+        `reads this command does not make and cannot report on. ` +
+        `Ask the frontier where it is answered: favro cards list ${STUB_BOARD} --filter "unblocked"`,
+    );
+  });
+
+  it('the unblocked remedy quotes a board NAME, so it can be pasted back', async () => {
+    // #126's class: a refusal whose remedy cannot be run. `favro cards list
+    // Sprint 42 --filter …` reads as two positionals and answers about a board
+    // nobody asked for. `board-stub` above is id-shaped and needs no quotes,
+    // which is why the unquoted case cannot prove this one.
+    const board = { widgetCommonId: STUB_BOARD, name: 'Sprint 42', type: 'board' };
+    const named = {
+      organizationId: 'org-stub',
+      get: async (url: string) => {
+        // A name carries a space, so `getBoard` resolves it off the LIST first
+        // and then reads the board by id.
+        if (url === '/widgets') return { entities: [board] };
+        if (url === `/widgets/${STUB_BOARD}`) return board;
+        throw new Error(`unexpected GET ${url}`);
+      },
+    } as any;
+
+    const error = await refusalFrom(() => new QueryAPI(named).execute('Sprint 42', 'unblocked'));
+    expect(error.message).toContain('favro cards list "Sprint 42" --filter "unblocked"');
+  });
+
+  it('a refusal never pages the board — and the positive control proves the probe', async () => {
+    const refused = makeWire();
+    await refusalFrom(() => new QueryAPI(refused.client).execute(STUB_BOARD, 'statuz:done'));
+    expect(refused.served).not.toContain('/cards');
+
+    const answered = makeWire();
+    await new QueryAPI(answered.client).execute(STUB_BOARD, 'status:done');
+    expect(answered.served).toContain('/cards');
+  });
+});
+
+describe('favro query answers the grammar it accepts', () => {
+  it('AND is sensitive to each conjunct on its own', async () => {
+    const { client } = makeWire();
+    const api = new QueryAPI(client);
+
+    // Both conjuncts: only the card satisfying both survives.
+    expect(idsOf((await api.execute(STUB_BOARD, 'status:done AND tag:bug')).matches)).toEqual(['c-both']);
+
+    // Drop `tag:bug` — the status-only card is admitted. Drop `status:done` —
+    // the tag-only card is. Neither is reachable by the pair, so the assertion
+    // above cannot pass on half the query.
+    expect(idsOf((await api.execute(STUB_BOARD, 'status:done')).matches)).toEqual(['c-both', 'c-status-only']);
+    expect(idsOf((await api.execute(STUB_BOARD, 'tag:bug')).matches)).toEqual(['c-both', 'c-tag-only']);
+  });
+
+  it('OR widens to the union, and never to everything', async () => {
+    const { client } = makeWire();
+    const matches = (await new QueryAPI(client).execute(STUB_BOARD, 'status:done OR tag:bug')).matches;
+
+    expect(idsOf(matches)).toEqual(['c-both', 'c-status-only', 'c-tag-only']);
+    // The omit arm: a card carrying neither field is not swept in by a union.
+    expect(idsOf(matches)).not.toContain('c-bare');
+  });
+
+  it('a card missing the field fails the predicate — absence is not a match', async () => {
+    const { client } = makeWire();
+    // `c-bare` has no `status` and no `tags` at all.
+    expect(idsOf((await new QueryAPI(client).execute(STUB_BOARD, 'status:todo')).matches)).toEqual(['c-tag-only']);
+  });
+
+  it('title~"…" is the one spelling of free text, and it works', async () => {
+    const { client } = makeWire();
+    expect(idsOf((await new QueryAPI(client).execute(STUB_BOARD, 'title~"login"')).matches)).toEqual(['c-both']);
+  });
+
+  it('the applied filter carries values SETTLED against Favro, not as typed', async () => {
+    // Opaque ids share no substring with the typed name, so this arm is only
+    // green if `resolveAssignee` actually ran — with `userId === email` a raw
+    // substring match would answer identically and prove nothing (#84).
+    const { client } = makeWire({ opaqueIds: true });
+    const result = await new QueryAPI(client).execute(STUB_BOARD, 'assignee:alice');
+
+    expect(result.filter.raw).toBe('assignee:alice');
+    expect(result.filter.ast).toEqual({
+      kind: 'field',
+      field: 'assignee',
+      operator: '=',
+      value: STUB_USER_IDS.alice,
+    });
+    // …and the cards, which carry emails, therefore match nothing. An answer
+    // here would mean the typed name had ridden through unresolved.
+    expect(result.matches).toEqual([]);
+  });
+
+  it('matches are ContextCards — no `card` wrapper, no per-row matchReason', async () => {
+    const { client } = makeWire();
+    const [card] = (await new QueryAPI(client).execute(STUB_BOARD, 'title~"login"')).matches;
+
+    expect(card.id).toBe('c-both');
+    expect(card.title).toBe('Fix login');
+    expect(card.status).toBe('done');
+    // The two fields `QueryMatch` used to add. Their absence is the shape change.
+    expect(Object.keys(card)).not.toContain('card');
+    expect(Object.keys(card)).not.toContain('matchReason');
+  });
+
+  it('total counts every card searched, not the matches', async () => {
+    const { client } = makeWire();
+    const result = await new QueryAPI(client).execute(STUB_BOARD, 'title~"login"');
 
     expect(result.matches).toHaveLength(1);
-    expect(result.matches[0].card.title).toBe('Done Card');
-    expect(result.summary).toContain('Found 1');
+    expect(result.total).toBe(CARDS.length);
   });
 
-  it('returns noResultsExplanation when no matches', async () => {
-    const cards = [makeCard({ status: 'todo' })];
-    mockGetSnapshot.mockResolvedValue(makeSnapshot(cards));
+  it('a board that reads clean carries NO unreachable key at all', async () => {
+    const { client } = makeWire();
+    const result = await new QueryAPI(client).execute(STUB_BOARD, 'status:done');
 
-    const api = new QueryAPI({} as any);
-    const result = await api.execute('board-1', 'status:done');
-
-    expect(result.matches).toHaveLength(0);
-    expect(result.noResultsExplanation).toBeDefined();
-    expect(result.noResultsExplanation).toContain('done');
+    // `unreachable: []` would read as a hole to any truthiness check (#86).
+    expect('unreachable' in result).toBe(false);
+    expect(JSON.stringify(result)).not.toContain('unreachable');
   });
 
-  it('returns total card count', async () => {
-    const cards = [
-      makeCard({ id: 'c1', status: 'done' }),
-      makeCard({ id: 'c2', status: 'todo' }),
-      makeCard({ id: 'c3', status: 'in-progress' }),
-    ];
-    mockGetSnapshot.mockResolvedValue(makeSnapshot(cards));
+  it('a dead card read is a HOLE, never an empty board', async () => {
+    const { client } = makeWire({ cardsFail: 'Request timed out' });
+    const result = await new QueryAPI(client).execute(STUB_BOARD, 'status:done');
 
-    const api = new QueryAPI({} as any);
-    const result = await api.execute('board-1', 'status:done');
+    expect(result.matches).toEqual([]);
+    expect(result.total).toBe(0);
+    expect(result.unreachable).toEqual([{ id: 'cards', reason: 'Request timed out' }]);
+    // ADR-0002: a successful command never prints nothing.
+    expect(result.summary).not.toBe('');
+  });
+});
 
-    expect(result.total).toBe(3);
+describe('buildSummary', () => {
+  const cards = (n: number): ContextCard[] =>
+    Array.from({ length: n }, (_, i) => ({ id: `c-${i}`, title: `Card ${i + 1}` }));
+
+  it('says the empty answer is empty, and how much was searched', () => {
+    expect(buildSummary([], 'Sprint 42', 'status:done', 12)).toBe(
+      `No cards on board "Sprint 42" match 'status:done' — searched 12 card(s).`,
+    );
   });
 
-  it('returns all cards on empty filter', async () => {
-    const cards = [
-      makeCard({ id: 'c1', title: 'A' }),
-      makeCard({ id: 'c2', title: 'B' }),
-    ];
-    mockGetSnapshot.mockResolvedValue(makeSnapshot(cards));
-
-    const api = new QueryAPI({} as any);
-    const result = await api.execute('board-1', 'list all');
-
-    expect(result.matches.length).toBeGreaterThanOrEqual(1);
+  it('a single match is a card, not cards', () => {
+    expect(buildSummary(cards(1), 'Sprint 42', 'x', 3)).toBe('Found 1 matching card: "Card 1"');
   });
 
-  it('filters by assignee', async () => {
-    const cards = [
-      makeCard({ id: 'c1', title: 'Alice Card', assignees: ['alice@example.com'] }),
-      makeCard({ id: 'c2', title: 'Bob Card', assignees: ['bob@example.com'] }),
-    ];
-    mockGetSnapshot.mockResolvedValue(makeSnapshot(cards));
-
-    const api = new QueryAPI({} as any);
-    const result = await api.execute('board-1', 'assigned:alice');
-
-    expect(result.matches.some(m => m.card.title === 'Alice Card')).toBe(true);
-    expect(result.matches.some(m => m.card.title === 'Bob Card')).toBe(false);
+  it('five or fewer lists every title', () => {
+    expect(buildSummary(cards(5), 'Sprint 42', 'x', 9)).toBe(
+      'Found 5 matching cards: "Card 1", "Card 2", "Card 3", "Card 4", "Card 5"',
+    );
   });
 
-  it('includes filter in result', async () => {
-    const cards = [makeCard({ status: 'done' })];
-    mockGetSnapshot.mockResolvedValue(makeSnapshot(cards));
-
-    const api = new QueryAPI({} as any);
-    const result = await api.execute('board-1', 'status:done');
-
-    expect(result.filter.status).toBe('done');
-    expect(result.filter.rawQuery).toBe('status:done');
-  });
-
-  // Was `passes cardLimit to getSnapshot`, asserting a pass-through into a
-  // parameter `getSnapshot` never read.
-  it('asks getSnapshot for the board and nothing else — there is no cap', async () => {
-    mockGetSnapshot.mockResolvedValue(makeSnapshot([]));
-
-    const api = new QueryAPI({} as any);
-    await api.execute('board-1', 'status:done');
-
-    expect(mockGetSnapshot).toHaveBeenCalledWith('board-1');
-  });
-
-  it('explains no-results for label', async () => {
-    const cards = [makeCard({ tags: ['backend'] })];
-    mockGetSnapshot.mockResolvedValue(makeSnapshot(cards));
-
-    const api = new QueryAPI({} as any);
-    const result = await api.execute('board-1', 'label:frontend');
-
-    expect(result.noResultsExplanation).toContain('frontend');
-    expect(result.noResultsExplanation).toContain('backend');
+  it('more than five lists three and counts the rest', () => {
+    expect(buildSummary(cards(6), 'Sprint 42', 'x', 9)).toBe(
+      'Found 6 matching cards: "Card 1", "Card 2", "Card 3", … and 3 more',
+    );
   });
 });

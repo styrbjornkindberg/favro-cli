@@ -130,7 +130,7 @@ export function buildWorkflow(columns: Array<{ id: string; name: string }>): Wor
  *   - `favro next` — an empty effort field (`{Effort: null}`) used to reach
  *     `Number(null) === 0` and score the card as a zero-effort *quick win*. It
  *     is now `undefined` and scores no bonus.
- *   - `favro sprint plan` — this was the copy with the 8-entry literal key list,
+ *   - `favro sprint-plan` — this was the copy with the 8-entry literal key list,
  *     so three things move. Iteration order flips from a fixed key priority to
  *     the card's own field order (`{Estimate: 8, Effort: 3}` was 3, is now 8).
  *     Name matching broadens to a substring regex, which picks up `Effort
@@ -155,8 +155,12 @@ export function extractEffort(card: ContextCard): number | undefined {
 /**
  * Normalize a raw card into the ContextCard format.
  * Extracts all relationships and custom field values.
+ *
+ * Exported for `api/query.ts`, which filters the RAW cards — the grammar reads
+ * Favro's own field names — and normalises only the survivors (#95). A second
+ * copy of this mapping is how the two would drift apart.
  */
-function normalizeCard(card: Card): ContextCard {
+export function normalizeCard(card: Card): ContextCard {
   const ctx: ContextCard = {
     id: card.cardId,
     title: card.name,
