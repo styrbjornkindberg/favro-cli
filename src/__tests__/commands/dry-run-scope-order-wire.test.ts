@@ -300,10 +300,13 @@ describe.each(SUBJECTS)('$label --dry-run takes the scope lock first', (s: Subje
     const { code, stdout, stderr } = await drive([...s.outside, '--human']);
 
     expect(code).toBe(1);
-    // `error-handler.ts` picks this heading off `.name === 'ScopeError'` (#133).
-    // A bare `Error` with an identical message is headed `Error:` and fails here,
-    // which is the mutation `toThrow(ScopeError)` cannot catch.
-    expect(stderr).toContain('Scope violation:');
+    // `error-handler.ts` picks this heading off `.name === 'ScopeError'` (#133), and
+    // the DISCRIMINATOR is the absent `Error:` — measured: a `ScopeError` renders
+    // `✗ Scope violation: …` while a bare `Error` carrying the identical message
+    // renders `✗ Error: Scope violation: …`. So asserting only that the text contains
+    // "Scope violation:" would be near-vacuous, since the message itself contains it.
+    // The test below pins that this pair really does discriminate, in both polarities.
+    expect(stderr.split('\n')[0]).toContain(`✗ Scope violation:`);
     expect(stderr).not.toContain('✗ Error:');
     expect(stdout).not.toContain('[dry-run]');
   });
@@ -400,6 +403,63 @@ describe('the boards pair pays for the wire under a lock, and only under one', (
     expect(code).toBeUndefined();
     expect(stdout).toContain('[dry-run]');
     expect(served).toEqual([]);
+  });
+});
+
+// ─── the heading the arms above lean on actually discriminates ────────────────
+
+describe('the `--human` heading distinguishes a ScopeError from a lookalike', () => {
+  /**
+   * The four `--human` arms above rest on `✗ Scope violation:` appearing and
+   * `✗ Error:` not. That is only worth asserting if the two renderings differ, and
+   * `toThrow(ScopeError)` famously does not establish it: jest matches by
+   * constructor NAME up the chain, so a renamed bare `Error` satisfies it. This
+   * pins the real reader instead, in both polarities, so the assertions above
+   * cannot quietly become unfalsifiable.
+   *
+   * `error-handler.ts` and `safety.ts` are exercised as-is — neither is touched.
+   */
+  const MESSAGE =
+    'Scope violation: target collection "coll-other" is not the locked collection "Locked".';
+
+  const render = (error: unknown): string => {
+    const lines: string[] = [];
+    const spy = jest.spyOn(console, 'error').mockImplementation((...a: unknown[]) => {
+      lines.push(a.map(String).join(' '));
+    });
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { logError } = require('../../lib/error-handler');
+      logError(error);
+    } finally {
+      spy.mockRestore();
+    }
+    return lines.join('\n');
+  };
+
+  it('heads a real ScopeError `Scope violation:` and never `Error:`', () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { ScopeError } = require('../../lib/safety');
+    const scopeError = new ScopeError(MESSAGE, '', LOCKED);
+
+    // The properties the readers actually key on, asserted rather than inferred
+    // from where the object came from.
+    expect(scopeError).toBeInstanceOf(ScopeError);
+    expect(scopeError).toBeInstanceOf(RefusalError);
+    expect(scopeError.name).toBe('ScopeError');
+
+    const text = render(scopeError);
+    expect(text.split('\n')[0]).toContain('✗ Scope violation:');
+    expect(text).not.toContain('✗ Error:');
+  });
+
+  it('heads a bare Error carrying the SAME message `Error:` — the opposite polarity', () => {
+    const text = render(new Error(MESSAGE));
+
+    // If this ever stops holding, the `--human` arms above have gone vacuous and
+    // this test is the one that says so.
+    expect(text).toContain('✗ Error:');
+    expect(text.split('\n')[0]).not.toContain('✗ Scope violation:');
   });
 });
 
