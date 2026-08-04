@@ -2,6 +2,7 @@ import FavroHttpClient from './http-client';
 import { getAllPages } from './paginate';
 import { classifyThrownError } from './favro-error';
 import { looksLikeName, resolveNameToId } from './name-resolve';
+import { detectStage, isDoneStage } from './workflow-stage';
 
 export type BoardType = 'board' | 'list' | 'kanban' | 'backlog';
 
@@ -117,16 +118,33 @@ export interface Collection {
 /**
  * Aggregate board stats from board data.
  * If raw card data is provided, compute from cards; otherwise use board metadata.
+ *
+ * `status` IS the column name — Favro has no status field (see `cards-api.ts`) —
+ * so "is this card finished" is the question `isDoneStage(detectStage(name))`
+ * exists to answer, and this counter no longer answers it itself (#157). It used
+ * to test `status === 'done' || status === 'completed'` **exactly**, which #98's
+ * census of eight judges missed and ADR-0005 recorded as deliberately left
+ * behind. Two consequences of the reroute, both measured:
+ *
+ *   - **`doneCards` widens, `openCards` narrows by the same amount.** A board
+ *     whose closing column is `Klar`, `Färdig`, `Avslutad`, `Approved`,
+ *     `Archived`, `Closed`, `Released`, `Shipped`, `Deployed` or `Done ✅`
+ *     reported ZERO done cards before, because none of those strings is
+ *     literally `done` or `completed`. That is the defect, not a preference:
+ *     `boards get --include stats` and `standup` disagreed about one board.
+ *   - **`overdueCards` narrows.** Widening "done" narrows overdue, because the
+ *     expression below excludes finished work from it. The old expression tested
+ *     `!== 'done'` and so did not even exclude `completed` — a past-due card in a
+ *     column named `Completed` counted as both done AND overdue. Now it counts as
+ *     neither.
  */
 export function aggregateBoardStats(board: ExtendedBoard, cards?: Array<{ status?: string; dueDate?: string }>): BoardStats {
   if (cards && cards.length > 0) {
     const now = new Date();
-    const doneCards = cards.filter(c =>
-      c.status?.toLowerCase() === 'done' || c.status?.toLowerCase() === 'completed'
-    ).length;
+    const doneCards = cards.filter(c => isDoneStage(detectStage(c.status))).length;
     const overdueCards = cards.filter(c => {
       if (!c.dueDate) return false;
-      return new Date(c.dueDate) < now && c.status?.toLowerCase() !== 'done';
+      return new Date(c.dueDate) < now && !isDoneStage(detectStage(c.status));
     }).length;
     return {
       totalCards: cards.length,
@@ -148,6 +166,13 @@ export function aggregateBoardStats(board: ExtendedBoard, cards?: Array<{ status
 /**
  * Calculate velocity from card completion data.
  * Returns weekly velocity data for the last 4 weeks.
+ *
+ * `completed` routes through the one done judge for the same reason
+ * `aggregateBoardStats` does (#157) — it carried a byte-identical exact-match
+ * copy of the same test. Nothing caches or persists a velocity series: all four
+ * weeks are recomputed from `updatedAt` on every invocation, so the reroute
+ * changes the whole printed series at once rather than grafting a wider week onto
+ * narrower history. There is no stored series for it to disagree with.
  */
 export function calculateVelocity(cards?: Array<{ status?: string; updatedAt?: string }>): VelocityData[] {
   const velocity: VelocityData[] = [];
@@ -169,11 +194,7 @@ export function calculateVelocity(cards?: Array<{ status?: string; updatedAt?: s
     const completed = cards.filter(c => {
       if (!c.updatedAt) return false;
       const updated = new Date(c.updatedAt);
-      return (
-        updated >= weekStart &&
-        updated < weekEnd &&
-        (c.status?.toLowerCase() === 'done' || c.status?.toLowerCase() === 'completed')
-      );
+      return updated >= weekStart && updated < weekEnd && isDoneStage(detectStage(c.status));
     }).length;
 
     velocity.push({ period, completed, added: 0, netChange: completed });

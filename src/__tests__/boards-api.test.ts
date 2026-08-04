@@ -519,3 +519,175 @@ describe('calculateVelocity', () => {
     expect(latestWeek.completed).toBeGreaterThanOrEqual(1);
   });
 });
+
+/**
+ * Both counters route through the ONE done judge (#157).
+ *
+ * `aggregateBoardStats` and `calculateVelocity` each carried their own exact
+ * `status === 'done' || === 'completed'` test — the two judges #98's census of
+ * eight missed and ADR-0005 recorded as knowingly left behind. `status` IS the
+ * column name (Favro has no status field), so the judgement is
+ * `isDoneStage(detectStage(status))`, the same composition `isCompleted` performs.
+ *
+ * WHY THE ARMS BELOW ARE SHAPED LIKE THIS. A *counter* fed a fixture where every
+ * card is done — or none is — cannot tell a real judge from `() => true` or
+ * `() => false`; it reports the array length or zero either way. So every arm
+ * here carries cards on **both** sides plus one that is neither, and asserts
+ * `doneCards`, `openCards` and `totalCards` together so a constant judge fails a
+ * named assertion instead of coincidentally matching one field.
+ *
+ * The date fixtures are built RELATIVE TO NOW on purpose. `overdueCards` and
+ * `calculateVelocity` both compare against an uncontrollable "today", and a
+ * fixture straddling it asserted with `toBeGreaterThanOrEqual` passes for both a
+ * real judge and a stub. Every date below is a fixed offset from `Date.now()`
+ * with a card on each side of every boundary.
+ */
+describe('boards-api counts done through the one judge (#157)', () => {
+  const board: ExtendedBoard = {
+    boardId: 'b1',
+    name: 'Test',
+    cardCount: 99,
+    createdAt: '2026-01-01',
+    updatedAt: '2026-01-01',
+  };
+  const stats = (cards: Array<{ status?: string; dueDate?: string }>) =>
+    aggregateBoardStats(board, cards as any);
+
+  // --- doneCards / openCards -------------------------------------------------
+
+  // The widening, one name at a time, each against a fixture that also holds an
+  // open card and a card with no status. `doneCards: 1` of 3 kills `() => true`;
+  // `openCards: 2` kills `() => false`.
+  it.each([
+    'Klar',
+    'Färdig',
+    'Avslutad',
+    'Approved',
+    'Archived',
+    'Closed',
+    'Released',
+    'Shipped',
+    'Deployed',
+    'Done ✅',
+    'Resolved',
+  ])('counts a card in the `%s` column as done, which the exact test did not', (name) => {
+    const s = stats([{ status: name }, { status: 'In Progress' }, {}]);
+    expect(s.doneCards).toBe(1);
+    expect(s.openCards).toBe(2);
+    expect(s.totalCards).toBe(3);
+  });
+
+  // The foreign arm. Nothing unfinished may count, and the fixture holds a real
+  // done card so a `() => false` judge cannot pass by reporting zero.
+  it.each(['Backlog', 'To Do', 'Doing', 'In Progress', 'In Review', 'Testing', 'Unresolved'])(
+    'still counts a card in the `%s` column as open',
+    (name) => {
+      const s = stats([{ status: name }, { status: 'Klar' }]);
+      expect(s.doneCards).toBe(1);
+      expect(s.openCards).toBe(1);
+    },
+  );
+
+  // The omit arm. A card Favro sent no column for is not finished — `detectStage`
+  // falls through to `queued` rather than throwing.
+  it('does not count a card with no status as done', () => {
+    const s = stats([{}, { status: '' }, { status: 'Done' }]);
+    expect(s.doneCards).toBe(1);
+    expect(s.openCards).toBe(2);
+  });
+
+  // What the exact test already got right, unchanged.
+  it.each(['Done', 'done', 'Completed', 'completed'])('keeps `%s` done', (name) => {
+    const s = stats([{ status: name }, { status: 'Todo' }]);
+    expect(s.doneCards).toBe(1);
+    expect(s.openCards).toBe(1);
+  });
+
+  // --- overdueCards ----------------------------------------------------------
+
+  const PAST = new Date(Date.now() - 86_400_000).toISOString();
+  const FUTURE = new Date(Date.now() + 86_400_000).toISOString();
+
+  // The narrowing, stated as a count rather than left to be discovered. All four
+  // cards are past due; only the two open ones are overdue.
+  it('excludes a widened-done card from overdue, and only that card', () => {
+    const s = stats([
+      { status: 'In Progress', dueDate: PAST },
+      { status: 'Backlog', dueDate: PAST },
+      { status: 'Klar', dueDate: PAST },
+      { status: 'Approved', dueDate: PAST },
+    ]);
+    expect(s.overdueCards).toBe(2);
+    expect(s.doneCards).toBe(2);
+  });
+
+  // The old overdue conjunct was `!== 'done'`, which did not even exclude
+  // `completed` — a past-due card in a `Completed` column counted as done AND
+  // overdue at once. It now counts as neither.
+  it('no longer counts a past-due `Completed` card as overdue', () => {
+    const s = stats([{ status: 'Completed', dueDate: PAST }, { status: 'Todo', dueDate: PAST }]);
+    expect(s.overdueCards).toBe(1);
+    expect(s.doneCards).toBe(1);
+  });
+
+  // The `dueDate < now` conjunct, with a card on each side of now. Deleting the
+  // comparison makes the future card overdue too.
+  it('does not count a future due date as overdue', () => {
+    const s = stats([{ status: 'Todo', dueDate: FUTURE }, { status: 'Todo', dueDate: PAST }]);
+    expect(s.overdueCards).toBe(1);
+  });
+
+  // --- velocity.completed ----------------------------------------------------
+
+  // Inside the newest week, with an open card and a status-less card alongside,
+  // so the count discriminates the judge rather than the array length.
+  it.each(['Klar', 'Färdig', 'Approved', 'Archived', 'Shipped', 'Closed'])(
+    'counts a `%s` card in this week\'s velocity, which the exact test did not',
+    (name) => {
+      const yesterday = new Date(Date.now() - 86_400_000).toISOString();
+      const velocity = calculateVelocity([
+        { status: name, updatedAt: yesterday },
+        { status: 'In Progress', updatedAt: yesterday },
+        { updatedAt: yesterday },
+      ] as any);
+      expect(velocity[velocity.length - 1].completed).toBe(1);
+      expect(velocity[velocity.length - 1].netChange).toBe(1);
+    },
+  );
+
+  it.each(['Backlog', 'In Progress', 'Testing', 'Unresolved'])(
+    'keeps a `%s` card out of velocity',
+    (name) => {
+      const yesterday = new Date(Date.now() - 86_400_000).toISOString();
+      const velocity = calculateVelocity([
+        { status: name, updatedAt: yesterday },
+        { status: 'Klar', updatedAt: yesterday },
+      ] as any);
+      expect(velocity[velocity.length - 1].completed).toBe(1);
+    },
+  );
+
+  // The two window conjuncts, each with a done card outside it. Deleting either
+  // comparison pulls one of these into the newest week's count.
+  it('counts a done card only in the week it was updated', () => {
+    const yesterday = new Date(Date.now() - 86_400_000).toISOString();
+    const fiveWeeksAgo = new Date(Date.now() - 35 * 86_400_000).toISOString();
+    const nextWeek = new Date(Date.now() + 8 * 86_400_000).toISOString();
+    const velocity = calculateVelocity([
+      { status: 'Klar', updatedAt: yesterday },
+      { status: 'Klar', updatedAt: fiveWeeksAgo },
+      { status: 'Klar', updatedAt: nextWeek },
+    ] as any);
+    expect(velocity[velocity.length - 1].completed).toBe(1);
+    expect(velocity.reduce((n, v) => n + v.completed, 0)).toBe(1);
+  });
+
+  it('does not count a done card with no updatedAt', () => {
+    const yesterday = new Date(Date.now() - 86_400_000).toISOString();
+    const velocity = calculateVelocity([
+      { status: 'Klar' },
+      { status: 'Klar', updatedAt: yesterday },
+    ] as any);
+    expect(velocity.reduce((n, v) => n + v.completed, 0)).toBe(1);
+  });
+});

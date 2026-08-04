@@ -159,6 +159,27 @@ Issue #95, ADR-0006.
   swept 38 phantom flags across three docs. A second hole surfaced with it: a fenced command
   written across a trailing `\` was scanned one line at a time, so flags on its continuation
   lines were invisible; 22 such commands are joined now (#156).
+- **`favro boards get --include stats,velocity` reported zero done cards on most boards,
+  and its printed numbers change.** Both counters in `lib/boards-api.ts` decided doneness
+  from an **exact** `status === 'done' || status === 'completed'`, while every other reader
+  in the tree asks `isDoneStage(detectStage(name))` (ADR-0005). `status` is the column name
+  — Favro has no status field — so a board whose closing column is `Klar`, `Färdig`,
+  `Avslutad`, `Approved`, `Archived`, `Closed`, `Released`, `Shipped`, `Deployed` or
+  `Done ✅` reported `doneCards: 0` and velocity `0` on every week, and `favro standup`
+  disagreed with `boards get --include stats` about the same board. Both now route through
+  the one judge. Measured over 49 column names: 25 move open → done, **none** moves done →
+  open. Concretely, a 10-card board with 4 cards in `Klar` — 2 of them past due, all 4
+  moved there in the last seven days — and 6 in `Pågår`, none past due:
+
+  ```
+  # before: doneCards 0, openCards 10, overdueCards 2, this week's velocity.completed 0
+  # after:  doneCards 4, openCards  6, overdueCards 0, this week's velocity.completed 4
+  ```
+
+  `overdueCards` therefore goes **down**, because finished work is excluded from it — and
+  the old conjunct tested only `!== 'done'`, so a past-due card in a `Completed` column used
+  to count as done *and* overdue at once. Velocity is recomputed from scratch on every
+  invocation and never cached, so all four printed weeks widen together (#157).
 
 - `favro standup --help` pointed at an `unblocked` command — a top-level command that has
   never existed. Its help now says `favro cards list <board> --filter "unblocked"`. The

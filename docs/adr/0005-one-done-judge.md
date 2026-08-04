@@ -90,15 +90,20 @@ for a bucket `buildStats` already keyed by raw status name, and decides nothing.
   status), so a merge would be a behaviour change dressed as a cleanup.
 - **`api/query.ts`'s `/\b(done|finished|completed|closed)\b/i`** matches a word the *user typed
   in a query string*. It judges no card. Left alone.
-- **`lib/boards-api.ts` holds two more done judgements, and they are real ones.**
-  `aggregateBoardStats` counts `doneCards` (and therefore `openCards`) and `calculateVelocity`
-  counts `completed`, both from `status?.toLowerCase() === 'done' || === 'completed'`. They are
-  live: `favro boards get --include stats,velocity` reaches both. Neither #98's census of eight
-  nor this ADR's first draft found them; review did. They are **left as they are** rather than
-  routed through `isDoneStage`, because they are exact-match and every other judge in this tree is
-  not — a `Klar`, `Approved` or `Done ✅` column reads as *open* to them today, and rerouting them
-  would silently move a printed count and a printed velocity. That is a behaviour change #98 did
-  not ask for and did not measure. Its own ticket, not a line in this one.
+- **`lib/boards-api.ts` held two more done judgements, and they were real ones.**
+  `aggregateBoardStats` counted `doneCards` (and therefore `openCards`) and `calculateVelocity`
+  counted `completed`, both from `status?.toLowerCase() === 'done' || === 'completed'`. Both are
+  live: `favro boards get --include stats,velocity` reaches them. Neither #98's census of eight
+  nor this ADR's first draft found them; review did. #98 **left them as they were** rather than
+  routing them through `isDoneStage`, because they were exact-match and every other judge in this
+  tree is not — a `Klar`, `Approved` or `Done ✅` column read as *open* to them — and rerouting
+  them moves a printed count and a printed velocity. That is a behaviour change #98 did not ask
+  for and did not measure. Its own ticket, not a line in that one.
+
+  **Both were rerouted in #157, and this ADR's claim of one done judge only became true then.**
+  See "Amendment (#157)" at the foot of this file. Until that commit, ADR-0005 said "one judge"
+  while two more lived in `boards-api.ts`, which is the exact class of overstatement §2's scope
+  paragraph was rewritten to avoid. It is recorded here rather than quietly corrected.
 
 ## Consequences
 
@@ -198,3 +203,62 @@ strings from it passed all 3334 tests. The gap predates this ADR; it was closed 
 sibling-site mutation was run at all five call sites instead of the four that already had
 coverage. The other four (`team`, `stale`, `health`, `my-standup`) each killed both an inverting
 and a neutering mutation.
+
+## Amendment (#157): the two `boards-api` counters, and what their numbers did
+
+`aggregateBoardStats` and `calculateVelocity` now read `isDoneStage(detectStage(c.status))`.
+`status` **is** the column name — `cards-api.ts` says so at the field: *"Favro has no `status`
+field — the column IS the status"* — so this is the same composition `isCompleted` performs, not a
+stage judgement forced onto a status by a cast. `detectStage` already accepts
+`string | null | undefined`, so nothing was widened to fit.
+
+**Measured over 49 column names** (every name this ADR and #157 quote, plus this org's Swedish and
+English column vocabulary). 25 move open → done. **Nothing moves done → open** — `Unresolved` was
+the only narrowing in the `isCompleted` merge and it is not affected here, because the exact test
+never called it done either.
+
+| moves open → done | stage `detectStage` returns |
+|---|---|
+| `Klar`, `Färdig`, `Avslutad`, `Closed`, `Released`, `Shipped`, `Deployed`, `Live`, `Finished`, `Resolved`, `Complete`, `Done ✅`, `Ready to Deploy` | `done` |
+| `Approved`, `Accepted`, `Verified`, `Sign-off`, `Godkänd`, **`Pending Approval`** | `approved` |
+| `Archived`, `Arkiverad` | `archived` |
+| **`Delivery`**, **`Deliverables`**, **`Delivered`**, **`Livestream`** | `done` |
+| unchanged done: `Done`, `done`, `Completed`, `completed` | — |
+| unchanged open: `Unresolved`, `Backlog`, `Inbox`, `To Do`, `Todo`, `Doing`, `In Progress`, `Pågår`, `In Review`, `Granskning`, `Testing`, `QA`, `Kvalitetssäkring`, `Selected`, `Vald`, `Ready`, `Next`, `Sprint`, `Blocked`, `On Hold` | — |
+
+The five **bold** names are the inherited `detectStage` quirks this ADR already recorded — `approv`
+tested before `pending`, and an unanchored `live` matching inside "de**live**ry". They now reach
+`boards get --include stats` too. Not tuned here for the reason §"What is *not* consolidated" gives:
+tuning a shared regex to suit one consumer is how one judge becomes five. #158 owns the term list.
+
+**`overdueCards` goes down, and that is a measurement users read.** The expression is *past due*
+**and** *not done*, so widening "done" narrows overdue by exactly the past-due cards sitting in any
+of the 25 columns above. It also fixes an inconsistency inside the old pair: the overdue conjunct
+tested `!== 'done'` and not `=== 'completed'`, so a past-due card in a `Completed` column counted as
+done **and** overdue simultaneously. 27 of the 49 names are now excluded from overdue where they
+were eligible before.
+
+**`calculateVelocity` is a rate, but there is no series to distort.** Nothing caches, persists or
+compares a velocity across runs — the only readers are the two formatters in
+`commands/boards-get.ts` and `commands/boards-list.ts`. All four weeks are recomputed from
+`updatedAt` on every invocation, so the widening applies to the whole printed series at once.
+
+**Not fixed here, and still open.** `listBoardsByCollection` and `commands/boards-list.ts` call both
+helpers with **no cards**, so `favro boards list --include stats,velocity` still reports
+`doneCards: 0` and `completed: 0` unconditionally, on every board, regardless of this change. #157
+raised it as possibly "the real defect"; it is a separate question about whether that path should
+fetch cards at all, and it was not approved as part of this reroute.
+
+The counters were mutation-tested at **both** sites, since a counter fed a fixture where every card
+is done cannot tell a real judge from `() => true` — it reports the array length either way.
+Fifteen mutations, fourteen killed: neutering and inverting the judge at each of the three call
+sites, deleting each conjunct of the overdue and velocity filters separately, and **reverting each
+site to the old exact `=== 'done' || === 'completed'` test**, which is the mutation that matters
+most and fails 19 assertions at the stats site and 12 at the velocity site.
+
+The one survivor is semantically equivalent and is recorded rather than tested around. Deleting
+`if (!c.dueDate) return false` from the overdue filter does not fail `tsc` *by luck* — it fails it
+outright, because `new Date(string | undefined)` matches no overload, so the type system is the
+guard's real defence. Forced past that with a cast, no count changes: `new Date(undefined)` is an
+Invalid Date and `InvalidDate < now` is already `false`. No test can kill it, which is the correct
+outcome for a mutant that changes nothing.
