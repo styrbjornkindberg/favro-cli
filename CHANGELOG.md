@@ -300,7 +300,11 @@ Issue #95, ADR-0006.
   keyword list. All six now route through `isDoneStage` in `lib/workflow-stage.ts`, the
   module that already held `detectStage` for the same reason. `judgeBlockers` remains the
   only judge of *blocked*; `board-renderer`'s `statusIcon` is labelled cosmetic in source so
-  it is not swept into the merge later.
+  it is not swept into the merge later. Scope: `isDoneStage` is the one judge of what a
+  *workflow stage* means. `boards get --include stats,velocity` still counts done cards with
+  its own exact `status === 'done' || 'completed'` in `lib/boards-api.ts` — found in review,
+  left alone deliberately, and recorded in ADR-0005 because rerouting it would move a printed
+  count.
 
   **Behaviour change in `standup`:** a card in an `Approved` or `Archived` column now groups
   as `completed`, where before it matched no group and was dropped from the output entirely.

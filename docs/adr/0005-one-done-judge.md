@@ -9,8 +9,11 @@ Status: accepted (#98, owner's decision recorded on the ticket 2026-08-04)
 
 What it did not touch is the **keyword** half — a predicate that reads a column name, a tag or a
 status string and decides from the words in it whether work is finished or stuck. #98's title
-counted eight of those. **The count measured at `8754500` is five**, because three had already
-been resolved by other tickets before this one started:
+counted eight of those. **Of those eight, six were still live at `8754500`** — two had been
+resolved by other tickets before this one started. (An earlier draft of this ADR said five and
+"three had already been resolved". That was wrong, and its own table below contradicted it:
+`risks.ts`'s `isBlocked` was not resolved, it was *relocated* to `lib/card-predicates.ts` by #89
+and is still live. Corrected in review; ADR-0003 applies to a count as much as to an API shape.)
 
 | Predicate | Evidence | State at `8754500` |
 |---|---|---|
@@ -46,7 +49,12 @@ It is the only predicate that reads evidence rather than words: the tracker boar
 columnId, then `archived` off that board, and anything it could not read still blocks. It is
 wrong in one direction only — over-blocking. Only `cards list --filter unblocked` pays for it.
 
-### 2. `isDoneStage` (`lib/workflow-stage.ts`) is the sole judge of "done"
+### 2. `isDoneStage` (`lib/workflow-stage.ts`) is the sole judge of "is this *stage* finished"
+
+Scope of that claim, stated precisely because review found it overstated: `isDoneStage` is the
+only reader that turns a *workflow stage or column name* into a done verdict. It is **not** the
+only place in the tree that decides a card is finished — see the `boards-api.ts` pair under "What
+is not consolidated" below.
 
 The five copies of the stage set and `isCompleted`'s `COMPLETED_STATUSES` list all route here.
 `isCompleted` now reads `isDoneStage(detectStage(card.status))`, because `status` *is* the column
@@ -66,7 +74,11 @@ it, because a future reader sweeping for duplicate keyword matches will otherwis
 "finish the job" — and a renderer taking a real verdict would have to pay for a per-blocker
 sweep on every board draw.
 
-### What is *not* a judge, and stays put
+`renderStatusBar` in the same file colours a status label by the same `'done'` / `'complete'` /
+`'block'` substrings. It is cosmetic for the same reason and on the same terms — it picks a colour
+for a bucket `buildStats` already keyed by raw status name, and decides nothing.
+
+### What is *not* consolidated, and why
 
 - **`isBlocked` in `api/standup.ts` and `lib/card-predicates.ts` are heuristics, not judges.**
   They answer "does a column name or tag contain the word", which is the only question a snapshot
@@ -78,6 +90,15 @@ sweep on every board draw.
   status), so a merge would be a behaviour change dressed as a cleanup.
 - **`api/query.ts`'s `/\b(done|finished|completed|closed)\b/i`** matches a word the *user typed
   in a query string*. It judges no card. Left alone.
+- **`lib/boards-api.ts` holds two more done judgements, and they are real ones.**
+  `aggregateBoardStats` counts `doneCards` (and therefore `openCards`) and `calculateVelocity`
+  counts `completed`, both from `status?.toLowerCase() === 'done' || === 'completed'`. They are
+  live: `favro boards get --include stats,velocity` reaches both. Neither #98's census of eight
+  nor this ADR's first draft found them; review did. They are **left as they are** rather than
+  routed through `isDoneStage`, because they are exact-match and every other judge in this tree is
+  not — a `Klar`, `Approved` or `Done ✅` column reads as *open* to them today, and rerouting them
+  would silently move a printed count and a printed velocity. That is a behaviour change #98 did
+  not ask for and did not measure. Its own ticket, not a line in this one.
 
 ## Consequences
 
@@ -96,9 +117,22 @@ judge instead of two:
   `deploy`. That quirk is inherited, not introduced — it has always driven column-mapping
   proposals — and it is recorded here rather than quietly tuned, because tuning the regex to
   suit one consumer is how a shared judge becomes five again.
+- **Three more inherited quirks now reach `standup`, measured over 48 column names in review.**
+  `detectStage`'s `approved` branch matches `accept|verified|sign.?off|godkän`, so `Accepted`,
+  `Verified`, `Sign-off` and `Godkänd` group as `completed` too — and so does **`Pending
+  Approval`**, because `approv` is tested before `pending`. Its `live` term is unanchored, so
+  **`Delivery`, `Deliverables` and `Delivered`** read as done off the `live` inside "de**live**ry".
+  All of these already drove `team`'s `doneCount`, `stale`'s skip and `health`'s flow ratio before
+  #98 — the branch changed which consumers see them, not what `detectStage` says. Recorded, not
+  tuned, for the reason in the bullet above. `Unresolved` was the ONLY narrowing across those 48
+  names.
 
 The five stage-set copies are gone. `done-judge.test.ts` ratchets the count at one definition in
-the tree, the same way `detectStage`'s own ratchet has since #52.
+the tree, the same way `detectStage`'s own ratchet has since #52. That ratchet greps for the three
+stage names **co-occurring** in a non-test file, not for one literal spelling of the array: as
+first written it grepped `'approved',\s*'archived'`, and a sixth copy in double quotes or with the
+members reordered walked past it. Both bypasses were built and both went undetected. Fixed in
+review.
 
 **One of the five copies was never tested, and that was found by mutation rather than review.**
 The done half of `main-menu.ts`'s queued filter — the copy inlined into a longer array — had no

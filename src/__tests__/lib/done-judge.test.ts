@@ -101,21 +101,35 @@ describe('the done set has exactly one definition in the tree', () => {
   // The same ratchet `detectStage` has carried since #52
   // (`tracker-init-wire.test.ts`). Five copies of these three strings is how
   // this ticket came to exist; a sixth must fail a test rather than a review.
+  // CO-OCCURRENCE, NOT A LITERAL SPELLING. This asserted
+  // `'approved',\s*'archived'` when it was written, which is a grep for ONE
+  // spelling of the set: a sixth copy written `["done", "approved", "archived"]`
+  // (double quotes) or `['approved', 'done', 'archived']` (reordered) passed it
+  // untouched — both were constructed and both went undetected. Every ratchet in
+  // this repo that scanned a textual proxy has eventually been proven blind to
+  // exactly what it guarded, so this one asks the question it means: does any
+  // non-test file other than the one home quote all three stage names?
+  //
+  // Measured before it was pinned: over every non-test `.ts` under `src/`, the
+  // only file quoting all three is `lib/workflow-stage.ts`. A file that happens
+  // to name all three for another reason would be a false positive — none exists
+  // today, and one would be a fair thing to make somebody justify.
   it('holds `done`, `approved`, `archived` in one place only', async () => {
     const { execFileSync } = await import('child_process');
     const path = await import('path');
     const src = path.join(__dirname, '..', '..');
 
-    // `-r` over src/, then drop this file and any other test: a test may quote
-    // the strings to assert about them, which is not a second definition.
-    const hits = execFileSync(
-      'grep',
-      ['-rlE', "'approved',\\s*'archived'", src],
-      { encoding: 'utf-8' },
-    )
-      .trim()
-      .split('\n')
-      .filter((f) => f && !f.includes('__tests__'));
+    // Drop this file and any other test: a test may quote the strings to assert
+    // about them, which is not a second definition.
+    const filesQuoting = (word: string): string[] =>
+      execFileSync('grep', ['-rlE', `['"]${word}['"]`, src], { encoding: 'utf-8' })
+        .trim()
+        .split('\n')
+        .filter((f) => f && !f.includes('__tests__'));
+
+    const approved = new Set(filesQuoting('approved'));
+    const archived = new Set(filesQuoting('archived'));
+    const hits = filesQuoting('done').filter((f) => approved.has(f) && archived.has(f));
 
     expect(hits).toEqual([path.join(src, 'lib', 'workflow-stage.ts')]);
   });
