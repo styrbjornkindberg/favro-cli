@@ -475,6 +475,55 @@ Issue #95, ADR-0006.
   --no-verbose` and the local `npm test` (`jest`) resolve the same `jest.config.js` and
   run the same suite — **172 suites / 3632 tests** both ways. No divergence to fix.
 
+- The test run no longer leaks temp directories, and a run that starts to again fails.
+
+  A green suite had been writing to the developer's `$TMPDIR` and never cleaning up:
+  **40,071** entries at the time of the fix, **39,551** of them `favro-*` and **29,242**
+  from `cards-link.test.ts` alone — that one called `mkdtempSync` in a `beforeEach` whose
+  `afterEach` restored the env var and the console spies but removed nothing. Twelve call
+  sites were leaking; all twelve are fixed, nine of them by moving to `tempConfigDir()`
+  rather than by adding a bespoke teardown line.
+
+  The check is a `globalSetup`/`globalTeardown` pair. Setup points `TMPDIR`/`TMP`/`TEMP`
+  at a fresh private directory, so every `mkdtemp` the run makes — `os.tmpdir()` re-reads
+  the env on every call, and workers inherit it at fork — lands somewhere we own; teardown
+  then asks only whether that directory is **empty**. That predicate is the point. A
+  prefix allowlist would rebuild the defect it is fixing, because it would only ever catch
+  the spellings someone remembered to list: `mkdtemp` call sites in `src/` went **69 → 59**
+  across **56 → 46** files, under no single naming scheme. Emptiness catches a suite
+  written tomorrow under a prefix nobody has typed.
+
+  `ts-jest` pulls in `v8-compile-cache-lib`, which parks a persistent cache at
+  `os.tmpdir()`, so the redirect would have read it as a leak; it is switched off with the
+  library's own `DISABLE_V8_COMPILE_CACHE`, which costs nothing when a fresh root makes
+  the cache cold anyway. `src/test-support/config-dir.ts` moved to `node:fs`, and that is
+  load-bearing rather than tidying: `shell-and-tui.test.ts` and `skill.test.ts` both
+  `jest.mock('fs')`, and under the bare specifier the helper's `mkdtempSync` is auto-mocked
+  to `undefined` (measured — both suites fail with `TypeError: The "path" argument must be
+  of type string`).
+
+  RED, measured, with one fix reverted: all **35** tests in `cards-link.test.ts` pass and
+  the run still exits **1** with `tmpdir leak: 35 entries survived the test run`. It fires
+  the same way under CI's `npx jest --coverage --no-verbose` (exit **1**) and under a
+  single-file run, and against a prefix it was never told about.
+
+  On review: nothing pinned the *wiring*. `globalTeardown` guards one way it can inspect
+  nothing — it throws when `FAVRO_JEST_TMPROOT` is unset — but it runs after the last
+  suite, so no test can observe its effect, and deleting its one line from
+  `jest.config.js` deletes the ratchet in silence: measured, a leaking run then exits
+  **0**. `tmpdir-leak-ratchet.test.ts` now asserts both keys are wired, that this worker's
+  `os.tmpdir()` really is inside the private root, and that the predicate still fails on a
+  leaked plain file and a nested directory as well as a leaked directory — the two cases a
+  drift back toward "does the name match something we listed" would quietly stop catching.
+
+  Left alone deliberately: three `mkdtemp` sites in `cards-export.test.ts` and
+  `filter-fail-closed-coverage.test.ts` build from `process.cwd()`, not `os.tmpdir()`, so
+  the redirect cannot see them — they have to be inside cwd because the `--out` guard
+  rejects anything outside it, and all three do clean up. `jest.integration.config.js`
+  gets no such check: its suites make real API calls, so whether a run leaves anything
+  behind cannot be measured here, and ADR-0003 says not to declare a rule that has not
+  been.
+
 ### Known gaps at release
 
 - The output migration is incomplete — see the caveat under Breaking #1.
