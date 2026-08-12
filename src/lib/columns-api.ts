@@ -6,7 +6,25 @@ export interface Column {
   name: string;
   position: number;
   color?: string;
-  boardId: string;
+  /**
+   * MEASURED 2026-08-12 against the throwaway board: `GET /columns?widgetCommonId=<board>`
+   * answers with the keys `cardCount, columnId, estimationSum, name, organizationId,
+   * position, timeSum, widgetCommonId` — it carries **`widgetCommonId`, and no
+   * `boardId` at all**. This field was declared as a required `boardId: string`, so
+   * every read of it was `undefined` at runtime while the type promised a string:
+   * `columns update` fed `col.boardId ?? ''` to `checkScope`, which refuses an empty
+   * board id on purpose, so under a configured scope lock that command refused every
+   * column however legitimate — and `--force` deliberately does not rescue that
+   * refusal (`safety.ts:190-192`).
+   *
+   * The single-column `GET /columns/{columnId}` shape is UNMEASURED, so `normalizeColumn`
+   * reads both spellings and asserts neither (ADR-0003). `boardId` is the name the rest
+   * of the CLI resolves boards by, so reads normalise onto it; it stays optional because
+   * a response carrying neither spelling must reach the fail-closed refusal rather than
+   * an empty string that reads as a board.
+   */
+  boardId?: string;
+  widgetCommonId?: string;
   /**
    * Favro already sends these three on every `GET /columns` response, so a
    * per-column count costs nothing. `cardCount` excludes archived cards.
@@ -14,6 +32,17 @@ export interface Column {
   cardCount?: number;
   timeSum?: number;
   estimationSum?: number;
+}
+
+/**
+ * Fill `boardId` from whichever spelling the response carried. Every read path in
+ * this class goes through it, so no caller has to know that the wire says
+ * `widgetCommonId` — and a payload with neither spelling keeps `boardId`
+ * `undefined`, which is what the scope check needs in order to refuse.
+ */
+function normalizeColumn(raw: Column): Column {
+  const boardId = raw.boardId ?? raw.widgetCommonId;
+  return boardId === undefined ? raw : { ...raw, boardId };
 }
 
 export class ColumnsAPI {
@@ -25,14 +54,14 @@ export class ColumnsAPI {
   async listColumns(boardId: string): Promise<Column[]> {
     const allColumns = await getAllPages<Column>(this.client, '/columns', { widgetCommonId: boardId });
 
-    return allColumns.sort((a, b) => a.position - b.position);
+    return allColumns.map(normalizeColumn).sort((a, b) => a.position - b.position);
   }
 
   /**
    * Get a specific column.
    */
   async getColumn(columnId: string): Promise<Column> {
-    return this.client.get<Column>(`/columns/${columnId}`);
+    return normalizeColumn(await this.client.get<Column>(`/columns/${columnId}`));
   }
 
   /**

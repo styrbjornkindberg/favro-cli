@@ -182,6 +182,20 @@ Issue #95, ADR-0006.
   (`src/__tests__/board-stats-wire.test.ts`). ADR-0005 carries the amendment; its #157 amendment
   called this widening "correct and latent, not printed" on the strength of an unmeasured `cards`
   array, and that conclusion is superseded rather than quietly corrected.
+- **`favro columns update` refused every column under a scope lock, and `--force` could not
+  rescue it.** `Column` declared a required `boardId: string`, but the wire does not send
+  that field: `GET /columns?widgetCommonId=<board>` was measured on 2026-08-12 to answer
+  with `cardCount, columnId, estimationSum, name, organizationId, position, timeSum,
+  widgetCommonId` — the board arrives as `widgetCommonId`. So `col.boardId` was `undefined`
+  at every read while the type promised a string, and the use site's `?? ''` handed
+  `checkScope` an empty board id, which is refused deliberately and which `--force` is
+  documented not to rescue. Reads now normalise both spellings onto `boardId` in one place
+  in `ColumnsAPI`, so no caller has to know what the wire calls it. A response carrying
+  neither spelling still leaves the field `undefined` and still refuses — the fix is not an
+  `?? ''`, because that would trade a false refusal for a lock that cannot see the write.
+  The single-column `GET /columns/{columnId}` shape remains unmeasured and is not asserted
+  either way (ADR-0003). Pinned against a real socket, including each read path reverted on
+  its own.
 
 - **`favro git sync` moved finished cards backwards whenever the merge check could not
   run.** `isBranchMerged` answered `false` for a failed `git branch --merged`,
