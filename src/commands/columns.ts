@@ -37,13 +37,20 @@ export function registerColumnsCommands(program: Command): void {
           console.log(`Found ${envelope.rows.length} column(s) on board ${boardId}:`);
           // cardCount / timeSum / estimationSum ride along on the same
           // response — rendering them means a per-column count costs no call.
+          // All three were measured present on `GET /columns` on 2026-08-12, so an
+          // absent one is an anomaly rather than the norm — which is exactly why it
+          // reads `—` and not `0`. This is the command `boards get --include stats`
+          // now points readers at when it cannot count cards itself, so a fabricated
+          // zero here would reinstate, in the remedy, the defect the remedy exists
+          // for. `—` is the same sentinel the boards table uses for an absent count.
+          // The `--json` path is untouched: an absent field stays absent there.
           const rows = envelope.rows.map(c => ({
             Position: c.position,
             ID: c.columnId,
             Name: c.name,
-            Cards: c.cardCount ?? 0,
-            Time: c.timeSum ?? 0,
-            Estimate: c.estimationSum ?? 0,
+            Cards: c.cardCount ?? '—',
+            Time: c.timeSum ?? '—',
+            Estimate: c.estimationSum ?? '—',
           }));
           console.table(rows);
           noteTruncation(envelope, columns.length);

@@ -52,8 +52,20 @@ describe('columns list', () => {
 
     expect(tableSpy).toHaveBeenCalledWith([
       { Position: 0, ID: 'col-1', Name: 'Doing', Cards: 3, Time: 90, Estimate: 5 },
-      { Position: 1, ID: 'col-2', Name: 'Done', Cards: 0, Time: 0, Estimate: 0 },
+      { Position: 1, ID: 'col-2', Name: 'Done', Cards: '—', Time: '—', Estimate: '—' },
     ]);
+  });
+
+  test('an absent count reads — and never 0, in the command stats points readers at', async () => {
+    await run('board-1');
+
+    // `boards get --include stats` cannot count cards and names this command as the
+    // one that can. A `?? 0` here would answer "no cards" for a column whose count
+    // simply did not arrive — the same fabrication, one command downstream.
+    const [rows] = tableSpy.mock.calls[0] as [Array<Record<string, unknown>>];
+    const absent = rows.find((r) => r.ID === 'col-2')!;
+    expect([absent.Cards, absent.Time, absent.Estimate]).toEqual(['—', '—', '—']);
+    expect(Object.values(absent)).not.toContain(0);
   });
 
   test('--json keeps the three fields untouched', async () => {
