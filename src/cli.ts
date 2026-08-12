@@ -19,12 +19,12 @@
 
 import { Command, CommanderError } from 'commander';
 import * as path from 'path';
-import CardsAPI, { UpdateCardRequest } from './lib/cards-api';
+import CardsAPI from './lib/cards-api';
 import BoardsAPI from './lib/boards-api';
 // The shared dispatch table. Importing it here is what makes the CLI a caller of
 // the one table rather than a second, drifting write path — and it registers
 // every intent, so intents added by later tickets are reachable with no change.
-import { dispatch } from './lib/dispatch';
+import { dispatch, UpdateResult } from './lib/dispatch';
 import { foldName } from './lib/fold-name';
 import { reportDispatch } from './lib/report-dispatch';
 import { writeCardsCSV, writeCardsJSON, normalizeCard, cardsToCSV } from './lib/csv';
@@ -632,8 +632,12 @@ cards
     '  favro cards update <card> --status "Done"\n' +
     '  favro cards update <card> --name "New title" --status "In Progress"\n' +
     '  favro cards update <card> --assignees "alice,bob"\n' +
-    '  favro cards update <card> --column "Developing" --board <board>\n' +
+    '  favro cards update <card> --column "Developing"\n' +
     '  favro cards update <card> --status "Done" --dry-run\n\n' +
+    '  Routed through the shared dispatch table, so each field is written through\n' +
+    '  its own primitive and carries its own compensating write: a failure on the\n' +
+    '  third field unwinds the first two. The scope lock runs BEFORE the --dry-run\n' +
+    '  preview, so a preview is never a way around it.\n\n' +
     'Batch update from CSV:\n' +
     '  favro cards update --from-csv bulk.csv --board Q2-Dev\n' +
     '  favro cards update --from-csv bulk.csv --board Q2-Dev --dry-run\n\n' +
@@ -650,7 +654,7 @@ cards
   .option('--assignees <list>', 'Assignees, comma-separated — the whole set; drop one to unassign')
   .option('--assignee <user>', 'Assignee for batch assign (use with --board)')
   .option('--tags <list>', 'Tags (comma-separated, single card update)')
-  .option('--column <column>', 'Move card to this column by name (use with --board)')
+  .option('--column <column>', 'Move card to this column by name — a second spelling of --status')
   .option('--label <label>', 'Label/tag filter for batch operations (use with --board)')
   .option('--board <board>', 'Board by name or boardId — required for batch operations, optional for single')
   .option('--from-csv <file>', 'CSV file with card updates (columns: cardId, status, assignee, dueDate)')
@@ -992,57 +996,65 @@ cards
     }
 
     try {
-      const updateData: UpdateCardRequest = {};
-      if (options.name) updateData.name = options.name;
-      if (options.description) updateData.description = options.description.replace(/\\n/g, '\n');
-      if (options.status) updateData.status = options.status;
-      // Names must become userIds before the whole-array write is diffed —
-      // an unresolved name would read as "remove everyone, add a stranger".
-      if (options.assignees) {
-        const { resolveAssignees } = await import('./lib/assignee');
-        updateData.assignees = await resolveAssignees(
-          client!,
-          options.assignees.split(',').map((a: string) => a.trim()).filter(Boolean),
+      // `--column` is a second SPELLING of `--status`, not a second field: both
+      // mean "put the card in this column", and the `update` intent resolves the
+      // name through `TxCards.moveColumn`, against the card's OWN board. So
+      // `--board` is no longer consulted here, and no longer required — it existed
+      // to disambiguate the column name, which the card's own board now does.
+      //
+      // What that gives up, stated rather than hidden: a name that is not a column
+      // of the card's board now REFUSES by name (`ColumnResolutionError`, listing
+      // that board's real columns) instead of PUTting `{columnId, boardId}` — a
+      // combined cross-board move nothing has measured, and one with no
+      // compensating write, since moving a card back across boards is not the
+      // inverse of moving it back across columns.
+      if (options.status && options.column && foldName(options.status) !== foldName(options.column)) {
+        console.error(
+          `✗ --status "${options.status}" and --column "${options.column}" name different columns. ` +
+            `They are two spellings of one field — pass one of them.`,
         );
-      }
-      if (options.tags) updateData.tags = options.tags.split(',');
-
-      // Column move: resolve column name → columnId
-      if (options.column) {
-        if (!options.board) {
-          console.error('✗ --board is required when using --column');
-          process.exit(1);
-          return;
-        }
-        const { ColumnsAPI } = await import('./lib/columns-api');
-        const columnsApi = new ColumnsAPI(client!);
-        const columns = await columnsApi.listColumns(options.board);
-        // `foldName`: the column name is Favro's, `--column` is the user's, and
-        // the same visible name reaches the two in different forms (#141).
-        const target = columns.find(c => foldName(c.name) === foldName(options.column));
-        if (!target) {
-          const available = columns.map(c => c.name).join(', ');
-          console.error(`✗ Column "${options.column}" not found. Available: ${available}`);
-          process.exit(1);
-          return;
-        }
-        updateData.columnId = target.columnId;
-        updateData.boardId = options.board;
-      }
-
-      if (options.dryRun) {
-        console.log(`[dry-run] Would update card ${cardId} with:`, JSON.stringify(updateData));
+        process.exit(1);
         return;
       }
+      // Trimmed, which `--tags` was not: a leading space survives into the tag
+      // name, and an unknown tag name on a write is a tag CREATION, so " bug"
+      // either invented a tag or 403'd. `--assignees` already trimmed.
+      const csv = (list: string): string[] =>
+        list.split(',').map((v: string) => v.trim()).filter(Boolean);
+      const args = {
+        card: cardId,
+        ...(options.name !== undefined ? { name: options.name } : {}),
+        ...(options.description !== undefined
+          ? { description: options.description.replace(/\\n/g, '\n') }
+          : {}),
+        ...(options.status || options.column ? { status: options.status ?? options.column } : {}),
+        ...(options.tags ? { tags: csv(options.tags) } : {}),
+        // Names are resolved to userIds INSIDE the intent now, so the skill engine
+        // and the MCP passthrough get the resolution this flag used to keep to
+        // itself. `setAssignees` refuses anything that is not a userId.
+        ...(options.assignees ? { assignees: csv(options.assignees) } : {}),
+      };
+      const hasFields = Object.keys(args).length > 1;
 
       const api = new CardsAPI(client!);
       const card = await api.getCard(cardId);
 
       const { readConfig } = await import('./lib/config');
       const { checkScope, confirmAction } = await import('./lib/safety');
-      await checkScope(card.boardId ?? '', client, await readConfig(), options.force);
+      const config = (await readConfig()) ?? {};
+      // HOISTED ABOVE THE PREVIEW (#108). This check used to sit below the
+      // `--dry-run` return, so under a scope lock a dry run cheerfully previewed a
+      // write the real run refuses — misinformation in the one flag a careful
+      // caller reaches for FIRST. The `--from-csv` path (#103) and the `--board`
+      // predicate path already ordered it this way; the single-card path was the
+      // straggler. It costs one `GET /cards/<id>` on a dry run that used to make
+      // none, which is what an opted-into preview buys.
+      await checkScope(card.boardId ?? '', client, config, options.force);
 
-      if (!(await confirmAction(`Update card "${card.name}" (${cardId})?`, { yes: options.yes }))) {
+      if (
+        !options.dryRun &&
+        !(await confirmAction(`Update card "${card.name}" (${cardId})?`, { yes: options.yes }))
+      ) {
         console.log('Aborted.');
         process.exit(0);
       }
@@ -1053,18 +1065,41 @@ cards
       // It costs one redundant `GET /cards/<id>`: `card.cardCommonId` is already
       // in hand from the read above, but passing it would be that second
       // implementation again. One call is the price of one resolver.
+      //
+      // Outside the dispatch table on purpose: a comment has no compensating
+      // write, so it is not an intent and cannot join the transaction. The lock
+      // above is therefore the only one guarding it, which is why that check is
+      // NOT skipped when there are no fields to dispatch.
       if (options.comment) {
         const commentText = options.comment.replace(/\\n/g, '\n');
-        const { CommentsApiClient } = await import('./api/comments');
-        await new CommentsApiClient(client!).addComment(cardId, commentText);
-        console.log(`✓ Comment added to card "${card.name}"`);
+        if (options.dryRun) {
+          console.log(`[dry-run] add a comment to card ${cardId} (${commentText.length} characters)`);
+        } else {
+          const { CommentsApiClient } = await import('./api/comments');
+          await new CommentsApiClient(client!).addComment(cardId, commentText);
+          console.log(`✓ Comment added to card "${card.name}"`);
+        }
       }
 
-      // Only call updateCard if there are fields to update (not just a comment)
-      if (Object.keys(updateData).length > 0) {
-        const updatedCard = await api.updateCard(cardId, updateData);
-        console.log(`✓ Card updated: ${updatedCard.cardId}`);
-        if (options.json) console.log(JSON.stringify(updatedCard));
+      // The field writes go through the ONE dispatch table, so they inherit the
+      // mandatory scope lock, the boardless-write refusal and — the part this path
+      // never had — a compensation log. A failure on the third field unwinds the
+      // first two and reports `rolled-back`.
+      if (hasFields) {
+        const result = await dispatch<UpdateResult>('update', args, {
+          client: client!,
+          config,
+          force: options.force,
+          dryRun: options.dryRun,
+        });
+        if (reportDispatch(result, options.json)) process.exit(1);
+        // `value !== undefined` is what keeps this off a dry run: the table's
+        // preview return carries a `preview` and no `value`, while `outcome` is
+        // `ok` either way.
+        if (result.outcome === 'ok' && result.value !== undefined) {
+          console.log(`✓ Card updated: ${result.value.cardId} (${result.value.wrote.join(', ')})`);
+          if (options.json) console.log(JSON.stringify(result.value));
+        }
       } else if (!options.comment) {
         console.log('Nothing to update.');
       }

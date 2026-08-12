@@ -341,16 +341,32 @@ describe('favro cards update — batch operations (CLA-1791)', () => {
 
   describe('single card update (regression)', () => {
     it('still works: favro cards update <cardId> --status Done', async () => {
-      mockApi.updateCard.mockResolvedValue(makeCard({ cardId: 'card-x', status: 'Done' }));
+      // Routed through the `update` intent since #108, so `--status` is no longer
+      // FORWARDED as `{status}` — that spelling 200s and changes nothing, and
+      // `TxCards.moveColumn` has always been the thing that knows so. It resolves
+      // the name to a `columnId`, writes that, and re-reads the card to confirm it
+      // landed. The three mocks below are that chain.
+      //
+      // The assertion moved with it: what a caller of this CLI receives is the
+      // printed line, and the wire shape is pinned against a REAL SOCKET in
+      // `cards-update-intent-wire.test.ts`, where the translation is observable
+      // rather than mocked. A mocked `updateCard` call shape asserted here would
+      // be a second, weaker copy of that.
+      mockApi.getCard.mockResolvedValue(makeCard({ cardId: 'card-x', columnId: 'col-done' }));
+      mockApi.resolveColumnId.mockResolvedValue('col-done');
+      mockApi.updateCard.mockResolvedValue(makeCard({ cardId: 'card-x', columnId: 'col-done' }));
 
       await program.parseAsync([
         'node', 'favro', 'cards', 'update', 'card-x',
         '--status', 'Done',
       ]);
 
-      expect(mockApi.updateCard).toHaveBeenCalledWith('card-x', { status: 'Done' });
+      expect(mockApi.updateCard).toHaveBeenCalledWith('card-x', { columnId: 'col-done' });
       const output = consoleLogSpy.mock.calls.map((c) => c[0]).join('\n');
       expect(output).toContain('✓ Card updated: card-x');
+      // The field the intent reports it wrote, so a run that silently wrote
+      // nothing cannot pass by printing the card id alone.
+      expect(output).toContain('(status)');
     });
 
     it('still works: --dry-run on single card', async () => {
