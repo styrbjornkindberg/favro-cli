@@ -45,11 +45,13 @@ THE SCOPE LOCK, AND THE TWO GUARDS BESIDE IT
   ('-y' skips the prompt) and takes '--dry-run' — a preview, never a safety wall.
 
 INTENTS
-  Nine, one call each — no chain to author. Each has a CLI spelling, and all but
+  Ten, one call each — no chain to author. Each has a CLI spelling, and all but
   'delete' can also be a skill 'command:'.
   create                Card plus every composite — parent, both dependency
                         directions, column, tags, assignees — in ONE POST, so a
                         bad value leaves no card behind. CLI: cards create.
+  update                Named fields, one card or an enumerated batch — a field
+                        per primitive, so a field per undo. CLI: cards update.
   read                  One card, optionally with its children. Writes nothing.
                         CLI: cards get, minus the children arm.
   delete                Remove ONE board instance; other instances of the same
@@ -111,9 +113,9 @@ BUILT-IN SKILLS
   several CLI calls: a run is ONE transaction over ONE compensation log.
 
 NOT EVERY WRITE IS A SAGA
-  'cards create --csv/--bulk' and 'cards update' are bulk edits, not tracker
-  intents. They take the same scope lock, but only the intents above carry a
-  compensation log — a bulk edit failing part-way is reported per row, not unwound.
+  'cards create --csv/--bulk' and 'cards update --from-csv' are bulk edits, not
+  intents: same scope lock, no compensation log, a part-way failure reported per
+  row rather than unwound.
 `;
 
 /**

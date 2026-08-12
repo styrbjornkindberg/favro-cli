@@ -315,7 +315,7 @@ export class CompensationLog {
   }
 }
 
-// ─── the seven reversible ops, plus one that is not ──────────────────────────
+// ─── the eight reversible ops, plus one that is not ──────────────────────────
 
 /** What `removeBlockingEdge` observed. `removed: false` means nothing was written. */
 export interface EdgeRemoval {
@@ -378,8 +378,16 @@ export interface ReadTx {
 }
 
 /**
+ * The scalar text fields of a card: the two whose value is replaced wholesale and
+ * whose write `CardsAPI.updateCard` already spells the way Favro honours.
+ *
+ * A CLOSED union, and that is a guard rather than tidiness — see `setText`.
+ */
+export type TextField = 'name' | 'description';
+
+/**
  * The only card surface an intent gets: every read, and only instrumented
- * writes. Seven reversible ops, each declared once, capture + mutate + push fused
+ * writes. Eight reversible ops, each declared once, capture + mutate + push fused
  * — plus `deleteCard`, the one write with no inverse, which logs nothing and
  * says why.
  *
@@ -877,6 +885,76 @@ export class TxCards implements ReadTx {
       label: `${was ? 're-archive' : 'un-archive'} card ${cardId}`,
       readLive: async () => (await this.api.getCard(cardId)).archived === true,
       applyInverse: async () => { await this.api.updateCard(cardId, { archive: was }); },
+    });
+    return after;
+  }
+
+  // ── 8. setText ────────────────────────────────────────────────────────────
+
+  /**
+   * Replace one of a card's scalar text fields — its `name` or its
+   * `description`.
+   *
+   * ONE method for the two of them rather than a `setName` / `setDescription`
+   * pair: the capture, the write and the compensation entry are the same three
+   * statements in both cases, and the only thing that differs is which key moves.
+   * #106 names the pair; when it lands, each is a one-line wrapper over this.
+   *
+   * **The field is a CLOSED union, and that is the guard.** A general
+   * `setScalar(cardRef, field, value)` would also accept `status`, `tags` and
+   * `assignees` — the three fields whose whole-value PUT answers 200 and writes
+   * nothing — and would hand back a green write that changed nothing, which is the
+   * silent-wrong-answer class this facade exists to close. Those three have
+   * primitives of their own above, each of which TRANSLATES the write into the verb
+   * Favro honours rather than forwarding the spelling a caller reached for.
+   *
+   * `description` needs no translation here because `CardsAPI.updateCard` already
+   * applies it: the honoured write field is `detailedDescription`, `PUT
+   * {description}` is a measured silent no-op, and `mapDescription` rewrites the key
+   * on the way out. A card reads the value back under `description`, normalised from
+   * `detailedDescription` by `normaliseCard`, so the capture and the inverse both
+   * spell it the read-side way and the API layer owns the asymmetry exactly once.
+   *
+   * **The write is deliberately NOT read back**, unlike `moveColumn` and
+   * `setArchived`. Each of those compares against a shape a live probe has
+   * measured — `columnId` on a card's GET row (#101), `archived` on the PUT echo
+   * (#75). Neither of these two fields has one: whether a PUT echoes `name` is
+   * unmeasured, and whether a description survives the round trip byte-for-byte is
+   * unmeasured too, since nothing has observed whether Favro canonicalises the
+   * markdown it stores. A strict-equality read-back would therefore assert an
+   * unmeasured shape (ADR-0003) and would throw on writes that in fact landed. What
+   * this DOES buy is the undo handle, which is what a transaction needs; detecting
+   * a silent no-op on these two waits for the probe that can measure it (#106).
+   *
+   * Already holding the requested value → nothing written and nothing logged,
+   * exactly as `setTags` / `setAssignees` / `setArchived` treat an empty delta.
+   *
+   * An absent prior value restores as `''`, never as `undefined`: the inverse has to
+   * WRITE something, and `mapDescription` drops an `undefined` description from the
+   * payload entirely, so an entry claiming to clear a description would quietly do
+   * nothing and then orphan on the compare. `name` is always present on a card, so
+   * only `description` reaches that arm — where empty IS the honest restore of "no
+   * description". `readLive` normalises the same way, so the detecting read and the
+   * captured value are compared in one space.
+   */
+  async setText(cardRef: string, field: TextField, value: string): Promise<Card> {
+    const before = await this.api.getCard(cardRef);
+    const cardId = before.cardId;
+    const was = before[field];
+    if (was === value) return before;
+    // Spelled out per field rather than as a computed key: `UpdateCardRequest` is
+    // the type that keeps a caller off the silent-no-op fields, and a computed key
+    // would widen the payload back to `Record<string, unknown>`.
+    const payload = (v: string) => (field === 'name' ? { name: v } : { description: v });
+
+    const after = await this.api.updateCard(cardId, payload(value));
+    this.log.push({
+      card: cardId,
+      field,
+      record: { shape: 'scalar', wrote: value, before: was ?? '' },
+      label: `restore ${field} on card ${cardId}`,
+      readLive: async () => (await this.api.getCard(cardId))[field] ?? '',
+      applyInverse: async () => { await this.api.updateCard(cardId, payload(was ?? '')); },
     });
     return after;
   }

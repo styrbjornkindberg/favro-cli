@@ -472,13 +472,43 @@ export interface MultiCreateArgs {
  * batch that reports success is exactly the silent-wrong-answer class this build
  * exists to close.
  *
- * ONE declaration, deliberately: `create` is its only reader today, and a second
- * constant for the next batched write would be a second number to keep in step
- * with this one's refusal wording. The argument is transaction integrity, which
- * is a property of the batch and not of the verb, so the name is the verb-neutral
- * one (#107).
+ * ONE declaration, deliberately: a second constant for the next batched write
+ * would be a second number to keep in step with this one's refusal wording. The
+ * argument is transaction integrity, which is a property of the batch and not of
+ * the verb, so the name is the verb-neutral one (#107) — and `boundEntries` below
+ * makes the WORDING verb-neutral too, now that `create` is not the only reader
+ * (#108).
  */
 export const MULTI_WRITE_CAP = 20;
+
+/**
+ * The enumerated list a multi-write will touch, bounded, or a refusal.
+ *
+ * One helper for every batched intent, because the cap and its justification are
+ * one rule. `create` carried the only copy while it was the only reader; `update`
+ * arriving with a second copy is how the number and — worse — the REASON drift
+ * apart, and the reason is the load-bearing half: an agent that reads the cap as a
+ * page size will split the batch and retry, which is correct, while one that reads
+ * it as a truncation point will believe the first 20 succeeded.
+ *
+ * @param verb the intent's own verb, for the wording. The rule is the same for
+ *   all of them; only the sentence naming what was refused differs.
+ */
+function boundEntries<T>(verb: string, entries: readonly T[]): readonly T[] {
+  if (entries.length === 0) {
+    throw new RefusalError(`Nothing to ${verb}: the enumerated card list is empty.`);
+  }
+  if (entries.length > MULTI_WRITE_CAP) {
+    throw new RefusalError(
+      `Refusing to ${verb} ${entries.length} cards in one call — a multi-${verb} is capped at ` +
+        `${MULTI_WRITE_CAP}.\n` +
+        `The cap is not a page size: the whole batch is one transaction, so writing only the first ` +
+        `${MULTI_WRITE_CAP} and dropping the rest would report success for cards that were never ` +
+        `touched. Split the list into batches of ${MULTI_WRITE_CAP} or fewer and run them one at a time.`,
+    );
+  }
+  return entries;
+}
 
 const isMulti = (a: CreateArgs | MultiCreateArgs): a is MultiCreateArgs =>
   Array.isArray((a as MultiCreateArgs).cards);
@@ -500,19 +530,7 @@ const normalize = (c: CreateArgs): NormalCreateArgs => ({
  */
 function createEntries(a: CreateArgs | MultiCreateArgs): NormalCreateArgs[] {
   if (!isMulti(a)) return [normalize(a)];
-  if (a.cards.length === 0) {
-    throw new RefusalError('Nothing to create: the enumerated card list is empty.');
-  }
-  if (a.cards.length > MULTI_WRITE_CAP) {
-    throw new RefusalError(
-      `Refusing to create ${a.cards.length} cards in one call — a multi-create is capped at ` +
-        `${MULTI_WRITE_CAP}.\n` +
-        `The cap is not a page size: the whole batch is one transaction, so creating the first ` +
-        `${MULTI_WRITE_CAP} and dropping the rest would report success for cards that do not exist. ` +
-        `Split the list into batches of ${MULTI_WRITE_CAP} or fewer and run them one at a time.`,
-    );
-  }
-  return a.cards.map(normalize);
+  return boundEntries('create', a.cards).map(normalize);
 }
 
 const createRequest = (a: NormalCreateArgs) => ({
@@ -1116,5 +1134,188 @@ registerIntent<ArchiveArgs, { cardId: string; archived: boolean }>({
     // would make the CLI's "✓ Card X is archived" a claim about the argument, in
     // the one feature whose whole premise is 200-and-nothing writes.
     return { cardId: card.cardId, archived: card.archived === true };
+  },
+});
+
+/**
+ * The fields `update` writes, each through the `TxCards` primitive that owns its
+ * wire shape. Every one is optional; at least one has to be there.
+ *
+ * `status` is the column, because on a write Favro's "status" IS the column and
+ * `PUT {status}` 200s and changes nothing — `moveColumn` owns that. `dueDate` is
+ * deliberately absent: see the seam note on the intent below.
+ */
+export interface UpdateArgs {
+  card: string;
+  name?: string;
+  description?: string;
+  /** Column name or `columnId`, resolved against the card's own board. */
+  status?: string;
+  /** A bare string is one item, never a string to iterate. See `oneOrMany`. */
+  tags?: string[] | string;
+  /** A name, an email, a `userId` or `@me` — resolved here, not by the caller. */
+  assignees?: string[] | string;
+}
+
+/** The multi form: an ENUMERATED list, never a derived one — as `create`'s is. */
+export interface MultiUpdateArgs {
+  cards: UpdateArgs[];
+}
+
+export interface UpdateResult {
+  cardId: string;
+  /** The fields this entry actually wrote, in the order they went out. */
+  wrote: string[];
+}
+
+const isMultiUpdate = (a: UpdateArgs | MultiUpdateArgs): a is MultiUpdateArgs =>
+  Array.isArray((a as MultiUpdateArgs).cards);
+
+/** Which of the writable fields this entry names, in the order `run` applies them. */
+function fieldsOf(a: UpdateArgs): string[] {
+  return [
+    ...(a.name !== undefined ? ['name'] : []),
+    ...(a.description !== undefined ? ['description'] : []),
+    ...(oneOrMany(a.tags)?.length ? ['tags'] : []),
+    ...(oneOrMany(a.assignees)?.length ? ['assignees'] : []),
+    ...(a.status !== undefined && a.status !== '' ? ['status'] : []),
+  ];
+}
+
+/**
+ * The entries this invocation will update, bounded, or a refusal.
+ *
+ * `preview`, `board` and `run` all route through here, so an entry naming no field
+ * cannot be reached around — which is why the check lives here and not in the CLI.
+ *
+ * An entry with no field REFUSES rather than being skipped. A skipped entry inside
+ * a batch is the silent-wrong-answer shape: the run would report `ok` over a card
+ * it never touched, and the caller's own list is the only record of what it meant
+ * to write. The CLI's old single-card path printed "Nothing to update." for this,
+ * which is honest for one card and unrepresentable for twenty.
+ */
+function updateEntries(a: UpdateArgs | MultiUpdateArgs): readonly UpdateArgs[] {
+  const entries = isMultiUpdate(a) ? boundEntries('update', a.cards) : [a];
+  for (const entry of entries) {
+    if (fieldsOf(entry).length === 0) {
+      throw new RefusalError(
+        `Nothing to update on ${entry.card}: no field was given.\n` +
+          `Pass at least one of name, description, status, tags or assignees. An entry naming no ` +
+          `field is refused rather than skipped: in a batch, skipping it would report success for a ` +
+          `card that was never written.`,
+      );
+    }
+  }
+  return entries;
+}
+
+/**
+ * `update` — write named fields on one card, or on an enumerated batch of at most
+ * `MULTI_WRITE_CAP` (#108, step 3 of #92).
+ *
+ * The point of registering it is everything it stops having to remember. It
+ * inherits the mandatory scope lock, the boardless-write refusal, the
+ * board-straddle refusal, the cap, and one compensation log — the four guardrails
+ * `cards update`'s hand-rolled `api.updateCard` call had none of.
+ *
+ * **`board()` returns EVERY entry's board, not the first.** That is what makes a
+ * batch straddling the lock refuse as a whole, before anything is written; taking
+ * the first would let one in-scope entry smuggle the rest past the lock. It costs
+ * one `GET /cards/{ref}` per entry, which `run` pays for again — the reads are not
+ * shared because `board()` runs before `assertScope` and may not cache a decision
+ * the lock has not yet approved.
+ *
+ * **A field per primitive, so a field per undo handle.** A failure on the third
+ * field unwinds the first two, LIFO, and the invocation reports `rolled-back`. That
+ * is the whole difference from the PUT it replaces: one `api.updateCard` carrying
+ * five keys either lands whole or fails whole, and Favro does not say which — so a
+ * partial write had no record and no inverse.
+ *
+ * `status` goes LAST, deliberately. It is the only field whose primitive confirms
+ * its own write with a re-read (`moveColumn`, #101), so it is the one most likely
+ * to raise — and raising last means the field writes before it are already logged
+ * and get unwound, rather than a failed move stranding them un-recorded.
+ *
+ * **THE SEAM: `dueDate` is not here, and neither are `setName`/`setDescription` as
+ * named primitives.** #106 owns all three. `name` and `description` route through
+ * `TxCards.setText`, which is that ticket's two methods fused into one while they
+ * are identical (see its own note). `dueDate` is left out rather than guessed at:
+ * its write shape is `YYYY-MM-DD` and a card reads it back as a full ISO timestamp
+ * encoding a local day boundary — measured across 853 cards, zero date-only (#132)
+ * — so the round trip is a normalisation nobody has observed. A captured pre-state
+ * is therefore an ISO string, and whether the WRITE side accepts one is unmeasured,
+ * which means the inverse cannot be shown to restore what it captured. An undo
+ * handle that may not undo is worse than a refused field, so the field is absent
+ * from the intent and `cards update` never offered it on the single-card path
+ * either. It arrives with the probe that measures it.
+ */
+registerIntent<UpdateArgs | MultiUpdateArgs, UpdateResult | UpdateResult[]>({
+  name: 'update',
+  summary: 'Update fields on a card, or on an enumerated batch of at most 20, in one transaction',
+  preview: (a) =>
+    updateEntries(a).flatMap((c) => [
+      `update card ${c.card}`,
+      ...(c.name !== undefined ? [`  name: "${c.name}"`] : []),
+      ...(c.description !== undefined ? [`  description: ${c.description.length} characters`] : []),
+      ...(oneOrMany(c.tags)?.length ? [`  tags: ${oneOrMany(c.tags)!.join(', ')}`] : []),
+      ...(oneOrMany(c.assignees)?.length ? [`  assignees: ${oneOrMany(c.assignees)!.join(', ')}`] : []),
+      ...(c.status !== undefined && c.status !== '' ? [`  column: "${c.status}"`] : []),
+      `  reversible: each field carries its own compensating write`,
+    ]),
+  // Every distinct board the invocation touches. `boards` is de-duplicated by the
+  // table, so a batch of twenty cards on one board costs one scope check.
+  board: async (a, tx) =>
+    Promise.all(updateEntries(a).map(async (c) => (await tx.getCard(c.card)).boardId)).then((all) =>
+      all.filter((b): b is string => Boolean(b)),
+    ),
+  run: async (a, tx) => {
+    const entries = updateEntries(a);
+    const results: UpdateResult[] = [];
+    // Sequential on purpose, exactly as `create`'s batch is: the cap is what bounds
+    // this, and a parallel batch would make "which fields are written now" a race
+    // with the compensation log.
+    for (const entry of entries) {
+      // Resolved once per entry, so every primitive below writes to the same
+      // instance. `setText` and the rest each re-read the card for their own
+      // capture; what they must not do is re-RESOLVE a reference that could settle
+      // on a different instance between two writes of one entry.
+      const cardId = (await tx.getCard(entry.card)).cardId;
+      const wrote: string[] = [];
+
+      if (entry.name !== undefined) {
+        await tx.setText(cardId, 'name', entry.name);
+        wrote.push('name');
+      }
+      if (entry.description !== undefined) {
+        await tx.setText(cardId, 'description', entry.description);
+        wrote.push('description');
+      }
+      const tags = oneOrMany(entry.tags);
+      if (tags?.length) {
+        // `setTags` owns the diff, the name/id keyspace and the unknown-name
+        // refusal. Whole-array semantics, as `--tags` has always had: the list
+        // given is the list the card ends with.
+        await tx.setTags(cardId, tags);
+        wrote.push('tags');
+      }
+      const assignees = oneOrMany(entry.assignees);
+      if (assignees?.length) {
+        // Names become userIds HERE rather than in the CLI, so the skill engine and
+        // the MCP passthrough get the same resolution the flag does. `setAssignees`
+        // refuses a non-userId, and a name diffed raw would read as "unassign
+        // everyone, add a string Favro has never seen".
+        const ids = [];
+        for (const one of assignees) ids.push(await tx.resolveAssignee(one));
+        await tx.setAssignees(cardId, ids);
+        wrote.push('assignees');
+      }
+      if (entry.status !== undefined && entry.status !== '') {
+        await tx.moveColumn(cardId, entry.status);
+        wrote.push('status');
+      }
+
+      results.push({ cardId, wrote });
+    }
+    return isMultiUpdate(a) ? results : results[0];
   },
 });
