@@ -8,7 +8,7 @@ that set that version, `a13a02a`) and this release. Commands were driven with
 `FAVRO_CONFIG_DIR` pointed at a throwaway config and no real credentials, so exit codes
 and streams are real and no request reached a live org.
 
-## 3.0.0 — unreleased
+## 3.0.0 — 2026-08-12
 
 Four breaking changes, all in how the CLI is *called* and how it *answers*. The library
 entry point is untouched: `src/index.ts` still exports `FavroHttpClient`, `CardsAPI` and
@@ -693,3 +693,15 @@ Issue #95, ADR-0006.
 ### Known gaps at release
 
 - The output migration is incomplete — see the caveat under Breaking #1.
+- `boards get --include stats` and `boards list --include stats,velocity` report every
+  card-derived facet as unknown rather than a number. That is the honest answer on the
+  measured wire, not a regression: the endpoint carries no card data to count. Per-column
+  counts are available today via `favro columns list <boardId>`.
+- `tasks update`, `tasks complete` and `tasks delete` still take `--card` to resolve a
+  board, and the taskId is never verified to belong to the card named. `GET /tasks/:taskId`
+  is unmeasured and `GET /tasks` requires a `cardCommonId` to call, so no bounded read
+  closes it (#126).
+- `moveColumn` reports a failed move when a confirmation read lags behind the write it is
+  confirming. The two are indistinguishable at the only input the code has, and closing it
+  needs either a version carrier on the card or a measured read-after-write; neither
+  exists. Recorded as an open edge on ADR-0002 rather than guessed at.
