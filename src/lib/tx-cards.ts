@@ -560,33 +560,63 @@ export class TxCards implements ReadTx {
    * nothing — so a move is a `columnId` write. Scalar shape: one value replaced
    * another, and strict equality is the honest guard.
    *
-   * The write is deliberately NOT read back, unlike `setArchived` below. That
-   * asymmetry is a measurement gap, not an oversight (#101). `setArchived`
-   * compares because #75 probed that the `PUT {archive}` **response** echoes
-   * `archived`; nothing equivalent has ever been probed for `columnId`. The
-   * carrier table measures `columnId` on every GET row
-   * (`docs/research/tracker-contract-favro-carriers.md` §1.3) — a read-side row
-   * is not a write-side echo, and inferring one from the other is the step
-   * ADR-0003 refuses. Getting it wrong is not cheap: if the response omits the
-   * field, `after.columnId` is `undefined` on every move and the guard throws on
-   * every `claim` and every `resolve` — two commands that work today.
+   * The write is READ BACK, like `setArchived` below — but the read is a fresh
+   * `GET /cards/{cardId}`, never the PUT response, and that distinction is the
+   * whole design rather than an extra cost (#101):
    *
-   * The stand cannot settle it. `dispatch-tx-wire.test.ts` answers a PUT with a
-   * full card row because WE wrote it that way, so a read-back tested there
-   * verifies our own assumption against itself. Only a live probe closes this,
-   * blocked on #105's throwaway board — the same gate as #126.
+   * - `columnId` on a card's GET row is MEASURED
+   *   (`docs/research/tracker-contract-favro-carriers.md` §1.3), so a comparison
+   *   against it asserts only a shape the wire has been observed to carry.
+   * - `columnId` on a PUT **response** has never been probed. Comparing against
+   *   that echo — the way `setArchived` compares `archived`, which it may do
+   *   because #75 probed exactly that echo — would assert an unmeasured shape,
+   *   the step ADR-0003 refuses; and if the response omits the field, it would
+   *   throw on every `claim` and every `resolve`, two commands that work today.
    *
-   * What defends the move meanwhile: `columnId` is not a member of the
-   * silent-no-op family, it is the honoured verb that family is TRANSLATED INTO,
-   * and callers report `moved.columnId` — the observed value, never the
-   * requested one — so a no-op surfaces as the old column rather than as a
-   * fabricated success.
+   * The re-read also settles what an echo comparison could never be tested for:
+   * a stand answering a PUT with a card row WE wrote verifies our own assumption
+   * against itself. A silent PUT echo plus a GET row that moved is a case only
+   * the re-read can pass, and that is the case the wire tests drive.
+   *
+   * Callers report the re-read too, because this returns it: `claim` and
+   * `resolve` print an observation of the card rather than whatever the PUT
+   * happened to echo. Reporting the echo was not merely unverified: on a response
+   * that says nothing about the column, `cards-tracker.ts` prints `(column —)`
+   * for a move that has in fact landed.
    */
   async moveColumn(cardRef: string, status: string): Promise<Card> {
     const before = await this.api.getCard(cardRef);
     const columnId = await this.api.resolveColumnId(status, before.boardId);
-    const after = await this.api.updateCard(before.cardId, { columnId });
     const cardId = before.cardId;
+    await this.api.updateCard(cardId, { columnId });
+    // Where the card reads NOW. `readLive` below asks the same question of the
+    // same endpoint, so this read and the rollback's detecting read cannot
+    // disagree about where the card is.
+    const after = await this.api.getCard(cardId);
+    // Checked BEFORE the log push, exactly as `setArchived` checks its own
+    // read-back, and for the same reason: nothing here needs compensating.
+    // Either the PUT wrote nothing, so there is nothing to undo — or a
+    // concurrent editor moved the card after our write, and then the facade-wide
+    // compare would decline to write over their edit anyway, so an entry would
+    // only report an orphan for wreckage nobody has to clean up.
+    //
+    // `TransientError`, and NOT a `RefusalError`: a refusal claims
+    // "deterministic, wrote nothing, repair the call", and the call is not what
+    // is wrong — the column resolved and the write was accepted. What failed is
+    // the card agreeing, so the next attempt is allowed to behave differently.
+    if (after.columnId !== columnId) {
+      throw new TransientError(
+        `Column move on card ${cardId} answered 200 but the card did not land there: sent ` +
+          `{columnId: ${columnId}}, and a re-read of the card reads ` +
+          `columnId=${JSON.stringify(after.columnId)}.\n` +
+          `Either the write did nothing, or another editor moved the card between the write and this ` +
+          `read — there is no version carrier on this wire to tell those apart. Nothing was logged for ` +
+          `compensation either way: the first case has nothing to undo, and in the second the compare ` +
+          `would decline to write over their edit.\n` +
+          `The comparison is against the card's own GET row, which is where \`columnId\` is measured; ` +
+          `the PUT response's echo is unprobed and is never read here (#101).`,
+      );
+    }
     this.log.push({
       card: cardId,
       field: 'columnId',

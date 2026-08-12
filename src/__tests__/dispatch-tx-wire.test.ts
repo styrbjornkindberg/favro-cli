@@ -152,6 +152,23 @@ function startServer(
      */
     ignoreArchiveWrites?: true;
     /**
+     * The same shape for the column write: `PUT {columnId: …}` answers 200 and
+     * leaves the card where it was. Nothing has ever observed Favro doing this —
+     * it is the hazard `moveColumn`'s read-back exists for, modelled on the far
+     * side of the wire so the check is exercised through the door production uses.
+     */
+    ignoreColumnWrites?: true;
+    /**
+     * A PUT response that says nothing about `columnId`, on a write that DID
+     * land. This is the arm with teeth (#101): `columnId` on a PUT response has
+     * never been probed, so a check reading the echo cannot pass here, while a
+     * check re-reading the card can. Without this option every PUT answers with a
+     * card row we wrote ourselves, and a read-back tested against that verifies
+     * our own assumption against itself — the trap `write-echo-wire.test.ts`
+     * describes.
+     */
+    stripColumnEcho?: true;
+    /**
      * Kill the connection instead of answering — a genuine transport failure.
      *
      * The only way to produce the error axios raises when there is NO response
@@ -265,7 +282,7 @@ function startServer(
           const next: StoredCard = { ...stored, tags: [...stored.tags], assignments: [...stored.assignments] };
           if (b.name !== undefined) next.name = b.name;
           if (b.detailedDescription !== undefined) next.detailedDescription = b.detailedDescription;
-          if (b.columnId !== undefined) next.columnId = b.columnId;
+          if (b.columnId !== undefined && !opts.ignoreColumnWrites) next.columnId = b.columnId;
           // The measured asymmetry (#75), modelled where it actually lives: the
           // wire honours the WRITE field `archive` and answers 200-and-nothing to
           // the READ field `archived`. Modelling only the honoured half would let
@@ -288,6 +305,7 @@ function startServer(
           // Leaving it live made a concurrent edit indistinguishable from a 200
           // that wrote nothing, which `setArchived`'s read-back has to tell apart.
           const echo = wire(next);
+          if (opts.stripColumnEcho) delete echo.columnId;
           concurrently();
           return send(200, echo);
         }
@@ -751,14 +769,24 @@ describe('compare-before-restore is always on, in whatever shape the write took'
   });
 
   it('a scalar a concurrent editor changed is SKIPPED, with per-field detail', async () => {
+    let written = false;
+    let cardGetsAfterWrite = 0;
     const stand = await startServer({
       fail: (r) => {
+        if (r.method === 'PUT' && r.path === `/cards/${CARD}`) written = true;
         // A human moves the card to Done between our write and the rollback's
         // detecting read. There is no version carrier on the wire, so this read
         // is the only guard available.
-        if (r.method === 'GET' && r.path === `/cards/${CARD}`) {
+        //
+        // Which post-write read matters is now specific: `moveColumn` confirms
+        // its own write with a re-read (#101), so GET 1 is that confirmation —
+        // it must see OUR column, or the move itself fails and this compare is
+        // never reached (the failure arm has its own test). GET 2 is the
+        // rollback's detecting read, which is the guard under test here.
+        if (written && r.method === 'GET' && r.path === `/cards/${CARD}`) {
+          cardGetsAfterWrite += 1;
           const held = standRef?.cards.get(CARD);
-          if (held && held.columnId === DOING) held.columnId = DONE;
+          if (cardGetsAfterWrite === 2 && held && held.columnId === DOING) held.columnId = DONE;
         }
         return undefined;
       },
@@ -1159,6 +1187,118 @@ describe('claim and resolve act on the tracker-board instance', () => {
   });
 });
 
+describe('a column move is confirmed by RE-READING the card, never by the PUT echo (#101)', () => {
+  /**
+   * CEILING, stated so nothing here is over-read: none of this measures what
+   * Favro's `PUT /cards/{id} {columnId}` actually echoes. What it pins is that
+   * the code does not DEPEND on that echo — it passes whether the response
+   * carries the column or says nothing about it, and it fails when the card did
+   * not move. That is the whole claim, and it needs no probe to hold.
+   */
+  it('the stand under stripColumnEcho answers a PUT with no columnId, and still moves the card', async () => {
+    // Proof the arm below is not vacuous: without this, `stripColumnEcho` could
+    // silently do nothing and every assertion under it would still pass off the
+    // full echo.
+    const stand = await startServer({ stripColumnEcho: true });
+
+    const echo = await stand.client.put<Record<string, unknown>>(`/cards/${CARD}`, { columnId: DONE });
+
+    expect('columnId' in echo).toBe(false);
+    expect(stand.cards.get(CARD)!.columnId).toBe(DONE);
+  });
+
+  it('the stand under ignoreColumnWrites answers 200 and leaves the card where it was', async () => {
+    const stand = await startServer({ ignoreColumnWrites: true });
+
+    await stand.client.put(`/cards/${CARD}`, { columnId: DONE });
+
+    expect(stand.cards.get(CARD)!.columnId).toBe(TODO);
+  });
+
+  it.each([
+    ['resolve', {}, DONE],
+    ['claim', { assignee: ALICE }, DOING],
+  ] as Array<[string, Record<string, unknown>, string]>)(
+    '%s reports the column it re-read, on a wire whose PUT echoes no column',
+    async (intent, extra, expected) => {
+      const stand = await startServer({ stripColumnEcho: true });
+      await useTracker();
+
+      const result = await dispatch<{ cardId: string; columnId?: string }>(
+        intent, { card: CARD, ...extra }, ctx(stand),
+      );
+
+      expect(result.outcome).toBe('ok');
+      // **THE assertion.** Read off the PUT response, this is `undefined`, and
+      // `cards-tracker.ts` prints `(column —)` for a move that landed. No
+      // assertion about the stored card can catch that — the card DID move — so
+      // this is the envelope a consumer receives, which is the contract.
+      expect(result.value?.columnId).toBe(expected);
+      expect(stand.cards.get(CARD)!.columnId).toBe(expected);
+    },
+  );
+
+  it('a 200 that left the card where it was is a LOUD failure, not a ✓ about the argument', async () => {
+    const stand = await startServer({ ignoreColumnWrites: true });
+    await useTracker();
+
+    const result = await dispatch('resolve', { card: CARD }, ctx(stand));
+
+    expect(result.outcome).toBe('rolled-back');
+    expect(result.error).toMatch(/answered 200 but the card did not land there/);
+    // The message names the OBSERVED column, not just the requested one — an
+    // assertion on the throw alone would pass on the wrong throw.
+    expect(result.error).toContain(`a re-read of the card reads columnId="${TODO}"`);
+    // Nothing to compensate: the check runs before the log push, so the unwind
+    // had nothing to leave behind.
+    expect(result.orphans).toBeUndefined();
+    // Transient, like the archive read-back: the call is fine, the wire changed.
+    expect(result.retryable).toBe(true);
+    // Exactly one PUT — ours. No compensating write for a write that did nothing.
+    expect(puts(stand.received)).toHaveLength(1);
+    expect(stand.cards.get(CARD)!.columnId).toBe(TODO);
+  });
+
+  it('the move failing takes the assignment with it — claim still unwinds what it wrote first', async () => {
+    // Throwing BEFORE the column entry is pushed must not cost the entries
+    // pushed before that: `claim` assigns, then moves.
+    const stand = await startServer({ ignoreColumnWrites: true });
+    await useTracker();
+
+    const result = await dispatch('claim', { card: CARD, assignee: ALICE }, ctx(stand));
+
+    expect(result.outcome).toBe('rolled-back');
+    expect(result.error).toMatch(/did not land there/);
+    expect(stand.cards.get(CARD)!.assignments).toEqual([]);
+    expect(puts(stand.received).map((r) => r.body)).toEqual([
+      { addAssignmentIds: [ALICE] },
+      { columnId: DOING },
+      { removeAssignmentIds: [ALICE] },
+    ]);
+  });
+
+  it('a concurrent editor who moved the card elsewhere surfaces as the same failure', async () => {
+    // The second cause the message names. There is no version carrier on this
+    // wire, so a 200-and-nothing and a human moving the card between our write
+    // and our read are indistinguishable — and either way nothing was logged, so
+    // no compensating write goes out over their move.
+    const stand = await startServer({
+      afterWrite: ({ cards }, wrote) => {
+        if (wrote !== 1) return;
+        cards.get(CARD)!.columnId = TODO;
+      },
+    });
+    await useTracker();
+
+    const result = await dispatch('resolve', { card: CARD }, ctx(stand));
+
+    expect(result.outcome).toBe('rolled-back');
+    expect(result.error).toMatch(/did not land there/);
+    expect(puts(stand.received)).toHaveLength(1);
+    expect(stand.cards.get(CARD)!.columnId).toBe(TODO);
+  });
+});
+
 describe('retag keeps the triage vocabulary coherent', () => {
   it('swaps the state role, leaves the category and everything outside the axes alone', async () => {
     const stand = await startServer();
@@ -1390,10 +1530,11 @@ describe('a deterministic WIRE refusal is not retryable either (#66)', () => {
     // surviving at the third site because inverting the default here would break
     // the in-process failures that genuinely ARE transient.
     //
-    // The carried-forward half of #151 enumerated those: ONE throw site, the
-    // archive read-back in `TxCards.setArchived`, which now says so with a
-    // `TransientError` and is pinned `true` by "a 200 that did not take is a LOUD
-    // failure". With that marked, `retryAdvice` gates all three callers on the
+    // The carried-forward half of #151 enumerated those: the read-backs in
+    // `TxCards`, each saying so with a `TransientError` — the archive one in
+    // `setArchived`, pinned `true` by "a 200 that did not take is a LOUD
+    // failure", and the column one in `moveColumn` (#101), pinned by "a 200 that
+    // left the card where it was". With those marked, `retryAdvice` gates all three callers on the
     // wire and an unmarked in-process failure is deterministic-until-proven-
     // otherwise: a wrong `false` costs one honest failure, a wrong `true` costs
     // an agent looping forever.

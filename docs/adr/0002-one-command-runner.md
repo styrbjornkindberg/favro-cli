@@ -306,6 +306,9 @@ the import closure of `dispatch.ts` — the intents' `run` bodies live in that f
 (27 modules by `madge`) is what they can reach, not `TxCards`'s 22; the five extra are `dispatch.ts`
 itself, `read-shape.ts`, `safety.ts` and `api/comments.ts` with its types. Across all of it the
 genuinely-transient in-process throws number **exactly one**: `TxCards.setArchived`'s read-back.
+(#101 added the second, `TxCards.moveColumn`'s — see the note under "Reach for `TransientError`
+only with an observation behind it" below. The population is still read-backs in `TxCards` and
+nothing else.)
 
 The rest of the non-`RefusalError` throws in that closure are either deterministic or unreachable
 from inside the try, and neither fact is guarded by a test — `refusal-drift.test.ts` covers the
@@ -339,8 +342,10 @@ write is NOT retryable"* and `skill-dispatch-wire.test.ts`'s *"a failure in step
   assertion would have left a test that cannot fail. Its third step now fails off the wire instead
   of in-process, keeping both halves true.
 - *"a 200 that did not take is a LOUD failure, not a ✓ about the argument"* was not touched at all.
-  It is the one test the `TransientError` marker exists for, and the only one in the suite that
-  reaches the exemption — dropping either the marker or the `instanceof` disjunct fails exactly it.
+  It is the test the `TransientError` marker exists for, and was for a while the only one in the
+  suite that reached the exemption — dropping either the marker or the `instanceof` disjunct failed
+  exactly it. #101's *"a 200 that left the card where it was is a LOUD failure"* now reaches the
+  same arm for `moveColumn`, so the disjunct has two tests behind it rather than one.
 
 `skill-engine.ts`'s **other** rollback path — a `StepDispatchFailure`, where the table caught the
 error, unwound and derived `retryable` itself — is still carried verbatim rather than re-derived.
@@ -676,6 +681,31 @@ The three `--dry-run` help strings that said "without making API calls" on
 the reason #135 corrected the `comments` trio's and #152 the `boards` pair's, and are
 reworded with the behaviour. `git todos`' and `git sync`' strings never made the claim and
 are untouched.
+
+### Amendment (#101): the second `TransientError` site, and what earns it
+
+`TxCards.moveColumn` raises one too now, so #134's "revisit if a second site ever appears" has been
+paid. The count stays unratcheted and the reasoning is unchanged — omission is the safe outcome —
+but the shape is worth naming, because it is what a third site would have to match: **a write
+followed by an observation of the card, where the observation is a shape the wire has been measured
+to carry.**
+
+The two sites get their observation differently, and the difference is ADR-0003 rather than taste.
+`setArchived` compares the PUT **response**, because #75 probed that the response echoes `archived`.
+Nothing has ever probed whether that response carries `columnId`, so `moveColumn` compares a fresh
+`GET /cards/{cardId}` instead — `columnId` on a card's GET row *is* measured
+(`docs/research/tracker-contract-favro-carriers.md` §1.3). Comparing the unmeasured echo is the
+version of this change #101's triage declined, and rightly: had the response omitted the field, it
+would have thrown on every `claim` and every `resolve`. The re-read costs one GET and asserts
+nothing unmeasured, so it needed no probe to ship.
+
+Two things fall out of reading the card rather than the response. A concurrent editor who moves the
+card between our write and that read is indistinguishable from a 200 that wrote nothing — there is
+no version carrier to tell them apart — so the throw names both causes, and neither logs a
+compensation entry: the first has nothing to undo, and in the second the facade-wide compare would
+decline to write over their edit anyway. And `claim` / `resolve` report the re-read column instead
+of the echo, which was a live defect and not only an unverified claim: under a silent echo the old
+shape printed `(column —)` for a move that had in fact landed.
 
 ## Consequences
 

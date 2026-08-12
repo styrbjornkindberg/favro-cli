@@ -650,6 +650,37 @@ Issue #95, ADR-0006.
   behind cannot be measured here, and ADR-0003 says not to declare a rule that has not
   been.
 
+- **A column move reported success on the strength of its own argument, and `cards claim`
+  / `cards resolve` printed a column nobody had observed.** `TxCards.moveColumn` held the
+  `PUT /cards/{id} {columnId}` response as its result and never compared it against the
+  column it had asked for; `claim` and `resolve` then returned `moved.columnId` — read
+  straight off that response — as the column they had reached. Whether Favro echoes
+  `columnId` on that PUT is **unmeasured** (ADR-0003), which makes both halves unsound in
+  the same direction: on a silent response the write is unverified *and* the CLI prints
+  `(column —)` for a card that did move.
+
+  The write is now read back, and the read is a fresh `GET /cards/{cardId}` rather than
+  the PUT response. That distinction is the fix rather than an implementation detail:
+  `columnId` on a card's GET row is measured
+  (`docs/research/tracker-contract-favro-carriers.md` §1.3), so the comparison asserts
+  only a shape the wire has been observed to carry — where comparing the unprobed echo,
+  the version this ticket's triage declined, would have thrown on every `claim` and every
+  `resolve` if the response omits the field. A mismatch raises a `TransientError`
+  ("answered 200 but the card did not land there"), the same class `setArchived`'s
+  read-back raises: the call is not what is wrong, so the next attempt is allowed to
+  behave differently. Nothing is logged for compensation either way — either the write did
+  nothing, or a concurrent editor owns the column now and the facade-wide compare would
+  decline to write over their edit — and `claim` / `resolve` report the re-read column.
+  This is the second `TransientError` site in the codebase, which pays off ADR-0002's
+  "revisit if a second site ever appears"; both sites are read-backs in `TxCards`.
+
+  RED, measured, against a `node:http` stand whose PUT answers 200 with **no `columnId`**
+  while the card really moves. That arm is the one with teeth, and it is the arm a stand
+  answering every PUT with a card row we wrote ourselves cannot express — a read-back
+  tested against that verifies our own assumption against itself. With the re-read
+  reverted to the echo, `resolve` and `claim` come back `rolled-back` instead of reporting
+  the column; with the comparison reverted, all three failure arms come back `ok`.
+
 ### Known gaps at release
 
 - The output migration is incomplete — see the caveat under Breaking #1.

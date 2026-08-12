@@ -324,8 +324,9 @@ describe('the run is ONE transaction — one log, threaded through every step', 
     // OURS being reported as a wire hiccup — the previous comment named that
     // defect and declined to close it, because inverting the default breaks the
     // in-process failures that ARE transient. The carried-forward half of #151
-    // enumerated those: exactly one throw site, `TxCards.setArchived`, now
-    // carrying a `TransientError`. With that marked, `retryAdvice` can gate the
+    // enumerated those: the read-backs in `TxCards` — `setArchived`, joined by
+    // `moveColumn` under #101 — each carrying a `TransientError`. With those
+    // marked, `retryAdvice` can gate the
     // table on the wire too, and a bare in-process `Error` is `false`.
     expect(result.rollback?.retryable).toBe(false);
     // What a caller can see afterwards: the card step 1 made is gone.

@@ -329,8 +329,10 @@ export interface UpdateCardRequest {
    * `columnId` is measured on every GET row
    * (`docs/research/tracker-contract-favro-carriers.md` §1.3), but a read-side
    * row is not a write-side echo — the same distinction `dueDate` above records
-   * about its own write shape. Do not write a read-back against this field
-   * until a live probe says the echo is there (#101, blocked on #105).
+   * about its own write shape. Do not compare against the RESPONSE's `columnId`
+   * until a live probe says the echo is there. `TxCards.moveColumn` does confirm
+   * its write, and that is not this: it re-reads the card and compares the GET
+   * row, which is the measured surface (#101).
    */
   columnId?: string;
   /**
@@ -902,7 +904,7 @@ export class CardsAPI {
    * this PUT at all — it is measured on every GET row
    * (`docs/research/tracker-contract-favro-carriers.md` §1.3), and a read-side
    * row is not a write-side echo, the same gap `UpdateCardRequest.columnId`
-   * records for itself (#101, blocked on #105). So an absent echo is reported
+   * records for itself. So an absent echo is reported
    * unconfirmed and is never thrown on: throwing on an unmeasured echo would
    * take out every move to defend a hazard with no observed instance.
    */

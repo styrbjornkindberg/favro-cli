@@ -168,8 +168,10 @@ it is why a refusal is never reported as retryable. `RefusalError`
 
 `TransientError`, beside it in the same leaf module, is the mirror and the rarer type: a
 failure the raising site **measured** transient, so retry advice may survive the wire gate
-for it. Exactly one site raises it (`TxCards.setArchived`'s read-back), and reaching for it
-without an observation behind it re-opens the retry loop for that path.
+for it. Two sites raise it, both read-backs in `TxCards` — `setArchived`'s (the PUT echo
+#75 probed) and `moveColumn`'s (a fresh GET of the card, because that PUT's echo is
+unprobed, #101) — and reaching for it without an observation behind it re-opens the retry
+loop for that path.
 
 **interactive command** — a command that cannot work without a terminal: it prompts, it
 draws an arrow-key picker, it hands a child this process's tty, or it repaints until

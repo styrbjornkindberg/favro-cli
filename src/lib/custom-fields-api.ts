@@ -322,8 +322,9 @@ export class CustomFieldsAPI {
    * echo. The one measured write echo on this endpoint is `archived`, from #75's
    * live probe — which is what earns `TxCards.setArchived` its throw. Throwing
    * here on an unmeasured echo would take out `custom-fields set` on every call
-   * if Favro simply does not return the array, which is #101's regression
-   * exactly. Unconfirmed is reported, not fabricated and not fatal.
+   * if Favro simply does not return the array — exactly the regression #101's
+   * triage declined, before it closed by re-reading the card instead of the
+   * echo. Unconfirmed is reported, not fabricated and not fatal.
    */
   private async putCardCustomField(
     cardId: string,

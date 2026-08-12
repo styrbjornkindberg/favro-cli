@@ -248,9 +248,9 @@ export function isRetryable(outcome: TxOutcome, error: unknown): boolean {
  * came back `retryable: true`, which is #134's `--include bogus` bug wearing the
  * table's clothes. The reason it survived #151 was the fear that inverting the
  * default would break the in-process failures that ARE transient; the
- * enumeration says that population is exactly ONE throw site
- * (`TxCards.setArchived`, see `TransientError`), so the marker costs one line
- * and the default gets to be fail-closed.
+ * enumeration says that population is two throw sites, both read-backs in
+ * `TxCards` (`setArchived` and `moveColumn`, see `TransientError`), so the
+ * marker costs one line each and the default gets to be fail-closed.
  *
  * `isWireFailure` FIRST is not decoration: it is what keeps a deterministic
  * error of ours out of `isRetryable`'s unclassifiable-is-transient arm at all.
@@ -918,6 +918,9 @@ registerIntent<CardArgs, { cardId: string; columnId?: string; assignee: string }
     const current = card.assignees ?? [];
     if (!current.includes(userId)) await tx.setAssignees(card.cardId, [...current, userId]);
     const moved = await tx.moveColumn(card.cardId, tracker.mapping.columns.active);
+    // `moved` is the card RE-READ after the write, not the PUT response, so the
+    // column printed here is an observation of the card. `moveColumn` owns that
+    // and threw already if the card did not land there (#101).
     return { cardId: card.cardId, columnId: moved.columnId, assignee: userId };
   },
 });
@@ -932,6 +935,7 @@ registerIntent<CardArgs, { cardId: string; columnId?: string }>({
     const tracker = await tx.tracker();
     const card = await trackerCard(tx, a.card, tracker);
     const moved = await tx.moveColumn(card.cardId, tracker.mapping.columns.done);
+    // The re-read column, as in `claim` above — never the PUT echo.
     return { cardId: card.cardId, columnId: moved.columnId };
   },
 });

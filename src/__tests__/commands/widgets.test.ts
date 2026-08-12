@@ -156,8 +156,8 @@ describe('widgets add', () => {
     // And exit 1: a hole forbids a clean exit code (#148). Not a throw — the
     // report still lands on stdout, which is what keeps a finding
     // distinguishable from a failure (#117). Throwing on an unmeasured echo
-    // would be #101's regression; a non-zero code next to a printed report is
-    // not.
+    // would be the regression #101's triage declined; a non-zero code next to a
+    // printed report is not.
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 

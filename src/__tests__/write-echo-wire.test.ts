@@ -14,14 +14,21 @@
  *      returned its body raw and `Card.boardId` is `normalizeCard`'s derivation
  *      from `widgetCommonId`.
  *
- * None of the three grew a THROW, and deliberately. A throw is only legitimate
- * against a **measured write-response echo**. The one this repo has is
- * `archived`, from #75's live probe (recorded on `UpdateCardRequest.archive`), and
- * it is what earns `TxCards.setArchived` its throw. `widgetCommonId`, `columnId`
- * and `customFields` are measured on **GET rows**
- * (`docs/research/tracker-contract-favro-carriers.md` §1.3/§3) — a read-side row
- * is not a write-side echo, and inferring one from the other is the step ADR-0003
- * refuses and the reason #101 was declined.
+ * None of the three grew a THROW, and deliberately. A throw against a write
+ * RESPONSE is only legitimate against a **measured write-response echo**. The one
+ * this repo has is `archived`, from #75's live probe (recorded on
+ * `UpdateCardRequest.archive`), and it is what earns `TxCards.setArchived` its
+ * throw. `widgetCommonId`, `columnId` and `customFields` are measured on **GET
+ * rows** (`docs/research/tracker-contract-favro-carriers.md` §1.3/§3) — a
+ * read-side row is not a write-side echo, and inferring one from the other is the
+ * step ADR-0003 refuses.
+ *
+ * That is a rule about the echo, not a ban on confirming a write. #101 closed by
+ * READING THE CARD BACK: `TxCards.moveColumn` throws on a mismatch, and the value
+ * it compares comes from a fresh `GET /cards/{cardId}` — the measured surface —
+ * never from the PUT. The three sites here could each buy a throw the same way,
+ * at one extra GET; none does, because reporting the hole is enough for them and
+ * an unread echo is not a hazard the way an unverified column move was.
  *
  * What all three DO is report the echo when it is there and report a hole when it
  * is not. Sites 1 and 3 are the same call on the same field, so they read the
@@ -364,10 +371,11 @@ describe('setFieldValue does not fail open onto its own argument', () => {
   });
 
   /**
-   * It must NOT throw. Throwing on an unmeasured echo is #101's regression: it
-   * takes out a working command to defend a hazard with no observed instance.
-   * `setArchived` may throw because #75 measured that echo; nothing measured this
-   * one.
+   * It must NOT throw. Throwing on an unmeasured ECHO is the shape #101's triage
+   * declined: it takes out a working command to defend a hazard with no observed
+   * instance. `setArchived` may throw because #75 measured that echo, and
+   * `moveColumn` may throw because it re-reads the card instead of trusting one;
+   * nothing measured this echo, and this site reads no card back.
    */
   it('an omitted echo is reported, not thrown — the echo is unmeasured', async () => {
     const { client } = await startServer('omit');
