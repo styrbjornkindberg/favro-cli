@@ -107,10 +107,18 @@ export function listBranches(): string[] {
  * directions write, so the failure reaches `git sync`, which refuses through its
  * error boundary rather than guessing.
  *
- * ponytail: the whole pass refuses, so one corrupt ref costs the listing of the
- * branches that were readable. Give `BranchCardMapping.status` an `'unknown'`
- * arm — and `git sync` a per-branch refusal — if that turns out to matter; the
- * write is what had to stop, and stopping it needed neither.
+ * ponytail: the whole pass refuses, and there is no partial answer to salvage —
+ * CORRECTED in review, the first version of this note named a ceiling that
+ * cannot occur. The git call below is the SAME for every branch (its argument is
+ * the default branch, not `branch`; `merged.includes(branch)` is the only
+ * per-branch step), so a failure here is global by construction: every branch
+ * fails or none does. An `'unknown'` status arm would mark them all unknown,
+ * which is this refusal with extra steps. The cost that IS real, measured on the
+ * built CLI: a `develop`-default clone with no `origin/HEAD` exits 1 on
+ * `git sync` even with nothing to sync, where it used to print "No branches with
+ * card references found." at exit 0. The upgrade path for that is a lazy default
+ * resolve — refuse when a target exists rather than when the listing starts —
+ * not a status arm.
  */
 export function isBranchMerged(branch: string): boolean {
   const defaultBranch = getDefaultBranch();

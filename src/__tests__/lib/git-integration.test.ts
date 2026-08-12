@@ -382,6 +382,11 @@ describe('git commands never reach /bin/sh', () => {
     const fromDefault = caught(() => getDefaultBranch());
     expect(fromDefault).toBeInstanceOf(RefusalError);
     expect((fromDefault as Error).message).toMatch(/no local `main` or `master`/);
+    // The REMEDY, pinned separately (added in review). Deleting just the
+    // `git remote set-head` sentence left every gate green: this arm matched the
+    // diagnosis half only, so the actionable half — the whole reason this is a
+    // refusal and not a failure — was decoration a later edit could drop.
+    expect((fromDefault as Error).message).toMatch(/git remote set-head origin <branch>/);
     // …and it reaches the caller `favro git sync` reads, which is the only reason
     // the refusal matters: no status is produced, so no card is moved.
     expect(caught(() => analyzeBranches())).toBeInstanceOf(RefusalError);

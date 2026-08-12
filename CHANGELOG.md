@@ -150,7 +150,10 @@ Issue #95, ADR-0006.
   `git branch --merged main` then fails for *every* branch at once in a clone whose
   default is `develop` — it now raises a `RefusalError` naming the remedy
   (`git remote set-head origin <branch>`). Found in review of #153; the swallowed-read
-  ratchet's `CATCH_DEBT` list drops from six entries to five.
+  ratchet's `CATCH_DEBT` list drops from six entries to five. Note the cost, measured on
+  the built CLI: a `develop`-default clone with no `origin/HEAD` now exits 1 on `git sync`
+  even when it has nothing to sync, where it used to print "No branches with card
+  references found." at exit 0 — the remedy is in the refusal.
 
 - A column that is *waiting* was counted as finished work. `detectStage` tested `approv`
   before `pending`, so `Pending Approval` read `approved` — done — and the unanchored `live`
