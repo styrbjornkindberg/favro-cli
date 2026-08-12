@@ -10,6 +10,7 @@
 import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import { RefusalError } from './refusal';
 
 // ─── Project Config (.favro.json) ─────────────────────────────────────────────
 
@@ -94,21 +95,40 @@ export function listBranches(): string[] {
 
 /**
  * Check if a branch has been merged into the default branch (main/master).
+ *
+ * THROWS when the check cannot run. It used to answer `false`, which was
+ * classified conservative on the grounds that `false` never advertises a branch
+ * as safe to delete — but nothing here deletes, and BOTH answers write:
+ * `analyzeBranches` spells `false` as status `'open'`, and `favro git sync`
+ * PATCHes every `'open'` card to "In Progress" (`git.ts:304` builds the target,
+ * `git.ts:373` sends it). So one failed `git branch --merged` moved finished
+ * work BACKWARDS, in volume — `getDefaultBranch()` naming a ref this clone does
+ * not have fails every branch at once. There is no safe default when both
+ * directions write, so the failure reaches `git sync`, which refuses through its
+ * error boundary rather than guessing.
+ *
+ * ponytail: the whole pass refuses, so one corrupt ref costs the listing of the
+ * branches that were readable. Give `BranchCardMapping.status` an `'unknown'`
+ * arm — and `git sync` a per-branch refusal — if that turns out to matter; the
+ * write is what had to stop, and stopping it needed neither.
  */
 export function isBranchMerged(branch: string): boolean {
   const defaultBranch = getDefaultBranch();
-  try {
-    const merged = git('branch', '--merged', defaultBranch, '--format=%(refname:short)')
-      .split('\n')
-      .filter(Boolean);
-    return merged.includes(branch);
-  } catch {
-    return false;
-  }
+  const merged = git('branch', '--merged', defaultBranch, '--format=%(refname:short)')
+    .split('\n')
+    .filter(Boolean);
+  return merged.includes(branch);
 }
 
 /**
  * Get the default branch (main or master).
+ *
+ * REFUSES rather than answering `'main'` for a repo that has no `main`. That
+ * answer was the trigger for the swallow above: `git branch --merged main` fails
+ * for every branch at once in a clone whose default is `develop`, and the
+ * failure then read as "nothing is merged". Naming a ref we did not find is a
+ * plausible answer built from input we could not read, which is the same defect
+ * one hop earlier.
  */
 export function getDefaultBranch(): string {
   try {
@@ -119,7 +139,11 @@ export function getDefaultBranch(): string {
     const branches = listBranches();
     if (branches.includes('main')) return 'main';
     if (branches.includes('master')) return 'master';
-    return 'main';
+    throw new RefusalError(
+      'Cannot determine the default branch: this repo has no refs/remotes/origin/HEAD, ' +
+      'and no local `main` or `master`. Point origin/HEAD at the right branch with ' +
+      '`git remote set-head origin <branch>`.',
+    );
   }
 }
 

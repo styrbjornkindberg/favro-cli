@@ -35,7 +35,7 @@
  * SEED TWO — the `try`/`catch` STATEMENT (#153). `try { cards = await
  * listCards(b) } catch { cards = [] }` is the identical substitution in a shape
  * seed one does not walk at all, and #149 shipped asserting that population was
- * zero. It is not zero: 15 of the 156 `catch` clauses in non-test `src/` match,
+ * zero. It is not zero: 14 of the 155 `catch` clauses in non-test `src/` match,
  * re-measured under this commit and triaged into `CATCH_DEBT`/`CATCH_DECIDED`
  * below. The seed is `ts.CatchClause`, and the error binding — absent, or present
  * and not destructured — takes the place of the handler's parameter list.
@@ -106,7 +106,7 @@
  *     survive the merge (#154 discharged all three reads), but the REASON did, in
  *     a stricter form: `DEBT` is now pinned EMPTY, and the arm that pins it claims
  *     there is no swallowed read "IN THE SHAPE THIS SCAN WALKS" whose caller
- *     cannot tell — a claim scoped to seed one. Folding seed two's six debts into
+ *     cannot tell — a claim scoped to seed one. Folding seed two's five debts into
  *     `DEBT` breaks the pin and falsifies the claim, so a collapse still costs a
  *     rewrite of the one line holding that population against growth. CORRECTED
  *     in review of #153: the merge resolution recorded this reason as dead, and it
@@ -131,7 +131,7 @@
  *     absence would refuse a whole artefact over display text; the three above
  *     are keyed off, so they still propagate.
  *
- * For a `CATCH_DEBT` line, also drop the `6` in the count assertion to `5` — the
+ * For a `CATCH_DEBT` line, also drop the `5` in the count assertion to `4` — the
  * count is pinned in BOTH directions on purpose, because "moved it to
  * `CATCH_DECIDED`" is the cheap way to discharge a defect without fixing it, and a
  * shrink is a two-character edit next to the line you are already deleting.
@@ -208,7 +208,7 @@ const DECIDED: Record<string, string> = {
  * Keyed `<file> <enclosing>() catch → <fallback>`, `#n` when one function has
  * several. NOT keyed on the line, which churns; see `enclosingName`.
  *
- * These SIX are triage, not a parking space. Each was read at its site under this
+ * These FIVE are triage, not a parking space. Each was read at its site under this
  * commit and the reason states what a caller actually observes — not "looks
  * sloppy". Fixing them is #153's follow-up and deliberately not #153: four other
  * branches were live in these files when this landed, and the checker fix is what
@@ -219,6 +219,14 @@ const DECIDED: Record<string, string> = {
  * hole on the card they return, the QUERY route of the two below, because
  * `cards get` answers a query. The whole `#1`–`#4` family went at once, so
  * nothing renumbered.
+ *
+ * `git-integration.ts isBranchMerged()`'s went next, by the OTHER route: a merge
+ * check has no envelope and no entity to hang a hole on, and its consumer is a
+ * write, so it PROPAGATES — `analyzeBranches` throws and `favro git sync` refuses
+ * through its error boundary instead of reading "we could not check" as 'open'
+ * and PATCHing finished cards back to "In Progress". `getDefaultBranch()` stopped
+ * answering `'main'` for a repo with no `main` in the same change, which was the
+ * trigger that failed every branch at once.
  */
 const CATCH_DEBT: Record<string, string> = {
   'src/commands/tasklists.ts boardOfTaskList() catch → \'\'':
@@ -231,8 +239,6 @@ const CATCH_DEBT: Record<string, string> = {
     '#153 — an unreadable directory is skipped and the scan still reports its TODO list as the answer; the fix is a skipped-paths count in the result, not a throw',
   'src/lib/todo-scanner.ts scanFile() catch → undefined':
     '#153 — same for a single unreadable file',
-  'src/lib/git-integration.ts isBranchMerged() catch → false':
-    '#153, RECLASSIFIED in review — `false` is not the conservative direction, because BOTH directions write. `analyzeBranches` turns it into status \'open\' and `favro git sync` then PATCHes every \'open\' card to "In Progress" (`git.ts:324` builds the target, `git.ts:355` sends it), so one failed `git branch --merged` moves finished work BACKWARDS, which is #148\'s exact harm rather than a passive report. `getDefaultBranch()` naming a ref this clone does not have fails every branch at once. There is no safe default; the read failure has to reach `git sync` instead of being spelled as a status',
 };
 
 /**
@@ -244,9 +250,11 @@ const CATCH_DEBT: Record<string, string> = {
  * predicate so it never raises them would blind it to `.catch(() => false)` on a
  * real read, which is the trade #149 already refused once.
  *
- * There were TEN. `isBranchMerged` was moved to `CATCH_DEBT` in review of #153:
+ * There were TEN. `isBranchMerged` was moved to `CATCH_DEBT` in review of #153 —
  * its entry argued `false` was conservative because the caller only reports, and
- * the caller writes. A wrong line HERE discharges a real defect permanently, since
+ * the caller writes — and has since been discharged from there by propagating, so
+ * the clause is gone from both lists. A wrong line HERE discharges a real defect
+ * permanently, since
  * no arm can ever complain about it — so every entry names what a caller does with
  * the fallback, not just what the fallback is.
  */
@@ -430,11 +438,11 @@ function ignoresError(bound: ts.BindingName | undefined): boolean {
  * half of a `catch` clause's key.
  *
  * A `catch` clause has no read to name the way a promise handler's receiver does:
- * its `try` block can hold several calls, and naming the first one misnames 5 of
- * the 15 live sites (`isValidWebhookUrl/trim`, `writeFile/cacheFilePath`,
- * `parseBasicAuth/toString`, `isBranchMerged/filter`, and `wirePath`, which has no
+ * its `try` block can hold several calls, and naming the first one misnames 4 of
+ * the 14 live sites (`isValidWebhookUrl/trim`, `writeFile/cacheFilePath`,
+ * `parseBasicAuth/toString`, and `wirePath`, which has no
  * call at all). The enclosing declaration is stable under edits above it, unique
- * for 13 of the 15 on its own, and actually findable by a human — which the key's
+ * for 12 of the 14 on its own, and actually findable by a human — which the key's
  * whole job is.
  */
 function enclosingName(node: ts.Node): string {
@@ -610,12 +618,12 @@ describe('no read answers a failure with emptiness, outside the two lists', () =
     // swallowing or not, so it goes red if `isPromise` or the walk collapses.
     expect(handlerSites).toBeGreaterThanOrEqual(12);
     expect(sourceFiles.length).toBeGreaterThan(100);
-    // Seed two's floor. Measured at 156 clauses under this commit; a collapse of
+    // Seed two's floor. Measured at 155 clauses under this commit; a collapse of
     // the walk or of `ts.isCatchClause` would report zero swallows and pass.
     // It said 160 for the length of #153 — the figure the header was corrected
     // FROM, left behind here by the same change that corrected every other
-    // instance. Re-measured in review: 156, and the four that went are
-    // `getCardById`'s.
+    // instance. Re-measured in review: 156, four of which were `getCardById`'s;
+    // 155 since `isBranchMerged`'s clause was deleted rather than relabelled.
     expect(catchClauses).toBeGreaterThanOrEqual(120);
   });
 
@@ -631,18 +639,18 @@ describe('no read answers a failure with emptiness, outside the two lists', () =
     // exemption above. It held the three `init` reads until #154 made them
     // propagate, so there is now no swallowed read IN THE SHAPE THIS SCAN WALKS
     // that its caller cannot tell about — not the same thing as none in `src/`,
-    // which the header's fifteen untriaged `ts.CatchClause` sites forbid saying.
+    // which the header's fourteen untriaged `ts.CatchClause` sites forbid saying.
     // A new line here would be a regression rather than a record of one.
     expect(Object.keys(DEBT).sort()).toEqual([]);
   });
 
-  it('the catch lists hold the fifteen clauses they were triaged at, split 6/9', () => {
+  it('the catch lists hold the fourteen clauses they were triaged at, split 5/9', () => {
     // The exemption and exactly-once arms already pin the SET of catch keys. What
     // they cannot see is the SPLIT: silently moving a key from `CATCH_DEBT` to
     // `CATCH_DECIDED` would discharge a defect by relabelling it, and parking a
-    // seventh build in `CATCH_DEBT` is the failure mode #149's header names. Both
+    // sixth build in `CATCH_DEBT` is the failure mode #149's header names. Both
     // move a count.
-    expect(Object.keys(CATCH_DEBT)).toHaveLength(6);
+    expect(Object.keys(CATCH_DEBT)).toHaveLength(5);
     expect(Object.keys(CATCH_DECIDED)).toHaveLength(9);
     // Disjoint, or `EXEMPT`'s spread would silently let the later list win and one
     // of the counts above would be describing a key nobody reads.
@@ -797,7 +805,7 @@ describe('seed two — the try/catch statement, through the same scan (#153)', (
     expect(scan(inFn('c', 'const o: { v?: string[] } = {}; try { o.v = await read(); } catch { o.v = []; } return o.v ?? [];')))
       .toEqual(['src/__synthetic__.ts c() catch → []']);
     // The empty body — `catch { /* best effort */ }`, which is the single most
-    // common live spelling here (6 of the 15; the other nine are `return`s).
+    // common live spelling here (6 of the 14; the other eight are `return`s).
     expect(scan(inFn('d', 'const o: { v?: string[] } = {}; try { o.v = await read(); } catch { } return o.v ?? [];')))
       .toEqual(['src/__synthetic__.ts d() catch → undefined']);
     // A bare `return;`.

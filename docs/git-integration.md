@@ -64,6 +64,8 @@ Sync reads every branch except the default one and maps it to a card:
 
 Sync never deletes cards and never unlinks branches — it only updates card status.
 
+Sync needs a default branch to compare against: `refs/remotes/origin/HEAD`, or a local `main` or `master`. A repo with none of those — a clone whose default is `develop`, say — refuses instead of guessing `main`, and the remedy is in the refusal (`git remote set-head origin <branch>`). A merge check that cannot run refuses for the same reason: "we could not check" is never reported as *not merged*, because *not merged* is what moves a card to "In Progress".
+
 ## Git Todos
 
 ```bash

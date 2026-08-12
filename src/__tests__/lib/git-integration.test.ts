@@ -21,9 +21,11 @@ import {
   hasStagedChanges,
   isGitRepo,
   getDefaultBranch,
+  isBranchMerged,
   analyzeBranches,
   FavroProjectConfig,
 } from '../../lib/git-integration';
+import { RefusalError } from '../../lib/refusal';
 
 // Node 22 makes child_process exports non-configurable, so jest.spyOn cannot
 // wrap them. Delegate to the real implementation and record the argv.
@@ -317,5 +319,71 @@ describe('git commands never reach /bin/sh', () => {
       cardId: '1122334455667788',
       status: 'current',
     });
+  });
+
+  /** The error a call threw, as a value — `toThrow(Class)` only matches a name. */
+  const caught = (fn: () => unknown): unknown => {
+    try {
+      fn();
+      return undefined;
+    } catch (error) {
+      return error;
+    }
+  };
+
+  // The hole the classification witness above could not see: a merge check that
+  // CANNOT RUN answered `false`, `analyzeBranches` spelled that as 'open', and
+  // `favro git sync` PATCHes every 'open' card to "In Progress" — so a repo git
+  // could not read moved finished work backwards, in volume.
+  //
+  // The first assertion is the DISCRIMINATOR. The same branch in the same repo is
+  // first genuinely unmerged and then unreadable, so a fixture too thin to tell
+  // those apart fails here rather than passing for both implementations.
+  test('a merge check that cannot run reaches the caller instead of reading as "not merged"', () => {
+    rawGit(['commit', '-m', 'first']);
+    rawGit(['checkout', '-q', '-b', 'feature/1122334455667788-open']);
+    fs.writeFileSync(path.join(repo, 'c.txt'), 'c\n');
+    rawGit(['add', 'c.txt']);
+    rawGit(['commit', '-m', 'open work']);
+    rawGit(['checkout', '-q', 'main']);
+
+    expect(isBranchMerged('feature/1122334455667788-open')).toBe(false);
+
+    // A clone whose upstream default was deleted: origin/HEAD still resolves to a
+    // NAME, so `getDefaultBranch()` succeeds and `git branch --merged <name>`
+    // then exits non-zero for every branch at once.
+    rawGit(['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/gone']);
+    expect(getDefaultBranch()).toBe('gone');
+
+    expect((caught(() => isBranchMerged('feature/1122334455667788-open')) as Error).message)
+      .toMatch(/malformed object name/);
+    expect((caught(() => analyzeBranches()) as Error).message)
+      .toMatch(/malformed object name/);
+  });
+
+  // The TRIGGER for that swallow, one hop earlier: `getDefaultBranch()` returned
+  // 'main' unconditionally when it found neither main nor master, which is a
+  // plausible ref name manufactured from a read that came back empty. Every merge
+  // check in such a repo then failed at once.
+  test('a repo with neither main nor master refuses instead of naming a branch it did not find', () => {
+    rawGit(['commit', '-m', 'first']);
+    rawGit(['branch', '-m', 'develop']);
+    rawGit(['checkout', '-q', '-b', 'feature/aabbccddeeff0011-work']);
+    fs.writeFileSync(path.join(repo, 'd.txt'), 'd\n');
+    rawGit(['add', 'd.txt']);
+    rawGit(['commit', '-m', 'more work']);
+    rawGit(['checkout', '-q', 'develop']);
+
+    // rawGit, not listBranches(): the module under test does not get to be the
+    // witness for "there really is no main or master in this repo".
+    expect(rawGit(['branch', '--list', '--format=%(refname:short)']).split('\n').sort())
+      .toEqual(['develop', 'feature/aabbccddeeff0011-work']);
+
+    const fromDefault = caught(() => getDefaultBranch());
+    expect(fromDefault).toBeInstanceOf(RefusalError);
+    expect((fromDefault as Error).message).toMatch(/no local `main` or `master`/);
+    // …and it reaches the caller `favro git sync` reads, which is the only reason
+    // the refusal matters: no status is produced, so no card is moved.
+    expect(caught(() => analyzeBranches())).toBeInstanceOf(RefusalError);
   });
 });

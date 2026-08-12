@@ -138,6 +138,20 @@ Issue #95, ADR-0006.
 
 ### Fixed
 
+- **`favro git sync` moved finished cards backwards whenever the merge check could not
+  run.** `isBranchMerged` answered `false` for a failed `git branch --merged`,
+  `analyzeBranches` spelled that as status `'open'`, and `git sync` PATCHes every `'open'`
+  card to "In Progress" — so one unreadable repo moved every card-linked Done card back to
+  In Progress, in volume. The `false` was classified conservative on the grounds that it
+  never advertises a branch as safe to delete; `git sync` deletes nothing, and both
+  answers write. The failure now propagates, so `analyzeBranches` throws and `git sync`
+  refuses instead of guessing a status. Its trigger went with it: `getDefaultBranch()`
+  returned `'main'` unconditionally when it found neither `main` nor `master`, and
+  `git branch --merged main` then fails for *every* branch at once in a clone whose
+  default is `develop` — it now raises a `RefusalError` naming the remedy
+  (`git remote set-head origin <branch>`). Found in review of #153; the swallowed-read
+  ratchet's `CATCH_DEBT` list drops from six entries to five.
+
 - A column that is *waiting* was counted as finished work. `detectStage` tested `approv`
   before `pending`, so `Pending Approval` read `approved` — done — and the unanchored `live`
   in the done branch matched inside "de**live**ry", so `Delivery`, `Deliverables` and
