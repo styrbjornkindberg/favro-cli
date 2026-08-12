@@ -8,6 +8,45 @@ that set that version, `a13a02a`) and this release. Commands were driven with
 `FAVRO_CONFIG_DIR` pointed at a throwaway config and no real credentials, so exit codes
 and streams are real and no request reached a live org.
 
+## 3.1.0 — unreleased
+
+### Changed
+
+- **`cards update` writes through the one dispatch table (#108).** The field writes were a
+  private path with no compensation log; they now go through the `update` intent, so they
+  inherit the mandatory scope lock, the boardless-write refusal, the 20-write cap and a
+  rollback. A failure on the third field unwinds the first two and reports `rolled-back`
+  instead of leaving a half-applied card.
+
+- **`cards update <card> --dry-run` now checks the scope lock before it previews.** It
+  returned from the preview first, so under a configured lock a dry run printed
+  `[dry-run] Would update card …` for a card the real run refuses — misinformation in the
+  one flag a careful caller reaches for first. The `--from-csv` path (#103) and the
+  `--board` predicate path already ordered it correctly; the single-card path was the
+  straggler, which is why neither sibling fix revealed it. Cost: one `GET /cards/<id>` on a
+  dry run that previously made no request at all.
+
+- **`--column` is now a second spelling of `--status`, not a second field.** Both mean "put
+  the card in this column", and the intent resolves the name against the card's own board,
+  so `--board` is no longer required alongside it. What that gives up, stated rather than
+  hidden: a name that is not a column of the card's board now refuses and lists that
+  board's real columns, where before it PUT `{columnId, boardId}` — a combined cross-board
+  move nothing has measured and one with no compensating write. `--status` and `--column`
+  naming different columns refuses as ambiguous rather than silently preferring one.
+
+- `--comment` stays outside the table on purpose: a comment has no compensating write, so
+  it is not an intent and cannot join the transaction. That is why the hoisted scope check
+  still runs when there are no fields to dispatch — it is the only guard on a comment-only
+  invocation.
+
+### Fixed
+
+- A whitespace-only `--tags` entry (`--tags "bug, ,urgent"`) reached the tag resolver as a
+  blank tag *name*, and an unknown name on a write is a tag creation. It is dropped now.
+  The trim was added with a broader justification than it deserved — every downstream
+  resolver already trims, so a spaced-but-nonempty ` bug ` always resolved correctly — and
+  a mutation run found the real case the trim covers, which is now the case pinned.
+
 ## 3.0.0 — 2026-08-12
 
 Four breaking changes, all in how the CLI is *called* and how it *answers*. The library
