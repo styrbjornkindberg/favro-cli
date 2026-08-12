@@ -31,6 +31,11 @@ const BOARD = 'board-in-scope';
 const COLLECTION = 'collection-locked';
 const COL_WIRE = 'col-wire';
 const COL_NAMELESS = 'col-no-board';
+/** Carries BOTH spellings, disagreeing — the measured one must win. */
+const COL_BOTH = 'col-both';
+/** Carries `boardId` for real and `widgetCommonId` as an empty string. */
+const COL_EMPTY_WIRE = 'col-empty-wire';
+const STALE_BOARD = 'board-stale';
 
 /** Every server this file started, so a failed assertion cannot leak one. */
 const running: http.Server[] = [];
@@ -50,6 +55,10 @@ function startServer(): Promise<{ client: FavroHttpClient; urls: string[] }> {
       let body: unknown = {};
       if (url.startsWith(`/api/v1/columns/${COL_NAMELESS}`)) {
         body = { columnId: COL_NAMELESS, name: 'Orphan', position: 0 };
+      } else if (url.startsWith(`/api/v1/columns/${COL_BOTH}`)) {
+        body = { columnId: COL_BOTH, name: 'Both', position: 0, boardId: STALE_BOARD, widgetCommonId: BOARD };
+      } else if (url.startsWith(`/api/v1/columns/${COL_EMPTY_WIRE}`)) {
+        body = { columnId: COL_EMPTY_WIRE, name: 'Empty wire', position: 0, boardId: BOARD, widgetCommonId: '' };
       } else if (url.startsWith(`/api/v1/columns/${COL_WIRE}`)) {
         body = { columnId: COL_WIRE, name: 'Doing', position: 1, widgetCommonId: BOARD, cardCount: 3 };
       } else if (url.startsWith('/api/v1/columns')) {
@@ -120,6 +129,30 @@ describe('a column carries its board as widgetCommonId', () => {
 
     // And it resolved by ASKING about that board — not by skipping the check.
     expect(urls).toContain(`/api/v1/widgets/${BOARD}`);
+  });
+
+  it('both spellings, disagreeing: the MEASURED one wins', async () => {
+    const { client } = await startServer();
+
+    const column = await new ColumnsAPI(client).getColumn(COL_BOTH);
+
+    // `widgetCommonId` is what the wire was measured to send; `boardId` is this repo's
+    // own normalised name. Letting the unmeasured spelling win a disagreement would
+    // resolve the scope lock against a board the wire never named.
+    expect(column.boardId).toBe(BOARD);
+    expect(column.boardId).not.toBe(STALE_BOARD);
+  });
+
+  it('an empty spelling is not a board id — it falls through to the one that is', async () => {
+    const { client } = await startServer();
+
+    const column = await new ColumnsAPI(client).getColumn(COL_EMPTY_WIRE);
+
+    // `''` is the exact value that produced the original defect: it reaches `checkScope`
+    // and reads as "no board". A present-but-empty `widgetCommonId` must not shadow a
+    // real `boardId`, which is why the fallback chain is `||` and not `??`.
+    expect(column.boardId).toBe(BOARD);
+    await expect(checkScope(column.boardId ?? '', client, lockedConfig, false)).resolves.toBeUndefined();
   });
 
   it('a column carrying neither spelling still refuses — fail-closed is preserved', async () => {

@@ -40,6 +40,20 @@ export interface Column {
  * `widgetCommonId` — and a payload with neither spelling keeps `boardId`
  * `undefined`, which is what the scope check needs in order to refuse.
  *
+ * Two details that a mutation run proved were unasserted, and are now pinned:
+ *
+ * **`widgetCommonId` wins when both are present.** It is the spelling the wire was
+ * measured to send; `boardId` is this repo's own normalised name, so a payload carrying
+ * both would mean either that Favro started sending `boardId` too, or that an
+ * already-normalised object is being normalised again. In the first case the measured
+ * field is the one to trust, and in the second the two agree and the order cannot matter.
+ * Letting the unmeasured spelling win a disagreement is the shape ADR-0003 exists to stop.
+ *
+ * **An empty string is not a board id**, from either spelling — hence `||` and not `??`.
+ * `''` reaching `checkScope` is the exact value that produced the original defect, and it
+ * has to arrive as `undefined` so the refusal fires rather than a lock silently checking
+ * nothing. `undefined` is the fail-closed value here; `''` only looks like one.
+ *
  * ponytail: the two WRITE paths (`createColumn`, `updateColumn`) deliberately return
  * their response unnormalised. No caller reads `boardId` off either — both print
  * `columnId`/`name` or dump the payload verbatim, and normalising there would put a key
@@ -48,7 +62,7 @@ export interface Column {
  * the use site.
  */
 function normalizeColumn(raw: Column): Column {
-  const boardId = raw.boardId ?? raw.widgetCommonId;
+  const boardId = raw.widgetCommonId || raw.boardId || undefined;
   return boardId === undefined ? raw : { ...raw, boardId };
 }
 
