@@ -1304,6 +1304,35 @@ describe('a column move is confirmed by RE-READING the card, never by the PUT ec
     expect(stand.cards.get(CARD)!.columnId).toBe(TODO);
   });
 
+  it('a re-read carrying NO column is a failure, not a pass — absent is not "where we asked"', async () => {
+    // `Card.columnId` is OPTIONAL, and the entity that has none is real: an
+    // assignment fork carries no `widgetCommonId` and no `columnId`. `claim` and
+    // `resolve` cannot reach one — `trackerCard` refuses a boardless card before
+    // either writes — but `moveColumn` is a facade op any intent may call on any
+    // `cardId`, so the comparison has to hold absent-is-not-equal on its own.
+    //
+    // Without this arm the guard could be written `after.columnId !== undefined &&
+    // after.columnId !== columnId` and the whole suite stayed green: measured, 173
+    // suites and 3648 tests passed with the absent case failing OPEN. That is the
+    // fail-closed direction ADR-0003 and this facade both require, and it was the
+    // one direction nothing asserted.
+    const stand = await startServer({
+      afterWrite: ({ cards }, wrote) => {
+        if (wrote !== 1) return;
+        delete cards.get(CARD)!.columnId;
+      },
+    });
+
+    const result = await dispatch('probe-move', { card: CARD, to: 'Doing' }, ctx(stand));
+
+    expect(result.outcome).toBe('rolled-back');
+    expect(result.error).toMatch(/answered 200 but the card did not land there/);
+    // The message reports the absence as an absence, not as an empty string.
+    expect(result.error).toContain('a re-read of the card reads columnId=undefined');
+    // Nothing logged, so no compensating write went out at a card with no column.
+    expect(puts(stand.received)).toHaveLength(1);
+  });
+
   it('a confirmation read that FAILS keeps the compensation entry — the write may have landed', async () => {
     // The window the re-read opens, and the one the two causes above do not
     // cover. `getCard` can fail for reasons that say nothing about the write:
