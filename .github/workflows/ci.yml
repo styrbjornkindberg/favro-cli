@@ -13,7 +13,11 @@ jobs:
 
     strategy:
       matrix:
-        node-version: [18.x, 20.x]
+        # 22.x is what development actually runs on; 18/20 stay because
+        # package.json declares engines.node ">=18.0.0". Adding an entry adds a
+        # published check name — `Unit Tests & Coverage (22.x)` — so branch
+        # protection has to be re-pinned or it guards two thirds of the matrix.
+        node-version: [18.x, 20.x, 22.x]
 
     steps:
       - uses: actions/checkout@v4
@@ -101,3 +105,15 @@ jobs:
       # — without it madge finds 0 files and passes for the wrong reason.
       - name: Import cycle check
         run: npm run check:cycles
+
+      # A step here rather than its own job: `tsc` is already this job's tool,
+      # so it reuses the checkout and `npm ci` instead of duplicating them.
+      # Measured, so the ceiling is known: the same type error in `src/` fails
+      # BOTH `npm run typecheck` and `npm run build`, because tsconfig.test.json
+      # extends tsconfig.json and only widens `exclude` — the build's file set
+      # is a subset. What this adds is the emit half `--noEmit` never runs (a
+      # dist/ that does not compile is a known failure mode here) and a guard on
+      # that subset relation: if the two configs ever diverge, the file only the
+      # build sees is checked by this step and nothing else.
+      - name: Build (emit dist/)
+        run: npm run build

@@ -444,6 +444,29 @@ Issue #95, ADR-0006.
   per-suite `PASS` header lines *are* lost under `--runInBand` (failure blocks and the summary are
   not, and CI's worker mode is unaffected), and `mkdtempSync` is **55 → 46**, not 45 → 36.
 
+- CI builds, and the unit-test matrix covers the version development runs on (#159).
+
+  `npm run build` had never run in CI, so `dist/` was unverified on every commit — the
+  failure mode already seen here is help text disagreeing with source, which reads as a
+  source defect and is not. It is now a step in the `TypeScript Check` job rather than a
+  job of its own: `tsc` is that job's tool already, so it reuses the checkout and `npm
+  ci`, and it adds no new check name for branch protection to pin. The ceiling is
+  measured, not assumed: the same deliberate `TS2322` in `src/index.ts` fails **both**
+  `npm run build` (exit 2) and `npm run typecheck` (exit 2), because tsconfig.test.json
+  extends tsconfig.json and only widens `exclude`, so the build's file set is a subset.
+  The step therefore buys the emit half `--noEmit` never runs, plus a guard on that
+  subset relation if the two configs ever diverge — not new type coverage.
+
+  The node matrix was `[18.x, 20.x]`; development runs 22. It is now `[18.x, 20.x,
+  22.x]`, with 18 and 20 kept because `engines.node` is `">=18.0.0"`. This adds a
+  published check, `Unit Tests & Coverage (22.x)`, so the required-status list has to be
+  re-pinned — a required check whose name matches no job never fires, and the new job is
+  not required until it is named.
+
+  Also measured while there, and deliberately left alone: CI's `npx jest --coverage
+  --no-verbose` and the local `npm test` (`jest`) resolve the same `jest.config.js` and
+  run the same suite — **172 suites / 3632 tests** both ways. No divergence to fix.
+
 ### Known gaps at release
 
 - The output migration is incomplete — see the caveat under Breaking #1.
