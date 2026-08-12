@@ -149,6 +149,11 @@ describe('init — resolving the collection', () => {
     expect(Object.keys(writtenContext().notes).sort()).toEqual(['cardIds', 'moveCards', 'scope']);
     expect(writtenContext().notes.scope).toContain('STALE');
     expect(writtenContext().notes.scope).toContain('~/.favro/config.json');
+    // BOTH polarities, or the note is only pinned to MENTION a provenance, not to
+    // pick one: a note carrying the stale wording AND the raw-id wording satisfies
+    // every positive assertion here and tells a reader nothing, which is the whole
+    // defect this marker exists to fix. Asserted in review.
+    expect(writtenContext().notes.scope).not.toContain('raw `collectionId`');
     // The human half, same as the membership fallback's.
     expect(errors()).toContain("collection's name could not be read");
     expect(process.exitCode).toBeUndefined();
@@ -159,6 +164,26 @@ describe('init — resolving the collection', () => {
   // name it is looking at was ever typed by a human or is just the id again.
   test('with no stored name it falls back to the raw id, and the note says THAT', async () => {
     (config.readConfig as jest.Mock).mockResolvedValue({ scopeCollectionId: 'coll-1' });
+    MockCollections.prototype.getCollection = jest.fn().mockRejectedValue(new Error('403'));
+
+    await runCli(['init']);
+
+    expect(writtenContext().scope.collectionName).toBe('coll-1');
+    expect(writtenContext().notes.scope).toContain('raw `collectionId`');
+    expect(writtenContext().notes.scope).not.toContain('STALE');
+    // The mirror of the assertion above, for the same reason.
+    expect(writtenContext().notes.scope).not.toContain('~/.favro/config.json');
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  // The value predicate and the NOTE's predicate have to be the same one. They
+  // were not: the value was `stored ?? collectionId` and the note is truthiness,
+  // so a stored EMPTY name wrote `collectionName: ""` under a note announcing
+  // "the raw `collectionId`" — the marker added to stop a fallback lying was
+  // itself naming the wrong fallback. Found in review; `''` is in type
+  // (`scopeCollectionName?: string`) and `scope set` copies it off the wire.
+  test('an empty stored name is "there is none", and the note is not allowed to disagree', async () => {
+    (config.readConfig as jest.Mock).mockResolvedValue({ scopeCollectionId: 'coll-1', scopeCollectionName: '' });
     MockCollections.prototype.getCollection = jest.fn().mockRejectedValue(new Error('403'));
 
     await runCli(['init']);

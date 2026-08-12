@@ -92,7 +92,7 @@ facets that can hold a fallback instead say so in `notes`:
 | `"team": {}` **and no** `notes.team` | the membership filter ran, and matched nobody |
 | `"team": {}` **with** `notes.team` | the collection's `sharedToUsers` could not be read, so `team` fails closed to nobody rather than opening to the whole org. It is stated in the file because a privacy filter that cannot run must not be skipped. |
 | `scope.collectionName` **and no** `notes.scope` | `GET /collections/:id` answered, and that is the collection's name |
-| `scope.collectionName` **with** `notes.scope` | that read failed, so the name is a fallback and NOT a measurement. The note says which of the two: the name in your local `~/.favro/config.json`, which may be stale, or the raw `collectionId` when there is none. This one facet falls back rather than refusing, because the name is display text and `collectionId` is always the real one — but the fallback announces itself, so it is never mistaken for the name. |
+| `scope.collectionName` **with** `notes.scope` | that read failed, so the name is a fallback and NOT a measurement. The note says which of the two: the name in your local `~/.favro/config.json`, which may be stale, or the raw `collectionId` when there is none. Like `team` above, this facet falls back rather than refusing — the name is display text and `collectionId` is always the real one — but the fallback announces itself, so it is never mistaken for a measurement. |
 
 The one thing this costs: a partially-readable workspace produces no file until
 the key can read every facet. `favro init --refresh` is the retry.

@@ -312,6 +312,15 @@ Issue #95, ADR-0006.
   grow a state. `docs/repo-context.md`'s table gains a row for each provenance, and the
   "every value is a measurement" claim removed in review of #154 is restored — with the two
   fallbacks named, since both now announce themselves.
+
+  **Fixed in review:** the marker named the wrong fallback for one input. The value was
+  picked with `??` and the note's wording with truthiness, so a stored *empty* name kept
+  `scope.collectionName: ""` under a note announcing "the raw `collectionId`" — the marker
+  added to stop a fallback lying was itself lying about which fallback it was. Both now read
+  the same predicate (`||`), which is also what the doc's table already said the id arm was
+  for: an empty stored name is "there is none". The two provenance tests also asserted only
+  that the note MENTIONS a provenance, so a note carrying both wordings passed — both
+  polarities are pinned now.
 - The same preview-before-lock defect as #152's four, at five more commands — the ones #152
   generalised its fix over instead of fixing: `dependencies delete`, `dependencies
   delete-all`, `custom-fields set`, `git todos` and `git sync` all returned from their

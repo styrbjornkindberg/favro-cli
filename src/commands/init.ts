@@ -195,8 +195,15 @@ export async function initHandler(ctx: Ctx, options: InitOptions) {
     const coll = await ctx.api.collections.getCollection(collectionId);
     collectionName = coll.name;
   } catch {
+    // `||`, not `??`, and the note below reads the SAME predicate. They used to
+    // disagree on one value: `??` kept a stored `''` as the name while the note,
+    // which is truthiness, announced "the raw `collectionId`" — so the marker
+    // added to stop a fallback lying named the wrong fallback, and the file said
+    // the name was the id while holding an empty string. An empty stored name is
+    // "there is none", which is what the doc's table already says the id arm is
+    // for. `scopeCollectionName` comes straight off the wire in `scope set`.
     const stored = config.scopeCollectionName;
-    collectionName = stored ?? collectionId;
+    collectionName = stored || collectionId;
     scopeNote =
       "The collection's name could not be read, so `scope.collectionName` is " +
       (stored
