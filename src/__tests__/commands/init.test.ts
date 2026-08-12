@@ -238,6 +238,36 @@ describe('init — the file it writes', () => {
     expect(Object.keys(writtenContext().boards)).toEqual(['atgarder-forbattringar']);
   });
 
+  test('two board names that slug alike both survive, and the one that did not collide is not renumbered', async () => {
+    // `boards[slug] = {…}` was a bare assignment onto a map whose key is
+    // DERIVED: `slugify` collapses every `[^a-z0-9]+` run and truncates to 30,
+    // so two distinct board names collapse to one key and the later board
+    // silently replaced the earlier one. It was then absent from context.json
+    // with nothing saying so — and this file's whole contract is that an
+    // absent thing is a finding, not a failed read (#154). A board that is
+    // simply gone is the same lie one level up.
+    MockBoards.prototype.listBoardsByCollection = jest.fn().mockResolvedValue([
+      { boardId: 'b-1', name: 'Sprint 42' },
+      { boardId: 'b-2', name: 'Sprint: 42' },
+      { boardId: 'b-3', name: 'Sprint 43' },
+      // `in` would call this a collision against `Object.prototype.constructor`
+      // and rename it on a board list where nothing collides.
+      { boardId: 'b-4', name: 'Constructor' },
+    ]);
+
+    await runCli(['init']);
+
+    const boards = writtenContext().boards;
+    expect(Object.keys(boards).sort()).toEqual(['constructor', 'sprint-42', 'sprint-42-2', 'sprint-43']);
+    // The first to claim a slug keeps the bare one. These keys are the
+    // interface agents resolve boards by (`docs/repo-context.md` rule 2), so a
+    // collision must not move a key that was never in the collision.
+    expect(boards['sprint-42'].boardId).toBe('b-1');
+    expect(boards['sprint-42-2'].boardId).toBe('b-2');
+    expect(boards['sprint-43'].boardId).toBe('b-3');
+    expect(boards['constructor'].boardId).toBe('b-4');
+  });
+
   test('a board with NO columns is recorded with no `workflow` key at all', async () => {
     // The absent half of the pair below. `/columns` ANSWERED and this board has
     // none, so the omission is a measurement — and it is an omission, not a

@@ -414,8 +414,28 @@ Issue #95, ADR-0006.
   `favro tracker init`, and rule 5 names them instead of promising two exceptions.
   `docs/adr/0008-stage-is-display-only.md` settles how far the heuristic is trusted — display
   only — and argues down the alternative of announcing `stage` in `notes`: those keys mark a
-  facet that fell back *on this run*, and a key that is always present marks nothing. No code
-  changed; `src/__tests__/commands/init.test.ts` gains one assertion holding the doc to it.
+  facet that fell back *on this run*, and a key that is always present marks nothing.
+  `src/__tests__/commands/init.test.ts` gains one assertion holding the doc to it.
+
+  **Review found the walk had stopped one slot short, and the slot it missed was losing data.**
+  The `boards` KEY is derived too — `slugify` collapses every `[^a-z0-9]+` run and truncates to
+  30 chars — and `boards[slug] = {…}` was a bare assignment, so two board names that slug alike
+  left only the LATER board in the file. `Sprint 42` and `Sprint: 42` both key to `sprint-42`,
+  and the first board was simply absent, with nothing saying so — the #154 defect one level up,
+  in the same artefact. The first board to claim a slug now keeps the bare key and a later
+  collider takes the next free numeric suffix, so a board that did not collide is never
+  renumbered (`hasOwnProperty`, not `in`, or a board named `Constructor` collides with the
+  prototype on a list of one). Three more, same walk: the *Workflow Stage Detection* keyword
+  table did not match `detectStage` — it omitted the wait-word branch that runs FIRST and
+  printed `klar`, `live`, `approv`, `godkän`, `accept`, `sign-off` for the patterns ADR-0005
+  narrowed to `(?<!o)klar`, `\blive\b`, `approved`, `godkän[dt]`, `accept(?!ance)`,
+  `signed.?off`, so the branches are now reproduced verbatim as code rather than paraphrased;
+  the new prose called `stage` "the one value" that is neither measured nor announced three
+  sections below the paragraph that had just called them two; and the premise both the doc and
+  ADR-0008 leaned on — *a `notes` entry marks a facet that fell back on this run* — is false of
+  `notes.cardIds` and `notes.moveCards`, which are always present, so it is now scoped to the
+  conditional keys it was actually about. `ContextBoard.description` and
+  `ContextCustomField.description` were declared and never written; deleted.
 
 - `cards export` no longer draws its spinner over its own error message. `Spinner.start()` opens
   an `unref`'d `setInterval` that only `stop()` clears, and the board fetch sat between

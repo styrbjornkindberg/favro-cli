@@ -73,14 +73,16 @@ interface ContextBoard {
   boardId: string;
   name: string;
   type?: string;
-  description?: string;
   workflow?: ContextWorkflowStep[];
 }
 
+// This and `ContextBoard` used to declare a `description?: string` that
+// `initHandler` never writes and nothing reads. These interfaces ARE the schema
+// an agent reads `context.json` against, so a slot that never appears is the
+// interface promising something the file does not keep.
 interface ContextCustomField {
   fieldId: string;
   type: string;
-  description?: string;
   options?: Record<string, string>;
 }
 
@@ -223,7 +225,32 @@ export async function initHandler(ctx: Ctx, options: InitOptions) {
   const boards: Record<string, ContextBoard> = {};
   for (const board of rawBoards) {
     console.log(`  Board: ${board.name}`);
-    const slug = slugify(board.name);
+
+    // The key is DERIVED, and derivation loses information: `slugify` collapses
+    // every `[^a-z0-9]+` run and truncates to 30, so two distinct board names
+    // can collapse to one key. `boards[slug] = {…}` below was a bare assignment,
+    // so the later board silently REPLACED the earlier one, which was then
+    // absent from context.json with nothing saying so. This file's contract is
+    // that an absent thing is a finding and not a failed read (#154) — a board
+    // that is simply gone is that same lie one level up.
+    //
+    // The first board to claim a slug keeps the bare one, deliberately: these
+    // keys are the interface agents resolve boards by (`docs/repo-context.md`
+    // rule 2), so a collision must not move a key that was never in it.
+    //
+    // `hasOwnProperty`, not `in`: `in` walks the prototype, so a board named
+    // `Constructor` would read as colliding with `Object.prototype.constructor`
+    // and be renumbered on a board list where nothing collides at all.
+    //
+    // ponytail: linear probe, and the suffix may push the key past 30 chars. A
+    // collection holds tens of boards; re-truncating to fit could only collide
+    // again.
+    let slug = slugify(board.name);
+    if (Object.prototype.hasOwnProperty.call(boards, slug)) {
+      let n = 2;
+      while (Object.prototype.hasOwnProperty.call(boards, `${slug}-${n}`)) n++;
+      slug = `${slug}-${n}`;
+    }
 
     // Fetch columns for workflow. NOT tolerated — see the header. A failed
     // read became `[]`, which the ternary below wrote as an ABSENT `workflow`,
