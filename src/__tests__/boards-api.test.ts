@@ -137,29 +137,35 @@ describe('Boards API', () => {
     });
   });
 
-  test('getBoardWithIncludes computes stats when requested', async () => {
-    const boardWithCards = {
-      ...sampleBoard,
-      cardCount: 3,
-      cards: [
-        { status: 'Done' },
-        { status: 'In Progress' },
-        { status: 'Todo' },
-      ] as any,
-    };
-    mockClient.get.mockResolvedValue(boardWithCards);
+  // This test used to hand the widget a hand-written three-card `cards` array and
+  // assert the counts derived from it — the fixture that let the printed zeros
+  // ship, since `GET /widgets/{id}?include=cards` was measured on 2026-08-12 to
+  // return no `cards` key at all. The wire arm now lives in
+  // `board-stats-wire.test.ts` against a real server; what is left here is the
+  // shape contract, asserted through a mock that no longer claims a field Favro
+  // does not send.
+  test('getBoardWithIncludes reports every card-derived stat unknown, never zero', async () => {
+    mockClient.get.mockResolvedValue(sampleBoard);
     const result = await api.getBoardWithIncludes('board-1', ['stats']);
-    expect(result.stats).toBeDefined();
-    expect(result.stats!.totalCards).toBe(3);
-    expect(result.stats!.doneCards).toBe(1);
-    expect(result.stats!.openCards).toBe(2);
+    expect(result.stats).toEqual({
+      totalCards: null,
+      doneCards: null,
+      openCards: null,
+      overdueCards: null,
+    });
+    expect(result.unmeasured).toContain('unknown, not zero');
   });
 
-  test('getBoardWithIncludes computes velocity when requested', async () => {
+  test('getBoardWithIncludes names the four weeks and reports each unknown', async () => {
     mockClient.get.mockResolvedValue(sampleBoard);
     const result = await api.getBoardWithIncludes('board-1', ['velocity']);
-    expect(result.velocity).toBeDefined();
-    expect(result.velocity!.length).toBe(4); // 4 weeks
+    expect(result.velocity).toHaveLength(4); // 4 weeks
+    for (const week of result.velocity!) {
+      expect(week.period).toMatch(/^\d{4}-\d{2}-\d{2} to \d{4}-\d{2}-\d{2}$/);
+      expect(week.completed).toBeNull();
+      expect(week.added).toBeNull();
+      expect(week.netChange).toBeNull();
+    }
   });
 
   test('getBoardWithIncludes computes both stats and velocity', async () => {
@@ -167,6 +173,14 @@ describe('Boards API', () => {
     const result = await api.getBoardWithIncludes('board-1', ['stats', 'velocity']);
     expect(result.stats).toBeDefined();
     expect(result.velocity).toBeDefined();
+  });
+
+  test('getBoardWithIncludes attaches neither facet, nor a note, when neither was asked for', async () => {
+    mockClient.get.mockResolvedValue(sampleBoard);
+    const result = await api.getBoardWithIncludes('board-1', ['members']);
+    expect(result.stats).toBeUndefined();
+    expect(result.velocity).toBeUndefined();
+    expect(result.unmeasured).toBeUndefined();
   });
 
   // --- listBoardsByCollection ---
@@ -210,15 +224,22 @@ describe('Boards API', () => {
   test('listBoardsByCollection with include stats adds stats to each board', async () => {
     mockCollectionAnd([sampleBoard]);
     const result = await api.listBoardsByCollection('coll-1', ['stats']);
-    expect(result[0].stats).toBeDefined();
-    expect(result[0].stats!.totalCards).toBeDefined();
+    // The list read carries no cards on any wire, so every facet is unknown here
+    // and `toBeDefined()` — which `null` satisfies — was not asking anything.
+    expect(result[0].stats).toEqual({
+      totalCards: null,
+      doneCards: null,
+      openCards: null,
+      overdueCards: null,
+    });
+    expect(result[0].unmeasured).toContain('unknown, not zero');
   });
 
   test('listBoardsByCollection with include velocity adds velocity to each board', async () => {
     mockCollectionAnd([sampleBoard]);
     const result = await api.listBoardsByCollection('coll-1', ['velocity']);
-    expect(result[0].velocity).toBeDefined();
-    expect(result[0].velocity!.length).toBe(4);
+    expect(result[0].velocity).toHaveLength(4);
+    expect(result[0].velocity!.every(v => v.completed === null)).toBe(true);
   });
 
   test('listBoardsByCollection with include stats,velocity adds both', async () => {
@@ -443,20 +464,26 @@ describe('aggregateBoardStats', () => {
     expect(stats.doneCards).toBe(1);
   });
 
-  test('falls back to board cardCount when no cards', () => {
+  // A `cardCount` on the board is a total, not a split. It answers `totalCards`
+  // and nothing else — reporting it as `openCards` asserts that no card on the
+  // board is finished, which nothing measured.
+  test('uses board cardCount for the total only, and reports the split unknown', () => {
     const stats = aggregateBoardStats(baseBoard);
     expect(stats.totalCards).toBe(5);
-    expect(stats.openCards).toBe(5);
-    expect(stats.doneCards).toBe(0);
+    expect(stats.openCards).toBeNull();
+    expect(stats.doneCards).toBeNull();
+    expect(stats.overdueCards).toBeNull();
   });
 
-  test('returns zeros when board has no cardCount and no cards', () => {
+  test('reports unknown, not zero, when the board has no cardCount and no cards', () => {
     const board: ExtendedBoard = { boardId: 'b', name: 'B', createdAt: '', updatedAt: '' };
     const stats = aggregateBoardStats(board);
-    expect(stats.totalCards).toBe(0);
-    expect(stats.doneCards).toBe(0);
-    expect(stats.openCards).toBe(0);
-    expect(stats.overdueCards).toBe(0);
+    expect(stats).toEqual({
+      totalCards: null,
+      doneCards: null,
+      openCards: null,
+      overdueCards: null,
+    });
   });
 
   test('counts overdue cards (past due, not done)', () => {
@@ -484,14 +511,25 @@ describe('calculateVelocity', () => {
     expect(velocity).toHaveLength(4);
   });
 
-  test('returns zero velocity when no cards', () => {
+  test('returns unknown velocity, not zero velocity, when no cards', () => {
     const velocity = calculateVelocity([]);
-    expect(velocity.every(v => v.completed === 0)).toBe(true);
+    expect(velocity.every(v => v.completed === null)).toBe(true);
   });
 
-  test('returns zero velocity when cards is undefined', () => {
+  test('returns unknown velocity when cards is undefined', () => {
     const velocity = calculateVelocity(undefined);
-    expect(velocity.every(v => v.completed === 0)).toBe(true);
+    expect(velocity.every(v => v.completed === null)).toBe(true);
+  });
+
+  // `added` has never had a source: no board path reads a card's creation date.
+  // It was the literal `0`, and `netChange: completed` therefore asserted it.
+  test('reports added and netChange unknown even when completions are counted', () => {
+    const yesterday = new Date(Date.now() - 86400000).toISOString();
+    const velocity = calculateVelocity([{ status: 'Done', updatedAt: yesterday }] as any);
+    const latest = velocity[velocity.length - 1];
+    expect(latest.completed).toBe(1);
+    expect(latest.added).toBeNull();
+    expect(latest.netChange).toBeNull();
   });
 
   test('each period has correct structure', () => {
@@ -502,7 +540,9 @@ describe('calculateVelocity', () => {
       expect(v).toHaveProperty('added');
       expect(v).toHaveProperty('netChange');
       expect(typeof v.period).toBe('string');
-      expect(typeof v.completed).toBe('number');
+      // `number | null`, and with no cards it is `null` — a `number` assertion
+      // here was what made "0 completed" look like a measured figure.
+      expect(v.completed).toBeNull();
     }
   });
 
@@ -651,7 +691,11 @@ describe('boards-api counts done through the one judge (#157)', () => {
         { updatedAt: yesterday },
       ] as any);
       expect(velocity[velocity.length - 1].completed).toBe(1);
-      expect(velocity[velocity.length - 1].netChange).toBe(1);
+      // `netChange` is null now, not `completed`: nothing measures cards ADDED in
+      // a period, so a net cannot be taken. The arm keeps its second assertion by
+      // reading the other side of the count instead.
+      expect(velocity[velocity.length - 1].netChange).toBeNull();
+      expect(velocity.reduce((n, v) => n + (v.completed ?? 0), 0)).toBe(1);
     },
   );
 
@@ -679,7 +723,7 @@ describe('boards-api counts done through the one judge (#157)', () => {
       { status: 'Klar', updatedAt: nextWeek },
     ] as any);
     expect(velocity[velocity.length - 1].completed).toBe(1);
-    expect(velocity.reduce((n, v) => n + v.completed, 0)).toBe(1);
+    expect(velocity.reduce((n, v) => n + (v.completed ?? 0), 0)).toBe(1);
   });
 
   it('does not count a done card with no updatedAt', () => {
@@ -688,24 +732,25 @@ describe('boards-api counts done through the one judge (#157)', () => {
       { status: 'Klar' },
       { status: 'Klar', updatedAt: yesterday },
     ] as any);
-    expect(velocity.reduce((n, v) => n + v.completed, 0)).toBe(1);
+    expect(velocity.reduce((n, v) => n + (v.completed ?? 0), 0)).toBe(1);
   });
 
-  // --- what the ONLY live caller actually passes -----------------------------
+  // --- what an UNHYDRATED card would do to these counters --------------------
   //
   // Every arm above hands these counters a card with a column NAME on `status`.
-  // `getBoardWithIncludes` does not: it passes `board.cards` off the raw
-  // `/widgets/{id}` payload, and Favro sends no `status` field — the column is
-  // the status, and the name is filled in by `CardsAPI.hydrateNames` from
-  // `columnId`, which that path never reaches (`cards-api.ts` normalizeCard,
-  // CONTEXT.md "column-as-status").
+  // Favro sends no `status` field — the column is the status, and the name is
+  // filled in by `CardsAPI.hydrateNames` from `columnId` (`cards-api.ts`
+  // normalizeCard, CONTEXT.md "column-as-status"). A card handed over raw
+  // therefore reads as never-finished, whatever column it is really in.
   //
-  // So the widening the arms above pin is LATENT on the live path, not printed.
-  // This pins that honestly rather than letting the ADR and CHANGELOG imply a
-  // user-visible number changed. If someone later hydrates the cards in
-  // `getBoardWithIncludes`, this test fails — which is the correct signal that
-  // the printed counts have started to move for real.
-  it('reads a RAW wire card — columnId, no status — as open, so the reroute is latent', () => {
+  // No board path reaches here at all any more: `/widgets/{id}?include=cards` was
+  // measured (2026-08-12) to return no `cards` key, so `withBoardIncludes` takes
+  // the unknown branch and nothing calls this branch with cards. The arm is kept
+  // because the branch is still live code for the first caller that does hydrate,
+  // and it states the trap that caller must avoid — pass raw wire cards and every
+  // count here is wrong rather than unknown, which is worse than the zeros this
+  // batch removed.
+  it('reads a RAW wire card — columnId, no status — as open, which is why a caller must hydrate first', () => {
     const raw = [
       { columnId: 'col-klar', dueDate: PAST },
       { columnId: 'col-pagar', dueDate: PAST },
@@ -720,6 +765,6 @@ describe('boards-api counts done through the one judge (#157)', () => {
     const velocity = calculateVelocity(
       raw.map(c => ({ ...c, updatedAt: new Date(Date.now() - 86_400_000).toISOString() })) as any,
     );
-    expect(velocity.reduce((n, v) => n + v.completed, 0)).toBe(0);
+    expect(velocity.reduce((n, v) => n + (v.completed ?? 0), 0)).toBe(0);
   });
 });

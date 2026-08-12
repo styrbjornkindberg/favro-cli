@@ -138,6 +138,51 @@ Issue #95, ADR-0006.
 
 ### Fixed
 
+- **`boards get --include stats` reported zero done cards and zero overdue cards for every board
+  that exists, and a flat four-week velocity series, all printed as measured fact.** The
+  premise the whole computation rested on is false. Probed against a throwaway board on
+  2026-08-12, `GET /widgets/{id}?include=cards` answers with exactly these keys — `archived`,
+  `collectionIds`, `color`, `columns`, `editRole`, `name`, `organizationId`, `ownerRole`, `type`,
+  `widgetCommonId` — and no others. There is **no `cards` array**: not empty, absent, and
+  `include=cards` does nothing on that endpoint. No `cardCount` either. So
+  `aggregateBoardStats` always took the branch that had been documented as a fallback to board
+  metadata, and that branch returned `doneCards: 0`, `overdueCards: 0` and
+  `openCards: board.cardCount ?? 0` — which is `0` as well, since the field is absent —
+  while `calculateVelocity` was called with `undefined` and answered four weeks of `completed: 0`.
+  `boards list --include stats,velocity` printed the same figures in table form, from three
+  further call sites that passed no cards at all.
+
+  Every card-derived facet now reports **unknown**, never `0`: `unknown` in `--human`, `null` in
+  JSON, on `BoardStats.totalCards/doneCards/openCards/overdueCards` and on
+  `VelocityData.completed/added/netChange`. A `null` is not a zero — treat it as unread. Both
+  commands print one note under the section naming the measurement and the command that *can*
+  count: `favro columns list <boardId>`, where `GET /columns` carries a measured `cardCount` per
+  column (excluding archived cards), and the boards carry the same sentence as an `unmeasured`
+  string for a `jq` consumer. `openCards` reports unknown rather than the board total for the same
+  reason the other two do: a total is not a split, and printing it as "open" asserts that nothing
+  on the board is finished.
+
+  **`added` had no source in either branch and was the literal `0`**, which made
+  `netChange: completed` a quiet assertion that `added === 0`. Both are `null` now, always.
+
+  Two decisions worth stating. `--include stats` **degrades rather than refuses** — the facet list
+  and the pointer to `columns list` are still something a reader can act on (ADR-0002), and a
+  refusal would take the whole board detail down with it on a composite read. And the measured
+  per-column `cardCount` is **not** summed to recover `totalCards`, because `boards list --include
+  stats` would then cost one `/columns` request per board and 322 boards is this repo's measured
+  worst case; `estimationSum`/`timeSum` are not a velocity source either, and inferring one is the
+  step ADR-0003 refuses.
+
+  All five attach sites are now one function, `withBoardIncludes` — three of the five passed no
+  cards, which is how the same question could answer `unknown` on one path and `0` on another. The
+  fixture that let this ship was a hand-written widget carrying a three-card `cards` array in
+  `boards-api.test.ts`; every counter test agreed with it and the wire agreed with none of it. It
+  is deleted, and the regression check is a real `node:http` server serving the measured key set,
+  asserting what both commands **print** in both modes across all four paths
+  (`src/__tests__/board-stats-wire.test.ts`). ADR-0005 carries the amendment; its #157 amendment
+  called this widening "correct and latent, not printed" on the strength of an unmeasured `cards`
+  array, and that conclusion is superseded rather than quietly corrected.
+
 - **`favro git sync` moved finished cards backwards whenever the merge check could not
   run.** `isBranchMerged` answered `false` for a failed `git branch --merged`,
   `analyzeBranches` spelled that as status `'open'`, and `git sync` PATCHes every `'open'`
@@ -199,6 +244,12 @@ Issue #95, ADR-0006.
   is correct and **latent**: it prints only once something hands those counters cards with
   column names on them. `boards list --include stats,velocity` remains a separate and
   unfixed zero — `listBoardsByCollection` calls both helpers with no cards at all (#157).
+
+  **Superseded, later in this same unreleased section.** The `include=cards` edge has since been
+  measured, and it closed the other way: there is no `cards` array, so `boards get` was printing the
+  same unconditional zeros this paragraph attributes only to `boards list`. Both are fixed — see the
+  first entry under Fixed. The widening above is dormant, not latent: nothing calls those counters
+  with cards at all.
 
 - `favro standup --help` pointed at an `unblocked` command — a top-level command that has
   never existed. Its help now says `favro cards list <board> --filter "unblocked"`. The

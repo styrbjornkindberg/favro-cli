@@ -333,8 +333,8 @@ favro boards list [collection-id] [--collection <name>] [--include stats,velocit
 
 | Value | Description |
 |---|---|
-| `stats` | Add open/done card counts per board |
-| `velocity` | Add weekly velocity data (cards completed/added per week) |
+| `stats` | Add the open/done card columns. Both read `unknown` — see "Card counts read `unknown`" below |
+| `velocity` | Add the weekly velocity column. Reads `unknown` — see "Card counts read `unknown`" below |
 
 **Output (`--human`):**
 ```
@@ -346,10 +346,18 @@ Found 2 board(s):
 
 **Output (`--human --include stats,velocity`):**
 ```
-┌───┬───────────┬─────────────┬───────┬────────────┬──────┬──────┬──────────┐
-│   │ ID        │ Name        │ Cards │ Updated    │ Open │ Done │ Velocity │
-└───┴───────────┴─────────────┴───────┴────────────┴──────┴──────┴──────────┘
+┌───┬───────────┬─────────────┬───────┬────────────┬─────────┬─────────┬──────────┐
+│   │ ID        │ Name        │ Cards │ Updated    │ Open    │ Done    │ Velocity │
+└───┴───────────┴─────────────┴───────┴────────────┴─────────┴─────────┴──────────┘
+Note: done/open/overdue counts and the velocity figures are unknown, not zero — …
 ```
+
+**Card counts read `unknown`, and that is the honest answer.** `GET /widgets` sends no cards and no
+per-board card count — measured 2026-08-12, see the "boards get" section below — so `Open`, `Done`
+and `Velocity` come back `unknown` for every board and the JSON carries `null`, never `0`. The rows
+also carry an `unmeasured` string explaining it. `null` is not zero: treat it as unread. For counts
+that *are* measured, run `favro columns list <boardId>`, which reports `cardCount` per column
+(excluding archived cards) from the same response it already fetches.
 
 **Examples:**
 ```bash
@@ -357,6 +365,7 @@ favro boards list                            # {"rows":[…]} — the default
 favro boards list --human                    # the table above
 favro boards list --collection "Sprint"
 favro boards list coll-abc123 --include stats,velocity
+favro columns list board-abc123              # the card counts that ARE measured
 ```
 
 **Error cases:**
@@ -391,10 +400,10 @@ favro boards get <id> [--include custom-fields,cards,members,stats,velocity] [--
 | Value | Description |
 |---|---|
 | `custom-fields` | List custom fields defined on the board |
-| `cards` | Embed cards on the board |
+| `cards` | Forwarded to the API. Favro sends no cards back — see "Card counts read `unknown`" below |
 | `members` | List board members with roles |
-| `stats` | Card counts: total, open, done, overdue |
-| `velocity` | Weekly velocity table |
+| `stats` | The card-count section: total, open, done, overdue. All four read `unknown` |
+| `velocity` | Weekly velocity table. Every figure reads `unknown` |
 
 **Output (with `--include members,stats`):**
 ```
@@ -412,17 +421,35 @@ Members:
 └───┴──────────┴───────────┴───────────────────┴─────────┘
 
 Stats:
-  Total cards:   18
-  Open cards:    12
-  Done cards:    6
-  Overdue cards: 2
+  Total cards:   unknown
+  Open cards:    unknown
+  Done cards:    unknown
+  Overdue cards: unknown
+
+Note: done/open/overdue counts and the velocity figures are unknown, not zero — GET
+/widgets/{id}?include=cards was measured (2026-08-12) to return no cards array at all, and no board
+path reads cards. For measured per-column card counts run: favro columns list <boardId>
 ```
+
+**Card counts read `unknown`, and that is the honest answer.** Probed against a throwaway board on
+2026-08-12, `GET /widgets/{id}?include=cards` answers with these keys and no others: `archived`,
+`collectionIds`, `color`, `columns`, `editRole`, `name`, `organizationId`, `ownerRole`, `type`,
+`widgetCommonId`. There is no `cards` array — not empty, absent — and no `cardCount`, so
+`include=cards` does nothing on that endpoint and nothing this command reads can split a board's
+cards into done and open. Those four facets therefore report `unknown` in `--human` and `null` in
+JSON, and they used to report `0`, which was not a measurement of anything. Same for the velocity
+table: `completed`, `added` and `netChange` are all `null`.
+
+`null` is not zero — treat it as unread. For card counts that *are* measured, run `favro columns
+list <boardId>`: `GET /columns` carries `cardCount` per column (excluding archived cards), plus
+`timeSum` and `estimationSum`.
 
 **Examples:**
 ```bash
 favro boards get board-001
 favro boards get board-001 --include members,stats
 favro boards get board-001 --include custom-fields,cards,members,stats,velocity
+favro columns list board-001                 # the card counts that ARE measured
 ```
 
 **Error cases:**
@@ -2181,8 +2208,8 @@ favro cards create --csv sprint-43-planning.csv --board $BOARD_ID
 favro batch assign --board $BOARD_ID --filter "status:Todo" --to alice
 favro batch assign --board $BOARD_ID --filter "tag:backend" --to bob
 
-# 4. Verify setup
-favro boards get $BOARD_ID --include stats
+# 4. Verify setup — per-column card counts, the ones Favro actually measures
+favro columns list $BOARD_ID
 ```
 
 ---

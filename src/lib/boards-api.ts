@@ -67,18 +67,34 @@ export interface BoardColumn {
   cardCount?: number;
 }
 
+/**
+ * A count Favro measured, or `null` when nothing on the wire measures it.
+ *
+ * `null` is never rendered as `0`. The distinction is the whole point: a board
+ * with nothing finished and a board whose finished count cannot be read are not
+ * the same answer, and printing `0` for the second is the fail-closed violation
+ * this type exists to make unspellable.
+ */
+export type MeasuredCount = number | null;
+
 export interface BoardStats {
-  totalCards: number;
-  doneCards: number;
-  openCards: number;
-  overdueCards: number;
+  totalCards: MeasuredCount;
+  doneCards: MeasuredCount;
+  openCards: MeasuredCount;
+  overdueCards: MeasuredCount;
 }
 
 export interface VelocityData {
   period: string;
-  completed: number;
-  added: number;
-  netChange: number;
+  completed: MeasuredCount;
+  /**
+   * Cards ADDED in the period. Always `null`: nothing this CLI reads carries a
+   * card's creation date on a board-level path, so there has never been a source
+   * for it. It used to be the literal `0`, which is why `netChange` — defined as
+   * completed minus added — was printed as if `added` were known to be zero.
+   */
+  added: MeasuredCount;
+  netChange: MeasuredCount;
 }
 
 export interface ExtendedBoard extends Board {
@@ -88,6 +104,13 @@ export interface ExtendedBoard extends Board {
   cards?: Array<{ status?: string; dueDate?: string; updatedAt?: string }>;
   stats?: BoardStats;
   velocity?: VelocityData[];
+  /**
+   * Why a `stats`/`velocity` facet came back `null`, when one did. Set by
+   * `withBoardIncludes` and by nothing else, so every path that can print an
+   * unknown count also carries the sentence explaining it — the ADR-0002 half of
+   * the fix, since a bare `null` in a table is not something a reader can act on.
+   */
+  unmeasured?: string;
 }
 
 /**
@@ -116,10 +139,35 @@ export interface Collection {
 }
 
 /**
- * Aggregate board stats from board data.
- * If raw card data is provided, compute from cards; otherwise use board metadata.
+ * Aggregate board stats from card data, or report each facet unknown.
  *
- * Where a card carries a column name under `status`, "is this card finished" is
+ * **THERE IS NO CARD SOURCE ON ANY BOARD PATH. Measured 2026-08-12:**
+ *
+ *     GET /widgets/{id}?include=cards
+ *       keys: archived, collectionIds, color, columns, editRole, name,
+ *             organizationId, ownerRole, type, widgetCommonId
+ *       has cards array: false
+ *
+ * Not an empty array — the key is absent, and `include=cards` does nothing on
+ * that endpoint. `cardCount` is absent from the same response, so it too is read
+ * as `null` rather than defaulted; if Favro ever sends one it is used, and until
+ * then nothing here asserts either way (ADR-0003).
+ *
+ * So the no-cards branch below reports every card-derived facet as `null`. It
+ * used to return `doneCards: 0`, `openCards: board.cardCount ?? 0` and
+ * `overdueCards: 0`, and since that branch is the only one any live caller ever
+ * takes, `favro boards get <b> --include stats` printed *0 done and 0 overdue
+ * cards for every board*, as measured fact. `openCards` is `null` for the same
+ * reason the other two are: a total is not a split, and reporting the total as
+ * "open" asserts that nothing on the board is finished.
+ *
+ * The measured source that DOES exist is per-column: `GET /columns?widgetCommonId=`
+ * carries `cardCount` on every column (`columns-api.ts`, and `cardCount` excludes
+ * archived cards). It is not read here — see `withBoardIncludes` for why.
+ *
+ * The cards branch is unchanged and still reachable only from a caller that
+ * hydrates column names onto `status` itself. Where a card carries a column name
+ * under `status`, "is this card finished" is
  * the question `isDoneStage(detectStage(name))` exists to answer, and this
  * counter no longer answers it itself (#157). It used to test
  * `status === 'done' || status === 'completed'` **exactly**, which #98's census
@@ -139,21 +187,16 @@ export interface Collection {
  *     column named `Completed` counted as both done AND overdue. Now it counts as
  *     neither.
  *
- * **`status` IS NOT A WIRE FIELD, and on the only live caller it is absent.**
- * Favro sends no `status` on a card — `cards-api.ts` says so at `normalizeCard`,
- * CONTEXT.md says so under "column-as-status", and the open/closed axis on the
- * wire is `columnId` and nothing else. The field is filled in by
- * `CardsAPI.hydrateNames`, which resolves `columnId` → column name. That is why
- * `isCompleted` (`api/standup.ts`) gets a real name: its input came through
- * `CardsAPI`. `getBoardWithIncludes` does NOT — it hands over
- * `board.cards` straight off the raw `/widgets/{id}` payload, unnormalised and
- * unhydrated. So on that path `c.status` is `undefined`, `detectStage` falls
- * through to `queued`, and every count below reads exactly as it did before the
- * reroute. The widening above is **correct and latent, not printed**: it becomes
- * visible only once something hands this function hydrated cards. Whether
- * `/widgets?include=cards` returns a `cards` array at all is **unmeasured** —
- * per ADR-0003 this records the open edge rather than asserting either answer.
- * The one fixture that says it does is a hand-written test stand.
+ * **`status` IS NOT A WIRE FIELD.** Favro sends no `status` on a card —
+ * `cards-api.ts` says so at `normalizeCard`, CONTEXT.md says so under
+ * "column-as-status", and the open/closed axis on the wire is `columnId` and
+ * nothing else. The field is filled in by `CardsAPI.hydrateNames`, which resolves
+ * `columnId` → column name. That is why `isCompleted` (`api/standup.ts`) gets a
+ * real name: its input came through `CardsAPI`. No board path does, and as of the
+ * measurement above no board path has cards to hydrate in the first place, so the
+ * widening the arms of the #157 test pin is reachable only through a caller that
+ * does not exist yet. That is a dormant branch, which is a different thing from
+ * the printed zeros it used to sit behind — those are gone.
  */
 export function aggregateBoardStats(board: ExtendedBoard, cards?: Array<{ status?: string; dueDate?: string }>): BoardStats {
   if (cards && cards.length > 0) {
@@ -171,18 +214,32 @@ export function aggregateBoardStats(board: ExtendedBoard, cards?: Array<{ status
     };
   }
 
-  const total = board.cardCount ?? 0;
   return {
-    totalCards: total,
-    doneCards: 0,
-    openCards: total,
-    overdueCards: 0,
+    // `?? null`, not `?? 0`: absent means unread, and `/widgets/{id}` was
+    // measured not to send this field at all.
+    totalCards: board.cardCount ?? null,
+    doneCards: null,
+    openCards: null,
+    overdueCards: null,
   };
 }
 
 /**
- * Calculate velocity from card completion data.
- * Returns weekly velocity data for the last 4 weeks.
+ * Calculate velocity from card completion data, or report each week unknown.
+ *
+ * **Called with no cards it names the four weeks and reports every figure
+ * unknown, and that is the honest whole of it.** Weekly completion counts need
+ * one `updatedAt` and one column name per card; the only board-level card source
+ * would be `/widgets/{id}?include=cards`, measured 2026-08-12 to return no cards
+ * array at all (see `aggregateBoardStats`), and reading cards per board is not on
+ * this path. There is therefore no measured source for a series, and this returns
+ * `null`s rather than inventing one. It used to return `completed: 0` for all four
+ * weeks, which `boards get --include velocity` printed as a table of measured
+ * facts, and `boards list --include velocity` printed as a single figure.
+ *
+ * `added` is `null` in **both** branches, cards or not — see `VelocityData`.
+ * `netChange` follows it: completed minus an unknown is unknown, and the old
+ * `netChange: completed` quietly asserted `added === 0`.
  *
  * `completed` routes through the one done judge for the same reason
  * `aggregateBoardStats` does (#157) — it carried a byte-identical exact-match
@@ -190,10 +247,6 @@ export function aggregateBoardStats(board: ExtendedBoard, cards?: Array<{ status
  * weeks are recomputed from `updatedAt` on every invocation, so the reroute
  * changes the whole series at once rather than grafting a wider week onto
  * narrower history. There is no stored series for it to disagree with.
- *
- * Same caveat as `aggregateBoardStats`: `status` is not a wire field, and the
- * only caller that passes cards passes unhydrated ones, so the widening is
- * latent until something hands this function cards with column names on them.
  */
 export function calculateVelocity(cards?: Array<{ status?: string; updatedAt?: string }>): VelocityData[] {
   const velocity: VelocityData[] = [];
@@ -208,7 +261,7 @@ export function calculateVelocity(cards?: Array<{ status?: string; updatedAt?: s
     const period = `${weekStart.toISOString().slice(0, 10)} to ${weekEnd.toISOString().slice(0, 10)}`;
 
     if (!cards || cards.length === 0) {
-      velocity.push({ period, completed: 0, added: 0, netChange: 0 });
+      velocity.push({ period, completed: null, added: null, netChange: null });
       continue;
     }
 
@@ -218,10 +271,57 @@ export function calculateVelocity(cards?: Array<{ status?: string; updatedAt?: s
       return updated >= weekStart && updated < weekEnd && isDoneStage(detectStage(c.status));
     }).length;
 
-    velocity.push({ period, completed, added: 0, netChange: completed });
+    velocity.push({ period, completed, added: null, netChange: null });
   }
 
   return velocity;
+}
+
+/**
+ * The sentence a reader gets instead of a fabricated number, and the command that
+ * *can* answer the question. ADR-0002: a facet reported unknown still has to leave
+ * the reader somewhere to go.
+ */
+export const NO_CARD_SOURCE =
+  'done/open/overdue counts and the velocity figures are unknown, not zero — ' +
+  'GET /widgets/{id}?include=cards was measured (2026-08-12) to return no cards array at all, ' +
+  'and no board path reads cards. For measured per-column card counts run: favro columns list <boardId>';
+
+/**
+ * Attach the requested `stats`/`velocity` facets, and the note naming whichever of
+ * them nothing measured. **THE ONE PLACE ANY BOARD GETS EITHER FIELD.**
+ *
+ * There were four call sites before this existed — two in `getBoardWithIncludes`,
+ * two in `listBoardsByCollection`, plus a fifth pair inlined in
+ * `commands/boards-list.ts` — and three of the five passed no cards at all, so the
+ * "fall back to board metadata" branch was not a fallback but the only branch
+ * anything reached. Routing all of them through here means a facet cannot be
+ * unknown on one command and a printed `0` on another, and a future card source
+ * has one function to be wired into rather than five.
+ *
+ * Returns a new board; it does not mutate the argument.
+ *
+ * ponytail: this does NOT fetch `/columns` to source `totalCards` from the
+ * measured per-column `cardCount`, which would turn one facet from unknown into a
+ * real figure. The ceiling is the list path: `boards list --include stats` would
+ * need one `/columns` request per board, and 322 boards is the measured worst case
+ * (see `commands/boards-list.ts`). Upgrade path if that facet is worth the calls:
+ * fetch `/columns` once per board inside `getBoardWithIncludes` only, leave the
+ * list path unknown, and say which command does which in `API-REFERENCE.md`.
+ */
+export function withBoardIncludes(board: ExtendedBoard, include?: string[]): ExtendedBoard {
+  const wantsStats = include?.includes('stats') ?? false;
+  const wantsVelocity = include?.includes('velocity') ?? false;
+  if (!wantsStats && !wantsVelocity) return board;
+
+  const cards = Array.isArray(board.cards) && board.cards.length > 0 ? board.cards : undefined;
+
+  return {
+    ...board,
+    ...(wantsStats ? { stats: aggregateBoardStats(board, cards) } : {}),
+    ...(wantsVelocity ? { velocity: calculateVelocity(cards) } : {}),
+    ...(cards ? {} : { unmeasured: NO_CARD_SOURCE }),
+  };
 }
 
 export class BoardsAPI {
@@ -302,27 +402,12 @@ export class BoardsAPI {
     const raw = await this.byBoard(boardOrName, id => this.client.get<any>(`/widgets/${id}`, { params }));
     const board: ExtendedBoard = { ...raw, ...normalizeWidget(raw) };
 
-    // Stats and velocity are computed client-side if requested.
-    //
-    // `board.cards` is read off the RAW `/widgets/{id}` payload, so its members
-    // never went through `normalizeCard` or `CardsAPI.hydrateNames` and carry no
-    // `status` — Favro sends none, the column IS the status, and only hydration
-    // fills the name in. Both counters below therefore judge `undefined` on this
-    // path, whatever a column is actually called. That `/widgets?include=cards`
-    // returns this array at all is unmeasured (ADR-0003); the declared shape on
-    // `ExtendedBoard.cards` is a hint, not a measurement. Cast removed: the field
-    // is declared, so `as any` was asserting a shape the type already claims.
-    if (include?.includes('stats') || include?.includes('velocity')) {
-      const cards = Array.isArray(board.cards) ? board.cards : undefined;
-      if (include?.includes('stats')) {
-        board.stats = aggregateBoardStats(board, cards);
-      }
-      if (include?.includes('velocity')) {
-        board.velocity = calculateVelocity(cards);
-      }
-    }
-
-    return board;
+    // Stats and velocity are computed client-side if requested. `include=cards`
+    // is still forwarded on the query string — Favro is free to start honouring
+    // it, and `withBoardIncludes` uses the array the moment one arrives — but it
+    // was measured (2026-08-12) to come back with no `cards` key, so on today's
+    // wire this is the no-cards branch and every card-derived facet is `null`.
+    return withBoardIncludes(board, include);
   }
 
   /**
@@ -348,17 +433,11 @@ export class BoardsAPI {
     const raw = await getAllPages<RawWidget>(this.client, '/widgets', { ...params, limit: 50 });
     const allBoards = raw.map(w => ({ ...w, ...normalizeWidget(w) })) as ExtendedBoard[];
 
-    // Augment each board with stats/velocity if requested
-    for (const board of allBoards) {
-      if (include?.includes('stats')) {
-        board.stats = aggregateBoardStats(board);
-      }
-      if (include?.includes('velocity')) {
-        board.velocity = calculateVelocity();
-      }
-    }
-
-    return allBoards;
+    // Augment each board with stats/velocity if requested. The list read carries
+    // no cards on any wire, measured or otherwise, so this is unconditionally the
+    // unknown branch — which is exactly why it goes through the shared attach
+    // rather than calling the counters with nothing and printing the result.
+    return allBoards.map(board => withBoardIncludes(board, include));
   }
 
   /**

@@ -233,6 +233,13 @@ cast that read it has been removed, since a cast is how an unmeasured shape gets
 Making the widening visible is a separate change — it needs hydrated cards, which means a column
 lookup this class does not have — and it was not approved here.
 
+> **The open edge closed on 2026-08-12, and it closed the other way. See
+> "Amendment (2026-08-12)" at the foot of this file.** `/widgets/{id}?include=cards` returns *no
+> `cards` key at all*, so there is no live path that supplies cards, the reroute is dormant rather
+> than latent, and the zeros this section describes as unobservable were being printed as measured
+> fact on every board. The paragraph above stands as written — it is what was known then — and the
+> amendment supersedes its conclusion.
+
 **Measured over 49 column names** (every name this ADR and #157 quote, plus this org's Swedish and
 English column vocabulary). 25 move open → done. **Nothing moves done → open** — `Unresolved` was
 the only narrowing in the `isCompleted` merge and it is not affected here, because the exact test
@@ -282,6 +289,10 @@ helpers with **no cards**, so `favro boards list --include stats,velocity` still
 raised it as possibly "the real defect"; it is a separate question about whether that path should
 fetch cards at all, and it was not approved as part of this reroute.
 
+> **It was the real defect, and it was wider than this paragraph says. Fixed — see
+> "Amendment (2026-08-12)".** `boards get --include stats` reported the same unconditional zeros,
+> because its cards array does not exist either.
+
 The counters were mutation-tested at **both** sites, since a counter fed a fixture where every card
 is done cannot tell a real judge from `() => true` — it reports the array length either way.
 Sixteen mutations, fourteen killed, each typechecked before its result was recorded (deleting a
@@ -311,3 +322,61 @@ false — `<`, `>`, `>=` and `<=` alike — so the overdue filter's `InvalidDate
 either expression reads `NaN` any other way, and neither uses `!==` or `isNaN`. No test can kill
 these, which is the correct outcome for mutants that change nothing. The first draft of this
 amendment reported only the `dueDate` one; the sibling site's identical mutant was not run.
+
+## Amendment (2026-08-12): there are no cards, so the counters report unknown
+
+The open edge the #157 amendment recorded has been measured. Probed against a throwaway board:
+
+```
+GET /widgets/{id}?include=cards
+  keys: archived, collectionIds, color, columns, editRole, name,
+        organizationId, ownerRole, type, widgetCommonId
+  has cards array: false
+```
+
+There is no `cards` key — not an empty array, absent — and no `cardCount` either. `include=cards`
+does nothing on that endpoint.
+
+**What that makes of the #157 amendment.** Its central claim, that the reroute is "correct and
+latent, not printed", rested on `getBoardWithIncludes` handing the counters unhydrated cards. It
+hands them nothing. Every board path took `aggregateBoardStats`'s second branch — the one described
+above as a fallback to board metadata — and that branch returned `doneCards: 0`, `overdueCards: 0`
+and `openCards: board.cardCount ?? 0`. `calculateVelocity` was called with `undefined` and answered
+four weeks of `completed: 0`. So `favro boards get <board> --include stats,velocity` reported **zero
+done cards, zero overdue cards and a flat velocity series for every board that exists**, printed as
+measured fact by `commands/boards-get.ts`, and `boards list --include stats,velocity` did the same
+in table form. Absent data converted into a plausible answer: the fail-closed violation, and an
+ADR-0003 violation, since the computation was justified by a wire shape nobody had looked at.
+
+**The fix reports unknown rather than refusing.** `BoardStats` and `VelocityData` facets are
+`number | null` (`MeasuredCount`), `null` means "nothing measured this", and both formatters render
+it `unknown` — never `0`. The JSON shapes carry `null` for the same facets, so a `jq` consumer sees
+the difference between "nothing is finished" and "the finished count cannot be read". Refusing
+`--include stats` outright was the alternative; it was rejected because the flag has one honest
+answer left — the facet list itself, and the command that *can* count — and a refusal would take
+`boards get`'s whole board detail down with it on a composite read. ADR-0002 is satisfied by a note
+that names the measurement and points at `favro columns list <boardId>`.
+
+**One attach point, five call sites collapsed.** `withBoardIncludes` in `lib/boards-api.ts` is now
+the only place any board receives `stats` or `velocity`. Three of the five previous sites passed no
+cards at all, which is how one path could print `unknown` while another printed `0`.
+
+**`added` was never measured either, in either branch.** It was the literal `0`, and
+`netChange: completed` therefore asserted `added === 0`. Both are `null` now, always. Nothing this
+CLI reads carries a card's creation date on a board-level path.
+
+**The measured per-column source is not read, deliberately.** `GET /columns?widgetCommonId=` carries
+`cardCount`, `timeSum` and `estimationSum` on every column — measured the same day, three columns,
+`["Done","Doing","Todo"]` — and `cardCount` excludes archived cards. Summing it would turn
+`totalCards` from unknown into a real figure, and `detectStage` over the measured column `name`
+would do the same for `doneCards`. It is not done here because `boards list --include stats` would
+then need one `/columns` request per board, and 322 boards is this repo's measured worst case. That
+is a change with its own cost to measure. `estimationSum`/`timeSum` are **not** a velocity source:
+nothing establishes that either means what `velocity` reports, and inferring it is the step ADR-0003
+refuses.
+
+The regression check is `src/__tests__/board-stats-wire.test.ts` — a real `node:http` server serving
+the measured key set, asserting the **printed** output of both commands in both modes, across all
+four attach paths. The fixture that let this ship was the opposite: a hand-written widget with a
+three-card `cards` array, in `boards-api.test.ts`, which every counter test then agreed with. It is
+gone.

@@ -13,7 +13,18 @@ import FavroHttpClient from '../../lib/http-client';
 import * as config from '../../lib/config';
 import type { Ctx } from '../../lib/run';
 
-jest.mock('../../lib/boards-api');
+/**
+ * Only the CLASS is mocked. Auto-mocking the whole module replaced the pure
+ * helpers beside it — including `withBoardIncludes`, which the handler now maps
+ * every board through — with stubs returning `undefined`, so a passing test would
+ * have been asserting against rows the real code never produces.
+ */
+jest.mock('../../lib/boards-api', () => {
+  // ONE constructor behind both bindings, the way the automock had it — `run`'s
+  // api namespace reads the named export and the test configures the default.
+  const BoardsAPI = jest.fn();
+  return { ...jest.requireActual('../../lib/boards-api'), __esModule: true, default: BoardsAPI, BoardsAPI };
+});
 jest.mock('../../lib/http-client');
 jest.mock('../../lib/config');
 

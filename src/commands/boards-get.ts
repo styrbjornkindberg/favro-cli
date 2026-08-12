@@ -5,10 +5,16 @@
  * favro boards get <id> [--include custom-fields,cards,members,stats,velocity]
  */
 import { Command } from 'commander';
-import { ExtendedBoard } from '../lib/boards-api';
+import { ExtendedBoard, MeasuredCount } from '../lib/boards-api';
 import { run } from '../lib/run';
 
 const VALID_INCLUDES = ['custom-fields', 'cards', 'members', 'stats', 'velocity'];
+
+/**
+ * A count nothing measured prints as `unknown`, never as a number. `boards-api.ts`
+ * explains which facets have no source and why; this is the render half of it.
+ */
+const shown = (value: MeasuredCount): string | number => value ?? 'unknown';
 
 function formatBoardDetails(board: ExtendedBoard): void {
   console.log(`Board: ${board.name} (${board.boardId})`);
@@ -53,21 +59,28 @@ function formatBoardDetails(board: ExtendedBoard): void {
 
   if (board.stats) {
     console.log('\nStats:');
-    console.log(`  Total cards:   ${board.stats.totalCards}`);
-    console.log(`  Open cards:    ${board.stats.openCards}`);
-    console.log(`  Done cards:    ${board.stats.doneCards}`);
-    console.log(`  Overdue cards: ${board.stats.overdueCards}`);
+    console.log(`  Total cards:   ${shown(board.stats.totalCards)}`);
+    console.log(`  Open cards:    ${shown(board.stats.openCards)}`);
+    console.log(`  Done cards:    ${shown(board.stats.doneCards)}`);
+    console.log(`  Overdue cards: ${shown(board.stats.overdueCards)}`);
   }
 
   if (board.velocity && board.velocity.length > 0) {
     console.log('\nVelocity (weekly):');
     const rows = board.velocity.map(v => ({
       Period: v.period,
-      Completed: v.completed,
-      Added: v.added,
-      'Net Change': v.netChange,
+      Completed: shown(v.completed),
+      Added: shown(v.added),
+      'Net Change': shown(v.netChange),
     }));
     console.table(rows);
+  }
+
+  // One note for both sections. It is set exactly when a facet above came back
+  // unknown, so the section is never printed as a wall of `unknown` with no
+  // explanation of what to run instead (ADR-0002).
+  if (board.unmeasured) {
+    console.log(`\nNote: ${board.unmeasured}`);
   }
 }
 

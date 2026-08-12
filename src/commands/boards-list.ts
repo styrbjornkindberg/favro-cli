@@ -4,8 +4,14 @@
  * CLA-1784 FAVRO-022: Enhanced with collection-id arg and --include stats,velocity
  */
 import { Command } from 'commander';
-import { Board, ExtendedBoard, aggregateBoardStats, calculateVelocity } from '../lib/boards-api';
+import { Board, ExtendedBoard, MeasuredCount, withBoardIncludes } from '../lib/boards-api';
 import { Ctx, run } from '../lib/run';
+
+/**
+ * A count nothing measured prints as `unknown`, never as a number. `boards-api.ts`
+ * explains which facets have no source and why; this is the render half of it.
+ */
+const shown = (value: MeasuredCount): string | number => value ?? 'unknown';
 
 export function formatBoardsTable(boards: Board[]): void {
   if (boards.length === 0) {
@@ -38,17 +44,25 @@ export function formatBoardsExtendedTable(boards: ExtendedBoard[]): void {
       Updated: board.updatedAt ? board.updatedAt.slice(0, 10) : '—',
     };
     if (board.stats) {
-      row['Open'] = board.stats.openCards;
-      row['Done'] = board.stats.doneCards;
+      row['Open'] = shown(board.stats.openCards);
+      row['Done'] = shown(board.stats.doneCards);
     }
     if (board.velocity && board.velocity.length > 0) {
       const latest = board.velocity[board.velocity.length - 1];
-      row['Velocity'] = latest.completed;
+      row['Velocity'] = shown(latest.completed);
     }
     return row;
   });
 
   console.table(rows);
+
+  // One note under the table, not one per row: the reason is a property of the
+  // endpoint, so every board on the page carries the same string. Dropping the
+  // columns instead would be its own defect — the reader asked for them.
+  const note = boards.find(b => b.unmeasured)?.unmeasured;
+  if (note) {
+    console.log(`Note: ${note}`);
+  }
 }
 
 const VALID_LIST_INCLUDES = ['stats', 'velocity'];
@@ -86,12 +100,7 @@ export async function listBoardsHandler(
 
   const boards: ExtendedBoard[] = collection
     ? await ctx.api.boards.listBoardsByCollection(collection, include)
-    : (await ctx.api.boards.listBoards(100)).map(b => {
-        const ext: ExtendedBoard = { ...b };
-        if (include?.includes('stats')) ext.stats = aggregateBoardStats(ext);
-        if (include?.includes('velocity')) ext.velocity = calculateVelocity();
-        return ext;
-      });
+    : (await ctx.api.boards.listBoards(100)).map(b => withBoardIncludes({ ...b }, include));
 
   // A list read: the runner writes the envelope, compact, and applies the cap.
   // `boards` has no bulk field to omit, so the cost here is row count alone —
