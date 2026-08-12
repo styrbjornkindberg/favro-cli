@@ -197,6 +197,15 @@ Issue #95, ADR-0006.
   either way (ADR-0003). Pinned against a real socket, including each read path reverted on
   its own.
 
+- **`favro columns list` answered `0` for a count that never arrived.** The human table
+  rendered `cardCount ?? 0`, and `timeSum` / `estimationSum` the same way, so a column whose
+  count was absent read as a column with no cards. This is the command
+  `boards get --include stats` now names as the one that *can* count, which made the
+  fabricated zero a defect in the remedy for the same defect. All three fields were measured
+  present on `GET /columns`, so an absent one is an anomaly worth reporting rather than
+  smoothing: the table reads `—`, the sentinel the boards table already uses. The `--json`
+  path is unchanged — an absent field was already absent there rather than zero.
+
 - **`favro git sync` moved finished cards backwards whenever the merge check could not
   run.** `isBranchMerged` answered `false` for a failed `git branch --merged`,
   `analyzeBranches` spelled that as status `'open'`, and `git sync` PATCHes every `'open'`
