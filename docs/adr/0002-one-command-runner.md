@@ -699,13 +699,27 @@ version of this change #101's triage declined, and rightly: had the response omi
 would have thrown on every `claim` and every `resolve`. The re-read costs one GET and asserts
 nothing unmeasured, so it needed no probe to ship.
 
-Two things fall out of reading the card rather than the response. A concurrent editor who moves the
+Three things fall out of reading the card rather than the response. A concurrent editor who moves the
 card between our write and that read is indistinguishable from a 200 that wrote nothing — there is
 no version carrier to tell them apart — so the throw names both causes, and neither logs a
 compensation entry: the first has nothing to undo, and in the second the facade-wide compare would
 decline to write over their edit anyway. And `claim` / `resolve` report the re-read column instead
 of the echo, which was a live defect and not only an unverified claim: under a silent echo the old
 shape printed `(column —)` for a move that had in fact landed.
+
+The third is the cost of a SEPARATE request, and it is the difference from `setArchived` that
+matters: a PUT's own echo cannot fail on its own, and this read can. A confirmation read that
+throws — 4xx, an exhausted 5xx retry, a reset — says nothing about the write, which already answered
+200. So an unreadable confirmation **pushes the entry anyway** and lets the unwind's compare decide:
+our column still live means restore it, anything else means report the concurrent edit. Only an
+*observation* that the card is elsewhere skips the entry. Dropping it on a failed read reported
+`rolled-back` — this facade's word for the world being genuinely back where it was — for a card
+still in the new column, and `claim` additionally undid its assignment while leaving its move.
+What remains open, and cannot be closed here: a confirmation read answering from behind the write is
+indistinguishable from a write that did nothing, so it skips the entry for a move that landed.
+Read-after-write on `GET /cards/{cardId}` has never been measured, so the throw names the
+possibility rather than declaring the other two causes exhaustive (ADR-0003); closing it needs a
+version carrier or that measurement.
 
 ## Consequences
 

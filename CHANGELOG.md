@@ -668,11 +668,20 @@ Issue #95, ADR-0006.
   `resolve` if the response omits the field. A mismatch raises a `TransientError`
   ("answered 200 but the card did not land there"), the same class `setArchived`'s
   read-back raises: the call is not what is wrong, so the next attempt is allowed to
-  behave differently. Nothing is logged for compensation either way — either the write did
-  nothing, or a concurrent editor owns the column now and the facade-wide compare would
+  behave differently. Nothing is logged for compensation on a mismatch — either the write
+  did nothing, or a concurrent editor owns the column now and the facade-wide compare would
   decline to write over their edit — and `claim` / `resolve` report the re-read column.
   This is the second `TransientError` site in the codebase, which pays off ADR-0002's
   "revisit if a second site ever appears"; both sites are read-backs in `TxCards`.
+
+  A confirmation read that FAILS is a different case from one that answers, and it keeps
+  the compensation entry. Unlike `setArchived`, whose observation is the PUT's own echo,
+  this one is a separate request that can throw on its own — a 4xx, an exhausted 5xx retry,
+  a reset — while the write that already answered 200 stands. Only an observation that the
+  card is elsewhere skips the entry; "we could not look" does not. Dropping it there
+  reported `rolled-back` — the word this facade uses for the world being genuinely back
+  where it was — for a card still sitting in the new column, and `claim` compounded it by
+  undoing its assignment while leaving its move in place.
 
   RED, measured, against a `node:http` stand whose PUT answers 200 with **no `columnId`**
   while the card really moves. That arm is the one with teeth, and it is the arm a stand

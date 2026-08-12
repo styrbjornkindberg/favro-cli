@@ -589,16 +589,50 @@ export class TxCards implements ReadTx {
     const columnId = await this.api.resolveColumnId(status, before.boardId);
     const cardId = before.cardId;
     await this.api.updateCard(cardId, { columnId });
-    // Where the card reads NOW. `readLive` below asks the same question of the
+    const entry: CompensationEntry = {
+      card: cardId,
+      field: 'columnId',
+      record: { shape: 'scalar', wrote: columnId, before: before.columnId },
+      label: `move card ${cardId} back to column ${before.columnId}`,
+      readLive: async () => (await this.api.getCard(cardId)).columnId,
+      applyInverse: async () => { await this.api.updateCard(cardId, { columnId: before.columnId }); },
+    };
+    // Where the card reads NOW. `readLive` above asks the same question of the
     // same endpoint, so this read and the rollback's detecting read cannot
     // disagree about where the card is.
-    const after = await this.api.getCard(cardId);
+    //
+    // Unlike `setArchived`'s read-back, this observation is a SEPARATE request,
+    // so it has a failure mode that reading a PUT's own echo does not: the read
+    // can fail while the write stands. "We could not look" is not "nothing was
+    // written" — the PUT already answered 200 — so the entry goes in and the
+    // unwind's own compare decides. It re-reads: our column still there means
+    // restore it, anything else means report the concurrent edit. Dropping the
+    // entry here instead reported `rolled-back` — which this facade defines as
+    // the world being genuinely back where it was — for a card still sitting in
+    // the new column, and for `claim` that also undid the assignment while
+    // leaving the move, a state nobody asked for.
+    let after: Card;
+    try {
+      after = await this.api.getCard(cardId);
+    } catch (error) {
+      this.log.push(entry);
+      throw error;
+    }
     // Checked BEFORE the log push, exactly as `setArchived` checks its own
     // read-back, and for the same reason: nothing here needs compensating.
     // Either the PUT wrote nothing, so there is nothing to undo — or a
     // concurrent editor moved the card after our write, and then the facade-wide
     // compare would decline to write over their edit anyway, so an entry would
     // only report an orphan for wreckage nobody has to clean up.
+    //
+    // Both of those are OBSERVATIONS that the card is not where we asked. What
+    // this cannot tell apart from them is a read that answered from a stale
+    // replica: nothing has measured read-after-write on this endpoint, so the
+    // message names that possibility rather than declaring the other two
+    // exhaustive (ADR-0003). In that third case the write did land and the entry
+    // is skipped, which is the one direction here that is not fail-closed — it
+    // needs a version carrier or a measured read-after-write to close, neither of
+    // which exists.
     //
     // `TransientError`, and NOT a `RefusalError`: a refusal claims
     // "deterministic, wrote nothing, repair the call", and the call is not what
@@ -610,21 +644,14 @@ export class TxCards implements ReadTx {
           `{columnId: ${columnId}}, and a re-read of the card reads ` +
           `columnId=${JSON.stringify(after.columnId)}.\n` +
           `Either the write did nothing, or another editor moved the card between the write and this ` +
-          `read — there is no version carrier on this wire to tell those apart. Nothing was logged for ` +
-          `compensation either way: the first case has nothing to undo, and in the second the compare ` +
-          `would decline to write over their edit.\n` +
+          `read, or the read answered from behind the write — there is no version carrier on this wire ` +
+          `to tell those apart. Nothing was logged for compensation: the first case has nothing to ` +
+          `undo, and in the second the compare would decline to write over their edit.\n` +
           `The comparison is against the card's own GET row, which is where \`columnId\` is measured; ` +
           `the PUT response's echo is unprobed and is never read here (#101).`,
       );
     }
-    this.log.push({
-      card: cardId,
-      field: 'columnId',
-      record: { shape: 'scalar', wrote: columnId, before: before.columnId },
-      label: `move card ${cardId} back to column ${before.columnId}`,
-      readLive: async () => (await this.api.getCard(cardId)).columnId,
-      applyInverse: async () => { await this.api.updateCard(cardId, { columnId: before.columnId }); },
-    });
+    this.log.push(entry);
     return after;
   }
 

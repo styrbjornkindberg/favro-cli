@@ -1233,6 +1233,12 @@ describe('a column move is confirmed by RE-READING the card, never by the PUT ec
       // `cards-tracker.ts` prints `(column —)` for a move that landed. No
       // assertion about the stored card can catch that — the card DID move — so
       // this is the envelope a consumer receives, which is the contract.
+      //
+      // Stated no wider than it is: on an `ok` outcome the read-back has already
+      // forced the observed column and the requested one to be equal, so this
+      // cannot tell an observation from an argument echo. It pins that the field
+      // is POPULATED without the PUT echo, which is what the old shape got wrong.
+      // The distinction is pinned by the failure arms below, where the two differ.
       expect(result.value?.columnId).toBe(expected);
       expect(stand.cards.get(CARD)!.columnId).toBe(expected);
     },
@@ -1296,6 +1302,52 @@ describe('a column move is confirmed by RE-READING the card, never by the PUT ec
     expect(result.error).toMatch(/did not land there/);
     expect(puts(stand.received)).toHaveLength(1);
     expect(stand.cards.get(CARD)!.columnId).toBe(TODO);
+  });
+
+  it('a confirmation read that FAILS keeps the compensation entry — the write may have landed', async () => {
+    // The window the re-read opens, and the one the two causes above do not
+    // cover. `getCard` can fail for reasons that say nothing about the write:
+    // 500, 429, a reset. The PUT already went out and 200'd, so "we could not
+    // look" is not "nothing was written" — and dropping the entry there reports
+    // `rolled-back`, which this codebase defines as the world being genuinely
+    // back where it was, for a card still sitting in the new column.
+    //
+    // So an unreadable confirmation keeps the entry and lets the unwind's own
+    // compare decide: it re-reads, finds our column, and restores. `claim` is
+    // the sharper caller — without the entry its assignment is undone while its
+    // column move survives, which is neither state the caller asked for.
+    let written = false;
+    let refused = false;
+    const stand = await startServer({
+      // A 4xx the classifier does not know, deliberately: `http-client` retries
+      // every 5xx and every response-less failure four times, so a 500 or a
+      // destroyed socket costs ~15s of backoff to express the same window.
+      fail: (r) => {
+        if (r.method === 'PUT' && r.body?.columnId !== undefined) written = true;
+        if (written && !refused && r.method === 'GET' && r.path === `/cards/${CARD}`) {
+          refused = true;
+          return { status: 400, message: 'Malformed backend response' };
+        }
+        return undefined;
+      },
+    });
+    await useTracker();
+
+    const result = await dispatch('claim', { card: CARD, assignee: ALICE }, ctx(stand));
+
+    expect(result.outcome).toBe('rolled-back');
+    // The read failed, so the error is the wire's — not a claim about the card.
+    expect(result.error).not.toMatch(/did not land there/);
+    // Both writes are undone, newest first, and the card ends where it started.
+    expect(puts(stand.received).map((r) => r.body)).toEqual([
+      { addAssignmentIds: [ALICE] },
+      { columnId: DOING },
+      { columnId: TODO },
+      { removeAssignmentIds: [ALICE] },
+    ]);
+    expect(stand.cards.get(CARD)!.columnId).toBe(TODO);
+    expect(stand.cards.get(CARD)!.assignments).toEqual([]);
+    expect(result.orphans).toBeUndefined();
   });
 });
 
@@ -2228,13 +2280,14 @@ describe('archive is ONE intent with a direction, and it writes `archive` not `a
     // Not a refusal — the call is fine, the wire changed. A refusal would claim
     // "repair the call", which is advice about the wrong thing.
     //
-    // **This is the one test that pins `TransientError`.** `retryAdvice` gates
-    // every caller on `isWireFailure` now, and this failure is raised in OUR
-    // process, so the marker on `TxCards.setArchived`'s throw is the only reason
-    // this line is `true` rather than `false`. Drop the marker, or drop the
-    // `instanceof TransientError` disjunct from the gate, and this is the
-    // assertion that fails — nothing else in the suite reaches the arm. It keys
-    // on the stand's real refusal to move the card, not on a call count.
+    // **This is one of the two tests that pin `TransientError`.** `retryAdvice`
+    // gates every caller on `isWireFailure` now, and this failure is raised in
+    // OUR process, so the marker on `TxCards.setArchived`'s throw is the only
+    // reason this line is `true` rather than `false`. Drop the marker and this is
+    // the assertion that fails. Dropping the `instanceof TransientError` disjunct
+    // from the gate fails this AND #101's "a 200 that left the card where it was
+    // is a LOUD failure", which reaches the same arm through `moveColumn`. It
+    // keys on the stand's real refusal to move the card, not on a call count.
     expect(result.retryable).toBe(true);
   });
 
