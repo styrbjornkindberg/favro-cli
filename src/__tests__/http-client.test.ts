@@ -8,11 +8,33 @@ import FavroHttpClient from '../lib/http-client';
 jest.mock('axios');
 const mockedAxios = axios as jest.Mocked<typeof axios>;
 
+/**
+ * Drive a pending retry to completion without sleeping through the real backoff.
+ *
+ * The interceptor awaits `setTimeout(delay)` before re-issuing the request, and
+ * the delays it computes are 1s, 2s, 4s, 8s and 30s. Eight tests below used to
+ * wait those out for real — 51s of the suite's wall clock — for assertions that
+ * are about the retry HAPPENING and about the seconds named in the user-visible
+ * message, never about elapsed real time. So the timer is faked and flushed
+ * instead. `runAllTimersAsync` drains the microtasks between timers, which a
+ * synchronous `runAllTimers` does not, and the interceptor awaits across the
+ * sleep.
+ *
+ * The two tests that DO pin a duration (`Retrying in 30 seconds` and the
+ * non-429 backoff) advance the clock deliberately rather than using this, so
+ * that a wrong delay fails instead of being flushed away.
+ */
+async function settle<T>(pending: Promise<T>): Promise<T> {
+  await jest.runAllTimersAsync();
+  return pending;
+}
+
 describe('FavroHttpClient', () => {
   let mockAxiosInstance: any;
 
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.useFakeTimers();
     // Create a mock axios instance
     mockAxiosInstance = {
       get: jest.fn(),
@@ -26,6 +48,10 @@ describe('FavroHttpClient', () => {
       },
     };
     mockedAxios.create = jest.fn().mockReturnValue(mockAxiosInstance);
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
   });
 
   test('creates axios instance with default base URL', () => {
@@ -165,11 +191,11 @@ describe('FavroHttpClient', () => {
 
     mockAxiosInstance.request.mockResolvedValue({ data: { success: true } });
 
-    await errorHandler(error429);
+    await settle(errorHandler(error429));
     expect(mockAxiosInstance.request).toHaveBeenCalledWith(error429.config);
     // After retry, _retryCount becomes 1
     expect((error429.config as any)._retryCount).toBe(1);
-  }, 10000);
+  });
 
   test('response interceptor shows "Rate limited. Retrying in X seconds..." on 429', async () => {
     const stderrSpy = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
@@ -183,11 +209,20 @@ describe('FavroHttpClient', () => {
 
     mockAxiosInstance.request.mockResolvedValue({ data: { success: true } });
 
-    await errorHandler(error429);
+    // The clock is advanced deliberately rather than flushed, so that the
+    // header's 30 seconds has to be the delay actually WAITED and not just the
+    // number printed. `delay = delaySecs * 1000` has no other test.
+    const pending = errorHandler(error429);
+    await jest.advanceTimersByTimeAsync(29_999);
+    expect(mockAxiosInstance.request).not.toHaveBeenCalled();
+    await jest.advanceTimersByTimeAsync(1);
+    await pending;
+    expect(mockAxiosInstance.request).toHaveBeenCalled();
+
     const written = stderrSpy.mock.calls.map((c) => String(c[0])).join('');
     expect(written).toContain('Rate limited. Retrying in 30 seconds...');
     stderrSpy.mockRestore();
-  }, 35000);
+  });
 
   test('response interceptor shows rate limit message without Retry-After header (uses exponential backoff)', async () => {
     const stderrSpy = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
@@ -202,11 +237,11 @@ describe('FavroHttpClient', () => {
 
     mockAxiosInstance.request.mockResolvedValue({ data: { success: true } });
 
-    await errorHandler(error429NoHeader);
+    await settle(errorHandler(error429NoHeader));
     const written = stderrSpy.mock.calls.map((c) => String(c[0])).join('');
     expect(written).toContain('Rate limited. Retrying in 1 seconds...');
     stderrSpy.mockRestore();
-  }, 5000);
+  });
 
   test('response interceptor retries up to 4 times (retryCount < 4)', async () => {
     const client = new FavroHttpClient();
@@ -220,10 +255,10 @@ describe('FavroHttpClient', () => {
 
     mockAxiosInstance.request.mockResolvedValue({ data: { success: true } });
 
-    await errorHandler(error429AtRetry3);
+    await settle(errorHandler(error429AtRetry3));
     expect(mockAxiosInstance.request).toHaveBeenCalled();
     expect((error429AtRetry3.config as any)._retryCount).toBe(4);
-  }, 15000);
+  });
 
   test('response interceptor does NOT retry after 4th attempt (retryCount=4)', async () => {
     const client = new FavroHttpClient();
@@ -254,13 +289,13 @@ describe('FavroHttpClient', () => {
     };
 
     mockAxiosInstance.request.mockResolvedValue({ data: { success: true } });
-    await errorHandler(error429HighCount);
+    await settle(errorHandler(error429HighCount));
 
     const written = stderrSpy.mock.calls.map((c) => String(c[0])).join('');
     // 2^3 = 8s
     expect(written).toContain('Rate limited. Retrying in 8 seconds...');
     stderrSpy.mockRestore();
-  }, 12000);
+  });
 
   test('response interceptor retries on 500 server error', async () => {
     const client = new FavroHttpClient();
@@ -273,9 +308,9 @@ describe('FavroHttpClient', () => {
 
     mockAxiosInstance.request.mockResolvedValue({ data: { ok: true } });
 
-    await errorHandler(error500);
+    await settle(errorHandler(error500));
     expect(mockAxiosInstance.request).toHaveBeenCalled();
-  }, 5000);
+  });
 
   test('response interceptor retries on 408 timeout', async () => {
     const client = new FavroHttpClient();
@@ -288,9 +323,9 @@ describe('FavroHttpClient', () => {
 
     mockAxiosInstance.request.mockResolvedValue({ data: { ok: true } });
 
-    await errorHandler(error408);
+    await settle(errorHandler(error408));
     expect(mockAxiosInstance.request).toHaveBeenCalled();
-  }, 5000);
+  });
 
   test('response interceptor does NOT retry on 400 bad request', async () => {
     const client = new FavroHttpClient();
@@ -329,9 +364,9 @@ describe('FavroHttpClient', () => {
 
     mockAxiosInstance.request.mockResolvedValue({ data: { ok: true } });
 
-    await errorHandler(networkError);
+    await settle(errorHandler(networkError));
     expect(mockAxiosInstance.request).toHaveBeenCalled();
-  }, 5000);
+  });
 
   test('response success interceptor passes through response unchanged', () => {
     const client = new FavroHttpClient();
@@ -343,25 +378,42 @@ describe('FavroHttpClient', () => {
   });
 
   test('caps Retry-After at 30s even when header value is huge', async () => {
-    jest.useFakeTimers();
     const stderrSpy = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
     const client = new FavroHttpClient({ auth: { token: 'test-token' } });
     const [, errorHandler] = mockAxiosInstance.interceptors.response.use.mock.calls[0];
 
     mockAxiosInstance.request.mockResolvedValue({ data: {} });
-    const promise = errorHandler({
-      response: { status: 429, headers: { 'retry-after': '9999' } },
-      config: {},
-    });
+    const written = await settle(
+      errorHandler({
+        response: { status: 429, headers: { 'retry-after': '9999' } },
+        config: {},
+      })
+    ).then(() => stderrSpy.mock.calls.map((c) => String(c[0])).join(''));
 
-    jest.runAllTimers(); // Advance all pending timers instantly (no real 30s wait)
-    await promise;
-
-    const written = stderrSpy.mock.calls.map((c) => String(c[0])).join('');
     expect(written).toContain('Retrying in 30 seconds');
     expect(written).not.toContain('9999');
 
     stderrSpy.mockRestore();
-    jest.useRealTimers();
-  }, 5000);
+  });
+
+  /**
+   * The non-429 backoff (`Math.pow(2, retryCount) * 1000`, capped at 30s) had no
+   * test that read the delay at all — the 500/408/network tests only assert that
+   * a retry happened, and every 429 test reads the seconds out of the printed
+   * message, which this arm never prints. Dropping it to 0 passed the whole file.
+   */
+  test('non-429 retry waits 2^retryCount seconds before re-issuing', async () => {
+    const client = new FavroHttpClient();
+    const [, errorHandler] = mockAxiosInstance.interceptors.response.use.mock.calls[0];
+
+    mockAxiosInstance.request.mockResolvedValue({ data: { ok: true } });
+    // retryCount 2 → 2^2 = 4s.
+    const pending = errorHandler({ response: { status: 500 }, config: { _retryCount: 2 } });
+
+    await jest.advanceTimersByTimeAsync(3_999);
+    expect(mockAxiosInstance.request).not.toHaveBeenCalled();
+    await jest.advanceTimersByTimeAsync(1);
+    await pending;
+    expect(mockAxiosInstance.request).toHaveBeenCalled();
+  });
 });

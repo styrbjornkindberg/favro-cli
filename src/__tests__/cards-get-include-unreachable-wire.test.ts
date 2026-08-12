@@ -36,13 +36,11 @@
  * (`read-shape.ts` rule 1), the same place `context`'s snapshot puts its own.
  */
 import * as http from 'http';
-import * as os from 'os';
-import * as path from 'path';
-import * as fsSync from 'fs';
 import { AddressInfo } from 'net';
 import FavroHttpClient from '../lib/http-client';
 import CardsAPI from '../lib/cards-api';
 import { invalidateCache } from '../lib/name-cache';
+import { tempConfigDir } from '../test-support/config-dir';
 
 // The only seam: the CLI builds its own client from real credentials, and this
 // points that client at the stand-in. Everything below it is the real thing.
@@ -58,9 +56,7 @@ jest.mock('../lib/client-factory', () => ({
 
 // Set before the CLI tree is required, so nothing reads the developer's own
 // `~/.favro` — neither the scope lock nor the persistent name cache.
-const CONFIG_DIR = fsSync.mkdtempSync(path.join(os.tmpdir(), 'favro-cards-get-holes-'));
-fsSync.writeFileSync(path.join(CONFIG_DIR, 'config.json'), '{}');
-process.env.FAVRO_CONFIG_DIR = CONFIG_DIR;
+tempConfigDir('favro-cards-get-holes-');
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { buildProgram } = require('../cli') as typeof import('../cli');
@@ -190,10 +186,6 @@ afterEach(async () => {
   logSpy.mockRestore();
   errSpy.mockRestore();
   process.exitCode = undefined;
-});
-
-afterAll(() => {
-  fsSync.rmSync(CONFIG_DIR, { recursive: true, force: true });
 });
 
 interface Payload {

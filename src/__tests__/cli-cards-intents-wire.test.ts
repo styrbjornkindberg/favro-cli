@@ -17,10 +17,10 @@ import * as http from 'http';
 import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs/promises';
-import * as fsSync from 'fs';
 import { AddressInfo } from 'net';
 import FavroHttpClient from '../lib/http-client';
 import type { TrackerMapping } from '../lib/tracker-config';
+import { tempConfigDir } from '../test-support/config-dir';
 
 // The only seam: the CLI builds its own client from real credentials, and this
 // points that client at the stand-in. Everything below the factory — the
@@ -41,15 +41,13 @@ jest.mock('../lib/client-factory', () => ({
 // config during its own import would read it too early for a `beforeEach` to
 // steer, and the scope lock would come from the developer's own
 // `~/.favro/config.json`.
-const CONFIG_DIR = fsSync.mkdtempSync(path.join(os.tmpdir(), 'favro-cli-intents-config-'));
-fsSync.writeFileSync(path.join(CONFIG_DIR, 'config.json'), '{}');
-process.env.FAVRO_CONFIG_DIR = CONFIG_DIR;
+tempConfigDir('favro-cli-intents-config-');
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { buildProgram } = require('../cli') as typeof import('../cli');
 // `tracker-config` imports `config`, so it must be loaded AFTER the line above
 // sets FAVRO_CONFIG_DIR — a value import here would be hoisted above it and
-// freeze CONFIG_DIR to the developer's real `~/.favro` (issue #65).
+// freeze the config dir to the developer's real `~/.favro` (issue #65).
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { renderTrackerBlock } = require('../lib/tracker-config') as typeof import('../lib/tracker-config');
 
@@ -295,7 +293,6 @@ afterEach(async () => {
 afterAll(async () => {
   if (originalTrackerDoc === undefined) delete process.env.FAVRO_TRACKER_DOC;
   else process.env.FAVRO_TRACKER_DOC = originalTrackerDoc;
-  await fs.rm(CONFIG_DIR, { recursive: true, force: true });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

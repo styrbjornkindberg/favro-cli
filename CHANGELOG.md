@@ -361,6 +361,42 @@ Issue #95, ADR-0006.
   said the opposite of the code: `next` dropped its blocking term in #47 and does not import
   `judgeBlockers`. Only `cards list --filter unblocked` pays it (#98).
 
+- `cards export` no longer draws its spinner over its own error message. `Spinner.start()` opens
+  an `unref`'d `setInterval` that only `stop()` clears, and the board fetch sat between
+  `start()` and `stop()` with no `finally` — so a fetch that threw skipped `stop()` and the
+  frames kept drawing over the error the `catch` prints, until the process exited. `src/cli.ts`
+  now stops it in a `finally`. It is the only `Spinner` call site in `src/`; `ProgressBar`
+  renders synchronously and cannot leak (#97).
+
+### Internal
+
+- Test suite: **63.9 s → 22.6–26.2 s**, and it no longer writes to the real stdout or stderr
+  (#97, ADR-0007).
+
+  `http-client.test.ts` alone was 51.2 s of the old wall clock, spent sleeping through real
+  exponential backoff — `1+30+1+8+8+1+1+1` seconds across eight retry tests, none of which
+  asserted elapsed time. It now uses fake timers and takes 1.2 s. The real sleeping was also
+  hiding two things: `delay = delaySecs * 1000 → 0` and the non-429 backoff `→ 0` both
+  *survived* the old suite and are killed now, so two tests advance the clock deliberately
+  rather than flushing it.
+
+  Direct `process.stdout.write` / `process.stderr.write` is not captured by Jest, so a run
+  leaked 821 bytes of `Validating credentials…` onto stdout and 420 spinner frames onto stderr,
+  the frames arriving as one unbroken line in front of an unrelated suite's `PASS`. A
+  `setupFilesAfterEnv` file now silences the deliberate writes per suite (stdout **821 → 0
+  bytes**); the frames were the leaked interval above, and fixing that at the source took them
+  from a run-dependent 5–152 to a deterministic **0**.
+
+  Shared fixtures already had a home — `src/test-support/`, build-excluded and recognised by
+  four ratchets — so `config-dir.ts` joins it there rather than starting a second one under
+  `src/__tests__/`, and `jest.config.js`'s `**/__tests__/**/*.ts` glob is left strict on purpose
+  so it stays the only home. Its `tempConfigDir()` is the per-suite, synchronous, module-scope
+  counterpart to the existing per-test `useTempConfigDir()`; nine suites now use it instead of
+  hand-rolling mkdtemp + `config.json` + `FAVRO_CONFIG_DIR` + a teardown. In `src/__tests__`:
+  `mkdtempSync` **45 → 36**, teardown lines **60 → 52**. Six suites still build one by hand for
+  lifetime reasons named in ADR-0007; the `entities` wrappers (157) and server-lifecycle blocks
+  (38) are untouched on purpose.
+
 ### Known gaps at release
 
 - The output migration is incomplete — see the caveat under Breaking #1.

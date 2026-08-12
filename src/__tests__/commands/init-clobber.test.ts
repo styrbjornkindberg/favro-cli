@@ -38,10 +38,9 @@ import { Command } from 'commander';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { tempConfigDir } from '../../test-support/config-dir';
 
-const CONFIG_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'favro-cli-init-config-'));
-fs.writeFileSync(path.join(CONFIG_DIR, 'config.json'), JSON.stringify({ scopeCollectionId: 'coll-1' }));
-process.env.FAVRO_CONFIG_DIR = CONFIG_DIR;
+tempConfigDir('favro-cli-init-config-', { scopeCollectionId: 'coll-1' });
 
 // `fs/promises` is deliberately NOT mocked — the disk is the subject here.
 jest.mock('../../lib/client-factory');
@@ -107,10 +106,6 @@ afterEach(() => {
   process.exitCode = undefined;
   jest.restoreAllMocks();
   fs.rmSync(repoDir, { recursive: true, force: true });
-});
-
-afterAll(() => {
-  fs.rmSync(CONFIG_DIR, { recursive: true, force: true });
 });
 
 async function runInit(...args: string[]): Promise<void> {

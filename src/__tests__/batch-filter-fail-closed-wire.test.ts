@@ -24,13 +24,11 @@
  * is simply broken.
  */
 import * as http from 'http';
-import * as os from 'os';
-import * as path from 'path';
 import * as fs from 'fs/promises';
-import * as fsSync from 'fs';
 import { AddressInfo } from 'net';
 import FavroHttpClient from '../lib/http-client';
 import { invalidateCache } from '../lib/name-cache';
+import { tempConfigDir } from '../test-support/config-dir';
 
 // The only seam: the CLI builds its own client from real credentials, and this
 // points that client at the stand-in. Everything below it is the real thing.
@@ -46,9 +44,7 @@ jest.mock('../lib/client-factory', () => ({
 
 // Set before the CLI tree is required, so nothing reads the developer's own
 // `~/.favro` — neither the scope lock nor the persistent name cache.
-const CONFIG_DIR = fsSync.mkdtempSync(path.join(os.tmpdir(), 'favro-batch-filter-config-'));
-fsSync.writeFileSync(path.join(CONFIG_DIR, 'config.json'), '{}');
-process.env.FAVRO_CONFIG_DIR = CONFIG_DIR;
+tempConfigDir('favro-batch-filter-config-');
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { buildProgram } = require('../cli') as typeof import('../cli');
@@ -267,10 +263,6 @@ afterEach(async () => {
   // deleting the file left the previous test's records being served from memory
   // and this cleanup did nothing at all.
   await invalidateCache();
-});
-
-afterAll(async () => {
-  await fs.rm(CONFIG_DIR, { recursive: true, force: true });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

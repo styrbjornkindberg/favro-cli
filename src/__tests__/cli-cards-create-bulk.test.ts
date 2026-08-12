@@ -15,9 +15,9 @@ import * as http from 'http';
 import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs/promises';
-import * as fsSync from 'fs';
 import { AddressInfo } from 'net';
 import FavroHttpClient from '../lib/http-client';
+import { tempConfigDir } from '../test-support/config-dir';
 
 // The only seam: the CLI builds its own client from real credentials, and this
 // points that client at the stand-in instead of favro.com. Everything below the
@@ -38,9 +38,7 @@ jest.mock('../lib/client-factory', () => ({
 // being required: a module that reads the config during its own import would
 // read it too late to be steered by a `beforeEach`, and the scope lock would
 // come from the developer's own `~/.favro/config.json`.
-const CONFIG_DIR = fsSync.mkdtempSync(path.join(os.tmpdir(), 'favro-cli-bulk-config-'));
-fsSync.writeFileSync(path.join(CONFIG_DIR, 'config.json'), '{}');
-process.env.FAVRO_CONFIG_DIR = CONFIG_DIR;
+tempConfigDir('favro-cli-bulk-config-');
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { buildProgram } = require('../cli') as typeof import('../cli');
@@ -176,10 +174,6 @@ afterEach(async () => {
   logSpy.mockRestore();
   errSpy.mockRestore();
   await fs.rm(tmpDir, { recursive: true, force: true });
-});
-
-afterAll(async () => {
-  await fs.rm(CONFIG_DIR, { recursive: true, force: true });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

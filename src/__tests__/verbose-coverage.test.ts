@@ -29,18 +29,14 @@
  * pass forever.
  */
 import { Command } from 'commander';
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
+import { tempConfigDir } from '../test-support/config-dir';
 
 // Set before the CLI is loaded. NOT because `config.ts` freezes anything —
 // `configDir()` has resolved per call since #65 and says so at `config.ts:43`.
 // The reason is the tree being required: any module that reads the config
 // during its own import would read it too early, and the run would land in the
 // developer's own ~/.favro.
-const CONFIG_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'favro-cli-verbose-config-'));
-fs.writeFileSync(path.join(CONFIG_DIR, 'config.json'), '{}');
-process.env.FAVRO_CONFIG_DIR = CONFIG_DIR;
+tempConfigDir('favro-cli-verbose-config-');
 
 // The single seam every command's error path funnels through: the factory that
 // builds the API client. Making it throw is the shortest route to a real

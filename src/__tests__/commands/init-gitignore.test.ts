@@ -31,10 +31,9 @@ import { Command } from 'commander';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { tempConfigDir } from '../../test-support/config-dir';
 
-const CONFIG_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'favro-cli-init-gi-config-'));
-fs.writeFileSync(path.join(CONFIG_DIR, 'config.json'), JSON.stringify({ scopeCollectionId: 'coll-1' }));
-process.env.FAVRO_CONFIG_DIR = CONFIG_DIR;
+tempConfigDir('favro-cli-init-gi-config-', { scopeCollectionId: 'coll-1' });
 
 // Every `fs/promises` call reaches the real disk. These two are routed through
 // a jest.fn only so a single call can be made to fail on demand; `beforeEach`
@@ -120,10 +119,6 @@ afterEach(() => {
   process.exitCode = undefined;
   jest.restoreAllMocks();
   fs.rmSync(repoDir, { recursive: true, force: true });
-});
-
-afterAll(() => {
-  fs.rmSync(CONFIG_DIR, { recursive: true, force: true });
 });
 
 async function runInit(...args: string[]): Promise<void> {

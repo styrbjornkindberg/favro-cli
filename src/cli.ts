@@ -1135,8 +1135,18 @@ cards
 
       const spinner = new (await import('./lib/progress')).Spinner('Fetching cards');
       spinner.start();
-      let cardList = await api.listCards(board);
-      spinner.stop();
+      // `finally`, because `Spinner.start` uses an `unref`'d `setInterval` that
+      // only `stop()` clears: a throwing `listCards` skipped it, and the frames
+      // then drew over the very error message the `catch` below prints, until
+      // the process exited. Under test `process.exit` is stubbed, so the
+      // interval instead survived for the rest of the Jest worker's life and
+      // scribbled across later suites' output — the stderr half of #97's leak.
+      let cardList;
+      try {
+        cardList = await api.listCards(board);
+      } finally {
+        spinner.stop();
+      }
 
       if (filters.length > 0) {
         const before = cardList.length;

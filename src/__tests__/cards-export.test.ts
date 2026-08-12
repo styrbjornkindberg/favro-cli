@@ -26,6 +26,7 @@ import {
 } from '../test-support/filter-vocabulary';
 import { escapeCsvField, cardsToCSV, normalizeCard, writeCardsCSV, writeCardsJSON } from '../lib/csv';
 import CardsAPI, { Card } from '../lib/cards-api';
+import { Spinner } from '../lib/progress';
 import FavroHttpClient from '../lib/http-client';
 import * as config from '../lib/config';
 
@@ -603,6 +604,34 @@ describe('cards export (live command)', () => {
       STUB_BOARD, '--format', 'json', '--out', '/tmp/traversal-attack.json',
     );
     expect(said).toContain('Output path must be within current directory');
+  });
+
+  /**
+   * `Spinner.start` opens an `unref`'d `setInterval` that only `stop()` clears.
+   * The fetch used to sit between `start()` and `stop()` with no `finally`, so a
+   * throwing `listCards` left the interval running: in real use it drew frames
+   * over the error message the catch prints, and under test — where
+   * `process.exit` is stubbed — it survived for the rest of the Jest worker's
+   * life and scribbled across later suites' stderr. That was the stderr half of
+   * #97's output leak, and it is why this asserts on `stop` rather than on the
+   * absence of frames: an absence assertion here would also pass if the spinner
+   * were never started at all.
+   */
+  test('stops the spinner when the board fetch fails, so its interval cannot outlive the command', async () => {
+    const listCards = jest.fn().mockRejectedValue(new Error('board fetch exploded'));
+    (CardsAPI as jest.MockedClass<typeof CardsAPI>)
+      .mockImplementation(() => ({ listCards } as any));
+    const stop = jest.spyOn(Spinner.prototype, 'stop');
+
+    try {
+      await expectRefusal(STUB_BOARD, '--format', 'json');
+      // The fetch really was attempted, so the spinner really was started —
+      // without this the assertion below could pass on a no-op path.
+      expect(listCards).toHaveBeenCalledWith(STUB_BOARD);
+      expect(stop).toHaveBeenCalled();
+    } finally {
+      stop.mockRestore();
+    }
   });
 
 });

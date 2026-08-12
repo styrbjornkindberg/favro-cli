@@ -12,9 +12,9 @@
  * Nothing here asserts wording. Asserting the prose against a copy of the prose
  * would pass forever and detect nothing.
  */
-import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs';
+import { tempConfigDir } from '../test-support/config-dir';
 
 // Set at module scope, before the command tree is imported. `config.ts` reads
 // the environment per call now (#65 unfroze it), so a `beforeEach` would work
@@ -22,9 +22,7 @@ import * as fs from 'fs';
 // module that captures a path at import time would still land on the
 // developer's own `~/.favro`. Earliest possible is the safe place for it.
 // Nothing here talks to a network.
-const CONFIG_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'favro-cli-drift-config-'));
-fs.writeFileSync(path.join(CONFIG_DIR, 'config.json'), '{}');
-process.env.FAVRO_CONFIG_DIR = CONFIG_DIR;
+tempConfigDir('favro-cli-drift-config-');
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { buildProgram } = require('../cli') as typeof import('../cli');
@@ -37,10 +35,6 @@ import type { Command } from 'commander';
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const BUILTIN_DIR = path.join(REPO_ROOT, 'skills', 'builtin');
-
-afterAll(() => {
-  fs.rmSync(CONFIG_DIR, { recursive: true, force: true });
-});
 
 // ─── reading the topic ───────────────────────────────────────────────────────
 
