@@ -39,6 +39,13 @@ export interface Column {
  * this class goes through it, so no caller has to know that the wire says
  * `widgetCommonId` — and a payload with neither spelling keeps `boardId`
  * `undefined`, which is what the scope check needs in order to refuse.
+ *
+ * ponytail: the two WRITE paths (`createColumn`, `updateColumn`) deliberately return
+ * their response unnormalised. No caller reads `boardId` off either — both print
+ * `columnId`/`name` or dump the payload verbatim, and normalising there would put a key
+ * into a `--json` dump that the wire never sent. If a caller ever needs the board off a
+ * write result, wrap those two the same way rather than reaching for `widgetCommonId` at
+ * the use site.
  */
 function normalizeColumn(raw: Column): Column {
   const boardId = raw.boardId ?? raw.widgetCommonId;
