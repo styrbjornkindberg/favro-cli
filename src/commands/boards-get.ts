@@ -5,16 +5,10 @@
  * favro boards get <id> [--include custom-fields,cards,members,stats,velocity]
  */
 import { Command } from 'commander';
-import { ExtendedBoard, MeasuredCount } from '../lib/boards-api';
+import { ExtendedBoard, shown } from '../lib/boards-api';
 import { run } from '../lib/run';
 
 const VALID_INCLUDES = ['custom-fields', 'cards', 'members', 'stats', 'velocity'];
-
-/**
- * A count nothing measured prints as `unknown`, never as a number. `boards-api.ts`
- * explains which facets have no source and why; this is the render half of it.
- */
-const shown = (value: MeasuredCount): string | number => value ?? 'unknown';
 
 function formatBoardDetails(board: ExtendedBoard): void {
   console.log(`Board: ${board.name} (${board.boardId})`);

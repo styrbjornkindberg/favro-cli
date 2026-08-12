@@ -4,14 +4,8 @@
  * CLA-1784 FAVRO-022: Enhanced with collection-id arg and --include stats,velocity
  */
 import { Command } from 'commander';
-import { Board, ExtendedBoard, MeasuredCount, withBoardIncludes } from '../lib/boards-api';
+import { Board, ExtendedBoard, shown, withBoardIncludes } from '../lib/boards-api';
 import { Ctx, run } from '../lib/run';
-
-/**
- * A count nothing measured prints as `unknown`, never as a number. `boards-api.ts`
- * explains which facets have no source and why; this is the render half of it.
- */
-const shown = (value: MeasuredCount): string | number => value ?? 'unknown';
 
 export function formatBoardsTable(boards: Board[]): void {
   if (boards.length === 0) {
@@ -103,9 +97,12 @@ export async function listBoardsHandler(
     : (await ctx.api.boards.listBoards(100)).map(b => withBoardIncludes({ ...b }, include));
 
   // A list read: the runner writes the envelope, compact, and applies the cap.
-  // `boards` has no bulk field to omit, so the cost here is row count alone —
-  // which is exactly what `--limit` answers, and 322 rows is the measured worst
-  // case (#99).
+  // Row count is the main cost, which is exactly what `--limit` answers, and 322
+  // rows is the measured worst case (#99). With `--include stats` or `velocity`
+  // each row also carries the same 267-byte `unmeasured` sentence — measured at
+  // 284 bytes of JSON per row, ~89 KiB across 322 boards. It is per-row on
+  // purpose: a `jq` pipeline that picks one row must still get the reason its
+  // counts are `null`, and `--limit` cuts that cost with everything else.
   return {
     rows: boards,
     limit: options.limit,

@@ -77,6 +77,19 @@ export interface BoardColumn {
  */
 export type MeasuredCount = number | null;
 
+/**
+ * Render a count for a human: the number, or the word `unknown`. **The one render
+ * half of `MeasuredCount`.**
+ *
+ * It lives here rather than beside each formatter because it was written twice —
+ * identically, in `commands/boards-get.ts` and `commands/boards-list.ts` — and only
+ * one of the two copies had a test that read the printed cell. The copy nothing
+ * asserted could be changed to `?? 0` and the whole suite stayed green, which is
+ * the defect this batch removed, reintroduced in the renderer instead of the
+ * counter. One function has one place to break.
+ */
+export const shown = (value: MeasuredCount): string | number => value ?? 'unknown';
+
 export interface BoardStats {
   totalCards: MeasuredCount;
   doneCards: MeasuredCount;
@@ -106,9 +119,16 @@ export interface ExtendedBoard extends Board {
   velocity?: VelocityData[];
   /**
    * Why a `stats`/`velocity` facet came back `null`, when one did. Set by
-   * `withBoardIncludes` and by nothing else, so every path that can print an
-   * unknown count also carries the sentence explaining it — the ADR-0002 half of
-   * the fix, since a bare `null` in a table is not something a reader can act on.
+   * `withBoardIncludes` and by nothing else — the ADR-0002 half of the fix, since a
+   * bare `null` in a table is not something a reader can act on.
+   *
+   * ponytail: set on the NO-CARDS branch only, which is every branch any caller
+   * reaches today (`/widgets/{id}` was measured to carry no cards). The ceiling is
+   * the dormant cards branch: `added` and `netChange` are `null` there too — there
+   * is no source for cards ADDED in a period either way — so a caller that ever
+   * hydrates cards gets `Added: unknown` with no note beside it. Upgrade path for
+   * that caller: set this from whether any attached facet is actually `null`, not
+   * from whether cards were passed, and give `added` its own sentence.
    */
   unmeasured?: string;
 }

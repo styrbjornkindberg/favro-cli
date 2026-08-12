@@ -497,6 +497,21 @@ Issue #95, ADR-0006.
 
 ### Internal
 
+- **The board-stats regression check stubbed `console.table` to a no-op, so half of the output
+  it claimed to assert was thrown away.** Review of the `--include stats` fix above. Both
+  tables — `boards get`'s velocity rows and `boards list`'s row per board — reach the reader
+  only through `console.table`, and `--json` never runs the formatter at all, so no assertion
+  anywhere read the `Open`, `Done`, `Velocity`, `Completed`, `Added` or `Net Change` cells.
+  Measured: changing `boards-list.ts`'s renderer to spell `null` as `0` left **all 174 suites
+  and 3650 tests passing** — the same defect the fix removed from the counters, reintroduced one
+  layer further out in the renderer, and invisible. The spy now records the rows it is handed
+  and two arms assert every cell, one per table; the same mutation now fails three tests.
+
+  The renderer was also written twice, identically, in `boards-get.ts` and `boards-list.ts`,
+  and only the `boards-get.ts` copy was read by a test — which is how one copy could drift
+  alone. It is now one exported `shown` in `lib/boards-api.ts`, beside the `MeasuredCount` type
+  it renders.
+
 - Test suite: **63.9 s → 22.6–26.2 s**, and it no longer writes to the real stdout or stderr
   (#97, ADR-0007).
 

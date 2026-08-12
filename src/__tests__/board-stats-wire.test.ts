@@ -71,6 +71,22 @@ let logSpy: jest.SpyInstance;
 let tmpDir: string;
 const originalConfigDir = process.env.FAVRO_CONFIG_DIR;
 
+/**
+ * Every row `console.table` was handed, flattened across calls.
+ *
+ * These are CAPTURED, not discarded. Both tables — `boards get`'s velocity rows and
+ * `boards list`'s extended row per board — reach the reader only through
+ * `console.table`, so stubbing it to a no-op left every cell in them unasserted:
+ * the suite stayed green with the list renderer's `shown` changed to `?? 0`, which
+ * is this whole defect printed again one layer further out. Asserting the cells is
+ * the only thing that catches that, because `--json` never runs the formatter.
+ */
+let tabled: Array<Record<string, unknown>> = [];
+
+/** The cells of every captured table row, as strings. */
+const cells = (): string[] =>
+  tabled.flatMap(row => Object.values(row).map(v => String(v)));
+
 /** Serves the measured widget for `/widgets`, and one collection for the resolve. */
 function startServer(): Promise<number> {
   const server = http.createServer((req, res) => {
@@ -111,6 +127,7 @@ async function cli(port: number, argv: string[]): Promise<string> {
   registerBoardsListCommand(boards);
 
   logged = [];
+  tabled = [];
   await program.parseAsync(['node', 'cli', 'boards', ...argv]);
   return logged.join('\n');
 }
@@ -122,9 +139,12 @@ beforeEach(async () => {
   logSpy = jest.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
     logged.push(args.map(a => (typeof a === 'string' ? a : JSON.stringify(a))).join(' '));
   });
-  // `console.table` writes through its own channel; the rows are asserted from
-  // the JSON arm, so it is enough here that it does not reach the reporter.
-  jest.spyOn(console, 'table').mockImplementation(() => {});
+  // `console.table` writes through its own channel, so it is kept off the
+  // reporter — but the rows it was given are recorded and asserted below.
+  tabled = [];
+  jest.spyOn(console, 'table').mockImplementation((rows?: unknown) => {
+    if (Array.isArray(rows)) tabled.push(...(rows as Array<Record<string, unknown>>));
+  });
 });
 
 afterEach(async () => {
@@ -165,6 +185,23 @@ describe('a card facet with no measured source is never printed as a number', ()
     expect(out).toContain('Velocity (weekly):');
     expect(out).toMatch(/Note: .*unknown, not zero/);
     expect(out).toContain('favro columns list <boardId>');
+  });
+
+  it('boards get --human: the velocity TABLE reads unknown in every cell but the period', async () => {
+    await cli(await startServer(), ['get', BOARD, '--include', 'velocity', '--human']);
+
+    // The velocity rows never touch `console.log` — they are handed to
+    // `console.table`, so this is the only assertion that reads them.
+    expect(tabled).toHaveLength(4);
+    for (const row of tabled) {
+      expect(row).toEqual({
+        Period: expect.stringMatching(/^\d{4}-\d{2}-\d{2} to \d{4}-\d{2}-\d{2}$/),
+        Completed: 'unknown',
+        Added: 'unknown',
+        'Net Change': 'unknown',
+      });
+    }
+    expect(cells()).not.toContain('0');
   });
 
   it('boards get --json: every facet is null, and null is not 0', async () => {
@@ -228,13 +265,21 @@ describe('a card facet with no measured source is never printed as a number', ()
     expect(envelope.rows[0].velocity.every((w: any) => w.completed === null)).toBe(true);
   });
 
-  it('boards list --human: the table keeps the columns and states why they are unknown', async () => {
+  it('boards list --human: the table KEEPS the columns, and every one of them reads unknown', async () => {
     const out = await cli(await startServer(), [
       'list', '--include', 'stats,velocity', '--human',
     ]);
 
     expect(out).toContain('Found 1 board(s):');
     expect(out).toMatch(/Note: .*unknown, not zero/);
+
+    // The columns the reader asked for are still there — dropping them would be
+    // its own defect — and not one of them carries a number. This is the arm that
+    // fails if `shown` ever renders `null` as `0` again: the row is `console.table`
+    // output, so `--json` and `console.log` assertions both miss it.
+    expect(tabled).toHaveLength(1);
+    expect(tabled[0]).toMatchObject({ Open: 'unknown', Done: 'unknown', Velocity: 'unknown' });
+    expect(cells()).not.toContain('0');
   });
 
   it('no facet, no note: --include is not the same as asking for stats', async () => {
