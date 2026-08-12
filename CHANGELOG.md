@@ -400,6 +400,23 @@ Issue #95, ADR-0006.
   said the opposite of the code: `next` dropped its blocking term in #47 and does not import
   `judgeBlockers`. Only `cards list --filter unblocked` pays it (#98).
 
+- **`docs/repo-context.md` told agents to trust a guess.** It stated that every value in a
+  `.favro/context.json` is a measurement with exactly two announced exceptions (`notes.team`,
+  `notes.scope`), and rule 5 repeated the count — while three paragraphs above, the same file
+  described `favro init` deriving `workflow[].stage` by Swedish/English keyword match, called
+  `detectStage` a *guess*, and recorded that a column matching no keyword (and a column Favro
+  sends with no name) still gets one. Rule 3 then told agents to key stage-aware operations off
+  that array. `context.json` has zero code readers, so the doc **is** the interface and the
+  false sentence was the defect. Walking the write surface rather than grepping for "stage"
+  found two derived values, not one: `stage`, and `next`, whose `null` means "last column" and
+  "the next column has no name" indistinguishably (`init.ts:250`). Both are now in the table of
+  what a value means, rule 3 keys off `columnId` and points at the two human-confirmed ids from
+  `favro tracker init`, and rule 5 names them instead of promising two exceptions.
+  `docs/adr/0008-stage-is-display-only.md` settles how far the heuristic is trusted — display
+  only — and argues down the alternative of announcing `stage` in `notes`: those keys mark a
+  facet that fell back *on this run*, and a key that is always present marks nothing. No code
+  changed; `src/__tests__/commands/init.test.ts` gains one assertion holding the doc to it.
+
 - `cards export` no longer draws its spinner over its own error message. `Spinner.start()` opens
   an `unref`'d `setInterval` that only `stop()` clears, and the board fetch sat between
   `start()` and `stop()` with no `finally` — so a fetch that threw skipped `stop()` and the

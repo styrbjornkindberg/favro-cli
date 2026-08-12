@@ -9,6 +9,8 @@
  */
 import { Command } from 'commander';
 import * as fs from 'fs/promises';
+import { readFileSync } from 'fs';
+import * as path from 'path';
 import { registerInitCommand } from '../../commands/init';
 import * as config from '../../lib/config';
 import * as clientFactory from '../../lib/client-factory';
@@ -326,6 +328,31 @@ describe('init — the file it writes', () => {
     // `next` is declared `string | null`, so a nameless neighbour is null —
     // not `undefined`, which JSON drops and which the type does not allow.
     expect(workflow[0].next).toBeNull();
+  });
+
+  // The ratchet for the claim this file's DATA cannot make (ADR-0008).
+  //
+  // `.favro/context.json` has no code readers, so `docs/repo-context.md` IS its
+  // interface. That doc promised "every value ... is a measurement" with exactly
+  // TWO announced exceptions (`notes.team`, `notes.scope`), while the two tests
+  // above are precisely what produces a third: a column matching no keyword —
+  // and a column with no name at all — still gets a `stage`, and no note says so.
+  //
+  // Two-sided on purpose. A doc-only grep stays green if `init` stops deriving
+  // `stage` at all, and a code-only check cannot see the false sentence; the
+  // claim only holds when both ends agree. The rule is located by "a numbered
+  // rule that says `measurement`" rather than by its number or its opening
+  // words, so renumbering or rewording the list does not quietly disarm this.
+  test('the trust rule in docs/repo-context.md names the derived stage', () => {
+    const read = (p: string) => readFileSync(path.join(__dirname, '..', '..', '..', p), 'utf-8');
+
+    expect(read('src/commands/init.ts')).toContain('stage: detectStage(');
+
+    const rules = read('docs/repo-context.md').split('## Rules for AI/LLM Consumers')[1];
+    expect(rules).toBeDefined();
+    const trustRule = rules.split('\n').find((l) => /^\d+\. .*measurement/.test(l));
+    expect(trustRule).toBeDefined();
+    expect(trustRule).toContain('`workflow[].stage`');
   });
 
   test('keeps only users the collection is shared with', async () => {

@@ -40,6 +40,7 @@ slug, custom-field name and userId respectively.
       "name": "Sprint 42",
       "type": "backlog",                        // omitted when Favro sends none
       "workflow": [                             // omitted when the board has NO columns
+        // `columnId` and `name` are read; `stage` and `next` are DERIVED — see rule 5
         { "columnId": "col-1", "name": "To Do",       "stage": "backlog", "next": "In Progress" },
         { "columnId": "col-2", "name": "In Progress", "stage": "active",  "next": "Done" },
         { "columnId": "col-3", "name": "Done",        "stage": "done",    "next": null }
@@ -82,8 +83,14 @@ each of those failures into an empty value, which is indistinguishable from the
 real finding — a failed `/users` read produced `"team": {}`, and every agent
 reading the file afterwards concluded the collection had no members.
 
-So every value in a `context.json` that exists is a measurement, and the two
-facets that can hold a fallback instead say so in `notes`:
+So every value in a `context.json` that was **read** is a measurement, and the
+two facets that can fall back instead of refusing say so in `notes`.
+
+Two values in the file are not reads at all, and neither announces itself in
+`notes` — a `notes` entry marks a facet that fell back *on this run*, and these
+are derived on *every* run, so a note that is always present marks nothing.
+They are listed in the table below with the rest, and settled in
+`docs/adr/0008-stage-is-display-only.md`.
 
 | You see | It means |
 |---------|----------|
@@ -93,6 +100,8 @@ facets that can hold a fallback instead say so in `notes`:
 | `"team": {}` **with** `notes.team` | the collection's `sharedToUsers` could not be read, so `team` fails closed to nobody rather than opening to the whole org. It is stated in the file because a privacy filter that cannot run must not be skipped. |
 | `scope.collectionName` **and no** `notes.scope` | `GET /collections/:id` answered, and that is the collection's name |
 | `scope.collectionName` **with** `notes.scope` | that read failed, so the name is a fallback and NOT a measurement. The note says which of the two: the name in your local `~/.favro/config.json`, which may be stale, or the raw `collectionId` when there is none. Like `team` above, this facet falls back rather than refusing — the name is display text and `collectionId` is always the real one — but the fallback announces itself, so it is never mistaken for a measurement. |
+| `workflow[].stage` | **derived, never read.** It is `detectStage`'s keyword guess at what the column's NAME means — see *Workflow Stage Detection*. Favro has no stage field to read, so there is no measurement this could be. Display only: it is not the open/closed axis, and nothing in the CLI consults it. |
+| `workflow[].next` | **derived, never read.** The next column's `name` in board order. `null` means either "this is the last column" or "the next column has no name" — the two are not distinguishable, so walk `workflow` by position and key off `columnId`, not off `next`. |
 
 The one thing this costs: a partially-readable workspace produces no file until
 the key can read every facet. `favro init --refresh` is the retry.
@@ -120,6 +129,10 @@ implementation — these are its branches, in the order it tests them):
 with no name at all — falls through to `queued`; no column is ever dropped from
 `workflow`. The stage is a keyword *guess*, so treat it as a display hint, never
 as the open/closed axis: `favro tracker init` stores two `columnId`s for that.
+That makes `stage` the one value in the file that is neither a measurement nor an
+announced fallback, which is why rule 5 names it instead of promising there are
+only two exceptions. `docs/adr/0008-stage-is-display-only.md` settles how far it
+may be trusted.
 
 ---
 
@@ -146,9 +159,9 @@ If you're building tools that read this file:
 
 1. **Check `_updated`** — a date, not a timestamp. Older than 7 days, suggest `favro init --refresh`
 2. **Resolve boards by the slug key first**, then `name`, then `boardId`
-3. **Use each board's `workflow` array** for stage-aware operations (e.g. "active cards" = cards in the columns whose `stage` is `active`)
+3. **Key column operations off `columnId`**, never off `name` and never off `stage`. Each board's `workflow` array gives you the columns and their order; `stage` on each entry is a guess at the column's name, not a reading of it (rule 5). For the open/closed axis — "active cards", "done cards" — use the two `columnId`s a human confirmed at `favro tracker init`, stored in `docs/agents/issue-tracker.md`. Where no confirmed mapping exists, `stage` is a proposal to put in front of a human, not a verdict to act on
 4. **Never modify `context.json` directly** — always use `favro init --refresh`
-5. **Trust every value as a measurement** — see *What the File Says About a Facet It Could Not Read*. A missing or empty facet is a finding, not a failed read; the two exceptions announce themselves in `notes.team` and `notes.scope`. Read `notes` before trusting `team` or `scope.collectionName`, and key off `collectionId`, never the name
+5. **Trust every value that was READ as a measurement** — see *What the File Says About a Facet It Could Not Read*. A missing or empty facet is a finding, not a failed read; the two facets that can fall back announce themselves in `notes.team` and `notes.scope`, so read `notes` before trusting `team` or `scope.collectionName`, and key off `collectionId`, never the name. **`workflow[].stage` and `workflow[].next` are derived, not read, and they do NOT announce themselves in `notes`** — they are derived on every run, so there is no per-run marker to look for. `stage` in particular is a keyword guess; treat it as display (rule 3)
 6. **Custom field types** determine how to set values:
    - `single_select` / `multiple_select` → use option values
    - `text` / `number` / `date` → use raw values
