@@ -393,9 +393,17 @@ Issue #95, ADR-0006.
   so it stays the only home. Its `tempConfigDir()` is the per-suite, synchronous, module-scope
   counterpart to the existing per-test `useTempConfigDir()`; nine suites now use it instead of
   hand-rolling mkdtemp + `config.json` + `FAVRO_CONFIG_DIR` + a teardown. In `src/__tests__`:
-  `mkdtempSync` **45 → 36**, teardown lines **60 → 52**. Six suites still build one by hand for
+  `mkdtempSync` **55 → 46**, teardown lines **60 → 52**. Six suites still build one by hand for
   lifetime reasons named in ADR-0007; the `entities` wrappers (157) and server-lifecycle blocks
   (38) are untouched on purpose.
+
+  On review: the silencer's teardown was unasserted — deleting the restore left all 172 suites
+  green — so `silence-output.test.ts` now checks from a root `afterAll` that both writers are the
+  pristine functions again, and the helper stops saving a `.bind()` copy that made that
+  uncheckable. `cli.ts`'s `let cardList` under the new `try`/`finally` had become an implicit
+  `any` and is annotated `Card[]` again. Two ADR-0007 claims were corrected against measurement:
+  per-suite `PASS` header lines *are* lost under `--runInBand` (failure blocks and the summary are
+  not, and CI's worker mode is unaffected), and `mkdtempSync` is **55 → 46**, not 45 → 36.
 
 ### Known gaps at release
 

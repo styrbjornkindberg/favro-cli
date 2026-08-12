@@ -35,3 +35,23 @@ describe('silence-output', () => {
     expect(called).toBe(true);
   });
 });
+
+/**
+ * The other half: the swap is UNDONE. Nothing asserted this, and deleting the
+ * restore loop left the whole suite green — a cleanup that does nothing, which
+ * is exactly what the setup half is careful about.
+ *
+ * A root `afterAll` is the only scope it is observable from. Jest runs root
+ * `afterAll` hooks in registration order (measured), and `setupFilesAfterEnv`
+ * registers before any test file, so the silencer's teardown has already run by
+ * the time this one does — and both writers must be the pristine functions
+ * again, by identity.
+ */
+afterAll(() => {
+  if (process.stdout.write !== pristineStdoutWrite) {
+    throw new Error('silence-output did not restore process.stdout.write');
+  }
+  if (process.stderr.write !== pristineStderrWrite) {
+    throw new Error('silence-output did not restore process.stderr.write');
+  }
+});

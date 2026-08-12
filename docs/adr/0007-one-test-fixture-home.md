@@ -33,7 +33,7 @@ re-measured, because ADR-0003 applies to a count as much as to an API shape.
 |---|---|---|
 | `{entities:[…]}` wrappers | 165 | **157** |
 | `new FavroHttpClient(` | 66 | **86** |
-| temp-config-dir setups | 29 | **45** `mkdtempSync` across **36** files |
+| temp-config-dir setups | 29 | **55** `mkdtempSync` across **36** files |
 | byte-identical teardown lines | 11 | **60** lines carrying `recursive: true, force: true` |
 | `http-client.test.ts` runtime | 55.6 s | **51.2 s** of a **63.9 s** wall clock |
 
@@ -129,8 +129,18 @@ had no test reading its delay at all — and both mutations are now killed. The 
 `setupFilesAfterEnv` loads `test-support/silence-output.ts`, which swaps `process.stdout.write` and
 `process.stderr.write` for sinks in `beforeAll` and restores them in `afterAll` — per **suite**, not
 at module scope, because under `--runInBand` the worker *is* the main process and a module-scope
-patch would silence Jest's own reporter and print no results. Jest emits a suite's reporter output
-after that suite's `afterAll`. Verified by running `--runInBand`.
+patch would silence Jest's own reporter and print no results.
+
+**Corrected on review (#97).** Per-suite scoping does not fully protect the reporter under
+`--runInBand` either. Measured: `npx jest -i http-client.test.ts temp-config-dir.test.ts` prints
+**2** `PASS` header lines with the silencer removed and **0** with it in place. Jest buffers a
+suite's header and flushes it through `process.stdout.write` resolved at flush time, and a suite
+using fake timers defers that flush past its own `afterAll` into the *next* suite's silenced window.
+What still prints in every `--runInBand` run measured: the failure blocks (`FAIL`, the diff, the
+stack) and the final summary, so a failure is never hidden and the exit code is unaffected. The
+default worker mode — what CI runs (`npx jest --coverage --no-verbose`) — keeps the reporter in the
+parent process and is untouched; `PASS` lines were present in every full run. The loss is cosmetic
+and local to `-i`.
 
 That closed the stdout half outright: **821 bytes → 0**, deterministic. It did **not** close the
 stderr half. Frames went 420 → 135 with per-test scoping → and with per-suite scoping oscillated
@@ -167,7 +177,7 @@ verbose-coverage               commands/init-clobber              commands/init-
 ```
 
 Measured before → after, counting `src/__tests__` only (the helper now lives outside it):
-`mkdtempSync` **45 → 36** (36 → 29 files); `recursive: true, force: true` **60 → 52**;
+`mkdtempSync` **55 → 46** (36 → 29 files); `recursive: true, force: true` **60 → 52**;
 `FAVRO_CONFIG_DIR =` assignments **99 → 90**; `config.json` literals **31 → 24**. `entities: [`
 unchanged at **157** and `listen(0,` unchanged at **38**, both deliberately. `new FavroHttpClient(`
 went **86 → 87**: the one new non-429 retry test constructs a client.
@@ -236,3 +246,45 @@ M6b covers.
 
 M6b is written to point at a *different temp directory*, never at the real `~/.favro`. Removing the
 assignment outright would have let `init`'s config writes reach a developer's live credentials.
+
+### Review pass (#97)
+
+Independent re-run of the three gates and of the mutations, plus mutations the record above does not
+cover. Verified as claimed: the original real-timer `http-client.test.ts` takes **52.1 s** and both
+delay mutations (`delay = delaySecs * 1000 → 0`, non-429 backoff `→ 0`) **survive it** — 30/30 pass,
+in 1.14 s, so the sleeping really did pin nothing; the converted file kills both and runs in 0.70 s.
+`tempConfigDir` inside a test body really does fail (`Hooks cannot be defined inside tests`), root
+`afterAll` hooks really do run in registration order, the seam partition really is 36 / 61 / empty
+overlap, and all six unmigrated suites really do have the lifetime they are said to have.
+
+New mutations, each `tsc:PASS` before its verdict, full suite each time:
+
+| # | Mutation | Verdict |
+|---|---|---|
+| R1 | silencer's `afterAll` restore loop deleted | **survived** → fixed below |
+| R2 | `await` dropped from the retry sleep | killed (2 tests) |
+| R3 | `retryCount < 4` → `< 1` (retry once, not four times) | killed (3 tests) |
+| R4 | `delay = delaySecs * 1000` → `… - 1` (off by **1 ms**) | killed (1 test) |
+| R5 | `config-dir` baseline captured per call instead of once | killed (suite, via the outer `afterAll`) |
+| R6 | silencer replaced by `export {}` | killed (2 tests, `silence-output.test.ts` only) |
+
+R4 shows the `advanceTimersByTimeAsync(29_999)` / `+1` pair is load-bearing at millisecond
+resolution. R6 shows the silencer blinds no assertion anywhere in the suite: with it gone, only its
+own test fails.
+
+**R1 was a real gap and is fixed here.** The setup half of the silencer was asserted; the teardown
+half was not, so deleting the restore left 172 suites green — the same "cleanup that does nothing"
+the `tempConfigDir` self-check is careful about, in the file with the widest blast radius. Two
+changes: `silence-output.ts` saves `stream.write` itself rather than a `.bind()` of it (the bind only
+cost identity — one wrapper per suite, each wrapping the last, and nothing to compare against), and
+`silence-output.test.ts` grows a root `afterAll` asserting both writers are the pristine functions
+again by identity. That scope is the only one from which the restore is observable, for the same
+reason `temp-config-dir.test.ts` gives.
+
+Also fixed: `cli.ts`'s `let cardList;` under the new `try`/`finally` was an implicit `any` — the
+previous `let cardList = await api.listCards(board)` was typed by inference, so the `finally` had
+silently unchecked `.length`, `applyFilters` and `.map(normalizeCard)` below it. Now `let
+cardList: Card[]`.
+
+Corrected counts: `mkdtempSync` in `src/__tests__` is **55 → 46**, not 45 → 36. The file count
+(36 → 29) and every other number in this ADR re-measured clean.

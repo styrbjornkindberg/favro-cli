@@ -1141,7 +1141,10 @@ cards
       // the process exited. Under test `process.exit` is stubbed, so the
       // interval instead survived for the rest of the Jest worker's life and
       // scribbled across later suites' output — the stderr half of #97's leak.
-      let cardList;
+      // Annotated: `let cardList;` is an implicit `any`, and every use below it
+      // — `.length`, `applyFilters`, `.map(normalizeCard)` — then stops being
+      // checked. The old `let cardList = await …` was typed by inference.
+      let cardList: Card[];
       try {
         cardList = await api.listCards(board);
       } finally {

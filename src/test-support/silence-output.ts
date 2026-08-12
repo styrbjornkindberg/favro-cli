@@ -52,7 +52,11 @@ const saved: Array<[NodeJS.WriteStream, Write]> = [];
 
 beforeAll(() => {
   for (const stream of [process.stdout, process.stderr] as NodeJS.WriteStream[]) {
-    saved.push([stream, stream.write.bind(stream) as Write]);
+    // The function itself, NOT a `.bind()` of it: `stream.write` is only ever
+    // put back on the same stream, so binding buys nothing and costs identity —
+    // one bound wrapper per suite, each wrapping the last, and no way for
+    // `silence-output.test.ts` to assert the restore actually happened.
+    saved.push([stream, stream.write as Write]);
     // Swallow the bytes but keep the contract: `write` returns whether the
     // caller may keep writing, and a `false` here would make product code
     // wait for a 'drain' event that is never coming.
