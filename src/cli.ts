@@ -1016,9 +1016,17 @@ cards
         process.exit(1);
         return;
       }
-      // Trimmed, which `--tags` was not: a leading space survives into the tag
-      // name, and an unknown tag name on a write is a tag CREATION, so " bug"
-      // either invented a tag or 403'd. `--assignees` already trimmed.
+      // Trimmed, which `--tags` was not. The reason is narrower than it looks, and
+      // was overstated here before a mutation run checked it: every downstream
+      // resolver already trims — `tags-api.ts` trims its key before `foldName`,
+      // `hasIdShape` trims before matching, `resolveAssignee` trims its value — so
+      // a spaced-but-nonempty ` bug ` resolved correctly all along. Deleting this
+      // `.map(trim)` leaves the whole suite green for exactly that reason.
+      //
+      // What it does buy: an entry that is nothing but spaces. `filter(Boolean)`
+      // keeps `' '`, because a space is truthy, and a blank tag NAME on a write is
+      // an unknown name, which is a tag CREATION. The trim turns it into `''` so it
+      // drops. Pinned in `cards-update-intent-wire.test.ts`.
       const csv = (list: string): string[] =>
         list.split(',').map((v: string) => v.trim()).filter(Boolean);
       const args = {

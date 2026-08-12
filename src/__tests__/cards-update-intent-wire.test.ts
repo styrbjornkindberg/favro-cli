@@ -561,10 +561,30 @@ describe('each field goes out in the spelling Favro honours (#108)', () => {
     for (const body of puts(received).map((r) => r.body)) {
       expect(body).not.toHaveProperty('tags');
     }
-    // The trim is the point of the spaced input: an untrimmed " bug" reaches the
-    // wire as an unknown tag NAME, and an unknown name on a write is a tag
-    // creation, so it either invents a tag or 403s.
     expect(said()).toContain('(tags)');
+  });
+
+  it('a whitespace-only --tags entry is dropped, not sent as a blank tag name', async () => {
+    // What the trim in the CLI's `csv()` actually buys. Every downstream resolver
+    // already trims — `tags-api.ts` trims its key before `foldName`, `hasIdShape`
+    // trims before matching a shape, and `resolveAssignee` trims its value — so a
+    // spaced-but-nonempty ` bug ` resolves correctly with or without it. Mutating
+    // that `.map(trim)` away leaves all 3691 tests green, which is how a comment
+    // claiming the trim stops a tag CREATION survived while being false.
+    //
+    // The one input that does depend on it: an entry that is nothing but spaces.
+    // Without the trim, `filter(Boolean)` keeps `' '` — a non-empty string — and a
+    // blank tag NAME reaches the resolver, where an unknown name on a write is a
+    // tag creation. With it the entry becomes `''` and is dropped.
+    const { received, cards } = await startServer();
+
+    await run('update', IN_CARD, '--tags', 'bug, ,urgent', '--yes');
+
+    expect(cards.get(IN_CARD)!.tags.sort()).toEqual(['tag-bug', 'tag-urgent']);
+    for (const body of puts(received).map((r) => r.body)) {
+      const added: string[] = (body as any).addTagIds ?? [];
+      expect(added.filter((t) => t.trim() === '')).toEqual([]);
+    }
   });
 
   it('--assignees resolves a name to a userId and ADDS it', async () => {
