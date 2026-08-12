@@ -115,7 +115,10 @@ unambiguously means true-empty. A composite read that answers with a SINGLE enti
 no envelope to carry the marker, so it rides on the entity instead — `context`'s
 snapshot and `cards get --include` both do this, same key, same `{id, reason}` shape.
 A read feeding a durable artefact has neither, so it propagates instead and writes
-nothing (`favro init`). `src/lib/read-shape.ts`.
+nothing (`favro init`'s three list reads) — unless the artefact has a prose field for
+the reason, which `context.json`'s `notes` is: `notes.team` and `notes.scope` mark the
+two facets that fall back rather than refuse, and the rule is that a fallback is never
+SILENT, not that it never happens. `src/lib/read-shape.ts`.
 
 **`--limit`** — a **print** cap and only a print cap, with one parser, `parseLimit`, and
 three outcomes, no fourth: whole digits of 1 or more are the cap; an **absent** flag is

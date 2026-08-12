@@ -28,13 +28,16 @@
  * three, `favro init` now produces NO file where it used to produce a partial
  * one. Measure it before narrowing the refusal; do not narrow it on a guess.
  *
- * And `collectionName` is the one value in the file that is NOT held to this. The
- * `getCollection` catch below falls back to the locally-stored name, or to the
- * raw id — a plausible value with no marker, which is the same shape of lie one
- * field over. It is left because the name is display text and `collectionId`,
- * which everything actually keys off, is always the real one; making it propagate
- * too is a behaviour call for the owner, not a review edit. `docs/repo-context.md`
- * says so in the table rather than claiming the file has no such value.
+ * And `collectionName` is the one value that does NOT propagate — it takes the
+ * OTHER discharge, the one the membership read below already uses. #154 left the
+ * call open; it is settled here. The name is display text and `collectionId`,
+ * which everything keys off, is always the real one, so refusing the whole file
+ * over it would cost a plan or guest role a file for a field nothing reads. But
+ * the fallback used to be a plausible value with NO marker, which is the same
+ * shape of lie one field over, so it now records itself: `notes.scope` in the
+ * artefact plus a line on stderr, naming WHICH of the two fallbacks it took.
+ * `notes` is a `Record<string, string>` for exactly this — a facet whose value is
+ * not a measurement saying so in prose — so the schema did not grow a state.
  *
  * The errors propagate RAW rather than wrapped in a `RefusalError`, because a
  * 502 on a read is a wire failure and not a deterministic decline —
@@ -183,12 +186,26 @@ export async function initHandler(ctx: Ctx, options: InitOptions) {
   }
 
   console.log('Fetching collection info...');
+  // The one read here that FALLS BACK instead of propagating — see the header.
+  // Both fallbacks are plausible names, so neither may be silent: the note says
+  // which one was taken, and its absence is what makes the read a measurement.
   let collectionName: string;
+  let scopeNote: string | undefined;
   try {
     const coll = await ctx.api.collections.getCollection(collectionId);
     collectionName = coll.name;
   } catch {
-    collectionName = config.scopeCollectionName ?? collectionId;
+    const stored = config.scopeCollectionName;
+    collectionName = stored ?? collectionId;
+    scopeNote =
+      "The collection's name could not be read, so `scope.collectionName` is " +
+      (stored
+        ? 'the name stored in ~/.favro/config.json and may be STALE'
+        : 'the raw `collectionId`, not a name') +
+      '. It is not a claim about what the collection is called. `collectionId` is ' +
+      'unaffected — key off it. Re-run `favro init --refresh` with a key that can ' +
+      `read /collections/${collectionId} to replace it.`;
+    console.error(`⚠ ${scopeNote}`);
   }
 
   // Fetch boards in collection
@@ -339,6 +356,9 @@ export async function initHandler(ctx: Ctx, options: InitOptions) {
     notes: {
       cardIds: 'Cards may have different cardIds across boards. Use cardCommonId for cross-board operations (tasks, tasklists, widgets). Use board-specific cardId for column moves.',
       moveCards: 'Use --column flag (not --status) to move cards between kanban columns. --status sets completion metadata, not column position.',
+      // Present only when `getCollection` failed. Without it a fallback name is
+      // indistinguishable from the collection's real one.
+      ...(scopeNote ? { scope: scopeNote } : {}),
       // Present only when the filter could not run. An empty `team` with
       // no note would read as "this collection has no members".
       ...(membership === undefined

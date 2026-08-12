@@ -59,6 +59,7 @@ slug, custom-field name and userId respectively.
   "notes": {
     "cardIds": "…",
     "moveCards": "…",
+    "scope": "…",                               // present ONLY when the collection's name could not be read
     "team": "…"                                 // present ONLY when the membership filter could not run
   }
 }
@@ -71,8 +72,9 @@ org-wide shared fields are dropped as noise.
 
 ## What the File Says About a Facet It Could Not Read
 
-**Nothing — the file is not written.** There is no "unread" state in the schema,
-and `favro init` does not invent one (#154).
+**Nothing — the file is not written.** The maps have no "unread" state in the
+schema, and `favro init` does not invent one (#154). The two facets that DO fall
+back carry the reason in `notes`, which is prose and needs no new schema.
 
 If `/columns`, `/customfields` or `/users` fails, the command reports the error,
 exits non-zero, and writes no `context.json` at all. An earlier version turned
@@ -80,8 +82,8 @@ each of those failures into an empty value, which is indistinguishable from the
 real finding — a failed `/users` read produced `"team": {}`, and every agent
 reading the file afterwards concluded the collection had no members.
 
-So every value in a `context.json` that exists is a measurement, with one
-exception named in the last row:
+So every value in a `context.json` that exists is a measurement, and the two
+facets that can hold a fallback instead say so in `notes`:
 
 | You see | It means |
 |---------|----------|
@@ -89,7 +91,8 @@ exception named in the last row:
 | `"customFields": {}` | `/customfields` answered, and no board-local field belongs to these boards |
 | `"team": {}` **and no** `notes.team` | the membership filter ran, and matched nobody |
 | `"team": {}` **with** `notes.team` | the collection's `sharedToUsers` could not be read, so `team` fails closed to nobody rather than opening to the whole org. It is stated in the file because a privacy filter that cannot run must not be skipped. |
-| `scope.collectionName` | **not guaranteed to be a measurement.** If `GET /collections/:id` fails, `init` falls back to the name in your local `~/.favro/config.json`, or to the raw `collectionId` when there is none — with no marker and no note. `collectionId` is always the real one; the *name* may be stale. It is display text only; nothing keys off it. |
+| `scope.collectionName` **and no** `notes.scope` | `GET /collections/:id` answered, and that is the collection's name |
+| `scope.collectionName` **with** `notes.scope` | that read failed, so the name is a fallback and NOT a measurement. The note says which of the two: the name in your local `~/.favro/config.json`, which may be stale, or the raw `collectionId` when there is none. This one facet falls back rather than refusing, because the name is display text and `collectionId` is always the real one — but the fallback announces itself, so it is never mistaken for the name. |
 
 The one thing this costs: a partially-readable workspace produces no file until
 the key can read every facet. `favro init --refresh` is the retry.
@@ -145,7 +148,7 @@ If you're building tools that read this file:
 2. **Resolve boards by the slug key first**, then `name`, then `boardId`
 3. **Use each board's `workflow` array** for stage-aware operations (e.g. "active cards" = cards in the columns whose `stage` is `active`)
 4. **Never modify `context.json` directly** — always use `favro init --refresh`
-5. **Trust every value as a measurement** — see *What the File Says About a Facet It Could Not Read*. A missing or empty facet is a finding, not a failed read. Two values are exceptions: `notes.team` announces its own, and `scope.collectionName` can be a stale local name with nothing announcing it — key off `collectionId`, never the name
+5. **Trust every value as a measurement** — see *What the File Says About a Facet It Could Not Read*. A missing or empty facet is a finding, not a failed read; the two exceptions announce themselves in `notes.team` and `notes.scope`. Read `notes` before trusting `team` or `scope.collectionName`, and key off `collectionId`, never the name
 6. **Custom field types** determine how to set values:
    - `single_select` / `multiple_select` → use option values
    - `text` / `number` / `date` → use raw values

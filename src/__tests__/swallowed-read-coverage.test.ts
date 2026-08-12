@@ -125,7 +125,11 @@
  *     `api/aggregate.ts` for the two shapes.
  *   - A read feeding a DURABLE ARTEFACT propagates instead, because there is no
  *     envelope to carry a marker and the artefact outlives the warning. That is
- *     how #154 discharged `init`'s three.
+ *     how #154 discharged `init`'s three. Unless the artefact has a PROSE field
+ *     for the reason — `context.json`'s `notes` is one, and the `DECIDED` entry
+ *     below is a swallow discharged through it. That route is for a facet whose
+ *     absence would refuse a whole artefact over display text; the three above
+ *     are keyed off, so they still propagate.
  *
  * For a `CATCH_DEBT` line, also drop the `6` in the count assertion to `5` — the
  * count is pinned in BOTH directions on purpose, because "moved it to

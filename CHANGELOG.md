@@ -292,13 +292,26 @@ Issue #95, ADR-0006.
   those answer a *query* and hand back what they did read; `init` produces a durable
   artefact that outlives the warning, and it is cheap and idempotent to re-run. The
   membership read is the one facet that still falls back, because it already states its
-  third state in `notes.team` and on stderr. `docs/repo-context.md` now documents the whole
+  third state in `notes.team` and on stderr — the collection *name* joined it on the same
+  terms in the entry below. `docs/repo-context.md` now documents the whole
   absent-vs-empty table, and its File Format block has been corrected — it described a
   different shape on every key.
 
   **Behaviour change worth knowing:** a key that cannot read every facet now gets exit 1
   and no file, where it used to get a partial one at exit 0. `favro init --refresh` is the
   retry.
+- `favro init`'s fourth read — the collection's own name — wrote a plausible fallback with
+  nothing saying so. When `GET /collections/:id` failed, `scope.collectionName` became the
+  name stored in `~/.favro/config.json`, or the raw `collectionId` when there was none, at
+  exit 0 with no marker: in a file whose only readers are later agents, a stale name is
+  indistinguishable from the current one. It still falls back rather than refusing — the
+  name is display text and `collectionId`, which everything keys off, is always real, so
+  refusing would cost a limited key a whole file for a field nothing reads. But the
+  fallback now announces itself in `notes.scope` and on stderr, naming **which** of the two
+  it took. `notes` is a prose map that already carried `notes.team`, so the schema did not
+  grow a state. `docs/repo-context.md`'s table gains a row for each provenance, and the
+  "every value is a measurement" claim removed in review of #154 is restored — with the two
+  fallbacks named, since both now announce themselves.
 - The same preview-before-lock defect as #152's four, at five more commands — the ones #152
   generalised its fix over instead of fixing: `dependencies delete`, `dependencies
   delete-all`, `custom-fields set`, `git todos` and `git sync` all returned from their

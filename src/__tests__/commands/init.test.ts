@@ -112,6 +112,12 @@ describe('init — resolving the collection', () => {
 
     expect(MockBoards.prototype.listBoardsByCollection).toHaveBeenCalledWith('coll-1');
     expect(writtenContext().scope).toEqual({ collectionId: 'coll-1', collectionName: 'Platform' });
+    // PROVENANCE ONE of three for `scope.collectionName`: the read landed. The
+    // ABSENCE of `notes.scope` is what makes that a measurement — the two
+    // fallbacks below are plausible names, so an unmarked one is
+    // indistinguishable from this in a file whose only readers are later agents
+    // with no memory of the failure.
+    expect(Object.keys(writtenContext().notes).sort()).toEqual(['cardIds', 'moveCards']);
   });
 
   test('--collection overrides the lock', async () => {
@@ -130,18 +136,36 @@ describe('init — resolving the collection', () => {
     expect(process.exitCode).toBe(1);
   });
 
-  test('an unreadable collection falls back to the stored name rather than failing', async () => {
+  // PROVENANCE TWO. Still exit 0 and still a file — the name is display text and
+  // `collectionId` is always real, so refusing here would cost a limited key a
+  // whole file for a field nothing keys off. What #154 left open and this settles
+  // is that the file now ADMITS the name is not a measurement.
+  test('an unreadable collection falls back to the stored name, and the file says so', async () => {
     MockCollections.prototype.getCollection = jest.fn().mockRejectedValue(new Error('403'));
 
     await runCli(['init']);
 
     expect(writtenContext().scope.collectionName).toBe('Fallback');
-    // The one value in the file that is NOT a measurement, and the reason
-    // `docs/repo-context.md`'s table has a row for it: the name is a local
-    // fallback and NOTHING in the file says so — no note, and the run succeeds.
-    // Pinned so the doc cannot go stale in either direction: add a marker and
-    // this goes red, which is the signal to update the table.
-    expect(Object.keys(writtenContext().notes).sort()).toEqual(['cardIds', 'moveCards']);
+    expect(Object.keys(writtenContext().notes).sort()).toEqual(['cardIds', 'moveCards', 'scope']);
+    expect(writtenContext().notes.scope).toContain('STALE');
+    expect(writtenContext().notes.scope).toContain('~/.favro/config.json');
+    // The human half, same as the membership fallback's.
+    expect(errors()).toContain("collection's name could not be read");
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  // PROVENANCE THREE, and the note tells it apart from TWO rather than merely
+  // marking it: a reader that cannot distinguish them cannot tell whether the
+  // name it is looking at was ever typed by a human or is just the id again.
+  test('with no stored name it falls back to the raw id, and the note says THAT', async () => {
+    (config.readConfig as jest.Mock).mockResolvedValue({ scopeCollectionId: 'coll-1' });
+    MockCollections.prototype.getCollection = jest.fn().mockRejectedValue(new Error('403'));
+
+    await runCli(['init']);
+
+    expect(writtenContext().scope.collectionName).toBe('coll-1');
+    expect(writtenContext().notes.scope).toContain('raw `collectionId`');
+    expect(writtenContext().notes.scope).not.toContain('STALE');
     expect(process.exitCode).toBeUndefined();
   });
 });
