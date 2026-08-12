@@ -108,12 +108,14 @@ jobs:
 
       # A step here rather than its own job: `tsc` is already this job's tool,
       # so it reuses the checkout and `npm ci` instead of duplicating them.
-      # Measured, so the ceiling is known: the same type error in `src/` fails
-      # BOTH `npm run typecheck` and `npm run build`, because tsconfig.test.json
-      # extends tsconfig.json and only widens `exclude` — the build's file set
-      # is a subset. What this adds is the emit half `--noEmit` never runs (a
-      # dist/ that does not compile is a known failure mode here) and a guard on
-      # that subset relation: if the two configs ever diverge, the file only the
-      # build sees is checked by this step and nothing else.
+      # A plain type error in `src/` does fail both gates — tsconfig.test.json
+      # extends tsconfig.json and only widens `exclude`, so the build's file set
+      # is a subset (measured: 449 files vs 635, no build-only file). But a
+      # superset of FILES is not a superset of ERRORS: an ambient declaration in
+      # a build-excluded file (`src/test-support/**`, `src/__tests__/**`,
+      # `**/*.test.ts`) widens types program-wide under the test config only.
+      # Measured probe — `declare global { interface String { zzProbe(): number } }`
+      # in `src/test-support/` plus a caller in `src/`: `npm run typecheck`
+      # exit 0, `npm run build` exit 2 (TS2339). That is what this step catches.
       - name: Build (emit dist/)
         run: npm run build

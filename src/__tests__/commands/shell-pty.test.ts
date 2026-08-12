@@ -87,7 +87,7 @@ const SUPPORTED = process.platform === 'darwin' || process.platform === 'linux';
  * ponytail: the macOS row is measured on this machine; the LINUX ROW IS NOT —
  * it is util-linux's documented shape, not an observed one, and ADR-0003 says
  * to label that rather than assert it. It is kept anyway because CI is where it
- * runs: `.github/workflows/ci.yml` is `ubuntu-latest` on node 18.x and 20.x, so
+ * runs: `.github/workflows/ci.yml` is `ubuntu-latest` on node 18.x, 20.x and 22.x, so
  * skipping Linux would mean the only pty test in the repo never executes in CI
  * — strictly worse than a branch CI itself verifies on the first push. If it is
  * wrong, CI goes red loudly and the fix is one argv. Upgrade path: once it has

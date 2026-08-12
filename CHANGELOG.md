@@ -446,16 +446,24 @@ Issue #95, ADR-0006.
 
 - CI builds, and the unit-test matrix covers the version development runs on (#159).
 
-  `npm run build` had never run in CI, so `dist/` was unverified on every commit — the
-  failure mode already seen here is help text disagreeing with source, which reads as a
-  source defect and is not. It is now a step in the `TypeScript Check` job rather than a
-  job of its own: `tsc` is that job's tool already, so it reuses the checkout and `npm
-  ci`, and it adds no new check name for branch protection to pin. The ceiling is
-  measured, not assumed: the same deliberate `TS2322` in `src/index.ts` fails **both**
-  `npm run build` (exit 2) and `npm run typecheck` (exit 2), because tsconfig.test.json
-  extends tsconfig.json and only widens `exclude`, so the build's file set is a subset.
-  The step therefore buys the emit half `--noEmit` never runs, plus a guard on that
-  subset relation if the two configs ever diverge — not new type coverage.
+  `npm run build` had never run in CI, so nothing verified that the published artifact
+  compiles — `prepack` was the first place a broken build would have surfaced, at publish
+  time. It is now a step in the `TypeScript Check` job rather than a job of its own: `tsc`
+  is that job's tool already, so it reuses the checkout and `npm ci`, and it adds no new
+  check name for branch protection to pin.
+
+  It is **not** redundant with `npm run typecheck`, and the reason is measured. The file
+  sets are a strict subset relation — `tsc --listFilesOnly` gives **449** files for
+  `tsconfig.json` and **635** for `tsconfig.test.json`, with no build-only file — so a
+  plain type error in `src/` (a deliberate `TS2322` in `src/index.ts`) fails both, exit 2
+  either way. But a superset of *files* is not a superset of *errors*: an ambient
+  declaration in a build-excluded file widens types program-wide under the test config
+  only. Probe — `declare global { interface String { zzProbe(): number } }` in
+  `src/test-support/` plus a caller in `src/` — `npm run typecheck` **exit 0**, `npm run
+  build` **exit 2** (`TS2339`). No such declaration exists in `src/` today; the step is
+  the gate that keeps it that way. Declaration-emit diagnostics are *not* the difference:
+  `declaration: true` is inherited by `tsconfig.test.json`, so a `TS4094` fails `--noEmit`
+  too (measured).
 
   The node matrix was `[18.x, 20.x]`; development runs 22. It is now `[18.x, 20.x,
   22.x]`, with 18 and 20 kept because `engines.node` is `">=18.0.0"`. This adds a
