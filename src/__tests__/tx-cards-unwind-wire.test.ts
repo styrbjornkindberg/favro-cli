@@ -13,18 +13,16 @@
  * Assertions are about what the wire RECEIVED and what the caller OBSERVED.
  */
 import * as http from 'http';
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
 import { AddressInfo } from 'net';
 import FavroHttpClient from '../lib/http-client';
 import CardsAPI from '../lib/cards-api';
 import { CompensationLog, TxCards } from '../lib/tx-cards';
+import { tempConfigDir } from '../test-support/config-dir';
 
 // This stand-in client carries an organizationId, so any TxCards path that grows
 // a cache-backed lookup would write to the real `~/.favro` from here. Set before
 // anything reads it — the cache and the config both resolve the dir per call.
-process.env.FAVRO_CONFIG_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'favro-tx-unwind-'));
+tempConfigDir('favro-tx-unwind-');
 
 const ORG = 'org-1';
 const CARD = '00000000000000000000cc01';

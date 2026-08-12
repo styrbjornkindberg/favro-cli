@@ -21,18 +21,17 @@
  */
 import * as http from 'http';
 import * as fs from 'fs';
-import * as os from 'os';
 import * as path from 'path';
 import { AddressInfo } from 'net';
 import FavroHttpClient from '../lib/http-client';
 import CardsAPI, { unknownTagMessage } from '../lib/cards-api';
 import { CompensationLog, TxCards } from '../lib/tx-cards';
 import { RefusalError } from '../lib/refusal';
+import { tempConfigDir } from '../test-support/config-dir';
 
 // The tag path is cache-backed and invalidates on a miss; the cache resolves its
 // file per call, so a tmpdir keeps this suite off the real `~/.favro`.
-const CONFIG_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'favro-tags-wire-'));
-process.env.FAVRO_CONFIG_DIR = CONFIG_DIR;
+const CONFIG_DIR = tempConfigDir('favro-tags-wire-');
 const CACHE_FILE = path.join(CONFIG_DIR, 'name-cache.json');
 const ORG = 'org-tags-wire';
 

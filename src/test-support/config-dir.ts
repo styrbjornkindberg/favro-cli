@@ -20,9 +20,14 @@
  * The second exists because the first structurally cannot do that job: a
  * `beforeEach` runs long after the file's imports have been evaluated.
  */
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
+// `node:fs`, not `fs`, and that is load-bearing: two suites that call this
+// helper also `jest.mock('fs')`, and an auto-mocked `mkdtempSync` returns
+// undefined — the redirect would silently point at "undefined" and the cleanup
+// would delete nothing. Jest does not intercept the `node:`-prefixed specifier,
+// which is why those files already reach for it directly.
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
 /**
  * A private `~/.favro` for one test file: a fresh temp dir holding

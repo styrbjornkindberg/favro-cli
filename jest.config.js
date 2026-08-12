@@ -10,6 +10,9 @@ module.exports = {
   testMatch: ['**/__tests__/**/*.ts', '**/?(*.)+(spec|test).ts'],
   // Direct process.stdout/stderr writes are not captured by Jest — see the file.
   setupFilesAfterEnv: ['<rootDir>/src/test-support/silence-output.ts'],
+  // The run gets a private os.tmpdir(), and must leave it empty. See the files.
+  globalSetup: '<rootDir>/jest.global-setup.js',
+  globalTeardown: '<rootDir>/jest.global-teardown.js',
   testPathIgnorePatterns: ['/node_modules/', '/__integration__/'],
   moduleFileExtensions: ['ts', 'js', 'json']
 };

@@ -10,14 +10,13 @@
  * returns. Nothing else in the suite would catch that, so it is pinned here:
  * both tests await the parse, and a missing resolve hangs them.
  */
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { EventEmitter } from 'node:events';
+import { tempConfigDir } from '../../test-support/config-dir';
 
 // Before any require that might touch the real ~/.favro — the runner reads the
 // config before every handler.
-process.env.FAVRO_CONFIG_DIR = mkdtempSync(join(tmpdir(), 'favro-shell-tui-'));
+tempConfigDir('favro-shell-tui-');
 
 import { Command } from 'commander';
 import * as readline from 'readline';

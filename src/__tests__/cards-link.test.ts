@@ -64,12 +64,14 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
   let exitSpy: jest.SpyInstance;
 
   const originalConfigDir = process.env.FAVRO_CONFIG_DIR;
+  let configDir: string;
 
   beforeEach(() => {
     jest.clearAllMocks();
     // `resolveBoardId` writes a real name cache — give the suite a throwaway
     // dir so a run never reads or clobbers the developer's own ~/.favro.
-    process.env.FAVRO_CONFIG_DIR = fsSync.mkdtempSync(path.join(os.tmpdir(), 'favro-cards-link-test-'));
+    configDir = fsSync.mkdtempSync(path.join(os.tmpdir(), 'favro-cards-link-test-'));
+    process.env.FAVRO_CONFIG_DIR = configDir;
     (config.resolveApiKey as jest.Mock).mockResolvedValue('test-key');
     // `clearAllMocks` clears calls, not implementations — without this the one
     // scope-locked test below leaks its lock into every test after it.
@@ -82,6 +84,9 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
   afterEach(() => {
     if (originalConfigDir === undefined) delete process.env.FAVRO_CONFIG_DIR;
     else process.env.FAVRO_CONFIG_DIR = originalConfigDir;
+    // The dir is per TEST, so removing it has to be too — this suite alone was
+    // 74% of the repo's temp-dir leakage.
+    fsSync.rmSync(configDir, { recursive: true, force: true });
     consoleSpy.mockRestore();
     consoleErrorSpy.mockRestore();
     exitSpy.mockRestore();

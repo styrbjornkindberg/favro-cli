@@ -542,6 +542,7 @@ const readsALimit = makeReadsALimit(limitProgram.getTypeChecker());
 
 /** Probe sources for the positive control live on disk so they get a program. */
 const probeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'favro-limit-probe-'));
+afterAll(() => fs.rmSync(probeDir, { recursive: true, force: true }));
 let probeSeq = 0;
 
 interface Offence {

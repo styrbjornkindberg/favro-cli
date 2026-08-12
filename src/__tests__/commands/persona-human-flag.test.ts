@@ -14,12 +14,11 @@
  * shallow, because the exact wording is each command's business and is covered
  * in its own suite.
  */
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { tempConfigDir } from '../../test-support/config-dir';
 
 // Before any require that might touch the real ~/.favro.
-process.env.FAVRO_CONFIG_DIR = mkdtempSync(join(tmpdir(), 'favro-human-flag-'));
+tempConfigDir('favro-human-flag-');
 
 import { Command } from 'commander';
 import * as config from '../../lib/config';

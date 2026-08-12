@@ -22,19 +22,17 @@
  *                               here beyond the field being gone from the type.
  */
 import * as http from 'http';
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
 import { AddressInfo } from 'net';
 import FavroHttpClient from '../lib/http-client';
 import CardsAPI from '../lib/cards-api';
 import { ColumnResolutionError } from '../lib/column-directory';
 import { AssigneeError } from '../lib/assignee';
+import { tempConfigDir } from '../test-support/config-dir';
 
 // The name cache resolves its file per call, so a tmpdir here keeps the suite
 // off the real `~/.favro` — a cache invalidation with no organizationId rewrites
 // the whole file.
-process.env.FAVRO_CONFIG_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'favro-update-wire-'));
+tempConfigDir('favro-update-wire-');
 
 interface Received {
   method: string;

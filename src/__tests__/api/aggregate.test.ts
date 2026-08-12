@@ -11,12 +11,10 @@
  * tmpdir at file level, before anything imports the config module.
  */
 
-import * as fs from 'fs';
-import * as os from 'os';
 import * as path from 'path';
+import { tempConfigDir } from '../../test-support/config-dir';
 
-const TMP_CONFIG_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'favro-aggregate-test-'));
-process.env.FAVRO_CONFIG_DIR = TMP_CONFIG_DIR;
+tempConfigDir('favro-aggregate-test-');
 
 import AggregateAPI from '../../api/aggregate';
 

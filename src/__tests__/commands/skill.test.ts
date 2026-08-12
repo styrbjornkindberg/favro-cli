@@ -8,14 +8,13 @@
  * (#66). The other is the recording state machine, which is module-level
  * mutable state shared between `record`, `recordStep` and `stop`.
  */
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { tempConfigDir } from '../../test-support/config-dir';
 
 // Before any require that might touch the real ~/.favro — the runner reads the
 // config before every handler now (#118), and `jest.mock('fs')` below does not
 // cover `fs/promises`, which is what `readConfig` uses.
-process.env.FAVRO_CONFIG_DIR = mkdtempSync(join(tmpdir(), 'favro-skill-'));
+tempConfigDir('favro-skill-');
 
 import { Command } from 'commander';
 import { registerSkillCommands, isRecording, recordStep } from '../../commands/skill';

@@ -1,15 +1,14 @@
 /**
  * Tests for favro-error.ts — classification is on message, never on status.
  */
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { classifyFavroError, classifyThrownError, MISSING_WORDING } from '../lib/favro-error';
 import { logError } from '../lib/error-handler';
 import { stripAnsi } from '../lib/theme';
+import { tempConfigDir } from '../test-support/config-dir';
 
 // Never let a require below reach the real ~/.favro/config.json.
-process.env.FAVRO_CONFIG_DIR = mkdtempSync(join(tmpdir(), 'favro-error-test-'));
+tempConfigDir('favro-error-test-');
 
 // Required after the env is set, so dispatch's module graph cannot see a real config.
 // eslint-disable-next-line @typescript-eslint/no-var-requires

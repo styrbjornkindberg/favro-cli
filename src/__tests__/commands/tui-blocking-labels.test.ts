@@ -6,12 +6,11 @@
  * for `judgeBlockers`, so an edge is reported as a dependency — never as a
  * blocked state, and never as a reason to drop a card out of another bucket.
  */
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { tempConfigDir } from '../../test-support/config-dir';
 
 // Before any require that might touch the real ~/.favro.
-process.env.FAVRO_CONFIG_DIR = mkdtempSync(join(tmpdir(), 'favro-tui-labels-'));
+tempConfigDir('favro-tui-labels-');
 
 import { Command } from 'commander';
 import { registerBoardTuiCommand } from '../../commands/board-tui';

@@ -7,12 +7,11 @@
  * `judgeBlockers`), so they must report the edge COUNT under an honest name and
  * leave the blocked *state* to the signals they can actually verify.
  */
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { tempConfigDir } from '../../test-support/config-dir';
 
 // Before any require that might touch the real ~/.favro.
-process.env.FAVRO_CONFIG_DIR = mkdtempSync(join(tmpdir(), 'favro-blocking-labels-'));
+tempConfigDir('favro-blocking-labels-');
 
 import { Command } from 'commander';
 import { registerMyStandupCommand } from '../../commands/my-standup';
