@@ -22,6 +22,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import FavroHttpClient from './http-client';
 import ColumnsAPI from './columns-api';
+import { listColumnsFor } from './column-directory';
 import { readConfig } from './config';
 import { MISSING_WORDING } from './favro-error';
 import { RefusalError } from './refusal';
@@ -187,7 +188,13 @@ export interface VerifiedTracker extends StoredTracker {
  * mapping here — by name, by position, by `detectStage` — would silently
  * re-point at a different column, so cards would move somewhere nobody chose
  * and the CLI would report success. The refusal lists the board's real columns
- * so the fix is one edit away.
+ * so the fix is one edit away, through `ColumnDirectory`'s own renderer rather
+ * than a second copy of it (#123).
+ *
+ * The READ stays on `ColumnsAPI`, not on the directory: the directory answers
+ * from a 15-minute cache, and a mapping verified against a cache is verified
+ * against what the columns looked like up to fifteen minutes ago — which is
+ * precisely the deleted column this function exists to catch.
  */
 export async function verifyTrackerMapping(
   client: FavroHttpClient,
@@ -199,9 +206,7 @@ export async function verifyTrackerMapping(
 
   const gone = (['active', 'done'] as const).filter((role) => !byId.has(mapping.columns[role]));
   if (gone.length > 0) {
-    const listed = columns.length === 0
-      ? '  (that board has no columns)'
-      : columns.map((c) => `  ${c.columnId}  ${c.name}`).join('\n');
+    const listed = listColumnsFor(columns);
     const named = gone.map((role) => `${role} = ${mapping.columns[role]}`).join(', ');
     throw new TrackerConfigError(
       `The tracker mapping in ${stored.location} points at a column that is ${MISSING_WORDING}: ${named}.\n` +

@@ -20,7 +20,7 @@ import ColumnDirectory from '../lib/column-directory';
 import type TagsAPI from '../lib/tags-api';
 import { TagLookupError } from '../lib/tags-api';
 import { ApiNamespace, apiNamespace, Ctx, run } from '../lib/run';
-import { foldName } from '../lib/fold-name';
+import { resolveNameToId } from '../lib/name-resolve';
 import { detectStage, proposeColumnMapping, WorkflowStage } from '../lib/workflow-stage';
 import { classifyThrownError } from '../lib/favro-error';
 import { invalidateCache } from '../lib/name-cache';
@@ -36,14 +36,6 @@ import {
 
 const SCAFFOLD_COLUMNS = ['To Do', 'Doing', 'Done'];
 const DEFAULT_BOARD_NAME = 'Issue Tracker';
-
-/**
- * One shared fold, not a fourth private copy: `--board` is typed by a human and
- * `b.name` came off the wire, so the same visible board name reaches the two
- * sides in different normalisation forms and the filter below found zero
- * matches — which this function reports as `missing` (#141).
- */
-const norm = foldName;
 
 export interface InitTrackerOptions {
   /** Already resolved — the caller does the scope check against it. */
@@ -176,14 +168,21 @@ export async function initTracker(
     chosen = boards[0];
 
     if (wanted) {
-      const matches = boards.filter((b) => b.boardId === wanted || norm(b.name) === norm(wanted));
-      if (matches.length !== 1) {
-        throw new TrackerConfigError(
-          `"${wanted}" matches ${matches.length} boards in collection ${collectionId}. That collection's boards:\n${listed}`,
-          matches.length === 0 ? 'missing' : 'ambiguous'
-        );
-      }
-      chosen = matches[0];
+      // `resolveNameToId`, not a fourth private matcher (#123): id-first, then
+      // exact folded name, refusing both zero and many with every candidate
+      // listed. `organizationId` is deliberately OMITTED, which disables the
+      // cache in both directions — these boards are ONE collection's, so reading
+      // the shared `boards` entry would match outside the collection and writing
+      // it would hand `resolveBoardId` a partial org listing.
+      const wantedId = await resolveNameToId({
+        kind: 'boards',
+        fetch: async () => boards.map((b) => ({ id: b.boardId, name: b.name })),
+        value: wanted,
+        label: 'board',
+        listCommand: `favro boards list --collection ${collectionId}`,
+        useIdWith: 'favro tracker init --collection <collection> --board <boardId>',
+      });
+      chosen = boards.find((b) => b.boardId === wantedId)!;
     } else if (boards.length > 1) {
       throw new TrackerConfigError(
         `Collection ${collectionId} has ${boards.length} boards, and Favro has no "primary board" field to break the tie — ` +

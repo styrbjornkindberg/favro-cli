@@ -56,7 +56,12 @@ export class ColumnResolutionError extends RefusalError {
   }
 }
 
-function listColumnsFor(columns: ColumnRef[]): string {
+/**
+ * The one rendering of "here are that board's columns" a refusal appends. Also
+ * `tracker-config.ts`'s drift refusal, which had a byte-identical copy of both
+ * the row format and the no-columns sentence (#123).
+ */
+export function listColumnsFor(columns: Array<{ columnId: string; name: string }>): string {
   if (columns.length === 0) return '  (that board has no columns)';
   return columns.map((c) => `  ${c.columnId}  ${c.name}`).join('\n');
 }

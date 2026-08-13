@@ -14,6 +14,7 @@ import * as fs from 'fs/promises';
 import { AddressInfo } from 'net';
 import FavroHttpClient from '../lib/http-client';
 import { initTracker } from '../commands/tracker-init';
+import { writeCache } from '../lib/name-cache';
 import {
   TRIAGE_TAGS,
   TrackerConfigError,
@@ -231,6 +232,34 @@ describe('tracker init on the wire', () => {
     const { client } = await startServer();
     const result = await initTracker(client, { collectionId: COLL_MANY, board: 'Board Y' });
     expect(result.mapping.boardId).toBe(BOARD_Y);
+  }, 10000);
+
+  // #123 routed `--board` onto `resolveNameToId`, the shared exact matcher, and
+  // deleted this file's private one. These two are the arms on that: a name
+  // nothing in the collection carries must still refuse, and it must refuse
+  // WITHOUT reaching outside the collection — `Delivery` is a real board in the
+  // org, so a matcher that lost its collection scope would adopt it silently.
+  it('refuses a --board no board in the collection carries, listing the ones it does', async () => {
+    const { client, received } = await startServer();
+    const attempt = initTracker(client, { collectionId: COLL_MANY, board: 'Ghost' });
+
+    await expect(attempt).rejects.toThrow('missing or not visible to your key');
+    await expect(attempt).rejects.toThrow(BOARD_X);
+    await expect(attempt).rejects.toThrow(BOARD_Y);
+    expect(received.filter((r) => r.method === 'POST')).toHaveLength(0);
+  }, 10000);
+
+  it('refuses a --board that names a board in ANOTHER collection', async () => {
+    const { client } = await startServer();
+    // Seeded so the arm covers BOTH ways the scope can be lost: fetching the org
+    // instead of the collection, and reading the shared org-wide `boards` cache
+    // that `resolveNameToId` consults before it fetches. `initTracker` never
+    // writes that entry itself, so without this line the cache path is untested.
+    await writeCache(ORG, 'boards', [{ id: BOARD, name: 'Delivery' }]);
+    const attempt = initTracker(client, { collectionId: COLL_MANY, board: 'Delivery' });
+
+    await expect(attempt).rejects.toThrow('missing or not visible to your key');
+    await expect(attempt).rejects.not.toThrow(BOARD);
   }, 10000);
 
   it('an explicit --active / --done overrides the proposal', async () => {
