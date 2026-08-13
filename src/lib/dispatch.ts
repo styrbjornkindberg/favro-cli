@@ -1236,18 +1236,20 @@ function updateEntries(a: UpdateArgs | MultiUpdateArgs): readonly UpdateArgs[] {
  * to raise — and raising last means the field writes before it are already logged
  * and get unwound, rather than a failed move stranding them un-recorded.
  *
- * **THE SEAM: `dueDate` is not here, and neither are `setName`/`setDescription` as
- * named primitives.** #106 owns all three. `name` and `description` route through
- * `TxCards.setText`, which is that ticket's two methods fused into one while they
- * are identical (see its own note). `dueDate` is left out rather than guessed at:
- * its write shape is `YYYY-MM-DD` and a card reads it back as a full ISO timestamp
- * encoding a local day boundary — measured across 853 cards, zero date-only (#132)
- * — so the round trip is a normalisation nobody has observed. A captured pre-state
- * is therefore an ISO string, and whether the WRITE side accepts one is unmeasured,
- * which means the inverse cannot be shown to restore what it captured. An undo
- * handle that may not undo is worse than a refused field, so the field is absent
- * from the intent and `cards update` never offered it on the single-card path
- * either. It arrives with the probe that measures it.
+ * **THE SEAM: `dueDate` and custom fields are not here.** `name` and `description`
+ * route through `TxCards.setText`, which is #106's two methods fused into one
+ * because the measurement did not split them (see its own note).
+ *
+ * `dueDate` was left out because its round trip was a normalisation nobody had
+ * observed: the write shape was `YYYY-MM-DD`, a card reads back a full ISO
+ * timestamp (#132, 853 cards, zero date-only), and whether the WRITE side accepted
+ * an ISO string was unmeasured — so a captured pre-state could not be shown to be
+ * restorable, and an undo handle that may not undo is worse than a refused field.
+ * **#106 measured it and the answer is yes**: an ISO timestamp is honoured and
+ * echoed verbatim, `null` clears, `""` is a silent no-op. `TxCards.setDueDate` and
+ * `setFieldValue` exist now and carry real compensation entries. Routing the
+ * commands through them is #109's; the field stays absent from this intent's args
+ * until then rather than half-wired here.
  */
 registerIntent<UpdateArgs | MultiUpdateArgs, UpdateResult | UpdateResult[]>({
   name: 'update',
