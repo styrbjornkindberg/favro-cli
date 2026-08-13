@@ -180,10 +180,10 @@ afterEach(async () => {
 
 /** Run one argv through the real program and hand back what the user saw. */
 async function drive(argv: string[]) {
-  let code: number | undefined;
-  const exit = jest.spyOn(process, 'exit').mockImplementation(((c?: number) => {
-    code = c;
-    throw new Error('process.exit');
+  const before = process.exitCode;
+  process.exitCode = undefined;
+  const exit = jest.spyOn(process, 'exit').mockImplementation((() => {
+    throw new Error('process.exit must not be called under run()');
   }) as never);
   const out = jest.spyOn(console, 'log').mockImplementation(() => {});
   const err = jest.spyOn(console, 'error').mockImplementation(() => {});
@@ -192,6 +192,8 @@ async function drive(argv: string[]) {
   } catch (error) {
     if ((error as Error).message !== 'process.exit') throw error;
   }
+  const code = process.exitCode;
+  process.exitCode = before;
   const stdout = out.mock.calls.map((c) => String(c[0])).join('\n');
   const stderr = err.mock.calls.map((c) => String(c[0])).join('\n');
   out.mockRestore();
@@ -206,13 +208,15 @@ describe('the live cards list refuses a --limit it cannot read', () => {
     jest.spyOn(clientFactory, 'createFavroClient').mockResolvedValue(client);
 
     const { code, stdout, stderr } = await drive([
-      'cards', 'list', BOARD, '--limit', '1_000', '--json',
+      'cards', 'list', BOARD, '--limit', '1_000', '--human',
     ]);
 
     expect(code).toBe(1);
     expect(stderr).toContain('1_000');
-    // Nothing on stdout that a caller could parse as a result. The old
-    // behaviour printed a full, well-formed envelope of every card.
+    // Nothing on stdout that a caller could parse as a RESULT. The old
+    // behaviour printed a full, well-formed envelope of every card. Driven
+    // `--human` since #119 put `cards list` on `run()`: unflagged, the refusal
+    // is an error ENVELOPE on stdout, which the arm below is about.
     expect(stdout).toBe('');
     // And it costs no board read: the parse runs before the fetch, so a typo'd
     // cap does not page a whole board only to throw it away.
@@ -223,12 +227,29 @@ describe('the live cards list refuses a --limit it cannot read', () => {
     const { client } = await startServer(5);
     jest.spyOn(clientFactory, 'createFavroClient').mockResolvedValue(client);
 
-    const { code, stdout } = await drive(['cards', 'list', BOARD, '--limit', '2', '--json']);
+    const { code, stdout } = await drive(['cards', 'list', BOARD, '--limit', '2']);
 
     expect(code).toBeUndefined();
     const envelope = JSON.parse(stdout);
     expect(envelope.rows).toHaveLength(2);
     expect(envelope.truncated).toBe(true);
+  });
+
+  it('the refusal is an ENVELOPE on stdout under the machine default (#119)', async () => {
+    // The other half of the arm above, and the one `cards list` could not have
+    // until it moved onto `run()`: a caller who parses stdout gets the reason
+    // rather than nothing at all.
+    const { client, served } = await startServer(5);
+    jest.spyOn(clientFactory, 'createFavroClient').mockResolvedValue(client);
+
+    const { code, stdout, stderr } = await drive(['cards', 'list', BOARD, '--limit', '1_000']);
+
+    expect(code).toBe(1);
+    expect(JSON.parse(stdout)).toEqual({
+      error: { message: expect.stringContaining('1_000'), retryable: false },
+    });
+    expect(stderr).toBe('');
+    expect(served.filter((s) => s.path.endsWith('/cards'))).toEqual([]);
   });
 });
 

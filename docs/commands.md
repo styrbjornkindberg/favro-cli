@@ -353,7 +353,6 @@ Get board details including columns, members, and stats.
 | Flag | Description |
 |------|-------------|
 | `--board <boardId>` | **Required.** Board to list from |
-| `--json` | Output the `{rows, truncated?, unreachable?}` envelope, compact |
 | `--limit <n>` | Cap how many cards are **printed** (default: 25); sets `truncated` |
 | `--filter <expr>` | Query expression, parsed and value-checked **before** the fetch |
 | `--status <column>` | Narrow to one column, by name or `columnId`. On the wire. |

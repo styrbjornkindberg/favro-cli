@@ -153,22 +153,41 @@ async function fixture(name: string, content: string): Promise<string> {
   return file;
 }
 
-/** `cards create` as a user reaches it, with `process.exit` turned into a throw. */
+/** `cards create` as a user reaches it — the machine DEFAULT (ADR-0002). */
 const run = (...argv: string[]) =>
   buildProgram().parseAsync(['node', 'favro', 'cards', 'create', ...argv]);
+
+/**
+ * The human path. #119 moved `cards create` onto `run()`, so its `✓ Created …`
+ * line is on the `human` formatter; unflagged, stdout carries the created cards
+ * alone.
+ */
+const runHuman = (...argv: string[]) =>
+  buildProgram().parseAsync(['node', 'favro', '--human', 'cards', 'create', ...argv]);
+
+/** `run()` sets `process.exitCode` and returns; it never rejects. */
+const exitCodeAfter = async (...argv: string[]): Promise<number | undefined> => {
+  process.exitCode = undefined;
+  await run(...argv);
+  const code = process.exitCode;
+  process.exitCode = undefined;
+  return code;
+};
 
 beforeEach(async () => {
   jest.clearAllMocks();
   injected = undefined;
   tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'favro-cli-bulk-test-'));
-  exitSpy = jest.spyOn(process, 'exit').mockImplementation(((code?: number) => {
-    throw new Error(`process.exit(${code})`);
+  process.exitCode = undefined;
+  exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {
+    throw new Error('process.exit must not be called under run()');
   }) as any);
   logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
   errSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
 });
 
 afterEach(async () => {
+  process.exitCode = undefined;
   await Promise.all(running.splice(0).map((s) => new Promise((done) => s.close(() => done(null)))));
   exitSpy.mockRestore();
   logSpy.mockRestore();
@@ -186,13 +205,13 @@ describe('`cards create --csv` sends the file to the wire as one enumerated batc
       'name,description\nFirst,one\nSecond,two\nThird,three\n',
     );
 
-    await run('--csv', csv, '--board', BOARD);
+    await runHuman('--csv', csv, '--board', BOARD);
 
     expect(posts(stand.received).map((r) => r.body.name)).toEqual(['First', 'Second', 'Third']);
     expect(posts(stand.received)[0].body.widgetCommonId).toBe(BOARD);
     expect(stand.cards.size).toBe(3);
     expect(logSpy.mock.calls.flat().join('\n')).toContain('✓ Created 3 cards');
-    expect(exitSpy).not.toHaveBeenCalled();
+    expect(process.exitCode).toBeUndefined();
   });
 });
 
@@ -231,13 +250,12 @@ describe('the cap is a refusal, not a truncation', () => {
     const rows = Array.from({ length: 21 }, (_, i) => `Card ${i + 1},body`).join('\n');
     const csv = await fixture('big.csv', `name,description\n${rows}\n`);
 
-    await expect(run('--csv', csv, '--board', BOARD)).rejects.toThrow('process.exit(1)');
+    expect(await exitCodeAfter('--csv', csv, '--board', BOARD)).toBe(1);
 
     // Not "the first 20 landed" — nothing did. A partial create reported as
     // success is exactly what the cap exists to prevent.
     expect(posts(stand.received)).toHaveLength(0);
     expect(stand.cards.size).toBe(0);
-    expect(exitSpy).toHaveBeenCalledWith(1);
   });
 });
 
@@ -246,7 +264,7 @@ describe('--bulk JSON reaches the same intent', () => {
     const stand = await startServer();
     const file = await fixture('one.json', JSON.stringify({ name: 'Solo', description: 'd' }));
 
-    await run('--bulk', file, '--board', BOARD);
+    await runHuman('--bulk', file, '--board', BOARD);
 
     expect(posts(stand.received).map((r) => r.body.name)).toEqual(['Solo']);
     expect(logSpy.mock.calls.flat().join('\n')).toContain('✓ Created 1 cards');
@@ -272,7 +290,6 @@ describe('--dry-run goes through the same table, so it needs credentials', () =>
     // there is no file-only path where the cap and the lock could drift.
     const csv = await fixture('dry2.csv', 'name\nFirst\n');
 
-    await expect(run('--csv', csv, '--board', BOARD, '--dry-run')).rejects.toThrow('process.exit(1)');
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(await exitCodeAfter('--csv', csv, '--board', BOARD, '--dry-run')).toBe(1);
   });
 });

@@ -160,14 +160,18 @@ describe('Missing FAVRO_API_TOKEN — command fast-fail', () => {
   test('a card read with no credentials names the missing API key and the fix', async () => {
     const program = buildProgram();
 
-    await expect(
-      program.parseAsync(['node', 'test', 'cards', 'list'])
-    ).rejects.toThrow('process.exit');
+    // `--human`, so the refusal renders on stderr where this arm reads it. #119
+    // moved `cards list` onto `run()`: unflagged it is an error envelope on
+    // stdout, and the code is `process.exitCode` rather than a hard exit.
+    const before = process.exitCode;
+    process.exitCode = undefined;
+    await program.parseAsync(['node', 'test', '--human', 'cards', 'list']);
 
     const errorMsg = consoleErrorSpy.mock.calls[0][0];
     expect(typeof errorMsg).toBe('string');
     expect(errorMsg).toContain('API key');
     expect(errorMsg).toContain('favro auth login');
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
+    process.exitCode = before;
   });
 });

@@ -20,13 +20,17 @@ jest.mock('../lib/http-client');
 // hand the reference back — what the resolver itself does is pinned on the wire
 // in `board-resolution-wire.test.ts`, and these assertions are about
 // `listCards`.
-jest.mock('../lib/boards-api', () => ({
-  __esModule: true,
-  default: jest.fn().mockImplementation(() => ({
+// BOTH exports. `cards list` reaches the resolver through `ctx.api.boards`
+// since #119, and `run.ts` imports the NAMED `BoardsAPI` — a mock supplying only
+// `default` answered `BoardsAPI is not a constructor`, which the runner's
+// boundary then swallowed into an error envelope and an empty `listCards`.
+jest.mock('../lib/boards-api', () => {
+  const stub = jest.fn().mockImplementation(() => ({
     resolveBoardId: async (board: string) =>
       board === 'Backlog - Web Hub' ? 'w-hub-0001' : board,
-  })),
-}));
+  }));
+  return { __esModule: true, default: stub, BoardsAPI: stub };
+});
 jest.mock('../lib/config', () => ({
   resolveApiKey: jest.fn().mockResolvedValue(undefined),
   loadConfig: jest.fn().mockResolvedValue({}),
@@ -119,12 +123,15 @@ describe('cli.ts — cards list options', () => {
     expect(optNames).toContain('--limit');
   });
 
-  test('cards list has --json option', () => {
+  test('cards list declares no --json — JSON is the default (#119)', () => {
+    // ADR-0002: JSON is the default and `--human` is the only way out, so a leaf
+    // `--json` would be a second spelling of a flag the root already owns.
     const program = buildProgram();
     const cardsCmd = program.commands.find(c => c.name() === 'cards')!;
     const listCmd = cardsCmd.commands.find(c => c.name() === 'list')!;
     const optNames = listCmd.options.map(o => o.long);
-    expect(optNames).toContain('--json');
+    expect(optNames).not.toContain('--json');
+    expect(program.options.map((o) => o.long)).toContain('--human');
   });
 
   // #44 reinstated --include on `cards list`, on the opposite grounds to CLA-1785:
@@ -162,7 +169,10 @@ describe('cli.ts — CLA-1785 critic fixes: limit cap and null guard', () => {
     consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
     consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     tableSpy = jest.spyOn(console, 'table').mockImplementation(() => {});
-    exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => { throw new Error('process.exit'); });
+    process.exitCode = undefined;
+    exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => {
+      throw new Error('process.exit must not be called under run()');
+    });
   });
 
   afterEach(() => {
@@ -201,7 +211,7 @@ describe('cli.ts — CLA-1785 critic fixes: limit cap and null guard', () => {
     } as any));
 
     const program = buildProgram();
-    await program.parseAsync(['node', 'cli', 'cards', 'list', 'board-123', '--limit', '2', '--json']);
+    await program.parseAsync(['node', 'cli', 'cards', 'list', 'board-123', '--limit', '2']);
 
     const line = consoleSpy.mock.calls.map(c => String(c[0])).find(c => c.startsWith('{"rows":'))!;
     const parsed = JSON.parse(line);
@@ -218,12 +228,12 @@ describe('cli.ts — CLA-1785 critic fixes: limit cap and null guard', () => {
       JSON.parse(consoleSpy.mock.calls.map(c => String(c[0])).filter(c => c.startsWith('{"rows":')).pop()!);
 
     const program = buildProgram();
-    await program.parseAsync(['node', 'cli', 'cards', 'list', 'board-123', '--json']);
+    await program.parseAsync(['node', 'cli', 'cards', 'list', 'board-123']);
     expect(envelope().rows[0].description).toBeUndefined();
     expect(envelope().rows[0].customFields).toBeUndefined();
 
     await program.parseAsync([
-      'node', 'cli', 'cards', 'list', 'board-123', '--json', '--body', '--include', 'custom-fields',
+      'node', 'cli', 'cards', 'list', 'board-123', '--body', '--include', 'custom-fields',
     ]);
     expect(envelope().rows[0].description).toBe('body text');
     expect(envelope().rows[0].customFields).toEqual([{ f: 1 }]);
@@ -238,10 +248,9 @@ describe('cli.ts — CLA-1785 critic fixes: limit cap and null guard', () => {
     } as any));
 
     const program = buildProgram();
-    await expect(
-      program.parseAsync(['node', 'cli', 'cards', 'list', 'board-123', '--filter', 'nosuchfield:x']),
-    ).rejects.toThrow('process.exit');
+    await program.parseAsync(['node', 'cli', 'cards', 'list', 'board-123', '--filter', 'nosuchfield:x']);
 
+    expect(process.exitCode).toBe(1);
     expect(mockListCards).not.toHaveBeenCalled();
   });
 
@@ -290,9 +299,11 @@ describe('cli.ts — CLA-1785 critic fixes: limit cap and null guard', () => {
     await program.parseAsync(['node', 'cli', 'cards', 'list', 'board-123', '--archived', 'all']);
     expect(mockListCards).toHaveBeenCalledWith(expect.objectContaining({ archived: 'all' }));
 
-    await expect(
-      program.parseAsync(['node', 'cli', 'cards', 'list', 'board-123', '--archived', 'maybe']),
-    ).rejects.toThrow('process.exit');
+    // `--human`, so the refusal renders on stderr where this arm reads it.
+    await buildProgram().parseAsync([
+      'node', 'cli', '--human', 'cards', 'list', 'board-123', '--archived', 'maybe',
+    ]);
+    expect(process.exitCode).toBe(1);
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('--archived'));
   });
 });
@@ -343,7 +354,10 @@ describe('cli.ts — FAVRO_API_TOKEN missing causes fast-fail', () => {
     delete process.env.FAVRO_API_TOKEN;
     delete process.env.FAVRO_API_KEY;
     consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => { throw new Error('process.exit'); });
+    process.exitCode = undefined;
+    exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => {
+      throw new Error('process.exit must not be called under run()');
+    });
   });
 
   afterEach(() => {
@@ -353,49 +367,42 @@ describe('cli.ts — FAVRO_API_TOKEN missing causes fast-fail', () => {
     else delete process.env.FAVRO_API_KEY;
     consoleErrorSpy.mockRestore();
     exitSpy.mockRestore();
+    process.exitCode = undefined;
   });
 
   test('cards list exits 1 with API key error when token missing', async () => {
     const program = buildProgram();
 
-    await expect(
-      program.parseAsync(['node', 'cli', 'cards', 'list'])
-    ).rejects.toThrow('process.exit');
+    await program.parseAsync(['node', 'cli', '--human', 'cards', 'list']);
 
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('API key'));
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   test('cards create exits 1 with API key error when token missing', async () => {
     const program = buildProgram();
 
-    await expect(
-      program.parseAsync(['node', 'cli', 'cards', 'create', 'Test Card'])
-    ).rejects.toThrow('process.exit');
+    await program.parseAsync(['node', 'cli', '--human', 'cards', 'create', 'Test Card']);
 
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('API key'));
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   test('cards update exits 1 with API key error when token missing', async () => {
     const program = buildProgram();
 
-    await expect(
-      program.parseAsync(['node', 'cli', 'cards', 'update', 'card-123'])
-    ).rejects.toThrow('process.exit');
+    await program.parseAsync(['node', 'cli', '--human', 'cards', 'update', 'card-123']);
 
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('API key'));
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   test('cards export exits 1 with API key error when token missing', async () => {
     const program = buildProgram();
 
-    await expect(
-      program.parseAsync(['node', 'cli', 'cards', 'export', 'board-123'])
-    ).rejects.toThrow('process.exit');
+    await program.parseAsync(['node', 'cli', '--human', 'cards', 'export', 'board-123']);
 
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('API key'));
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 });

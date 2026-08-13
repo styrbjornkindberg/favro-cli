@@ -83,10 +83,10 @@ const ALLOWLIST: Record<string, string> = {};
  * The envelope is the shape of a READ. Two other things put an array on stdout
  * and neither is answering "what rows are there":
  *
- *   - A write echo. `cards create --bulk` and `deps add` print what the write
- *     produced, under a `✓ …` line, after `reportDispatch` has already had its
- *     say. Wrapping those in `{rows}` would give one write two machine shapes
- *     and imply a `--limit` that would be a data-loss flag on a write receipt.
+ *   - A write echo. `deps add` prints what the write produced, under a `✓ …`
+ *     line, after `reportDispatch` has already had its say. Wrapping those in
+ *     `{rows}` would give one write two machine shapes and imply a `--limit`
+ *     that would be a data-loss flag on a write receipt.
  *   - An export. `cards export` serialises to a FORMAT — the same bytes go to
  *     `--out file.json` as to stdout, and CSV is the sibling arm. An envelope
  *     there would either change the file format or make the file and the pipe
@@ -94,9 +94,16 @@ const ALLOWLIST: Record<string, string> = {};
  *
  * These are not going away. Recording them here is what stops the next sweep
  * "fixing" them.
+ *
+ * `src/cli.ts cards create` was the third entry until #119 moved that action
+ * onto `run()`. The DECISION is unchanged — `--bulk` still echoes a `Card[]` —
+ * but the site is no longer here to see: the array is written by `writeValue`
+ * in `run.ts`, and this scan walks `src/cli.ts` and `src/commands/`. Struck
+ * because the staleness arm below fails in both directions, and an entry naming
+ * a site the scan cannot reach is cover rather than a record. What now holds
+ * that shape is the dispatch arm's own contract, not this list.
  */
 const OUT_OF_REMIT: Record<string, string> = {
-  'src/cli.ts cards create': '#99 — write echo, not a read; reportDispatch owns the machine shape',
   'src/cli.ts cards export': '#99 — a serialisation format, shared with --out; CSV is its sibling',
 };
 

@@ -84,7 +84,6 @@ const RUNNER_FREE: readonly string[] = ['src/commands/issue-tracker-help.ts'];
  * `run()` instead, or a migrated command regressing, which should be fixed.
  */
 const ALLOWLIST: readonly string[] = [
-  'src/cli.ts',
   'src/commands/attachments.ts',
   // `batch-smart.ts` and `batch.ts` were here until #110 DELETED them. They were
   // struck off by deletion rather than by migration, which is the other way a
@@ -281,8 +280,7 @@ describe('no module exits the process', () => {
     expect(production.length).toBeGreaterThan(100);
     expect(production).toEqual(
       expect.arrayContaining([
-        'src/cli.ts',
-        'src/lib/safety.ts',
+              'src/lib/safety.ts',
         'src/api/comments.ts',
         'src/test-support/scope-passthrough.ts',
         'src/mcp-http-server.ts',

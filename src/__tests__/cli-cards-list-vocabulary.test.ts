@@ -77,12 +77,14 @@ beforeEach(() => {
   logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
   errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
   tableSpy = jest.spyOn(console, 'table').mockImplementation(() => {});
+  process.exitCode = undefined;
   exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => {
-    throw new Error('process.exit');
+    throw new Error('process.exit must not be called under run()');
   });
 });
 
 afterEach(() => {
+  process.exitCode = undefined;
   logSpy.mockRestore();
   errorSpy.mockRestore();
   tableSpy.mockRestore();
@@ -91,8 +93,9 @@ afterEach(() => {
 
 /** Run `cards list` with the given flags and read the JSON envelope back. */
 async function list(...flags: string[]): Promise<{ rows: Array<{ cardId: string }> }> {
+  // No `--json`: JSON is the default since #119 put `cards list` on `run()`.
   await buildProgram().parseAsync([
-    'node', 'cli', 'cards', 'list', STUB_BOARD, '--json', ...flags,
+    'node', 'cli', 'cards', 'list', STUB_BOARD, ...flags,
   ]);
   const line = logSpy.mock.calls
     .map((c) => String(c[0]))
@@ -103,9 +106,11 @@ async function list(...flags: string[]): Promise<{ rows: Array<{ cardId: string 
 
 /** Run `cards list` expecting it to refuse, and hand back what it printed. */
 async function refusal(...flags: string[]): Promise<string> {
-  await expect(
-    buildProgram().parseAsync(['node', 'cli', 'cards', 'list', STUB_BOARD, '--json', ...flags])
-  ).rejects.toThrow('process.exit');
+  // `--human`, because this reads the WORDING off stderr; unflagged the runner
+  // puts it on stdout as an error envelope instead.
+  await buildProgram().parseAsync(['node', 'cli', '--human', 'cards', 'list', STUB_BOARD, ...flags]);
+  expect(process.exitCode).toBe(1);
+  process.exitCode = undefined;
   return errorSpy.mock.calls.map((c) => c.map(String).join(' ')).join('\n');
 }
 

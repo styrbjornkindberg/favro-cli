@@ -111,7 +111,7 @@ describe('cards update --from-csv — scope lock (#79)', () => {
     mockFsReadFile.mockResolvedValue('card_id,status\ncard-1,Done' as any);
     seed(() => 'board-A');
 
-    await program.parseAsync(['node', 'favro', 'cards', 'update', '--from-csv', 'bulk.csv']);
+    await program.parseAsync(['node', 'favro', '--human', 'cards', 'update', '--from-csv', 'bulk.csv']);
 
     expect(mockAssertScope).toHaveBeenCalledWith('board-A', expect.anything(), LOCKED_CONFIG, undefined);
     expect(calls).toEqual(['scope:board-A', 'write:card-1']);
@@ -121,7 +121,7 @@ describe('cards update --from-csv — scope lock (#79)', () => {
     mockFsReadFile.mockResolvedValue('card_id,status\ncard-1,Done\ncard-2,Done\ncard-3,Done' as any);
     seed((cardId) => (cardId === 'card-3' ? 'board-B' : 'board-A'));
 
-    await program.parseAsync(['node', 'favro', 'cards', 'update', '--from-csv', 'bulk.csv']);
+    await program.parseAsync(['node', 'favro', '--human', 'cards', 'update', '--from-csv', 'bulk.csv']);
 
     expect(mockAssertScope.mock.calls.map((c) => c[0])).toEqual(['board-A', 'board-B']);
     expect(calls.slice(0, 2)).toEqual(['scope:board-A', 'scope:board-B']);
@@ -131,7 +131,7 @@ describe('cards update --from-csv — scope lock (#79)', () => {
     mockFsReadFile.mockResolvedValue('card_id,status\ncard-1,Done\ncard-2,Done' as any);
     seed(() => 'board-A');
 
-    await program.parseAsync(['node', 'favro', 'cards', 'update', '--from-csv', 'bulk.csv']);
+    await program.parseAsync(['node', 'favro', '--human', 'cards', 'update', '--from-csv', 'bulk.csv']);
 
     expect(mockAssertScope.mock.calls.map((c) => c[0])).toEqual(['board-A']);
   });
@@ -144,7 +144,7 @@ describe('cards update --from-csv — scope lock (#79)', () => {
       if (boardId === 'board-OUTSIDE') throw new Error('Scope violation');
     });
 
-    await program.parseAsync(['node', 'favro', 'cards', 'update', '--from-csv', 'bulk.csv']);
+    await program.parseAsync(['node', 'favro', '--human', 'cards', 'update', '--from-csv', 'bulk.csv']);
 
     expect(mockApi.updateCard).not.toHaveBeenCalled();
     expect(calls).toEqual(['scope:board-A', 'scope:board-OUTSIDE']);
@@ -154,7 +154,7 @@ describe('cards update --from-csv — scope lock (#79)', () => {
     mockFsReadFile.mockResolvedValue('card_id,status\ncard-1,Done' as any);
     mockApi.getCard.mockRejectedValue(new Error('404 Not Found'));
 
-    await program.parseAsync(['node', 'favro', 'cards', 'update', '--from-csv', 'bulk.csv']);
+    await program.parseAsync(['node', 'favro', '--human', 'cards', 'update', '--from-csv', 'bulk.csv']);
 
     // The intent makes the read itself, so an unreadable row is the wire's own
     // error rather than an empty boardId handed to the check — and it names the
@@ -170,7 +170,7 @@ describe('cards update --from-csv — scope lock (#79)', () => {
     seed(() => 'board-A');
 
     await program.parseAsync([
-      'node', 'favro', 'cards', 'update', '--from-csv', 'bulk.csv', '--force',
+      'node', 'favro', '--human', 'cards', 'update', '--from-csv', 'bulk.csv', '--force',
     ]);
 
     expect(mockAssertScope).toHaveBeenCalledWith('board-A', expect.anything(), LOCKED_CONFIG, true);
@@ -193,7 +193,7 @@ describe('cards update --from-csv — scope lock (#79)', () => {
       });
 
       await program.parseAsync([
-        'node', 'favro', 'cards', 'update', '--from-csv', 'bulk.csv', '--dry-run',
+        'node', 'favro', '--human', 'cards', 'update', '--from-csv', 'bulk.csv', '--dry-run',
       ]);
 
       expect(mockAssertScope).toHaveBeenCalledWith('board-A', expect.anything(), LOCKED_CONFIG, undefined);
@@ -214,7 +214,7 @@ describe('cards update --from-csv — scope lock (#79)', () => {
       });
 
       await program.parseAsync([
-        'node', 'favro', 'cards', 'update', '--from-csv', 'bulk.csv', '--dry-run',
+        'node', 'favro', '--human', 'cards', 'update', '--from-csv', 'bulk.csv', '--dry-run',
       ]);
 
       expect(mockApi.updateCard).not.toHaveBeenCalled();
@@ -226,7 +226,7 @@ describe('cards update --from-csv — scope lock (#79)', () => {
       seed(() => 'board-A');
 
       await program.parseAsync([
-        'node', 'favro', 'cards', 'update', '--from-csv', 'bulk.csv', '--dry-run', '--force',
+        'node', 'favro', '--human', 'cards', 'update', '--from-csv', 'bulk.csv', '--dry-run', '--force',
       ]);
 
       expect(mockAssertScope).toHaveBeenCalledWith('board-A', expect.anything(), LOCKED_CONFIG, true);

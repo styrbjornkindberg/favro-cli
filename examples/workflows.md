@@ -111,10 +111,10 @@ favro cards export <boardId> --format json \
 
 ```bash
 # Get card IDs in a machine-readable format
-favro cards list --board <boardId> --json | jq '.[].cardId'
+favro cards list --board <boardId> | jq '.rows[].cardId'
 
 # Create a card and capture its ID
-CARD_ID=$(favro cards create "New task" --board <boardId> --json | jq -r '.cardId')
+CARD_ID=$(favro cards create "New task" --board <boardId> | jq -r '.cardId')
 echo "Created card: $CARD_ID"
 
 # Update it immediately

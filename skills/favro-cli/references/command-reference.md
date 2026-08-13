@@ -122,7 +122,6 @@ List cards on a board.
 | Flag | Description |
 |------|-------------|
 | `--board <boardId>` | **Required.** Board to list from |
-| `--json` | Output raw JSON |
 | `--limit <n>` | Cap how many cards are **printed** (default: 25); sets `truncated`. The board is always fetched to completion |
 | `--filter <expr>` | Filter expression (repeatable) |
 
@@ -136,7 +135,6 @@ Create a new card.
 | `--assignee <user>` | Assignee by name, email, userId or `@me` (repeatable) |
 | `--tag <name>` | Tag by name (repeatable) — an unknown name is refused, never created |
 | `--description <text>` | Card description (literal `\n` converted to newlines) |
-| `--json` | Output raw JSON |
 | `--dry-run` | Preview only |
 | `-y, --yes` | Skip confirmation |
 | `--force` | Bypass scope check |
@@ -159,7 +157,6 @@ Update one card, or up to twenty from a CSV file.
 | `--description <text>` | New description (literal `\n` converted to newlines) |
 | `--comment <text>` | Add a comment to the card (non-destructive, literal `\n` → newlines) |
 | `--from-csv <file>` | Update up to 20 cards from a CSV, in one transaction |
-| `--json` | Output raw JSON |
 | `--dry-run` | Preview only |
 | `-y, --yes` | Skip confirmation |
 | `--force` | Bypass scope check |

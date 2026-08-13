@@ -268,17 +268,25 @@ let warnSpy: jest.SpyInstance;
 const lock = (config: unknown) =>
   fsp.writeFile(path.join(CONFIG_DIR, 'config.json'), JSON.stringify(config));
 
-/** The command as a user reaches it, with `process.exit` turned into a throw. */
-const run = (...argv: string[]) => buildProgram().parseAsync(['node', 'favro', 'cards', ...argv]);
+/**
+ * The command as a user reaches it. `--human`, because `said()` below merges
+ * both streams and the `✓ Card updated: …` lines these arms read live on the
+ * `human` formatter since #119 put `cards update` on `run()`.
+ */
+const run = (...argv: string[]) =>
+  buildProgram().parseAsync(['node', 'favro', '--human', 'cards', ...argv]);
 
-/** `run`, swallowing the `process.exit` throw so an arm can assert on output. */
-const attempt = async (...argv: string[]): Promise<string | undefined> => {
-  try {
-    await run(...argv);
-    return undefined;
-  } catch (error) {
-    return (error as Error).message;
-  }
+/**
+ * `run`, handing back the exit code. It used to swallow a thrown
+ * `process.exit(N)`; the runner sets `process.exitCode` and returns instead, so
+ * there is nothing to throw and nothing to swallow.
+ */
+const attempt = async (...argv: string[]): Promise<number | undefined> => {
+  process.exitCode = undefined;
+  await run(...argv);
+  const code = process.exitCode;
+  process.exitCode = undefined;
+  return code;
 };
 
 const said = () =>
@@ -290,8 +298,9 @@ beforeEach(async () => {
   jest.clearAllMocks();
   injected = undefined;
   await lock({});
-  exitSpy = jest.spyOn(process, 'exit').mockImplementation(((code?: number) => {
-    throw new Error(`process.exit(${code})`);
+  process.exitCode = undefined;
+  exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {
+    throw new Error('process.exit must not be called under run()');
   }) as any);
   logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
   errSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
@@ -315,7 +324,7 @@ describe('cards update --dry-run takes the scope lock FIRST (#108)', () => {
 
     const thrown = await attempt('update', OUT_CARD, '--name', 'New name', '--dry-run');
 
-    expect(thrown).toBe('process.exit(1)');
+    expect(thrown).toBe(1);
     expect(said()).toContain('Scope violation');
     // The positive half of this pair is the next arm, which asserts this very
     // line IS printed — so the absence here is falsifiable rather than vacuous.
@@ -371,7 +380,7 @@ describe('cards update --dry-run takes the scope lock FIRST (#108)', () => {
 
     const thrown = await attempt('update', OUT_CARD, '--name', 'New name', '--dry-run');
 
-    expect(thrown).toBe('process.exit(1)');
+    expect(thrown).toBe(1);
     expect(said()).toContain(LOCKED_COLLECTION);
     expect(said()).not.toContain('[dry-run]');
     expect(writes(received)).toEqual([]);
@@ -383,7 +392,7 @@ describe('cards update --dry-run takes the scope lock FIRST (#108)', () => {
 
     const thrown = await attempt('update', OUT_CARD, '--name', 'New name', '--yes');
 
-    expect(thrown).toBe('process.exit(1)');
+    expect(thrown).toBe(1);
     expect(said()).toContain('Scope violation');
     expect(writes(received)).toEqual([]);
   });
@@ -398,7 +407,7 @@ describe('cards update --dry-run takes the scope lock FIRST (#108)', () => {
 
     const thrown = await attempt('update', OUT_CARD, '--comment', 'ship it', '--dry-run');
 
-    expect(thrown).toBe('process.exit(1)');
+    expect(thrown).toBe(1);
     expect(said()).toContain('Scope violation');
     expect(said()).not.toContain('[dry-run]');
     expect(writes(received)).toEqual([]);
@@ -614,7 +623,7 @@ describe('each field goes out in the spelling Favro honours (#108)', () => {
 
     const thrown = await attempt('update', IN_CARD, '--status', 'Done', '--column', 'To Do', '--yes');
 
-    expect(thrown).toBe('process.exit(1)');
+    expect(thrown).toBe(1);
     expect(said()).toContain('two spellings of one field');
     expect(writes(received)).toEqual([]);
   });
@@ -717,7 +726,7 @@ describe('a part-way failure unwinds the fields already written (#108)', () => {
 
     const thrown = await attempt('update', IN_CARD, '--name', 'Renamed', '--status', 'Done', '--yes');
 
-    expect(thrown).toBe('process.exit(1)');
+    expect(thrown).toBe(1);
     expect(said()).toContain('update failed');
     expect(said()).toContain('Rolled back');
     expect(said()).not.toContain('✓ Card updated');

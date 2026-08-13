@@ -637,7 +637,7 @@ describe('no read answers a failure with emptiness, outside the two lists', () =
     // migration rather than being slackened once to cover it — a floor with room
     // for a whole file's clauses to vanish cannot notice the walk collapsing,
     // which is the only thing it is for.
-    expect(catchClauses).toBeGreaterThanOrEqual(119);
+    expect(catchClauses).toBeGreaterThanOrEqual(113);
   });
 
   it('no read swallows its failure outside DEBT and DECIDED', () => {

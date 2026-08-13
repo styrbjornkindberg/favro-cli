@@ -25,7 +25,7 @@ import type { Command } from 'commander';
 import FavroHttpClient from './http-client';
 import { createFavroClient } from './client-factory';
 import { readConfig, FavroConfig } from './config';
-import { capRows, noteTruncation, writeEnvelope } from './read-shape';
+import { capRows, noteTruncation, Unreachable, writeEnvelope } from './read-shape';
 import { reportDispatch } from './report-dispatch';
 import { DispatchResult, retryAdvice } from './dispatch';
 import { isVerbose, logError } from './error-handler';
@@ -171,6 +171,16 @@ export interface RowsResult<T> extends WithExitCode, NotItem, NotDispatch {
    * the parse, so a handler passes `options.limit` through untouched.
    */
   limit?: number | string;
+  /**
+   * The third key of `read-shape.ts`'s envelope: what a COMPOSITE read could not
+   * reach. `capRows` cannot produce it — only the handler knows which per-item
+   * calls came back empty — so without this member the runner could express two
+   * thirds of the shape it exists to guarantee, and the first list read with
+   * holes to migrate would have dropped them silently (#119, `cards list
+   * --filter unblocked`). Spread in only when NON-EMPTY, so absent stays
+   * distinguishable from empty, which is rule 3.
+   */
+  unreachable?: Unreachable[];
   /** Returning `void` is legal, and is what accommodates `console.table`. */
   human?: (rows: T[]) => string | void;
 }
@@ -422,15 +432,25 @@ function emit(result: AnyResult, format: Format): void {
       writeValue(result.dispatch.value, result.human, format);
     }
   } else if (result.rows) {
-    const envelope = capRows(result.rows, result.limit);
+    const capped = capRows(result.rows, result.limit);
+    const envelope = result.unreachable?.length
+      ? { ...capped, unreachable: result.unreachable }
+      : capped;
     if (format.json) {
       writeEnvelope(envelope, format.pretty);
     } else {
       writeHuman(envelope.rows, result.human);
-      // A `human` formatter is handed ROWS, not the envelope, so it cannot say
-      // a cut happened and every one of them would have to be told to. The
-      // runner says it instead — once, for every migrated list read (#99).
+      // A `human` formatter is handed ROWS, not the envelope, so it can say
+      // neither that a cut happened nor that part of the read is missing, and
+      // every one of them would have to be told to. The runner says both —
+      // once, for every migrated list read (#99).
       noteTruncation(envelope, result.rows.length);
+      if (result.unreachable?.length) {
+        console.log(
+          `(${result.unreachable.length} part(s) of this read could not be reached:)`,
+        );
+        for (const hole of result.unreachable) console.log(`  ${hole.id} — ${hole.reason}`);
+      }
     }
   } else {
     writeValue(result.item, result.human, format);

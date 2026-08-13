@@ -294,22 +294,25 @@ describe('the live cards export refuses a filter it cannot settle', () => {
 
   test('an unknown tag exits 1, writes no file, and never fetches the board', async () => {
     const out = path.join(outDir, 'refused.json');
-    let code: number | undefined;
-    const exit = jest.spyOn(process, 'exit').mockImplementation(((c?: number) => {
-      code = c;
-      throw new Error('process.exit');
+    // `--human`, so the refusal renders on stderr where this arm reads it. #119
+    // put `cards export` on `run()`: unflagged it emits the error ENVELOPE on
+    // stdout instead, and sets `process.exitCode` rather than exiting hard.
+    const before = process.exitCode;
+    process.exitCode = undefined;
+    const exit = jest.spyOn(process, 'exit').mockImplementation((() => {
+      throw new Error('process.exit must not be called under run()');
     }) as never);
     const said = jest.spyOn(console, 'error').mockImplementation(() => {});
 
-    await expect(
-      buildProgram().parseAsync([
-        'node', 'favro', 'cards', 'export', BOARD,
-        '--filter', 'tag:typoo',
-        '--out', out,
-      ])
-    ).rejects.toThrow('process.exit');
+    await buildProgram().parseAsync([
+      'node', 'favro', '--human', 'cards', 'export', BOARD,
+      '--filter', 'tag:typoo',
+      '--out', out,
+    ]);
 
     const printed = said.mock.calls.map((c) => String(c[0])).join('\n');
+    const code = process.exitCode;
+    process.exitCode = before;
     said.mockRestore();
     exit.mockRestore();
 
@@ -380,6 +383,7 @@ describe('the live favro query refuses a filter in the same words cards export d
       throw new Error(`process.exit:${c}`);
     }) as never);
     const before = process.exitCode;
+    process.exitCode = undefined;
     try {
       await buildProgram().parseAsync(['node', 'favro', ...argv]);
     } catch (error) {
@@ -398,15 +402,18 @@ describe('the live favro query refuses a filter in the same words cards export d
     const query = await driven(['query', BOARD, filter]);
     const exported = await driven(['cards', 'export', BOARD, '--filter', filter, '--out', 'unused.json']);
 
-    // Query is migrated: the machine-readable refusal is on STDOUT (ADR-0002).
+    // The machine-readable refusal is on STDOUT (ADR-0002).
     const envelope = JSON.parse(query.stdout);
     expect(envelope.error.message).toContain(unresolvable);
     expect(query.code).toBe(1);
 
-    // …and it is the SAME sentence the unmigrated command puts on stderr. Not a
-    // substring of it: the whole message, which is what makes a second grammar
-    // reappearing here fail rather than pass on "it also said typoo".
-    expect(exported.stderr).toContain(envelope.error.message);
+    // …and it is the SAME sentence, whole rather than a substring, which is what
+    // makes a second grammar reappearing here fail rather than pass on "it also
+    // said typoo". `cards export` put it on STDERR with stdout empty until #119
+    // moved it onto `run()`; both boundaries are the runner's now, so the
+    // comparison is envelope against envelope.
+    expect(JSON.parse(exported.stdout).error.message).toBe(envelope.error.message);
+    expect(exported.code).toBe(1);
   });
 
   test('a refusal never pages the board, and a filter it accepts does', async () => {
@@ -475,19 +482,23 @@ describe('every live --filter command refuses identically', () => {
 
   /** Run one command to its refusal and return what the user saw. */
   async function refusal(argv: string[]) {
-    let code: number | undefined;
+    const before = process.exitCode;
+    process.exitCode = undefined;
     const exit = jest.spyOn(process, 'exit').mockImplementation(((c?: number) => {
-      code = c;
-      throw new Error('process.exit');
+      throw new Error(`process.exit:${c}`);
     }) as never);
     const said = jest.spyOn(console, 'error').mockImplementation(() => {});
     const alsoSaid = jest.spyOn(console, 'log').mockImplementation(() => {});
     try {
-      await buildProgram().parseAsync(['node', 'favro', ...argv]);
+      // `--human`, for the reason above: the comparison is on the WORDING, and
+      // both of these commands render it on stderr only under that flag.
+      await buildProgram().parseAsync(['node', 'favro', '--human', ...argv]);
     } catch (err) {
-      if ((err as Error).message !== 'process.exit') throw err;
+      if (!/^process\.exit:/.test((err as Error).message)) throw err;
     }
     const printed = said.mock.calls.map((c) => String(c[0])).join('\n');
+    const code = process.exitCode;
+    process.exitCode = before;
     said.mockRestore();
     alsoSaid.mockRestore();
     exit.mockRestore();

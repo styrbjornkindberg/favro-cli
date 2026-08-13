@@ -478,14 +478,24 @@ describe('cards export (live command)', () => {
   const runExport = (...args: string[]): Promise<unknown> =>
     buildProgram().parseAsync(['node', 'favro', 'cards', 'export', ...args]);
 
-  /** Run an argv expected to refuse, and return what it printed. */
+  /**
+   * Run an argv expected to refuse, and return what it printed.
+   *
+   * `--human`, because these arms read the WORDING off stderr. #119 moved
+   * `cards export` onto `run()`: unflagged, the refusal is an error envelope on
+   * stdout, and the code is `process.exitCode` rather than a hard exit.
+   */
   async function expectRefusal(...args: string[]): Promise<string> {
+    const before = process.exitCode;
+    process.exitCode = undefined;
     const exit = jest.spyOn(process, 'exit')
-      .mockImplementation(() => { throw new Error('process.exit'); });
+      .mockImplementation(() => { throw new Error('process.exit must not be called under run()'); });
     try {
-      await expect(runExport(...args)).rejects.toThrow('process.exit');
+      await buildProgram().parseAsync(['node', 'favro', '--human', 'cards', 'export', ...args]);
+      expect(process.exitCode).toBe(1);
       return printed();
     } finally {
+      process.exitCode = before;
       exit.mockRestore();
     }
   }

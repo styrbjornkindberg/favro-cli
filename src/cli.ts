@@ -19,14 +19,11 @@
 
 import { Command, CommanderError } from 'commander';
 import * as path from 'path';
-import CardsAPI from './lib/cards-api';
-import BoardsAPI from './lib/boards-api';
 // The shared dispatch table. Importing it here is what makes the CLI a caller of
 // the one table rather than a second, drifting write path — and it registers
 // every intent, so intents added by later tickets are reachable with no change.
 import { dispatch, UpdateResult } from './lib/dispatch';
 import { foldName } from './lib/fold-name';
-import { reportDispatch } from './lib/report-dispatch';
 import { writeCardsCSV, writeCardsJSON, normalizeCard, cardsToCSV } from './lib/csv';
 import { applyFilters, ExportFormat } from './lib/cards-export';
 import { Card } from './lib/cards-api';
@@ -88,8 +85,64 @@ import { registerTrackerInitCommand } from './commands/tracker-init';
 import { runMainMenu } from './commands/main-menu';
 import { logError, latchVerbose } from './lib/error-handler';
 import { ProgressBar } from './lib/progress';
-import { createFavroClient } from './lib/client-factory';
-import { capRows, noteTruncation, omitBulk, parseLimit, writeEnvelope } from './lib/read-shape';
+import { omitBulk, parseLimit } from './lib/read-shape';
+import { RefusalError } from './lib/refusal';
+import { Ctx, run } from './lib/run';
+
+/** The flag row `cards export` declares. */
+interface CardsExportFlags {
+  format?: string;
+  out?: string;
+  filter?: string[];
+}
+
+/** The flag row `cards update` declares. */
+interface CardsUpdateFlags {
+  name?: string;
+  description?: string;
+  comment?: string;
+  status?: string;
+  assignees?: string;
+  assignee?: string;
+  tags?: string;
+  column?: string;
+  label?: string;
+  board?: string;
+  fromCsv?: string;
+  dryRun?: boolean;
+  yes?: boolean;
+  force?: boolean;
+}
+
+/** The flag row `cards create` declares. */
+interface CardsCreateFlags {
+  board?: string;
+  description?: string;
+  status?: string;
+  tag?: string[];
+  assignee?: string[];
+  parent?: string;
+  blockedBy?: string[];
+  blocks?: string[];
+  bulk?: string;
+  csv?: string;
+  dryRun?: boolean;
+  yes?: boolean;
+  force?: boolean;
+}
+
+/** The flag row `cards list` declares, so the handler's `options` is not `any`. */
+interface CardsListFlags {
+  board?: string;
+  status?: string;
+  archived?: string;
+  assignee?: string;
+  tag?: string;
+  filter?: string;
+  body?: boolean;
+  include?: string;
+  limit?: string;
+}
 
 /**
  * Build the CLI program (exported for testing).
@@ -306,10 +359,8 @@ cards
   .option('--body', 'Include card descriptions, omitted by default')
   .option('--include <keys>', 'Comma-separated extras to keep in output: custom-fields')
   .option('--limit <number>', 'Cap how many cards are printed (default 25); sets "truncated"', '25')
-  .option('--json', 'Output as JSON')
-  .action(async (boardArg: string | undefined, options) => {
-    try {
-      const client = await createFavroClient();
+  .action(run(async (ctx: Ctx, boardArg: string | undefined, options: CardsListFlags) => {
+      const client = ctx.client;
 
       // Support the positional board or the --board option. Either spelling is
       // a NAME or a boardId; `boardRef` is what was typed, `boardId` below is
@@ -317,14 +368,12 @@ cards
       const boardRef = boardArg ?? options.board;
 
       if (!boardRef) {
-        console.error('Error: A board is required. Pass it as the positional argument or use --board <board> — a name or a boardId.');
-        process.exit(1);
+        throw new RefusalError('Error: A board is required. Pass it as the positional argument or use --board <board> — a name or a boardId.');
       }
 
       const archived = String(options.archived ?? 'false').toLowerCase();
       if (archived !== 'true' && archived !== 'false' && archived !== 'all') {
-        console.error(`Error: --archived takes true, false or all — got "${options.archived}"`);
-        process.exit(1);
+        throw new RefusalError(`Error: --archived takes true, false or all — got "${options.archived}"`);
       }
 
       const include: string[] = options.include
@@ -332,24 +381,23 @@ cards
         : [];
       const unknownIncludes = include.filter((key) => key !== 'custom-fields');
       if (unknownIncludes.length > 0) {
-        console.error(`Error: unknown --include value(s): ${unknownIncludes.join(', ')}. Valid: custom-fields`);
-        process.exit(1);
+        throw new RefusalError(`Error: unknown --include value(s): ${unknownIncludes.join(', ')}. Valid: custom-fields`);
       }
 
-      // A pure OUTPUT cap, so there is nothing to clamp: the fetch runs to
-      // completion whatever this says. A malformed value refuses (#142) rather
-      // than falling back to 25 — the caller asked to be capped at something,
-      // and 25 is not it.
+      // Parsed BEFORE the fetch, not left to `capRows` inside the runner: a
+      // malformed `--limit` refuses (#142), and a refusal evaluated after the
+      // `rows:` are in hand costs a whole board read that is then thrown away.
+      // A pure OUTPUT cap either way — there is nothing to clamp.
       const limit = parseLimit(options.limit) ?? 25;
 
-      const api = new CardsAPI(client);
+      const api = ctx.api.cards;
 
       // The board is settled ONCE, here, because two consumers need it and the
       // filter validator runs first: handed a NAME it looks a column up on a
       // board that does not exist and refuses with "No column named done on
       // board Backlog - Web Hub" — the wrong problem, named confidently (#82).
       // `listCards` settles its own board too; an id costs a cache read.
-      const boardId = await new BoardsAPI(client).resolveBoardId(boardRef);
+      const boardId = await ctx.api.boards.resolveBoardId(boardRef);
 
       // The WHOLE filtering flag row — `--filter`, `--tag`, `--assignee` — is
       // parsed AND its values settled against Favro's own vocabularies BEFORE
@@ -379,55 +427,49 @@ cards
       let unreachable: import('./lib/read-shape').Unreachable[] = [];
       if (query) {
         const { filterCards, queryNames } = await import('./lib/query-parser');
-        let ctx: import('./lib/query-parser').EvalContext = {};
+        // Named `evalCtx`, not `ctx`: the handler's own `ctx` is the runner's.
+        let evalCtx: import('./lib/query-parser').EvalContext = {};
         if (queryNames(query, 'unblocked')) {
           const { judgeBlockers } = await import('./lib/blocking');
           const judged = await judgeBlockers(cardList, client);
-          ctx = { doneBlockers: judged.done };
+          evalCtx = { doneBlockers: judged.done };
           unreachable = judged.unreachable;
         }
-        cardList = filterCards(query, cardList, ctx);
+        cardList = filterCards(query, cardList, evalCtx);
       }
 
-      // Cap last, and say so.
-      const capped = capRows(cardList, limit);
+      // Omission is rendering only — the read returned every field, and this
+      // projects what is PRINTED. Applied to the whole list rather than to a
+      // capped slice because the cap is the runner's now (`capRows`), and both
+      // orders render the same rows.
+      const keep = [
+        ...(options.body ? ['description', 'detailedDescription'] : []),
+        ...(include.includes('custom-fields') ? ['customFields'] : []),
+      ];
 
-      if (options.json) {
-        // Omission is rendering only — `cardList` still holds every field.
-        const keep = [
-          ...(options.body ? ['description', 'detailedDescription'] : []),
-          ...(include.includes('custom-fields') ? ['customFields'] : []),
-        ];
-        writeEnvelope({
-          ...capped,
-          rows: omitBulk('card', capped.rows, keep),
-          ...(unreachable.length > 0 ? { unreachable } : {}),
-        }, Boolean(program.opts()?.pretty));
-      } else {
-        console.log(`Found ${capped.rows.length} card(s):`);
-        if (capped.rows.length > 0) {
-          const rows = capped.rows.map(card => ({
-            ID: card.cardId,
-            Title: (card.name ?? '').length > 40 ? (card.name ?? '').slice(0, 37) + '...' : (card.name ?? ''),
-            Status: card.status ?? '—',
-            Assignees: (card.assignees ?? []).join(', ') || '—',
-            Tags: (card.tags ?? []).join(', ') || '—',
-            Created: card.createdAt ? card.createdAt.slice(0, 10) : '—',
-          }));
-          console.table(rows);
-        }
-        // The wording every other list read now shares — it started here.
-        noteTruncation(capped, cardList.length);
-        if (unreachable.length > 0) {
-          console.log(`(${unreachable.length} blocker(s) could not be checked, so their cards stayed blocked:)`);
-          unreachable.forEach((u) => console.log(`  ${u.id} — ${u.reason}`));
-        }
-      }
-    } catch (error) {
-      logError(error, program.opts().verbose);
-      process.exit(1);
-    }
-  });
+      return {
+        rows: omitBulk('card', cardList, keep),
+        limit,
+        // The holes ride out on the envelope rather than passing as "not
+        // blocked". `unreachable` is the runner's third envelope key since
+        // #119; before that this action wrote the envelope itself, which is
+        // why it was the only list read that could carry one.
+        ...(unreachable.length > 0 ? { unreachable } : {}),
+        human: (rows: Card[]) => {
+          console.log(`Found ${rows.length} card(s):`);
+          if (rows.length > 0) {
+            console.table(rows.map(card => ({
+              ID: card.cardId,
+              Title: (card.name ?? '').length > 40 ? (card.name ?? '').slice(0, 37) + '...' : (card.name ?? ''),
+              Status: card.status ?? '—',
+              Assignees: (card.assignees ?? []).join(', ') || '—',
+              Tags: (card.tags ?? []).join(', ') || '—',
+              Created: card.createdAt ? card.createdAt.slice(0, 10) : '—',
+            })));
+          }
+        },
+      };
+  }));
 
 // ─── cards link / unlink / move ──────────────────────────────────────────────
 registerCardsLinkCommands(cards);
@@ -502,16 +544,16 @@ cards
   )
   .option('-y, --yes', 'Skip confirmation prompt')
   .option('--force', 'Bypass scope check')
-  .option('--json', 'Output as JSON')
   // On intent-carrying commands only. A pointer on every command would be noise
   // an agent learns to skip.
   .addHelpText('after', '\nIntent contract: run `favro help issue-tracker`.')
-  .action(async (title: string | undefined, options) => {
+  .action(run(async (ctx: Ctx, title: string | undefined, options: CardsCreateFlags) => {
     if (!title && !options.csv && !options.bulk) {
-      console.error('Error: provide a title or use --csv/--bulk for bulk import');
-      process.exit(1);
+      // A `RefusalError`, so the runner owns the stream and the code. It was
+      // OUTSIDE the try before, so under the JSON default `console.error` plus a
+      // return would have been exit 0 with an empty stdout.
+      throw new RefusalError('Error: provide a title or use --csv/--bulk for bulk import');
     }
-    try {
       const fs = await import('fs/promises');
 
       // ── Multi-create: CSV or JSON, one bounded transaction ──────────────────
@@ -522,7 +564,7 @@ cards
       // reach for: `POST /cards/bulk` does not exist (200 + HTML), and a
       // half-successful bulk would give no per-card undo handle at all.
       if (options.csv || options.bulk) {
-        const source = options.csv ?? options.bulk;
+        const source = (options.csv ?? options.bulk)!;
         const raw = await fs.readFile(source, 'utf-8');
         const entries: Array<Record<string, any>> = options.csv
           ? parseCSV(raw)
@@ -554,24 +596,19 @@ cards
           .filter((c) => c.name);
 
         if (cards.length === 0) {
-          console.error(`Error: ${source} has no rows with a name`);
-          process.exit(1);
+          throw new RefusalError(`Error: ${source} has no rows with a name`);
         }
 
-        const client = await createFavroClient();
-        const { readConfig } = await import('./lib/config');
         const result = await dispatch<Card[]>('create', { cards }, {
-          client,
-          config: (await readConfig()) ?? {},
+          client: ctx.client,
+          config: ctx.config,
           force: options.force,
           dryRun: options.dryRun,
         });
-        if (reportDispatch(result, options.json)) process.exit(1);
-        if (result.outcome === 'ok' && result.value) {
-          console.log(`✓ Created ${result.value.length} cards`);
-          if (options.json) console.log(JSON.stringify(result.value));
-        }
-        return;
+        return {
+          dispatch: result,
+          human: (value: Card[]) => `✓ Created ${value.length} cards`,
+        };
       }
 
       // ── Single card ─────────────────────────────────────────────────────────
@@ -583,8 +620,6 @@ cards
       // Every composite below rides the ONE POST Favro validates: a bad tag,
       // assignee, column or dependency target 403s the whole create and leaves
       // no card behind.
-      const client = await createFavroClient();
-      const { readConfig } = await import('./lib/config');
       const result = await dispatch<Card>(
         'create',
         {
@@ -599,27 +634,25 @@ cards
           blocks: options.blocks,
         },
         {
-          client,
-          config: (await readConfig()) ?? {},
+          client: ctx.client,
+          config: ctx.config,
           force: options.force,
           dryRun: options.dryRun,
         },
       );
       // A refusal (scope lock, resolver, unknown intent) never reaches here — it
-      // throws, and the catch below is the one place a throw becomes an exit code.
-      if (reportDispatch(result, options.json)) process.exit(1);
-      if (result.outcome === 'ok' && result.value) {
-        // The intent returns the WHOLE card and this projects what it prints, so
-        // the `--json` contract (`cardCommonId`, `columnId`, `sequentialId`, …)
-        // is whatever `POST /cards` answered — unchanged by going through the table.
-        console.log(`✓ Card created: ${result.value.cardId}`);
-        if (options.json) console.log(JSON.stringify(result.value));
-      }
-    } catch (error) {
-      logError(error, program.opts().verbose);
-      process.exit(1);
-    }
-  });
+      // throws, and the runner's boundary is the one place a throw becomes an
+      // exit code.
+      return {
+        dispatch: result,
+        // The intent returns the WHOLE card and the runner emits it, so the
+        // machine contract (`cardCommonId`, `columnId`, `sequentialId`, …) is
+        // whatever `POST /cards` answered — unchanged by going through the
+        // table. The ✓ is the HUMAN line: it used to print to stdout ahead of
+        // that payload, which is what stopped the documented default parsing.
+        human: (value: Card) => `✓ Card created: ${value.cardId}`,
+      };
+  }));
 
 // ─── cards update ─────────────────────────────────────────────────────────────
 cards
@@ -664,50 +697,52 @@ cards
   .option('--dry-run', 'Preview changes without writing — with --from-csv under a scope lock this still reads each row\'s card, because the lock runs before the preview, by design, so a preview cannot be a way around it')
   .option('-y, --yes', 'Skip confirmation prompt')
   .option('--force', 'Bypass scope check')
-  .option('--json', 'Output as JSON')
-  .option('--verbose', 'Show stack traces on failure')
-  .action(async (cardId: string | undefined, options, command: Command) => {
-    // ── Removed in 4.0: the --board predicate batch ───────────────────────────
-    // A DERIVED write set — "every card on this board matching this label" — is
-    // the shape #92 retired along with `batch move` and `batch assign`. The
-    // command read the board, decided the set itself, and wrote to whatever came
-    // back, so what it wrote to was never in the invocation and never in any
-    // record. `--from-csv` is the same job with the set enumerated by the caller.
-    //
-    // Registered rather than removed: an agent that hits "unknown option" has
-    // nothing to recover with, and this one is a FLAG COMBINATION, so commander
-    // could not have refused it by name at all.
-    //
-    // FIRST, above the credential resolution: a removal needs no client, and
-    // measured against the built CLI with none configured this branch answered
-    // "API key not found" — a refusal naming the wrong problem, on the one input
-    // whose whole job is to name the right one.
-    //
-    // Through `run()` and not `console.error` + `process.exit(1)`, which is what
-    // it was until review: this action is not migrated, so a hand-written refusal
-    // here lands on stderr with EMPTY STDOUT and ignores the JSON default
-    // entirely — and an agent reading the documented default gets exit 1 and
-    // nothing parseable, which is the dead end #110 exists to remove. The
-    // `command` is passed so the runner resolves `--human` from the real
-    // invocation. The other five refuse through the same boundary.
-    if (options.board && !cardId) return refusePredicateBatch(command);
+  // The removed `--board` predicate batch is refused ABOVE the runner, not
+  // inside the handler, and that placement is load-bearing: `run()` resolves the
+  // credential BEFORE it calls the handler, so a refusal written inside answers
+  // "API key not found" to a user who has none — a refusal naming the wrong
+  // problem, on the one input whose whole job is to name the right one.
+  //
+  // A DERIVED write set — "every card on this board matching this label" — is
+  // the shape #92 retired along with `batch move` and `batch assign`. The
+  // command read the board, decided the set itself, and wrote to whatever came
+  // back, so what it wrote to was never in the invocation and never in any
+  // record. `--from-csv` is the same job with the set enumerated by the caller.
+  //
+  // Registered rather than removed: an agent that hits "unknown option" has
+  // nothing to recover with, and this one is a FLAG COMBINATION, so commander
+  // could not have refused it by name at all.
+  //
+  // `refusePredicateBatch` is `run({ anonymous: true })`, so it builds no client
+  // and still writes through the same boundary — the envelope on stdout under
+  // the JSON default, `✗ Error: …` on stderr under `--human`. The `command` is
+  // passed so the runner resolves `--human` from the real invocation. The other
+  // five removed spellings refuse through that same boundary.
+  .action((cardId: string | undefined, options: CardsUpdateFlags, command: Command) =>
+    options.board && !cardId
+      ? refusePredicateBatch(command)
+      : updateCard(cardId, options, command));
 
-    // Resolve client once — shared across the single-card and --from-csv paths
-    let client: import('./lib/http-client').default;
-    try { client = await createFavroClient(); }
-    catch (err: any) { logError(err, program.opts().verbose); process.exit(1); return; }
+const updateCard = run(async (
+  ctx: Ctx,
+  cardId: string | undefined,
+  options: CardsUpdateFlags,
+  // Declared, never read: commander appends the `Command` to every action's
+  // arguments and `run()`'s `commandFrom` detects it by shape at the END of the
+  // list, so the handler's own arity has to leave room for it.
+  _command: Command,
+) => {
 
     // ── CSV batch update ──────────────────────────────────────────────────────
     if (options.fromCsv) {
       if (!options.dryRun) {
         const { confirmAction } = await import('./lib/safety');
         if (!(await confirmAction('Apply these bulk updates to cards from CSV?', { yes: options.yes }))) {
-          console.log('Aborted.');
-          process.exit(0);
+          return { item: { updated: 0, aborted: true }, human: () => 'Aborted.' };
         }
       }
 
-      try {
+      {
         const fs = await import('fs/promises');
         const { parseCSVContent } = await import('./lib/csv');
 
@@ -715,26 +750,23 @@ cards
         try {
           content = await fs.readFile(options.fromCsv, 'utf-8');
         } catch (err: any) {
-          console.error(`✗ Cannot read CSV file "${options.fromCsv}": ${err.message}`);
-          process.exit(1);
-          return;
+          throw new RefusalError(`✗ Cannot read CSV file "${options.fromCsv}": ${err.message}`);
         }
 
         const { rows, errors: parseErrors } = parseCSVContent(content);
 
         if (parseErrors.length > 0) {
-          console.error('✗ CSV validation errors:');
-          for (const e of parseErrors) {
-            console.error(`  Row ${e.row}: [${e.field}] ${e.message}`);
-          }
-          process.exit(1);
-          return;
+          // ONE refusal carrying every row, rather than N `console.error` lines
+          // and a hard exit: the runner writes it to stdout as an envelope under
+          // the machine default, and a per-line print would have put the reasons
+          // on stderr with nothing parseable beside them.
+          throw new RefusalError(
+            ['✗ CSV validation errors:', ...parseErrors.map((e) => `  Row ${e.row}: [${e.field}] ${e.message}`)].join('\n'),
+          );
         }
 
         if (rows.length === 0) {
-          console.error('✗ CSV file has no valid data rows');
-          process.exit(1);
-          return;
+          throw new RefusalError('✗ CSV file has no valid data rows');
         }
 
         // One `update` invocation over the whole file, which is what #110 bought
@@ -762,63 +794,48 @@ cards
           ...(row.due_date ? { dueDate: row.due_date } : {}),
         }));
 
-        const { readConfig: readScopeConfig } = await import('./lib/config');
-        const scopeConfig = (await readScopeConfig()) ?? {};
-
         // With nothing locked there is no lock to take and no board to resolve,
         // so the preview is rendered from the intent's own pure `preview()` and
         // costs zero requests — the #102/#104 price for an unlocked path, and
         // what this branch already had. Under a lock it dispatches instead, so
         // the table takes the lock BEFORE it previews (#103/#155).
-        if (options.dryRun && !scopeConfig.scopeCollectionId) {
+        //
+        // `previewOnly` writes for itself, so this is the `void` streaming arm.
+        if (options.dryRun && !ctx.config.scopeCollectionId) {
           const { previewOnly } = await import('./lib/report-dispatch');
-          previewOnly('update', { cards }, scopeConfig);
+          previewOnly('update', { cards }, ctx.config);
           return;
         }
 
         const result = await dispatch<UpdateResult[]>(
           'update',
           { cards },
-          { client, config: scopeConfig, force: options.force, dryRun: options.dryRun },
+          { client: ctx.client, config: ctx.config, force: options.force, dryRun: options.dryRun },
         );
-        if (reportDispatch(result, options.json)) process.exit(1);
-        if (result.outcome === 'ok' && result.value !== undefined) {
-          console.log(`✓ ${result.value.length} card(s) updated`);
-          for (const one of result.value) console.log(`  ${one.cardId} (${one.wrote.join(', ')})`);
-          // The whole `DispatchResult`, not the bare `value` array: `reportDispatch`
-          // prints exactly this on the failure side under `--json`, so the two
-          // sides of the branch answer in one shape — and an array on stdout is
-          // what `read-shape.ts` rule 1 forbids.
-          //
-          // OPEN EDGE, recorded rather than fixed (#110 review). Both this line
-          // and the `reportDispatch` above key on the LEAF `--json` flag, so this
-          // path's default is human — while ADR-0002's default, which the runner
-          // holds and which the refusal at the top of this action now obeys, is
-          // JSON with `--human` opting out. Greppable from the two `options.json`
-          // reads; what is NOT measured is the successful `--json` shape off a
-          // real wire, which needs credentials. Closing it means migrating this
-          // action to `run()`, which is #119's business — step 7, the one that
-          // migrates the inline `cli.ts` write actions and deletes the ratchet
-          // allowlist — not a side effect of a removal. (#118 is step 6, the
-          // streaming and anonymous commands; it is closed and never owned this.)
-          if (options.json) console.log(JSON.stringify(result));
-        }
-      } catch (error) {
-        logError(error, program.opts().verbose);
-        process.exit(1);
+        // CLOSES THE OPEN EDGE #110 RECORDED. Both the report and the payload
+        // keyed on the LEAF `--json` flag, so this branch defaulted to HUMAN
+        // while the refusal at the top of the same action obeyed ADR-0002's
+        // default of JSON with `--human` opting out — one action, two output
+        // defaults, depending on which branch you hit. The runner owns both now,
+        // and the leaf flag is gone.
+        return {
+          dispatch: result,
+          human: (value: UpdateResult[]) =>
+            [
+              `✓ ${value.length} card(s) updated`,
+              ...value.map((one) => `  ${one.cardId} (${one.wrote.join(', ')})`),
+            ].join('\n'),
+        };
       }
-      return;
     // (end of fromCsv path)
     }
 
     // ── Single card update ────────────────────────────────────────────────────
     if (!cardId) {
-      console.error('Error: provide a card ID, --from-csv <file>, or --board <board> for batch operations');
-      process.exit(1);
-      return;
+      throw new RefusalError('Error: provide a card ID, --from-csv <file>, or --board <board> for batch operations');
     }
 
-    try {
+    {
       // `--column` is a second SPELLING of `--status`, not a second field: both
       // mean "put the card in this column", and the `update` intent resolves the
       // name through `TxCards.moveColumn`, against the card's OWN board. So
@@ -832,12 +849,10 @@ cards
       // compensating write, since moving a card back across boards is not the
       // inverse of moving it back across columns.
       if (options.status && options.column && foldName(options.status) !== foldName(options.column)) {
-        console.error(
+        throw new RefusalError(
           `✗ --status "${options.status}" and --column "${options.column}" name different columns. ` +
             `They are two spellings of one field — pass one of them.`,
         );
-        process.exit(1);
-        return;
       }
       // Trimmed, which `--tags` was not. The reason is narrower than it looks, and
       // was overstated here before a mutation run checked it: every downstream
@@ -867,12 +882,10 @@ cards
       };
       const hasFields = Object.keys(args).length > 1;
 
-      const api = new CardsAPI(client!);
-      const card = await api.getCard(cardId);
+      const card = await ctx.api.cards.getCard(cardId);
 
-      const { readConfig } = await import('./lib/config');
       const { checkScope, confirmAction } = await import('./lib/safety');
-      const config = (await readConfig()) ?? {};
+      const config = ctx.config;
       // HOISTED ABOVE THE PREVIEW (#108). This check used to sit below the
       // `--dry-run` return, so under a scope lock a dry run cheerfully previewed a
       // write the real run refuses — misinformation in the one flag a careful
@@ -880,14 +893,13 @@ cards
       // predicate path already ordered it this way; the single-card path was the
       // straggler. It costs one `GET /cards/<id>` on a dry run that used to make
       // none, which is what an opted-into preview buys.
-      await checkScope(card.boardId ?? '', client, config, options.force);
+      await checkScope(card.boardId ?? '', ctx.client, config, options.force);
 
       if (
         !options.dryRun &&
         !(await confirmAction(`Update card "${card.name}" (${cardId})?`, { yes: options.yes }))
       ) {
-        console.log('Aborted.');
-        process.exit(0);
+        return { item: { updated: false, aborted: true, card: cardId }, human: () => 'Aborted.' };
       }
 
       // --comment: add a comment via the comments API (non-destructive).
@@ -901,14 +913,14 @@ cards
       // write, so it is not an intent and cannot join the transaction. The lock
       // above is therefore the only one guarding it, which is why that check is
       // NOT skipped when there are no fields to dispatch.
+      let commented = false;
       if (options.comment) {
         const commentText = options.comment.replace(/\\n/g, '\n');
         if (options.dryRun) {
           console.log(`[dry-run] add a comment to card ${cardId} (${commentText.length} characters)`);
         } else {
-          const { CommentsApiClient } = await import('./api/comments');
-          await new CommentsApiClient(client!).addComment(cardId, commentText);
-          console.log(`✓ Comment added to card "${card.name}"`);
+          await ctx.api.comments.addComment(cardId, commentText);
+          commented = true;
         }
       }
 
@@ -918,27 +930,30 @@ cards
       // first two and reports `rolled-back`.
       if (hasFields) {
         const result = await dispatch<UpdateResult>('update', args, {
-          client: client!,
+          client: ctx.client,
           config,
           force: options.force,
           dryRun: options.dryRun,
         });
-        if (reportDispatch(result, options.json)) process.exit(1);
-        // `value !== undefined` is what keeps this off a dry run: the table's
-        // preview return carries a `preview` and no `value`, while `outcome` is
-        // `ok` either way.
-        if (result.outcome === 'ok' && result.value !== undefined) {
-          console.log(`✓ Card updated: ${result.value.cardId} (${result.value.wrote.join(', ')})`);
-          if (options.json) console.log(JSON.stringify(result.value));
-        }
-      } else if (!options.comment) {
-        console.log('Nothing to update.');
+        return {
+          dispatch: result,
+          human: (value: UpdateResult) => {
+            // The comment write has no dispatch of its own — it is not an intent
+            // — so its ✓ rides here rather than printing above the payload.
+            if (commented) console.log(`✓ Comment added to card "${card.name}"`);
+            return `✓ Card updated: ${value.cardId} (${value.wrote.join(', ')})`;
+          },
+        };
       }
-    } catch (error) {
-      logError(error, program.opts().verbose);
-      process.exit(1);
+      if (options.comment) {
+        return {
+          item: { card: cardId, commented, wrote: [] as string[] },
+          human: () => (commented ? `✓ Comment added to card "${card.name}"` : undefined),
+        };
+      }
+      return { item: { card: cardId, wrote: [] as string[] }, human: () => 'Nothing to update.' };
     }
-  });
+});
 
 // ─── cards export ─────────────────────────────────────────────────────────────
 cards
@@ -968,25 +983,30 @@ cards
   )
   // No --limit: the board is always fetched to completion. A cap here could only
   // silently export part of a board and call it the export.
-  .action(async (board: string, options) => {
+  // `cards export` returns `void` — the STREAMING arm, deliberately (ADR-0002).
+  // `--format json|csv` survives here where it was deleted from `webhooks`,
+  // `collections list` and `activity`, because CSV is a serialization axis
+  // rather than a view of the envelope: this command writes its own file, or
+  // its own bytes to stdout, and there is no envelope for `--human` to opt out
+  // of. What it DOES gain is the runner's error boundary — a refusal is now an
+  // envelope on stdout at exit 1 instead of a stderr line with stdout empty.
+  .action(run(async (ctx: Ctx, board: string, options: CardsExportFlags) => {
     const format = (options.format ?? 'json').toLowerCase() as ExportFormat;
     if (format !== 'json' && format !== 'csv') {
-      console.error(`Error: Invalid format "${options.format}". Use --format json or --format csv`);
-      process.exit(1);
+      throw new RefusalError(`Error: Invalid format "${options.format}". Use --format json or --format csv`);
     }
 
     if (options.out) {
       const resolved = path.resolve(options.out);
       const cwd = process.cwd();
       if (!resolved.startsWith(cwd + path.sep) && resolved !== cwd) {
-        console.error(`Error: Output path must be within current directory: ${options.out}`);
-        process.exit(1);
+        throw new RefusalError(`Error: Output path must be within current directory: ${options.out}`);
       }
     }
 
-    try {
-      const client = await createFavroClient();
-      const api = new CardsAPI(client);
+    {
+      const client = ctx.client;
+      const api = ctx.api.cards;
 
       // The whole protocol `cards list` runs \u2014 parse AND settle the values \u2014 so
       // a typo'd tag or column refuses instead of exporting zero rows (#83), and
@@ -1024,8 +1044,11 @@ cards
       }
 
       if (cardList.length === 0) {
+        // Exit 0 — an empty board is not a failure, and it never was. It used to
+        // be a hard exit with code 0; under `run()` that is the code nobody
+        // sets. The notice stays on stderr, where the export's own bytes are not.
         console.error('\u26a0 No cards to export (0 results after filtering).');
-        process.exit(0);
+        return;
       }
 
       if (options.out) {
@@ -1047,11 +1070,8 @@ cards
         }
         console.error(`\u2139 Exported ${cardList.length} card(s) to stdout (${format.toUpperCase()})`);
       }
-    } catch (error) {
-      logError(error, program.opts().verbose);
-      process.exit(1);
     }
-  });
+  }));
 
   // ─── members commands ────────────────────────────────────────────────────────
   registerMembersCommand(program);
@@ -1083,6 +1103,43 @@ cards
   return program;
 } // end buildProgram()
 
+/**
+ * The last error boundary: anything `run()` did not already catch.
+ *
+ * EXPORTED, and that is the whole reason it exists as a function. The `.catch`
+ * it replaces lived inside `if (require.main === module)`, which Jest never
+ * executes — every test drives `buildProgram().parseAsync(…)` — so the arm had
+ * no reachable call site and had never run. `cli-top-level-catch.test.ts` calls
+ * this directly.
+ *
+ * `.exitOverride()` routes `--help`, `--version` and parse errors here as
+ * `CommanderError`. Commander has already written its own output, so the only
+ * thing left is the code it asked for — logging it again would put
+ * "✗ Error: (outputHelp)" under every `--help`.
+ *
+ * `process.exitCode`, never a hard exit: ADR-0002's rule, and this file is
+ * scanned for the spelling (#133). `logError` takes no second argument — it
+ * reads `isVerbose()`, which is #85's single spelling; passing
+ * `prog.opts().verbose` here would be a second one.
+ *
+ * WHAT IT IS AND IS NOT REACHABLE FROM, measured rather than claimed: `run()`
+ * catches everything an action can throw, so no ordinary command path arrives
+ * here. What does is commander itself — an unknown command, a missing required
+ * option, `--help`, `--version` — all `CommanderError`, which is the first arm.
+ * The second arm's live sources are the root `preAction` hook (`latchVerbose`)
+ * and `commandFrom`/`resolveFormat` inside `run.ts`; no input was found that
+ * reaches it, so the test drives it with a constructed error rather than
+ * claiming a command that does.
+ */
+export function reportUncaught(err: unknown): void {
+  if (err instanceof CommanderError) {
+    process.exitCode = err.exitCode;
+    return;
+  }
+  logError(err);
+  process.exitCode = 1;
+}
+
 // Only run when executed directly (not when imported in tests)
 if (require.main === module) {
   const prog = buildProgram();
@@ -1092,21 +1149,10 @@ if (require.main === module) {
   if (userArgs.length === 0) {
     // `runMainMenu` is `run(handler)` (#118): it owns the error boundary and
     // the exit code, and it never rejects — so there is nothing to `.catch`,
-    // and nothing to `process.exit(0)` for. The menu releases stdin on the way
+    // and no hard exit to make. The menu releases stdin on the way
     // out and node leaves once the event loop drains, after stdout flushes.
     void runMainMenu(prog.version() ?? '', prog);
   } else {
-    prog.parseAsync(process.argv).catch((err) => {
-      // `.exitOverride()` routes `--help`, `--version` and parse errors here as
-      // `CommanderError`. Commander has already written its own output, so the
-      // only thing left is the code it asked for — logging it again would put
-      // "✗ Error: (outputHelp)" under every `--help`.
-      if (err instanceof CommanderError) {
-        process.exitCode = err.exitCode;
-        return;
-      }
-      logError(err, prog.opts().verbose);
-      process.exit(1);
-    });
+    prog.parseAsync(process.argv).catch(reportUncaught);
   }
 }

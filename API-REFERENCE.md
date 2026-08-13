@@ -558,7 +558,7 @@ List cards from a board with optional filtering.
 **Syntax:**
 ```
 favro cards list [--board <id>] [--status <status>] [--assignee <user>] [--tag <tag>]
-                 [--filter <expression>] [--limit <n>] [--json]
+                 [--filter <expression>] [--limit <n>] [--human]
 ```
 
 **Options:**
@@ -571,7 +571,6 @@ favro cards list [--board <id>] [--status <status>] [--assignee <user>] [--tag <
 | `--tag <tag>` | — | Filter by tag (substring match, legacy) |
 | `--filter <expression>` | — | Enhanced query filter (repeatable); overrides legacy flags |
 | `--limit <number>` | `25` | Cap how many cards are **printed**; sets `truncated`. The board is always fetched to completion. Whole digits of 1 or more — anything else is refused, exit 1 |
-| `--json` | — | Output as JSON |
 
 **Enhanced filter syntax:**
 
@@ -594,7 +593,7 @@ favro cards list --board abc123
 favro cards list --board abc123 --status "In Progress" --limit 100
 favro cards list --board abc123 --filter "status:done OR status:in-progress"
 favro cards list --board abc123 --filter "assignee:alice" --filter "tag:bug"
-favro cards list --board abc123 --json | jq '.[].name'
+favro cards list --board abc123 | jq '.rows[].name'
 ```
 
 **Error cases:**
@@ -1623,7 +1622,7 @@ Update up to twenty cards from a CSV file, in one transaction.
 
 **Syntax:**
 ```
-favro cards update --from-csv <file> [--dry-run] [--yes] [--force] [--json]
+favro cards update --from-csv <file> [--dry-run] [--yes] [--force] [--human]
 ```
 
 **Options:**
@@ -1634,7 +1633,6 @@ favro cards update --from-csv <file> [--dry-run] [--yes] [--force] [--json]
 | `--dry-run` | — | Preview changes without applying |
 | `--yes` | — | Skip the confirmation prompt |
 | `--force` | — | Bypass the scope check |
-| `--json` | — | Output the dispatch result as JSON |
 
 **CSV format:**
 
@@ -1891,7 +1889,7 @@ favro cards list --board board-001 --limit 500
 favro cards update --from-csv reassign.csv --yes
 
 # Slow: N individual calls
-favro cards list --board board-001 --status Backlog --json \
+favro cards list --board board-001 --status Backlog --human \
   | jq -r '.[].cardId' \
   | while read id; do favro cards update "$id" --assignees alice; done
 ```
@@ -2015,7 +2013,7 @@ Map out what's blocking what before a release:
 
 ```bash
 # For each blocking card, see what it blocks
-CARD_IDS=$(favro cards list --board board-001 --json | jq -r '.[].cardId')
+CARD_IDS=$(favro cards list --board board-001 | jq -r '.rows[].cardId')
 
 for id in $CARD_IDS; do
   BLOCKERS=$(favro cards blocking $id | jq -r '.rows[].cardId')
@@ -2064,7 +2062,7 @@ PRIORITY_FIELD="cf-priority-id"
 favro custom-fields values $PRIORITY_FIELD
 
 # Get all cards with their priority custom field
-favro cards list --board $BOARD_ID --json \
+favro cards list --board $BOARD_ID \
   | jq -r '.[].cardId' \
   | while read id; do
     favro cards get $id --include custom-fields \

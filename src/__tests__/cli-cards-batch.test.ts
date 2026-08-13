@@ -94,7 +94,10 @@ describe('favro cards update --from-csv', () => {
 
     consoleLogSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
     consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    processExitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {}) as any);
+    process.exitCode = undefined;
+    processExitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {
+      throw new Error('process.exit must not be called under run()');
+    }) as any);
 
     program = buildProgram();
     program.exitOverride();
@@ -102,6 +105,7 @@ describe('favro cards update --from-csv', () => {
 
   afterEach(() => {
     delete process.env.FAVRO_API_KEY;
+    process.exitCode = undefined;
     jest.restoreAllMocks();
   });
 
@@ -111,7 +115,7 @@ describe('favro cards update --from-csv', () => {
   it('writes every row, through the spelling each field is honoured in', async () => {
     mockFsReadFile.mockResolvedValue('card_id,status\ncard-1,Done\ncard-2,In Progress' as any);
 
-    await program.parseAsync(['node', 'favro', 'cards', 'update', '--from-csv', 'bulk.csv', '--yes']);
+    await program.parseAsync(['node', 'favro', '--human', 'cards', 'update', '--from-csv', 'bulk.csv', '--yes']);
 
     // `{status}` is a measured 200-and-no-op; `moveColumn` is what writes.
     expect(mockApi.updateCard).toHaveBeenCalledWith('card-1', { columnId: 'col-Done' });
@@ -122,7 +126,7 @@ describe('favro cards update --from-csv', () => {
   it('the camelCase aliases reach the fields they name', async () => {
     mockFsReadFile.mockResolvedValue('cardId,dueDate\ncard-1,2026-12-31' as any);
 
-    await program.parseAsync(['node', 'favro', 'cards', 'update', '--from-csv', 'bulk.csv', '--yes']);
+    await program.parseAsync(['node', 'favro', '--human', 'cards', 'update', '--from-csv', 'bulk.csv', '--yes']);
 
     expect(mockApi.updateCard).toHaveBeenCalledWith('card-1', { dueDate: '2026-12-31' });
     expect(said()).toContain('(dueDate)');
@@ -132,40 +136,40 @@ describe('favro cards update --from-csv', () => {
     const rows = Array.from({ length: MULTI_WRITE_CAP + 1 }, (_, i) => `card-${i},Done`).join('\n');
     mockFsReadFile.mockResolvedValue(`card_id,status\n${rows}` as any);
 
-    await program.parseAsync(['node', 'favro', 'cards', 'update', '--from-csv', 'bulk.csv', '--yes']);
+    await program.parseAsync(['node', 'favro', '--human', 'cards', 'update', '--from-csv', 'bulk.csv', '--yes']);
 
     // A dispatch per row would have written the first twenty and then refused —
     // which is the outcome the cap exists to prevent.
     expect(mockApi.updateCard).not.toHaveBeenCalled();
     expect(said()).toContain(`capped at ${MULTI_WRITE_CAP}`);
-    expect(processExitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   it('a row naming no field refuses rather than reporting success over an untouched card', async () => {
     mockFsReadFile.mockResolvedValue('card_id,status\ncard-1,Done\ncard-2,' as any);
 
-    await program.parseAsync(['node', 'favro', 'cards', 'update', '--from-csv', 'bulk.csv', '--yes']);
+    await program.parseAsync(['node', 'favro', '--human', 'cards', 'update', '--from-csv', 'bulk.csv', '--yes']);
 
     expect(mockApi.updateCard).not.toHaveBeenCalled();
     expect(said()).toContain('Nothing to update on card-2');
-    expect(processExitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   it('an unknown column refuses, naming it, before any card is read', async () => {
     mockFsReadFile.mockResolvedValue('card_id,custom_field_priority\ncard-1,high' as any);
 
-    await program.parseAsync(['node', 'favro', 'cards', 'update', '--from-csv', 'bulk.csv', '--yes']);
+    await program.parseAsync(['node', 'favro', '--human', 'cards', 'update', '--from-csv', 'bulk.csv', '--yes']);
 
     expect(mockApi.getCard).not.toHaveBeenCalled();
     expect(said()).toContain('custom_field_priority');
-    expect(processExitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   it('dry-run with nothing locked previews and makes no request at all', async () => {
     mockFsReadFile.mockResolvedValue('card_id,status\ncard-1,Done\ncard-2,In Progress' as any);
 
     await program.parseAsync([
-      'node', 'favro', 'cards', 'update', '--from-csv', 'bulk.csv', '--dry-run',
+      'node', 'favro', '--human', 'cards', 'update', '--from-csv', 'bulk.csv', '--dry-run',
     ]);
 
     expect(mockApi.updateCard).not.toHaveBeenCalled();
@@ -179,18 +183,18 @@ describe('favro cards update --from-csv', () => {
     mockFsReadFile.mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
 
     await program.parseAsync([
-      'node', 'favro', 'cards', 'update', '--from-csv', 'missing.csv', '--yes',
+      'node', 'favro', '--human', 'cards', 'update', '--from-csv', 'missing.csv', '--yes',
     ]);
 
-    expect(processExitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   it('exits 1 for a CSV with no card_id column', async () => {
     mockFsReadFile.mockResolvedValue('status,owner\nDone,alice' as any);
 
-    await program.parseAsync(['node', 'favro', 'cards', 'update', '--from-csv', 'bad.csv', '--yes']);
+    await program.parseAsync(['node', 'favro', '--human', 'cards', 'update', '--from-csv', 'bad.csv', '--yes']);
 
-    expect(processExitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('validation errors'));
   });
 });
