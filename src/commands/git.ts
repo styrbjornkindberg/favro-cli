@@ -19,7 +19,7 @@ import BoardsAPI from '../lib/boards-api';
 // so they inherit the mandatory scope lock, the boardless-write refusal, the
 // multi-write cap and a compensation log — none of which a raw
 // `api.updateCard` / `api.createCard` here ever had.
-import { dispatch, UpdateResult } from '../lib/dispatch';
+import { dispatch, MULTI_WRITE_CAP, UpdateResult } from '../lib/dispatch';
 import { reportDispatch } from '../lib/report-dispatch';
 import { CommentsApiClient } from '../api/comments';
 import { parseLimit } from '../lib/read-shape';
@@ -195,11 +195,16 @@ export function registerGitCommands(program: Command): void {
             // lock's refusal would turn the write guardrail into a notice and
             // exit 0. Rethrown to the outer boundary, which owns the exit code.
             //
-            // Narrower than that catch on purpose: `ColumnResolutionError` is a
-            // `RefusalError` too, and it is exactly the "status column may not
-            // exist" case this arm has always reported as a notice.
+            // Narrower than that catch on purpose, and NOT for the reason first
+            // written here. `ColumnResolutionError` is a `RefusalError` and used
+            // to be the case this arm protected — but it is raised inside
+            // `intent.run`, so it comes back as a non-`ok` OUTCOME on the line
+            // above and never reaches this catch at all. What still reaches it is
+            // a throw from `board()`, which runs outside the table's try: an
+            // unreadable card, or the lock. Only the lock is a guardrail, so only
+            // the lock is rethrown.
             if (error instanceof ScopeError) throw error;
-            console.log('  (Could not move card — status column may not exist)');
+            console.log('  (Could not move card — the card could not be read)');
           }
         }
       } catch (error) {
@@ -353,6 +358,8 @@ export function registerGitCommands(program: Command): void {
           ...open.map(m => ({ card: m.cardId!, status: 'In Progress' })),
         ];
         const cards = [...new Map(targets.map(t => [t.card, t])).values()];
+        /** Which branch pointed at each card, for the abort message below. */
+        const branchOf = new Map(withCards.map(m => [m.cardId!, m.branch]));
 
         // ONE `update` invocation over the enumerated list, so the whole pass is
         // one transaction (#109). What that replaces, and why each half mattered:
@@ -408,6 +415,33 @@ export function registerGitCommands(program: Command): void {
           client: await createFavroClient(),
           config: globalConfig,
           force: options.force,
+        }).catch((error) => {
+          // `board()` runs OUTSIDE the table's try, so a stale branch mapping
+          // onto a deleted card escapes as the wire's own error — bare
+          // `404 Not Found`, naming neither the card nor the branch that pointed
+          // at it. Aborting is right: the pass is one transaction, and a card
+          // that cannot be read cannot be scope-checked. A refusal that does not
+          // name the fix is only half a refusal, so this adds the mapping and the
+          // repair, and nothing else.
+          //
+          // Narrow on purpose. Every REFUSAL — the scope lock, the cap, the
+          // boardless-write rule — already names its own fix, so rewrapping one
+          // would replace a precise message with a guess about card reads. What
+          // is left is a throw out of `board()`, which is the read.
+          if (error instanceof RefusalError) throw error;
+          const mapping = cards
+            .map((c) => `${branchOf.get(c.card) ?? '(no branch)'} → ${c.card}`)
+            .join('\n    ');
+          throw new Error(
+            `git sync could not read one of the ${cards.length} cards its branches point at, so the ` +
+              `whole pass was refused and NOTHING was written.\n` +
+              `  The pass is ONE transaction: a card that cannot be read cannot be checked against the ` +
+              `scope lock, and syncing the rest would report a success count for a batch that was never whole.\n` +
+              `  Branch → card:\n    ${mapping}\n` +
+              `  Underlying error: ${error instanceof Error ? error.message : String(error)}\n` +
+              `  A stale mapping lives in this repo's .favro.json, under "branches" — remove the entry (or ` +
+              `the branch) and re-run, or run 'favro git branch <card>' to re-point it.`,
+          );
         });
         if (reportDispatch(result)) process.exit(1);
 
@@ -531,26 +565,35 @@ export function registerGitCommands(program: Command): void {
           // on card 7 of 12 deletes 1–6 and reports `rolled-back`, where the old
           // loop left them and printed "Created 6/12".
           //
-          // It also inherits the cap: more than twenty TODOs REFUSES rather than
-          // creating twenty and dropping the rest. `--limit <n>` is how a caller
-          // brings the batch under it, and the refusal says as much.
-          //
-          // The board is RESOLVED above and the resolved id is what the intent
-          // sees: `--board` and the repo link config both take a NAME, and the
-          // lock GETs `/widgets/<id>` — handed a name it 404s into "Board … not
-          // found", a refusal naming the wrong problem (#82). The `create`
-          // intent's own `board()` passes its argument through unresolved, so the
-          // resolution has to happen before the call, not inside it.
-          const resolvedBoard = favroConfig.scopeCollectionId
-            ? await new BoardsAPI(client).resolveBoardId(boardId)
-            : boardId;
-          const result = await dispatch<Card[]>('create', {
-            cards: limited.map((item) => ({
-              name: todoToCardTitle(item),
-              description: formatTodoAsCardDescription(item),
-              board: resolvedBoard,
-            })),
-          }, { client, config: favroConfig, force: options.force });
+          // It also inherits the cap, and THAT IS A CLIFF ON THIS COMMAND: the
+          // listing's `--limit` defaults to 100, so any repo with more than
+          // `MULTI_WRITE_CAP` TODOs refuses `--create` by default. Refusing is
+          // right — creating twenty and dropping the rest would report success
+          // for cards that were never made — but the table's refusal ends
+          // "split an enumerated list, or act on a derived one entry at a time",
+          // and neither is available here: the list is a SCAN. `--limit` is the
+          // only remedy, the table cannot know that, so the sentence is added
+          // here rather than restating the cap's reason in a second place.
+          const cards = limited.map((item) => ({
+            name: todoToCardTitle(item),
+            description: formatTodoAsCardDescription(item),
+            board: boardId,
+          }));
+          const result = await dispatch<Card[]>('create', { cards }, {
+            client,
+            config: favroConfig,
+            force: options.force,
+          }).catch((error) => {
+            if (error instanceof RefusalError && cards.length > MULTI_WRITE_CAP) {
+              throw new RefusalError(
+                `${error.message}\n` +
+                  `This list is a codebase SCAN, so there is nothing to split: re-run with ` +
+                  `--limit ${MULTI_WRITE_CAP} to take the first ${MULTI_WRITE_CAP} TODOs, ` +
+                  `or narrow the scan.`,
+              );
+            }
+            throw error;
+          });
           if (reportDispatch(result)) process.exit(1);
 
           console.log(`\n✓ Created ${result.value?.length ?? 0}/${limited.length} cards.`);

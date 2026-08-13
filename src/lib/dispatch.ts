@@ -580,10 +580,18 @@ registerIntent<CreateArgs | MultiCreateArgs, Card | Card[]>({
       ...(c.blockedBy?.length ? [`  blocked by: ${c.blockedBy.join(', ')}`] : []),
       ...(c.blocks?.length ? [`  blocks: ${c.blocks.join(', ')}`] : []),
     ]),
-  board: async (a) =>
-    createEntries(a)
-      .map((c) => c.board)
-      .filter((b): b is string => Boolean(b)),
+  // SETTLED, not passed through (#109). `--board` takes a NAME or an id, and
+  // `assertScope` GETs `/widgets/<id>`: handed a name it 404s into "Board … not
+  // found", a refusal naming the wrong problem (#82). `createCard` already
+  // resolves the same value through the same cache, so the second resolve is a
+  // cache hit and costs no request — measured in `cards-create-wire.test.ts`.
+  board: async (a, tx) =>
+    Promise.all(
+      createEntries(a)
+        .map((c) => c.board)
+        .filter((b): b is string => Boolean(b))
+        .map((b) => tx.resolveBoardId(b)),
+    ),
   run: async (a, tx) => {
     const entries = createEntries(a);
     if (!isMulti(a)) return tx.create(createRequest(entries[0]));

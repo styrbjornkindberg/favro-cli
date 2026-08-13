@@ -475,6 +475,40 @@ describe('git todos — reporting', () => {
     expect(MockCardsAPI.prototype.createCard).not.toHaveBeenCalled();
   });
 
+  test('more than twenty TODOs REFUSES, and the refusal names --limit', async () => {
+    // A CLIFF, not a corner: the listing's `--limit` defaults to 100 and the
+    // multi-write cap is 20, so any repo with more than twenty TODOs refuses
+    // `--create` by default. Refusing is right — creating twenty and dropping the
+    // rest reports success for cards nobody made — but the table's own sentence
+    // ends "split an enumerated list, or act on a derived one entry at a time",
+    // and a codebase SCAN is neither. `--limit` is the only remedy here and the
+    // table cannot know that, so the command says it.
+    const many = Array.from({ length: 21 }, (_, i) => ({ ...item, line: i + 1 }));
+    (todoScanner.scanTodos as jest.Mock).mockReturnValue(many);
+    (todoScanner.groupByFile as jest.Mock).mockReturnValue([{ file: 'src/a.ts', items: many }]);
+    MockCardsAPI.prototype.createCard = jest.fn();
+
+    await runCli(['git', 'todos', '--create', '-y']);
+
+    expect(MockCardsAPI.prototype.createCard).not.toHaveBeenCalled();
+    expect(errors()).toContain('capped at 20');
+    expect(errors()).toContain('--limit 20');
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  test('--limit 20 is the remedy the refusal names, and it works', async () => {
+    // The other polarity: advice that does not work is worse than no advice.
+    const many = Array.from({ length: 21 }, (_, i) => ({ ...item, line: i + 1 }));
+    (todoScanner.scanTodos as jest.Mock).mockReturnValue(many);
+    (todoScanner.groupByFile as jest.Mock).mockReturnValue([{ file: 'src/a.ts', items: many }]);
+    MockCardsAPI.prototype.createCard = jest.fn().mockResolvedValue({ cardId: 'new-1' });
+
+    await runCli(['git', 'todos', '--create', '-y', '--limit', '20']);
+
+    expect((MockCardsAPI.prototype.createCard as jest.Mock).mock.calls).toHaveLength(20);
+    expect(output()).toContain('✓ Created 20/20 cards.');
+  });
+
   test('a failed create UNWINDS the batch rather than creating the rest', async () => {
     // It used to print "✗ Failed to create card for src/a.ts:3" and "✓ Created
     // 1/2 cards.", leaving whatever did get created behind. The scan is an
