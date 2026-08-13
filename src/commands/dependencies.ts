@@ -141,7 +141,7 @@ export function registerDependenciesCommands(program: Command): void {
         // command's dry run at zero requests and no credential, and routing it
         // must not take that away.
         if (options.dryRun && !config.scopeCollectionId) {
-          previewOnly('remove-blocking-edge', { ...args });
+          previewOnly('remove-blocking-edge', { ...args }, config);
           return;
         }
 
@@ -200,7 +200,7 @@ export function registerDependenciesCommands(program: Command): void {
         // branch exists to avoid — so the preview says what the bound IS and the
         // real run is where an over-cap card refuses.
         if (options.dryRun && !config.scopeCollectionId) {
-          previewOnly('clear-blocking-edges', { card: cardId });
+          previewOnly('clear-blocking-edges', { card: cardId }, config);
           return;
         }
 

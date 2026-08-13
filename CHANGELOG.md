@@ -24,9 +24,15 @@ and streams are real and no request reached a live org.
   `✗ Could not update card X` alongside `✓ Updated 5/6 cards.` and leave the five standing.
   Two branches naming the same card are collapsed to one write. Over twenty cards it
   REFUSES, naming the cap, rather than moving the first twenty — and the refusal costs no
-  requests. `git todos --create` gets the same treatment: the scan is an enumerated list,
-  so more than twenty TODOs refuses (use `--limit`) and a part-way failure deletes the
-  cards already made.
+  requests.
+
+- **`git todos --create` refuses on a repo with more than twenty TODOs, by default.** The
+  scan is an enumerated list, so it is one `create` transaction and inherits the same cap —
+  but the listing's `--limit` defaults to 100, so this is a cliff and not a corner. Refusing
+  is the right half (creating twenty and dropping the rest would report success for cards
+  nobody made); the refusal now also names the remedy, `--limit 20`, because the shared
+  cap message ends "split an enumerated list, or act on a derived one entry at a time" and
+  a codebase scan is neither. A part-way failure deletes the cards already made.
 
   The ticket's premise that `git sync` was silently writing nothing —
   `PUT {status: 'Done'}` being a measured no-op — turned out to be **false**, and the
@@ -52,12 +58,31 @@ and streams are real and no request reached a live org.
   is already there is reported rather than rewritten, and a pair holding the REVERSE edge
   refuses instead of 403-ing off the wire.
 
+- **`dependencies add --type blocks` now checks the TARGET card's board, not the source's.**
+  "A blocks B" is the edge recorded on B with A as its blocker, and the shared intent boards
+  off the card the edge is recorded on — which `cards link` has always done. Both directions
+  of the change, stated rather than left to be discovered: source-inside/target-outside now
+  REFUSES where it used to pass, and source-outside/target-inside now PASSES where it used
+  to refuse. One end is unchecked either way; that is pre-existing and shared with
+  `cards link`, and closing it means checking both cards' boards for both commands — a
+  decision about the lock rather than about this routing, so it is recorded and not taken
+  here. `--type depends-on` is unaffected. Pinned in `commands/dependencies.test.ts`.
+
 - **`custom-fields set` no longer has an "accepted (200) but UNCONFIRMED" arm.** The write
   is read back and matched on `customFieldId`, so an echo that does not carry what was sent
   is a failure the table reports with retry advice, not a success-shaped notice. The value
   is still resolved against the field's own definition, and still sent under the payload key
   that field's TYPE spells — only `Single select` is measured on this path (#106) and
-  nothing here widens that.
+  nothing here widens that. One consequence to know about: that failure carries
+  `retryable: true`, where the old notice was a flat exit 1. Nothing observed whether the
+  write landed, so "try again" is the honest advice and the message says to read the card
+  first.
+
+- **`cards create --board "<name>"` no longer 404s under a scope lock.** The board argument
+  reached `assertScope` unresolved, and the lock GETs `/widgets/<id>` — handed a name it
+  404s into "Board … not found", a refusal naming the wrong problem (#82). It settles inside
+  the intent now. It costs no extra request: the create resolves the same value through the
+  same 15-minute name cache, measured as one board list across both settlings.
 
 - **`cards move` checks BOTH boards, and gains `--dry-run`.** The origin and the settled
   destination are checked before anything is written, so a move out of the locked collection
@@ -104,6 +129,16 @@ and streams are real and no request reached a live org.
   it is not an intent and cannot join the transaction. That is why the hoisted scope check
   still runs when there are no fields to dispatch — it is the only guard on a comment-only
   invocation.
+
+### Removed
+
+- **`CardsAPI.deleteAllDependencies`, `CustomFieldsAPI.setFieldValue` and its private
+  `putCardCustomField` are deleted (#109).** All three were un-instrumented card writes with
+  no production caller left after the routing above. The seam's premise is that a write
+  outside the transactional facade is *unconstructible*, not merely unused — one left
+  reachable is one the next command takes without touching the table. The payload
+  resolution `setFieldValue` did survives as `CustomFieldsAPI.fieldWrite`, which makes no
+  request of its own.
 
 ### Fixed
 

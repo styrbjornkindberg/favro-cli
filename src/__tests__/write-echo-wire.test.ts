@@ -311,77 +311,32 @@ describe('addWidgetToBoard reports the board it OBSERVED (#82)', () => {
 
 // ── Site 2: custom-fields set ───────────────────────────────────────────────
 
-describe('setFieldValue does not fail open onto its own argument', () => {
-  it('echoed → the observed value, marked confirmed', async () => {
-    const { client } = await startServer('full');
-    const result = await new CustomFieldsAPI(client).setFieldValue(CARD_ID, FIELD_ID, 'sent-value');
-    expect(result.confirmed).toBe(true);
-    expect(result.value).toBe('observed-value');
-  });
-
-  /**
-   * THE test. The old code returned `{ value: 'sent-value', displayValue:
-   * 'sent-value' }` here — byte-identical in shape to a confirmed write, and the
-   * command printed `✓ Custom field updated successfully. Value: sent-value`.
-   */
-  it('omitted → confirmed:false and NO value, not the argument echoed back', async () => {
-    const { client } = await startServer('omit');
-    const result = await new CustomFieldsAPI(client).setFieldValue(CARD_ID, FIELD_ID, 'sent-value');
-    expect(result.confirmed).toBe(false);
-    expect(result.value).toBeNull();
-    expect(result.displayValue).toBeUndefined();
-    // The specific regression: the argument must not come back as an observation.
-    expect(result.value).not.toBe('sent-value');
-    expect(result.displayValue).not.toBe('sent-value');
-  });
-
-  it('a different value echoed → reported as stored, not as sent', async () => {
-    const { client } = await startServer('different');
-    const result = await new CustomFieldsAPI(client).setFieldValue(CARD_ID, FIELD_ID, 'sent-value');
-    expect(result.confirmed).toBe(true);
-    expect(result.value).toBe('something-else');
-  });
-
-  /**
-   * The arm that pins the `customFieldId` match. A real `customFields` array
-   * carries every field on the card, so "the response contained a value" and
-   * "the response contained OUR field's value" are different claims. Without
-   * this, dropping the id filter and taking `[0]` passes the whole suite — and
-   * confirms this write with another field's value.
-   */
-  it('a foreign field echoed → unconfirmed, never that field\'s value', async () => {
-    const { client } = await startServer('foreign');
-    const result = await new CustomFieldsAPI(client).setFieldValue(CARD_ID, FIELD_ID, 'sent-value');
-    expect(result.confirmed).toBe(false);
-    expect(result.value).toBeNull();
-    expect(result.displayValue).toBeUndefined();
-  });
-
-  /**
-   * Present-but-`null` is reported unconfirmed. It errs toward the safe side —
-   * the write may well have landed as a cleared value — but nothing here measured
-   * whether Favro spells a cleared field `null`, an empty string, or an omission,
-   * so it stays a hole rather than becoming a confirmation.
-   */
-  it('a blank echo is a hole, not a confirmation', async () => {
-    const { client } = await startServer('blank');
-    const result = await new CustomFieldsAPI(client).setFieldValue(CARD_ID, FIELD_ID, 'sent-value');
-    expect(result.confirmed).toBe(false);
-    expect(result.value).toBeNull();
-  });
-
-  /**
-   * It must NOT throw. Throwing on an unmeasured ECHO is the shape #101's triage
-   * declined: it takes out a working command to defend a hazard with no observed
-   * instance. `setArchived` may throw because #75 measured that echo, and
-   * `moveColumn` may throw because it re-reads the card instead of trusting one;
-   * nothing measured this echo, and this site reads no card back.
-   */
-  it('an omitted echo is reported, not thrown — the echo is unmeasured', async () => {
-    const { client } = await startServer('omit');
-    await expect(
-      new CustomFieldsAPI(client).setFieldValue(CARD_ID, FIELD_ID, 'sent-value'),
-    ).resolves.toMatchObject({ confirmed: false });
+/**
+ * **Site 2's method is deleted, and that is the strongest form this arm can
+ * take (#109).**
+ *
+ * `CustomFieldsAPI.setFieldValue` resolved a value and PUT it in one
+ * un-instrumented call, and the six arms that used to live here pinned that its
+ * report never laundered the ARGUMENT back as an observation. `custom-fields set`
+ * routes through the dispatch table now, so the write is
+ * `TxCards.setFieldValue`, which does something strictly stronger than reporting
+ * an unconfirmed echo: it matches the echo on `customFieldId` and THROWS when it
+ * does not carry what it sent. Those arms live in
+ * `tx-cards-field-writes-wire.test.ts`, on the same kind of socket.
+ *
+ * What is left here is the ratchet. An un-instrumented write left reachable is
+ * one the next command takes without touching the table — the seam's premise,
+ * not a tidiness preference — so the assertion is that the door is gone, not
+ * merely unused. The payload RESOLUTION survived the deletion as `fieldWrite`,
+ * and `custom-fields.test.ts` pins that.
+ */
+describe('custom-fields set has no un-instrumented write left to fail open with', () => {
+  it('CustomFieldsAPI can no longer write a card at all', () => {
+    const api = new CustomFieldsAPI({} as never);
+    expect((api as unknown as Record<string, unknown>).setFieldValue).toBeUndefined();
+    expect((api as unknown as Record<string, unknown>).putCardCustomField).toBeUndefined();
+    // The resolution half is deliberately still here.
+    expect(typeof api.fieldWrite).toBe('function');
   });
 });
 

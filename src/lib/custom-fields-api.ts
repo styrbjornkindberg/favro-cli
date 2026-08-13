@@ -223,32 +223,21 @@ export class CustomFieldsAPI {
   }
 
   /**
-   * Set a custom field value on a card.
-   * For select fields, validates value against allowed options before calling API.
+   * The wire payload one value takes on one field. **Resolution only — this
+   * class no longer writes.**
    *
-   * @param cardId  The card to update
-   * @param fieldId The field to set
-   * @param value   The value to set (string; for select pass option name; for members pass userId; for link pass URL)
-   */
-  async setFieldValue(
-    cardId: string,
-    fieldId: string,
-    value: string
-  ): Promise<CustomFieldValue> {
-    const field = await this.getField(fieldId);
-    const payload = this.buildFieldPayload(field, value);
-    return this.putCardCustomField(cardId, fieldId, payload);
-  }
-
-  /**
-   * The wire payload one value takes on one field, WITHOUT making the write —
-   * `setFieldValue`'s first two steps, and nothing else.
+   * There WAS a `setFieldValue` here that resolved and PUT in one call, and a
+   * private `putCardCustomField` under it. Both are deleted (#109): every card
+   * write goes through `TxCards` now, and an un-instrumented write left reachable
+   * is one the next command reaches without touching the table — which is the
+   * seam's whole premise, not a tidiness preference. What that PUT reported as
+   * "accepted (200) but UNCONFIRMED" is now `TxCards.setFieldValue` throwing,
+   * because it matches the echo on `customFieldId` and refuses to call an
+   * unobserved write a write.
    *
-   * Split out for `TxCards.customFieldWrite` (#109), which needs the resolution
-   * on the read side of the transactional facade so the PUT can be the
-   * instrumented one. Nothing about the mapping changes: `buildFieldPayload`
-   * stays the single owner of "which key does this field type spell", and it
-   * always returns exactly one, which is what makes the destructure below total.
+   * `buildFieldPayload` stays the single owner of "which key does this field type
+   * spell", and it always returns exactly one, which is what makes the
+   * destructure below total.
    */
   async fieldWrite(
     fieldId: string,
@@ -323,45 +312,6 @@ export class CustomFieldsAPI {
 
     // text and any unknown types
     return { value };
-  }
-
-  /**
-   * Update a single custom field on a card via PUT /cards/:cardId.
-   * Favro has no sub-resource endpoint — the only supported path is the full card update.
-   *
-   * When the response omits the field, this reports `confirmed: false` and NO
-   * value. It used to degrade to the caller's own argument, which made an
-   * observed write and an unobserved one produce byte-identical output — the
-   * argument echoed back as though the server had said it.
-   *
-   * It does **not** throw. Whether this PUT's response echoes `customFields` is
-   * **unmeasured**: the field is measured on every GET row
-   * (`docs/research/tracker-contract-favro-carriers.md` §3, as
-   * `{customFieldId, value}` pairs), and a read-side row is not a write-side
-   * echo. The one measured write echo on this endpoint is `archived`, from #75's
-   * live probe — which is what earns `TxCards.setArchived` its throw. Throwing
-   * here on an unmeasured echo would take out `custom-fields set` on every call
-   * if Favro simply does not return the array — exactly the regression #101's
-   * triage declined, before it closed by re-reading the card instead of the
-   * echo. Unconfirmed is reported, not fabricated and not fatal.
-   */
-  private async putCardCustomField(
-    cardId: string,
-    fieldId: string,
-    fieldPayload: Record<string, unknown>
-  ): Promise<CustomFieldValue> {
-    type RawField = { customFieldId?: string; fieldId?: string; value?: unknown; members?: unknown[]; link?: unknown; total?: unknown };
-    const updated = await this.client.put<{ customFields?: RawField[] }>(
-      `/cards/${cardId}`,
-      { customFields: [{ customFieldId: fieldId, ...fieldPayload }] }
-    );
-    const match = updated.customFields?.find(
-      f => (f.customFieldId ?? f.fieldId) === fieldId
-    );
-    const raw = match?.value ?? match?.members ?? match?.link ?? match?.total;
-    if (raw == null) return { fieldId, value: null, confirmed: false };
-    const displayValue = typeof raw === 'object' ? JSON.stringify(raw) : String(raw);
-    return { fieldId, value: displayValue, displayValue, confirmed: true };
   }
 
   /**

@@ -407,8 +407,9 @@ export interface UpdateCardRequest {
   archive?: boolean;
   /**
    * Custom field values, in Favro's own wire shape. There is no sub-resource
-   * endpoint — the full card PUT is the only path, which is why
-   * `CustomFieldsAPI.putCardCustomField` sends the same thing.
+   * endpoint — the full card PUT is the only path. It is now the ONLY path in
+   * this codebase too: `CustomFieldsAPI` had its own copy of this write and it
+   * was deleted with #109, so `TxCards.setFieldValue` is the single caller.
    *
    * Probed live (#106, `docs/research/card-write-field-semantics.md` §4) on **one
    * field type, `Single select`**, and nothing here generalises to the types that
@@ -960,15 +961,6 @@ export class CardsAPI {
       this.references.toCardId(fromCardRef),
     ]);
     await this.client.delete(`/cards/${cardId}/dependencies/${fromCardId}`);
-  }
-
-  /**
-   * Remove all dependencies from a card.
-   */
-  async deleteAllDependencies(cardRef: string): Promise<void> {
-    const cardId = await this.references.toCardId(cardRef);
-    // Mutation: settled id, one attempt, no escalation.
-    await this.client.delete(`/cards/${cardId}/dependencies`);
   }
 
   /**

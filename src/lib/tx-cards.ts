@@ -425,8 +425,9 @@ const dueDay = (value: string | null | undefined): string =>
  * rather than trusting the declared one.
  *
  * **All four value keys are read, not just `value`** — the same
- * `value ?? members ?? link ?? total` fallback `CustomFieldsAPI.putCardCustomField`
- * already uses, reused rather than re-derived. Only `value` on a `Single select`
+ * `value ?? members ?? link ?? total` fallback `CustomFieldsAPI` used to read its
+ * own PUT echo with, kept when that method was deleted (#109) rather than
+ * re-derived. Only `value` on a `Single select`
  * is measured; the other three are what `custom-fields-api.ts` builds for
  * `Members`, `Link` and `Number` fields. Reading `value` alone was worse than
  * unmeasured, it was BLIND in one direction: a write to one of those types that
@@ -1357,19 +1358,26 @@ export class TxCards implements ReadTx {
    * write behind `cards move`.
    *
    * **Pushes nothing onto the compensation log**, and the intent that calls it is
-   * `terminal` for that reason. The move-back is spellable — the origin board is
-   * in hand before the write — and it is still not an INVERSE:
+   * `terminal` for that reason. Which reason, exactly, because there are two on
+   * offer and only one of them holds:
    *
-   *  - The card's COLUMN on the origin board is not carried by this write and is
-   *    not captured. Where a card lands when it arrives on a board is unmeasured,
-   *    so a move-back restores the board and leaves the column wherever Favro puts
-   *    it. `rolled-back` means the world is back where it was; that would be a lie
-   *    about the column, and there is no fourth outcome to tell the truth with.
-   *  - `position` has the same problem and is not even readable back.
+   *  - NOT "the pre-state is unavailable". It is available and it is free:
+   *    `move-board`'s `board()` already reads the card, so `boardId` AND
+   *    `columnId` are both in hand before the write. Capturing them would cost
+   *    nothing, and an earlier draft of this comment implied otherwise.
+   *  - The reason is that **restoring a column after a cross-board move is
+   *    UNMEASURED**. `moveColumn` is a measured inverse *within* a board; where a
+   *    card lands when it arrives back on its origin board, and whether the old
+   *    `columnId` is still writable on it, is not something anything here has
+   *    observed. So an inverse would restore the board and guess at the column,
+   *    while `rolled-back` claims the world is back where it was. There is no
+   *    fourth outcome to tell that truth with, so the composition is refused
+   *    instead. `position` compounds it: not captured, not readable back.
    *
    * Nothing here is a claim that a move cannot be undone by hand — `favro cards
    * move` the other way is right there. It is a claim that this facade cannot
-   * undo it and say `rolled-back` honestly.
+   * undo it and say `rolled-back` honestly. Probe the return move on the #105
+   * scratch board and this becomes a real compensation entry.
    *
    * So the caller must honour `deleteCard`'s two consequences: this must be the
    * LAST thing an intent's `run` does (a `RefusalError` after it would be misread
@@ -1398,11 +1406,22 @@ export class TxCards implements ReadTx {
    * this is the write that manufactures one, which is why it belongs inside the
    * table rather than beside it.
    *
-   * **Pushes nothing onto the compensation log**, for `moveToBoard`'s reason and
-   * one more: the inverse would be deleting the instance this commit created, and
-   * the new instance's `cardId` is not something the response has been measured to
-   * carry — `CommittedWidget.widgetCommonId` is optional precisely because the
-   * echo is unprobed. An inverse that cannot name its target is not an inverse.
+   * **Pushes nothing onto the compensation log**, and again the reason is worth
+   * naming precisely rather than gesturing at the echo. The inverse would be
+   * deleting the instance this commit created, which needs that instance's own
+   * `cardId`:
+   *
+   *  - The PUT's echo is unprobed (`CommittedWidget.widgetCommonId` is optional
+   *    for that reason), so the id cannot be read off the response. That alone is
+   *    only an argument about the ECHO — a follow-up `GET /widgets?cardCommonId=`
+   *    would name the new instance, and it is one request.
+   *  - The reason terminal HOLDS is the write itself: `DELETE /cards/{cardId}` is
+   *    the only removal available, and `deleteCard` next door records why that is
+   *    not an inverse of a create — it takes the comments, tasks and tasklists
+   *    hanging off the `cardCommonId` with it if it is the last instance, and none
+   *    of that was ever captured. An "undo" that can destroy more than it made is
+   *    not one.
+   *
    * The intent is `terminal`, and this must be the last write its `run` makes.
    */
   async commitToBoard(board: string, cardCommonId: string, columnId?: string): Promise<CommittedWidget> {

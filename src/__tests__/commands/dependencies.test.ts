@@ -109,6 +109,52 @@ describe('favro dependencies add', () => {
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
+  /**
+   * WHICH END THE LOCK CHECKS FLIPPED FOR `--type blocks`, and it is pinned here
+   * rather than discovered later.
+   *
+   * The intent boards off `args.card`, and `blocks` swaps the arguments —
+   * "A blocks B" is the edge recorded on B with A as its blocker — so the board
+   * checked is the TARGET's. This command used to check the SOURCE's (behind a
+   * truthiness guard that a fork slipped through). Consequences, both directions:
+   * source-inside/target-outside now REFUSES where it used to pass, and
+   * source-outside/target-inside now PASSES where it used to refuse.
+   *
+   * One end is unchecked either way — that is pre-existing, and shared with
+   * `cards link`, which has always used these arguments. Closing it means
+   * `add-blocking-edge`'s `board()` returning BOTH cards' boards, which is two
+   * lines and one extra read; it is not taken here because it would also tighten
+   * `cards link` for every existing caller, and that is a decision about the lock
+   * rather than about routing. `--type depends-on` is unaffected: there the source
+   * IS `args.card`.
+   */
+  it('--type blocks checks the TARGET card\'s board, not the source\'s', async () => {
+    (config.readConfig as jest.Mock).mockResolvedValue({ scopeCollectionId: 'coll-1' });
+    MockCardsAPI.prototype.getCard = jest.fn(async (ref: string) => ({
+      cardId: ref,
+      boardId: ref === 'card-1' ? 'board-source' : 'board-target',
+    })) as never;
+    MockCardsAPI.prototype.linkCard = jest.fn().mockResolvedValue([{ cardId: 'card-1', isBefore: true }]);
+
+    await runCli(['dependencies', 'add', 'card-1', 'card-2', '--type', 'blocks', '--yes']);
+
+    expect(safety.assertScope).toHaveBeenCalledWith('board-target', expect.anything(), expect.anything(), undefined);
+    expect(safety.assertScope).not.toHaveBeenCalledWith('board-source', expect.anything(), expect.anything(), undefined);
+  });
+
+  it('--type depends-on checks the SOURCE card\'s board — the arguments do not swap', async () => {
+    (config.readConfig as jest.Mock).mockResolvedValue({ scopeCollectionId: 'coll-1' });
+    MockCardsAPI.prototype.getCard = jest.fn(async (ref: string) => ({
+      cardId: ref,
+      boardId: ref === 'card-1' ? 'board-source' : 'board-target',
+    })) as never;
+    MockCardsAPI.prototype.linkCard = jest.fn().mockResolvedValue([{ cardId: 'card-2', isBefore: true }]);
+
+    await runCli(['dependencies', 'add', 'card-1', 'card-2', '--type', 'depends-on', '--yes']);
+
+    expect(safety.assertScope).toHaveBeenCalledWith('board-source', expect.anything(), expect.anything(), undefined);
+  });
+
   it('takes the lock on the source card even when it has NO board', async () => {
     // The hole this file's command used to have: the check sat behind
     // `if (sourceCard && sourceCard.boardId)`, so a fork — a card with no
@@ -211,11 +257,14 @@ describe('favro dependencies delete-all', () => {
       { cardId: 'card-3', isBefore: false },
     ]);
     MockCardsAPI.prototype.unlinkCard = jest.fn().mockResolvedValue(undefined);
-    MockCardsAPI.prototype.deleteAllDependencies = jest.fn();
 
     await runCli(['dependencies', 'delete-all', 'card-1', '--yes']);
 
-    expect(MockCardsAPI.prototype.deleteAllDependencies).not.toHaveBeenCalled();
+    // `CardsAPI.deleteAllDependencies` is GONE, not merely unused: the bulk
+    // `DELETE /cards/{id}/dependencies` had no per-edge record and no inverse,
+    // and leaving it reachable meant the next command could take it without
+    // touching the table. `git-sync-intent-wire.test.ts` keeps the route alive on
+    // its stand so the socket can still prove nothing reaches it.
     expect(MockCardsAPI.prototype.unlinkCard).toHaveBeenCalledWith('card-1', 'card-2');
     expect(MockCardsAPI.prototype.unlinkCard).toHaveBeenCalledWith('card-1', 'card-3');
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Removed 2 dependencies'));

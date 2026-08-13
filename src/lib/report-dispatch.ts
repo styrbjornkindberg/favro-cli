@@ -8,6 +8,7 @@
  * must read identically whichever command produced it.
  */
 import { DispatchResult, getIntent, UnknownIntentError, intentNames } from './dispatch';
+import { RefusalError } from './refusal';
 
 /**
  * Print the result, and say whether the caller should exit non-zero.
@@ -78,8 +79,29 @@ export function reportDispatch(result: DispatchResult<unknown>, json?: boolean):
  * unlocked `dependencies delete-all --dry-run` will not tell you the card is over
  * the cap, because finding that out is the request this exists to avoid. The
  * refusal is on the real run.
+ *
+ * **The config is a REQUIRED argument, and a configured lock REFUSES.** All three
+ * callers gate on `!scopeCollectionId` correctly today, and that gate is
+ * invisible from here — a fourth call site calling this unconditionally would
+ * rebuild #155's hole exactly, a preview promising a write the lock refuses, and
+ * nothing else would catch it. A convention every caller has to remember is not a
+ * guardrail; this is.
  */
-export function previewOnly(intent: string, args: Record<string, unknown>): void {
+export function previewOnly(
+  intent: string,
+  args: Record<string, unknown>,
+  config: { scopeCollectionId?: string } | undefined,
+): void {
+  if (config?.scopeCollectionId) {
+    throw new RefusalError(
+      `previewOnly("${intent}") was called with a scope lock configured ` +
+        `("${config.scopeCollectionId}"). It renders a preview WITHOUT taking the lock, so under one ` +
+        `it would promise a write the real run refuses — the defect #155 closed.\n` +
+        `It exists for the unlocked path only, where there is no lock to take and the reads getting to ` +
+        `one would cost are unbillable. Under a lock, dispatch with { dryRun: true }: the table takes ` +
+        `the lock before it previews.`,
+    );
+  }
   const known = getIntent(intent);
   if (!known) throw new UnknownIntentError(intent, intentNames());
   reportDispatch({ intent, outcome: 'ok', retryable: false, preview: known.preview(args) });

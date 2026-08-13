@@ -259,30 +259,32 @@ describe('CustomFieldsAPI', () => {
     });
   });
 
-  // --- setFieldValue ---
+  // --- fieldWrite ---
 
-  describe('setFieldValue', () => {
-    test('sets text field value directly', async () => {
+  /**
+   * `setFieldValue` is GONE (#109): it resolved a value and PUT it in one
+   * un-instrumented call, which is the shape the transactional facade exists to
+   * make unconstructible. What survives is the RESOLUTION — which payload key a
+   * field type spells, and which values it refuses — and that is what these arms
+   * always tested. They now assert the resolved `{key, value}` rather than a PUT
+   * body, because there is no PUT here any more; `TxCards.setFieldValue` makes it,
+   * and `tx-cards-field-writes-wire.test.ts` pins that on a socket.
+   */
+  describe('fieldWrite', () => {
+    test('a text field spells its value under `value`', async () => {
       mockClient.get.mockResolvedValue(sampleTextField);
-      mockClient.put.mockResolvedValue({ customFields: [{ customFieldId: 'field-text-1', value: 'hello' }] });
 
-      const result = await api.setFieldValue('card-1', 'field-text-1', 'hello');
-      expect(result.value).toBe('hello');
-      expect(mockClient.put).toHaveBeenCalledWith(
-        '/cards/card-1',
-        { customFields: [{ customFieldId: 'field-text-1', value: 'hello' }] }
-      );
+      expect(await api.fieldWrite('field-text-1', 'hello')).toEqual({ key: 'value', value: 'hello' });
+      expect(mockClient.put).not.toHaveBeenCalled();
     });
 
-    test('sets select field value using optionId array', async () => {
+    test('a select field resolves the option NAME to an optionId array', async () => {
       mockClient.get.mockResolvedValue(sampleSelectField);
-      mockClient.put.mockResolvedValue({ customFields: [{ customFieldId: 'field-select-1', value: ['opt-high'] }] });
 
-      await api.setFieldValue('card-1', 'field-select-1', 'High');
-      expect(mockClient.put).toHaveBeenCalledWith(
-        '/cards/card-1',
-        { customFields: [{ customFieldId: 'field-select-1', value: ['opt-high'] }] }
-      );
+      expect(await api.fieldWrite('field-select-1', 'High')).toEqual({
+        key: 'value',
+        value: ['opt-high'],
+      });
     });
 
     test('resolves select value for Favro "Status" type field (not "select")', async () => {
@@ -292,113 +294,89 @@ describe('CustomFieldsAPI', () => {
         type: 'Status', // Favro returns this instead of 'select'
       };
       mockClient.get.mockResolvedValue(statusField);
-      mockClient.put.mockResolvedValue({ customFields: [{ customFieldId: 'field-status-1', value: ['opt-high'] }] });
 
-      await api.setFieldValue('card-1', 'field-status-1', 'High');
-      expect(mockClient.put).toHaveBeenCalledWith(
-        '/cards/card-1',
-        { customFields: [{ customFieldId: 'field-status-1', value: ['opt-high'] }] }
-      );
+      expect(await api.fieldWrite('field-status-1', 'High')).toEqual({
+        key: 'value',
+        value: ['opt-high'],
+      });
     });
 
     test('throws for invalid select value', async () => {
       mockClient.get.mockResolvedValue(sampleSelectField);
 
-      await expect(
-        api.setFieldValue('card-1', 'field-select-1', 'Critical')
-      ).rejects.toThrow(/Invalid value "Critical"/);
+      await expect(api.fieldWrite('field-select-1', 'Critical')).rejects.toThrow(/Invalid value "Critical"/);
     });
 
     test('throws for invalid date format', async () => {
       mockClient.get.mockResolvedValue(sampleDateField);
 
-      await expect(
-        api.setFieldValue('card-1', 'field-date-1', 'not-a-date')
-      ).rejects.toThrow(/Invalid date "not-a-date"/);
+      await expect(api.fieldWrite('field-date-1', 'not-a-date')).rejects.toThrow(/Invalid date "not-a-date"/);
     });
 
     test('throws for empty string date value', async () => {
       mockClient.get.mockResolvedValue(sampleDateField);
 
-      await expect(
-        api.setFieldValue('card-1', 'field-date-1', '')
-      ).rejects.toThrow(/requires a value/);
+      await expect(api.fieldWrite('field-date-1', '')).rejects.toThrow(/requires a value/);
     });
 
     test('throws for blank/whitespace date value', async () => {
       mockClient.get.mockResolvedValue(sampleDateField);
 
-      await expect(
-        api.setFieldValue('card-1', 'field-date-1', '   ')
-      ).rejects.toThrow(/requires a value/);
+      await expect(api.fieldWrite('field-date-1', '   ')).rejects.toThrow(/requires a value/);
     });
 
     test('throws for non-ISO date format like MM/DD/YYYY', async () => {
       mockClient.get.mockResolvedValue(sampleDateField);
 
-      await expect(
-        api.setFieldValue('card-1', 'field-date-1', '12/31/2024')
-      ).rejects.toThrow(/Invalid date "12\/31\/2024"/);
+      await expect(api.fieldWrite('field-date-1', '12/31/2024')).rejects.toThrow(/Invalid date "12\/31\/2024"/);
     });
 
     test('throws for invalid calendar date like 2024-02-30', async () => {
       mockClient.get.mockResolvedValue(sampleDateField);
 
-      await expect(
-        api.setFieldValue('card-1', 'field-date-1', '2024-02-30')
-      ).rejects.toThrow(/Invalid date "2024-02-30"/);
+      await expect(api.fieldWrite('field-date-1', '2024-02-30')).rejects.toThrow(/Invalid date "2024-02-30"/);
     });
 
     test('accepts valid ISO 8601 date', async () => {
       mockClient.get.mockResolvedValue(sampleDateField);
-      mockClient.put.mockResolvedValue({ customFields: [{ customFieldId: 'field-date-1', value: '2024-12-31' }] });
 
-      const result = await api.setFieldValue('card-1', 'field-date-1', '2024-12-31');
-      expect(mockClient.put).toHaveBeenCalledWith(
-        '/cards/card-1',
-        { customFields: [{ customFieldId: 'field-date-1', value: '2024-12-31' }] }
-      );
+      expect(await api.fieldWrite('field-date-1', '2024-12-31')).toEqual({
+        key: 'value',
+        value: '2024-12-31',
+      });
     });
 
     test('accepts valid ISO 8601 datetime with timezone', async () => {
       mockClient.get.mockResolvedValue(sampleDateField);
-      mockClient.put.mockResolvedValue({ customFields: [{ customFieldId: 'field-date-1', value: '2024-12-31T00:00:00Z' }] });
 
-      await api.setFieldValue('card-1', 'field-date-1', '2024-12-31T00:00:00Z');
-      expect(mockClient.put).toHaveBeenCalledWith(
-        '/cards/card-1',
-        { customFields: [{ customFieldId: 'field-date-1', value: '2024-12-31T00:00:00Z' }] }
-      );
+      expect(await api.fieldWrite('field-date-1', '2024-12-31T00:00:00Z')).toEqual({
+        key: 'value',
+        value: '2024-12-31T00:00:00Z',
+      });
     });
 
     test('rejects when getField fails (no silent bypass)', async () => {
       mockClient.get.mockRejectedValue(new Error('Network error'));
 
-      await expect(
-        api.setFieldValue('card-1', 'field-text-1', 'fallback')
-      ).rejects.toThrow(/Network error/);
+      await expect(api.fieldWrite('field-text-1', 'fallback')).rejects.toThrow(/Network error/);
     });
 
-    test('sets user/members field value using members array', async () => {
+    test('a user/members field spells its value under `members`', async () => {
       mockClient.get.mockResolvedValue(sampleUserField);
-      mockClient.put.mockResolvedValue({ customFields: [{ customFieldId: 'field-user-1', members: ['user-123'] }] });
 
-      await api.setFieldValue('card-1', 'field-user-1', 'user-123');
-      expect(mockClient.put).toHaveBeenCalledWith(
-        '/cards/card-1',
-        { customFields: [{ customFieldId: 'field-user-1', members: ['user-123'] }] }
-      );
+      expect(await api.fieldWrite('field-user-1', 'user-123')).toEqual({
+        key: 'members',
+        value: ['user-123'],
+      });
     });
 
-    test('sets link field value using link object', async () => {
+    test('a link field spells its value under `link`', async () => {
       mockClient.get.mockResolvedValue(sampleLinkField);
-      mockClient.put.mockResolvedValue({ customFields: [{ customFieldId: 'field-link-1', link: { url: 'https://example.com' } }] });
 
-      await api.setFieldValue('card-1', 'field-link-1', 'https://example.com');
-      expect(mockClient.put).toHaveBeenCalledWith(
-        '/cards/card-1',
-        { customFields: [{ customFieldId: 'field-link-1', link: { url: 'https://example.com' } }] }
-      );
+      expect(await api.fieldWrite('field-link-1', 'https://example.com')).toEqual({
+        key: 'link',
+        value: { url: 'https://example.com' },
+      });
     });
   });
 

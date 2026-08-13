@@ -183,7 +183,7 @@ export function registerCustomFieldsCommands(program: Command): void {
         // command's dry run at zero requests and no credential, and routing it
         // must not take that away.
         if (options.dryRun && !config.scopeCollectionId) {
-          previewOnly('update', args);
+          previewOnly('update', args, config);
           return;
         }
 
