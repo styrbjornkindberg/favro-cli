@@ -284,14 +284,14 @@ dependency edges all used to write, and each refuses as a whole now.
   collection writes take the lock at their own. "`cards create --csv/--bulk` and `cards
   update --from-csv` are bulk edits, not intents … no compensation log" stopped being
   true for the CSV path when #110 routed it onto the `update` intent, and was never true
-  for `cards create --csv`; both dispatch the whole file as ONE invocation capped at 20
-  rows, so a failure on row 12 unwinds rows 1-11. And "every write command … takes
+  for `cards create --csv`; both dispatch the whole file as ONE invocation and REFUSE
+  over 20 rows — a failure on row 12 unwinds rows 1-11. And "every write command … takes
   `--dry-run`" is now "most": `git branch`, `git commit`, `members remove`, `webhooks
-  delete` and `tracker init` do not declare the flag. The same corrections landed in
-  `README.md`, `docs/commands.md` and the shipped skill's `command-reference.md`, which
-  all said the collection lock checks "every write command"'s target *board* — it does
-  not for the five collection-target writes, nor for the nine org-wide ones that land on
-  no board at all.
+  delete` and `tracker init` do not declare the flag, and `README.md`'s "every write is
+  previewed before executing" is corrected with them. Separately, `docs/commands.md` and
+  the shipped skill's `command-reference.md` both said the collection lock checks "every
+  write command"'s target *board* — it does not for the six collection-target writes, nor
+  for the nine org-wide ones that land on no board at all.
 
 - A whitespace-only `--tags` entry (`--tags "bug, ,urgent"`) reached the tag resolver as a
   blank tag *name*, and an unknown name on a write is a tag creation. It is dropped now.

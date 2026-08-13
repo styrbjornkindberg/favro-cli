@@ -41,7 +41,7 @@ THE SCOPE LOCK, AND THE TWO GUARDS BESIDE IT
   A write that lands on a BOARD resolves it and checks it against the locked
   collection first; a batch that straddles the lock refuses whole. The INTENTS
   below take it in the shared dispatch table — the CLI, 'skill run' and MCP get
-  one check; every OTHER write (a comment, a task, a board, a column, a member)
+  one check; every other BOARD write (comment, task, board, column, member)
   takes it at its own call site. '--force' is the only escape hatch, and MOST
   write commands confirm ('-y' skips) and take '--dry-run', a preview not a wall.
 
@@ -123,7 +123,7 @@ BUILT-IN SKILLS
 
 BULK IS ONE TRANSACTION, NOT MANY
   'cards create --csv/--bulk' and 'cards update --from-csv' dispatch the whole
-  file as ONE intent invocation capped at 20 rows: row 12 failing unwinds 1-11.
+  file as ONE invocation, refusing over 20 rows: row 12 failing unwinds 1-11.
 `;
 
 /**

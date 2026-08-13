@@ -213,6 +213,16 @@ add`/`update`/`delete`, `webhooks delete`, `tracker init`. The 26 include every 
 `attachments` write, plus `tags delete` and `groups delete`. All 38 exit 1 and all 38 report the
 violation somewhere; none is silent on both streams.
 
+> **Two of the 26 no longer exist, and the denominator has moved twice (#111).** #110 deleted
+> `batch` and `batch-smart`. The 38/12/26 split above is the measurement as it was TAKEN, not a
+> claim about today — it is left standing because the argument it supports is about the entry
+> point, which is unchanged. The live denominators are carried by
+> `src/__tests__/commands/dry-run-scope-order-wire.test.ts`, which scans `src/commands` for
+> `.command(…)` registrations that call a scope guard and asserts them exactly: **26 guarded, 23
+> with a preview** on HEAD, 30/27 before #110, 38 before #109 routed eight of them through the
+> table. That scan counts guarded REGISTRATIONS rather than write paths, so it is the successor
+> to this number and not the same number re-measured.
+
 So #133 is the necessary half and not the sufficient one, and the acceptance criterion "a scope
 violation under the JSON default emits the error envelope on stdout" holds on 12 paths of 38. Both
 helpers now throw, which is what no caller could work around; the remaining silence is a property

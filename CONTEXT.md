@@ -225,8 +225,12 @@ credential. The **shape** of the refusal still differs by migration state, and t
 
 Stated as a whole-CLI rule this time, because it is now **checkable** rather than
 generalised: `dry-run-scope-order-wire.test.ts` scans every `.command(…)` registration in
-`src/commands` that calls a scope guard — 38 of them, 33 with an `if (options.dryRun)`
-preview — and fails on any whose preview precedes its guard. Falsifiable in both
+`src/commands` that calls a scope guard — **26 of them, 23 with an `if (options.dryRun)`
+preview** — and fails on any whose preview precedes its guard. (Those counts read 38/33
+here until #111 re-measured them: #109 routed eight of the commands through the dispatch
+table, so their `checkScope(` text is gone from the command file, and #110 deleted
+`batch`/`batch-smart` with four guarded, previewing blocks between them. The test's own
+assertion is the arbiter and has carried 26/23 since #110.) Falsifiable in both
 polarities: the same predicate run against `src/commands` at `8754500` reports exactly the
 five gaps #155 closed, at the five lines the ticket named. It is a text scan, and its
 ceiling is measured against constructed bypasses rather than guessed at: a preview hoisted

@@ -599,6 +599,54 @@ describe('the exemption for dispatch-routed commands is founded', () => {
     // start hiding real writes.
     expect(actions.filter((a) => a.routed).length).toBeGreaterThan(4);
   });
+
+  it("dispatch.ts's header counts every guard the tree actually has", () => {
+    // The other half of the exemption. The arms above pin that the check EXISTS
+    // and that something routes through it; `dispatch.ts`'s header is what tells
+    // a reader which writes do NOT, and it states that as four numbers.
+    //
+    // Numbers rot the way the claim they replaced rotted: the header said the
+    // guardrails held "on every path" until #111 measured 26 guard call sites
+    // outside the table. Nothing read those digits, so this reads them — off the
+    // prose, against the tree, with NO literal on either side. Add a
+    // `checkScope(` call and the header is red until it says so; delete one and
+    // it is red too.
+    const text = (sf: ts.SourceFile) => sf.getFullText();
+    const header = text(sourceFiles.find((sf) => sf.fileName.endsWith(`lib${path.sep}dispatch.ts`))!);
+    // `safety.ts` declares all five and is where `checkResolvedScope` calls
+    // `checkScope`, so counting it would count the plumbing as call sites.
+    // `test-support/` is a stand, not a caller.
+    const tree = sourceFiles.filter(
+      (sf) =>
+        !sf.fileName.endsWith(`lib${path.sep}safety.ts`) &&
+        !sf.fileName.includes(`${path.sep}test-support${path.sep}`),
+    );
+    // A text scan, and its ceiling is the same one every text scan here has: a
+    // guard named in PROSE with its parentheses would inflate the count. No
+    // comment in the tree spells one that way today, and the header itself is
+    // careful not to.
+    const live = (guard: string): number =>
+      tree.reduce((n, sf) => n + (text(sf).match(new RegExp(`\\b${guard}\\s*\\(`, 'g')) ?? []).length, 0);
+
+    const claimed: Record<string, number> = {};
+    for (const guard of ['checkScope', 'checkResolvedScope', 'checkCollectionScope', 'assertOrgScope']) {
+      const said = new RegExp(`\`${guard}\` ×(\\d+)`).exec(header);
+      expect(said).not.toBeNull();
+      claimed[guard] = Number(said![1]);
+      expect({ guard, sites: claimed[guard] }).toEqual({ guard, sites: live(guard) });
+    }
+
+    // The two DERIVED numbers in the same paragraph, so a corrected `×N` cannot
+    // leave the sums behind it stale — which is exactly the drift #111 fixed.
+    const census = /census is (\d+) to this table's (\d+)/.exec(header);
+    expect(census).not.toBeNull();
+    expect(Number(census![1])).toBe(Object.values(claimed).reduce((a, b) => a + b, 0));
+    expect(Number(census![2])).toBe(live('assertScope'));
+
+    const thunked = /so (\d+) reach the same/.exec(header);
+    expect(thunked).not.toBeNull();
+    expect(Number(thunked![1])).toBe(claimed.checkScope + claimed.checkResolvedScope);
+  });
 });
 
 /**

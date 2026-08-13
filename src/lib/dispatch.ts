@@ -17,15 +17,21 @@
  *   `add-board-instance`. A `TxCards` is constructed in exactly one production
  *   place — `dispatch()` below — and handed to nothing but an intent's own
  *   `board()` and `run`, the first of which sees only its `ReadTx` face (#107).
- *   So a card write that skipped the table would have nothing to write with.
+ *   So no card write outside the table exists today — but `CardsAPI`'s writes
+ *   stay REACHABLE: `run.ts:93` puts a live one on `ctx.api.cards` for every
+ *   `run()`-wrapped command, so this is a measured fact held by review, not a
+ *   structural impossibility. (`write-echo-wire.test.ts` discharges that class by
+ *   DELETING the method; these seven cannot go, because `TxCards` needs them.)
  *   There is no pending exception to name either: `favro execute` was the eighth
  *   unrouted write path, and ADR-0004 (#96) had it DELETED rather than routed, so
  *   #112 closed without work; #124 did the deleting at `0a963a6`.
  * - **The callers are `cli.ts`, eight modules under `src/commands/`, and
- *   `skill-engine.ts`.** Neither MCP server is one of them: both reach Favro by
- *   shelling `favro …` (`mcp-server.ts`, `execFile`), so MCP re-enters through
+ *   `skill-engine.ts`.** Neither MCP server is one of them: neither WRITES except
+ *   by shelling `favro …` (`mcp-server.ts`, `execFile`), so MCP re-enters through
  *   the CLI path it names and inherits exactly what that path does — it has no
- *   route of its own into this table to be guarded separately.
+ *   route of its own into this table to be guarded separately. (`mcp-http-server`
+ *   does build a client of its own, for one read: `GET /organizations`, to settle
+ *   which org a request belongs to.)
  * - **Writes to a card's SUB-RESOURCES and to everything that is not a card do
  *   NOT route here** — comments, tasks, tasklists, attachments, boards, columns,
  *   members, collections. They take a guard at their own call sites, and the

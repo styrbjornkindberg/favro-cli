@@ -60,7 +60,7 @@ Controls write-safety scope locking. **READ THIS BEFORE ANY WRITES.**
 | `favro scope show` | Display current lock |
 | `favro scope clear` | Remove lock |
 
-When scope is set, a write that lands on a **board** checks that board's parent collection, and a write that targets a **collection** (`boards create`, `collections update/delete`, `members add --collection-target`, `tracker init`) checks the collection itself. Either way a mismatch **exits with an error** before any API mutation. Org-wide writes — tags, user groups, webhooks, `collections create` — land on no board for the lock to resolve, so it cannot narrow them; the three irreversible ones (`tags delete`, `groups delete`, `webhooks delete`) are refused outright while a lock is set, unless you pass `--force`.
+When scope is set, a write that lands on a **board** checks that board's parent collection, and a write that targets a **collection** (`boards create`, `collections update/delete`, `members add/remove --collection-target`, `tracker init`) checks the collection itself. Either way a mismatch **exits with an error** before any API mutation. Org-wide writes — tags, user groups, webhooks, `collections create` — land on no board for the lock to resolve, so it cannot narrow them; the three irreversible ones (`tags delete`, `groups delete`, `webhooks delete`) are refused outright while a lock is set, unless you pass `--force`.
 
 ### Unconfirmed writes
 
