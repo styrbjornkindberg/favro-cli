@@ -229,6 +229,18 @@ const ALLOWLIST: Record<string, { count: number; why: string }> = {
     count: 2,
     why: 'the release note that removed it; showing the old spelling is the point',
   },
+  // DECISION — same category, one release later. 4.0.0's first breaking entry
+  // shows what an agent that still runs `batch update` now SEES: the invocation,
+  // then the refusal and the pointer. Removing the flag from that block would
+  // leave a before/after with no before.
+  //
+  // Count is exactly 1: the four table rows below it were written without their
+  // flags precisely so this stays at one, and a second occurrence — someone
+  // teaching `--from-csv` on `batch update` as though it worked — fails here.
+  'CHANGELOG.md  batch update --from-csv': {
+    count: 1,
+    why: 'the release note that removed it; showing the old spelling is the point',
+  },
   // DEBT, and bigger than a flag rename. `--parent` was added to `cards update`
   // in 3239633 and is gone now; §2.2's corollary and §4.6 are built on it, and
   // both cite `src/commands/cards-update.ts`, a file that no longer exists.
@@ -748,8 +760,10 @@ describe('every command the docs teach is a command the binary answers to', () =
     // The frozen counters, not the live ones — see DOC_ROWS_READ.
     //
     // 370/370 against 391/385 until #110 deleted the option tables for `batch
-    // update`, `batch move`, `batch assign` and `batch-smart` — 41 rows, 391→350
-    // and 385→344. The replacement floors are EXACT-FIT rather than re-slackened:
+    // update`, `batch move`, `batch assign` and `batch-smart` across
+    // `API-REFERENCE.md` and the skill reference, and added one for
+    // `cards update --from-csv`. Net 41 rows either way: 391→350 and 385→344.
+    // The replacement floors are EXACT-FIT rather than re-slackened:
     // the counters exist to notice `readOptionTables` going blind, and a floor
     // sitting 21 below the live count cannot notice a whole file's tables
     // vanishing.

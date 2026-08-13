@@ -21,6 +21,16 @@ import {
 } from '../../lib/profiling';
 
 describe('Profiler', () => {
+  /**
+   * `setTimeout(50)` is not a floor on the `performance.now()` delta across it.
+   * Measured on this tree: 49 under a full-suite run, 50+ in isolation — libuv's
+   * timer can fire a whole millisecond early against the clock the profiler
+   * reads. Asserting 50 made this arm flaky rather than strict; what it is
+   * actually for is "the span was measured at all", so it asserts that with the
+   * one millisecond of slack the runtime takes.
+   */
+  const SLEPT = 49;
+
   it('measures span durations and derives throughput from the item count', async () => {
     const profiler = new Profiler('test');
     const span = profiler.startSpan('work');
@@ -29,9 +39,9 @@ describe('Profiler', () => {
     const result = profiler.finish(10);
 
     expect(result.name).toBe('test');
-    expect(result.totalMs).toBeGreaterThanOrEqual(50);
+    expect(result.totalMs).toBeGreaterThanOrEqual(SLEPT);
     expect(result.spans).toHaveLength(1);
-    expect(result.spans[0].durationMs).toBeGreaterThanOrEqual(50);
+    expect(result.spans[0].durationMs).toBeGreaterThanOrEqual(SLEPT);
     expect(result.itemCount).toBe(10);
     expect(result.throughput).toBeGreaterThan(0);
   });

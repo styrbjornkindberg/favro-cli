@@ -162,9 +162,13 @@ export const UPDATE_CSV_COLUMNS = ['card_id', 'status', 'owner', 'due_date'] as 
 
 /**
  * Header spellings accepted as an alias of a canonical column, matched after the
- * header is trimmed and lower-cased. `cardId`, `assignee` and `dueDate` are what
- * `cards export` and the CLI's own `--assignee` flag spell, so a round trip
- * through the export is not a rename exercise.
+ * header is trimmed and lower-cased.
+ *
+ * These are the camelCase spellings the rest of the CLI uses: `cardId` is the key
+ * on every card in JSON output, `--assignee` is the flag `cards list` takes, and
+ * `dueDate` is one of `cards export`'s eight columns. The snake_case set is
+ * canonical only because `card_id` was the required column before #110 and
+ * renaming it would break every existing CSV for nothing.
  */
 const HEADER_ALIASES: Readonly<Record<string, string>> = {
   cardid: 'card_id',

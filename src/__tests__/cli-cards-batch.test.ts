@@ -4,8 +4,9 @@
  *
  * What this file pins is the CSV-SPECIFIC half: that the whole file becomes ONE
  * dispatch rather than one per row (a dispatch per row would silently give back
- * the whole-batch refusal and the cap), that each column reaches the field it
- * names, and that the two removed spellings on this command refuse by name.
+ * the whole-batch refusal and the cap), and that each column reaches the field it
+ * names. The removed spellings are in `commands/removed.test.ts`, all six
+ * together, because the thing worth comparing is that they refuse alike.
  *
  * The guardrails themselves — the cap, the straddle refusal, the boardless
  * refusal, the part-way unwind — are pinned against a real socket in
@@ -188,47 +189,17 @@ describe('favro cards update --from-csv', () => {
 
 // ─── the spellings #110 removed ──────────────────────────────────────────────
 
-describe('the predicate batch is a refusal that names its replacement', () => {
-  let program: Command;
-  let consoleErrorSpy: jest.SpyInstance;
-  let processExitSpy: jest.SpyInstance;
-
-  beforeEach(() => {
-    jest.clearAllMocks();
-    process.env.FAVRO_API_KEY = 'test-token';
-    mockResolveApiKey.mockResolvedValue('test-token');
-    mockReadConfig.mockResolvedValue({} as any);
-    jest.spyOn(console, 'log').mockImplementation(() => {});
-    consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    processExitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {}) as any);
-    program = buildProgram();
-    program.exitOverride();
-  });
-
-  afterEach(() => {
-    delete process.env.FAVRO_API_KEY;
-    jest.restoreAllMocks();
-  });
-
-  const printed = () => consoleErrorSpy.mock.calls.map((c) => String(c[0])).join('\n');
-
-  it.each([
-    ['--label + --status', ['--board', 'Q2-Dev', '--label', 'urgent', '--status', 'done']],
-    ['--assignee', ['--board', 'Q2-Dev', '--assignee', 'alice']],
-  ])('%s exits 1 and points at --from-csv', async (_label, flags) => {
-    await program.parseAsync(['node', 'favro', 'cards', 'update', ...flags, '--yes']);
-
-    expect(processExitSpy).toHaveBeenCalledWith(1);
-    expect(printed()).toContain('removed in 3.0');
-    expect(printed()).toContain('cards update --from-csv');
-  });
-
-  it('the batch-only flags are still DECLARED, so none of them is an unknown option', () => {
-    // The refusal above is the point of keeping them: commander cannot name a
+describe('the batch-only flags on this command', () => {
+  // WHAT THEY REFUSE WITH is pinned in `commands/removed.test.ts`, alongside the
+  // three `batch` subcommands and `batch-smart`, so all six removed spellings are
+  // compared in one place. What is pinned HERE is the half that lives on this
+  // command's declaration and nowhere else: the flags are still there.
+  it('are still DECLARED, so none of them is an unknown option', () => {
+    // The refusal is the point of keeping them. Commander cannot name a
     // replacement, and an agent reading `unknown option '--label'` cannot tell a
-    // removal from a typo.
-    const update = program.commands
-      .find((c) => c.name() === 'cards')!
+    // removal from a typo — it retries the same call spelled differently.
+    const update = buildProgram()
+      .commands.find((c) => c.name() === 'cards')!
       .commands.find((c) => c.name() === 'update')!;
     const flags = update.options.map((o) => o.long);
     expect(flags).toEqual(expect.arrayContaining(['--board', '--label', '--assignee']));

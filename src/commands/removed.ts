@@ -1,11 +1,12 @@
 /**
- * Commands removed in 3.0, kept registered so they can say what to run instead
+ * Commands removed in 4.0, kept registered so they can say what to run instead
  * (#110, step 5 of #92).
  *
  * `batch update`, `batch move`, `batch assign` and `batch-smart` are gone: three
- * of them derived their own write set from a board read, and all four wrote
- * through `BulkTransaction`, the second of the three rollback engines this repo
- * carried. `tx-cards` is the only one left.
+ * of them derived their own write set from a board read, and between them they
+ * carried two of this repo's three rollback engines — the three `batch`
+ * subcommands wrote through `BulkTransaction`, and `batch-smart` had a
+ * best-effort unwind of its own. `tx-cards` is the only one left.
  *
  * WHY A STUB AND NOT A DELETION. An agent that hits `unknown command` has
  * nothing to recover with — it cannot tell a removal from a typo, and the next
@@ -39,7 +40,7 @@ const ENUMERATE_FIRST =
  * the list it is handed.
  */
 const DECIDE_YOURSELF =
-  `Removed in 3.0. Decide the operations yourself, then 'favro cards update --from-csv'.`;
+  `Decide the operations yourself, then 'favro cards update --from-csv'.`;
 
 /**
  * A `RefusalError`, so the runner's error boundary owns the exit code and the
@@ -48,24 +49,25 @@ const DECIDE_YOURSELF =
  * false, which is the honest answer — running it again removes nothing.
  */
 function refuse(spelling: string, replacement: string): never {
-  throw new RefusalError(`'favro ${spelling}' was removed in 3.0.\n${replacement}`);
+  throw new RefusalError(`'favro ${spelling}' was removed in 4.0.\n${replacement}`);
 }
 
 /**
  * The four registrations, written out rather than looped.
  *
- * A table would be shorter and it does not work: `interactive-command-coverage`
- * and `list-envelope-coverage` both resolve a command's argv path by walking the
- * chain from `.action(…)` back to a `.command(<literal>)`, and a name held in a
- * variable makes that walk return `''` — the one path that is always exempt. A
- * tracer miss reading as a pass is the bypass those ratchets exist to close, so
- * the literal is load-bearing.
+ * A table would be shorter and it does not work. `interactive-command-coverage`
+ * resolves a command's argv path by walking the chain from `.action(…)` back to a
+ * `.command(<literal>)`; a name held in a variable makes that walk return `''` —
+ * the one path that is always exempt — and its own header records that a tracer
+ * miss reading as a pass is the bypass it exists to close. Measured: the looped
+ * version of this file failed that arm with `src/commands/removed.ts `. The
+ * literal is load-bearing.
  */
 export function registerRemovedCommands(program: Command): void {
   const batch = program
     .command('batch')
     .description(
-      'Removed in 3.0. Bulk card operations are one command now:\n' +
+      'Removed in 4.0. Bulk card operations are one command now:\n' +
       `  ${FROM_CSV}`
     );
 
@@ -74,21 +76,21 @@ export function registerRemovedCommands(program: Command): void {
   // `error: unknown option '--from-csv'` and the pointer never prints.
   batch
     .command('update')
-    .description(`Removed in 3.0 — ${FROM_CSV}`)
+    .description(`Removed in 4.0 — ${FROM_CSV}`)
     .arguments('[args...]')
     .allowUnknownOption()
     .action(run({ anonymous: true }, (_ctx: AnonymousCtx) => refuse('batch update', FROM_CSV)));
 
   batch
     .command('move')
-    .description(`Removed in 3.0 — ${ENUMERATE_FIRST}`)
+    .description(`Removed in 4.0 — ${ENUMERATE_FIRST}`)
     .arguments('[args...]')
     .allowUnknownOption()
     .action(run({ anonymous: true }, (_ctx: AnonymousCtx) => refuse('batch move', ENUMERATE_FIRST)));
 
   batch
     .command('assign')
-    .description(`Removed in 3.0 — ${ENUMERATE_FIRST}`)
+    .description(`Removed in 4.0 — ${ENUMERATE_FIRST}`)
     .arguments('[args...]')
     .allowUnknownOption()
     .action(
@@ -97,7 +99,7 @@ export function registerRemovedCommands(program: Command): void {
 
   program
     .command('batch-smart')
-    .description(`Removed in 3.0 — ${DECIDE_YOURSELF}`)
+    .description(`Removed in 4.0 — ${DECIDE_YOURSELF}`)
     .arguments('[args...]')
     .allowUnknownOption()
     .action(run({ anonymous: true }, (_ctx: AnonymousCtx) => refuse('batch-smart', DECIDE_YOURSELF)));

@@ -644,7 +644,7 @@ cards
     '  parser this replaced accepted custom_field_* and silently wrote none of it.\n' +
     '  The whole file is ONE transaction, capped at 20 rows: a failure on row 12\n' +
     '  unwinds rows 1-11 rather than leaving them standing.\n\n' +
-    'Removed in 3.0 — the predicate batch (`--board` with no card):\n' +
+    'Removed in 4.0 — the predicate batch (`--board` with no card):\n' +
     '  Enumerate first with `favro cards list --filter …`, then --from-csv.\n\n' +
     'Tip: Use `favro cards list --json` to find card IDs.'
   )
@@ -655,11 +655,11 @@ cards
   .option('--assignees <list>', 'Assignees, comma-separated — the whole set; drop one to unassign')
   // Still declared so the removed predicate batch reaches a refusal that names
   // its replacement, rather than commander's "unknown option".
-  .option('--assignee <user>', 'Removed in 3.0 — see --from-csv')
+  .option('--assignee <user>', 'Removed in 4.0 — see --from-csv')
   .option('--tags <list>', 'Tags (comma-separated, single card update)')
   .option('--column <column>', 'Move card to this column by name — a second spelling of --status')
-  .option('--label <label>', 'Removed in 3.0 — see --from-csv')
-  .option('--board <board>', 'Removed in 3.0 as a batch selector; ignored on a single card update')
+  .option('--label <label>', 'Removed in 4.0 — see --from-csv')
+  .option('--board <board>', 'Removed in 4.0 as a batch selector; ignored on a single card update')
   .option('--from-csv <file>', 'CSV file with card updates (columns: card_id, status, owner, due_date)')
   .option('--dry-run', 'Preview changes without writing — with --from-csv under a scope lock this still reads each row\'s card, because the lock runs before the preview, by design, so a preview cannot be a way around it')
   .option('-y, --yes', 'Skip confirmation prompt')
@@ -667,7 +667,32 @@ cards
   .option('--json', 'Output as JSON')
   .option('--verbose', 'Show stack traces on failure')
   .action(async (cardId: string | undefined, options) => {
-    // Resolve client once — shared across all 3 update code paths
+    // ── Removed in 4.0: the --board predicate batch ───────────────────────────
+    // A DERIVED write set — "every card on this board matching this label" — is
+    // the shape #92 retired along with `batch move` and `batch assign`. The
+    // command read the board, decided the set itself, and wrote to whatever came
+    // back, so what it wrote to was never in the invocation and never in any
+    // record. `--from-csv` is the same job with the set enumerated by the caller.
+    //
+    // Registered rather than removed: an agent that hits "unknown option" has
+    // nothing to recover with, and this one is a FLAG COMBINATION, so commander
+    // could not have refused it by name at all.
+    //
+    // FIRST, above the credential resolution: a removal needs no client, and
+    // measured against the built CLI with none configured this branch answered
+    // "API key not found" — a refusal naming the wrong problem, on the one input
+    // whose whole job is to name the right one.
+    if (options.board && !cardId) {
+      console.error(
+        `✗ 'favro cards update --board <board>' (predicate batch) was removed in 4.0.\n` +
+          `  Enumerate first with 'favro cards list --filter …', then ` +
+          `'favro cards update --from-csv <file>'.`,
+      );
+      process.exit(1);
+      return;
+    }
+
+    // Resolve client once — shared across the single-card and --from-csv paths
     let client: import('./lib/http-client').default;
     try { client = await createFavroClient(); }
     catch (err: any) { logError(err, program.opts().verbose); process.exit(1); return; }
@@ -772,26 +797,6 @@ cards
       }
       return;
     // (end of fromCsv path)
-    }
-
-    // ── Removed in 3.0: the --board predicate batch ───────────────────────────
-    // A DERIVED write set — "every card on this board matching this label" — is
-    // the shape #92 retired along with `batch move` and `batch assign`. The
-    // command read the board, decided the set itself, and wrote to whatever came
-    // back, so what it wrote to was never in the invocation and never in any
-    // record. `--from-csv` is the same job with the set enumerated by the caller.
-    //
-    // Registered rather than removed: an agent that hits "unknown option" has
-    // nothing to recover with, and this one is a FLAG COMBINATION, so commander
-    // could not have refused it by name at all.
-    if (options.board && !cardId) {
-      console.error(
-        `✗ 'favro cards update --board <board>' (predicate batch) was removed in 3.0.\n` +
-          `  Enumerate first with 'favro cards list --filter …', then ` +
-          `'favro cards update --from-csv <file>'.`,
-      );
-      process.exit(1);
-      return;
     }
 
     // ── Single card update ────────────────────────────────────────────────────
