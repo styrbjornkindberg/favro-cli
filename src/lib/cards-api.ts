@@ -1150,7 +1150,9 @@ export class CardsAPI {
     mapDescription(payload);
     // Same settling as `createCard`: a board NAME on a PUT moves the card
     // nowhere and answers 200 (#82).
-    const boardId = await this.boardIdOf(
+    // `let`, because the column guard below fills it from the card when this
+    // write named no board of its own — see there.
+    let boardId = await this.boardIdOf(
       (payload.widgetCommonId ?? payload.boardId) as string | undefined,
     );
     delete payload.boardId;
@@ -1167,6 +1169,38 @@ export class CardsAPI {
       delete payload.status;
       const columnBoardId = boardId ?? (await currentCard()).boardId;
       payload.columnId = await this.columns.resolveColumnId(status, columnBoardId);
+    }
+
+    // Favro resolves `columnId` AGAINST `widgetCommonId`, so a PUT carrying a
+    // column and no board has nothing to resolve it against. MEASURED 2026-08-13
+    // (#162), raw HTTP against the live API: `PUT {columnId}` answers
+    // `202 {"message":"Access denied"}` and the card does not move;
+    // `PUT {columnId, widgetCommonId}` answers 200 and it does; and a
+    // widgetCommonId naming the WRONG board answers `202 {"message":"Invalid
+    // column"}` — which is what proves the board is the resolution context and
+    // "Access denied" is a resolution failure wearing a rights message. 202 is a
+    // success to axios, so without this every column move was silently denied.
+    //
+    // Sending the card's OWN board is a no-op for board membership: a field diff
+    // across a fixed move changed only `columnId`, `listPosition`, time counters
+    // and one board-automation custom field.
+    //
+    // Filled here rather than at the call sites because this is the seam every
+    // column move funnels through — `cards update --status`/`--column`,
+    // `resolve`, `claim`, bulk CSV `status` rows, and `TxCards.moveColumn`'s own
+    // `applyInverse`, which was denied for this same reason and so could not
+    // unwind a move. On the `status` path the read above already happened, so
+    // this costs nothing; an explicit `columnId` pays one GET.
+    //
+    // Conditioned on `boardId`, not on `payload.widgetCommonId`: the two say the
+    // same thing by the time we get here (the line above writes the payload key
+    // from this local, and only from it), and keeping the card's board in the
+    // same local means there is still exactly ONE name for a settled board id in
+    // this method — which is what the #82 ratchet reads. Resolution is not needed
+    // on this value: it is an id off the card's own GET row, never a board name.
+    if (payload.columnId !== undefined && !boardId) {
+      boardId = (await currentCard()).boardId;
+      if (boardId) payload.widgetCommonId = boardId;
     }
 
     // Favro ignores both `assignees` and `assignmentIds` on PUT (200, no change)

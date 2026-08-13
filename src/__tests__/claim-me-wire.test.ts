@@ -257,7 +257,7 @@ describe('claim with no --assignee resolves @me through the config', () => {
     // userId, and the placeholder is resolved before it ever leaves the CLI.
     expect(puts(stand.received).map((r) => r.body)).toEqual([
       { addAssignmentIds: [ME] },
-      { columnId: DOING },
+      { columnId: DOING, widgetCommonId: BOARD },
     ]);
     expect(JSON.stringify(stand.received)).not.toContain('@me');
 

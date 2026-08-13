@@ -391,7 +391,7 @@ describe('git sync writes a column move that actually lands', () => {
 
     const puts = writes(received).filter((r) => r.method === 'PUT');
     expect(puts).toHaveLength(1);
-    expect(puts[0].body).toEqual({ columnId: DONE });
+    expect(puts[0].body).toEqual({ columnId: DONE, widgetCommonId: IN_BOARD });
     expect(puts[0].body).not.toHaveProperty('status');
   });
 

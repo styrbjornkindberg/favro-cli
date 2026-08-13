@@ -1099,7 +1099,7 @@ describe('claim and resolve act on the tracker-board instance', () => {
     // would unassign whoever else is on the card.
     expect(puts(stand.received).map((r) => r.body)).toEqual([
       { addAssignmentIds: [ALICE] },
-      { columnId: DOING },
+      { columnId: DOING, widgetCommonId: BOARD },
     ]);
     expect(stand.cards.get(CARD)!.assignments).toEqual([{ userId: ALICE }]);
     expect(stand.cards.get(CARD)!.columnId).toBe(DOING);
@@ -1112,7 +1112,9 @@ describe('claim and resolve act on the tracker-board instance', () => {
     const result = await dispatch<{ columnId?: string }>('resolve', { card: CARD }, ctx(stand));
 
     expect(result.outcome).toBe('ok');
-    expect(puts(stand.received).map((r) => r.body)).toEqual([{ columnId: DONE }]);
+    expect(puts(stand.received).map((r) => r.body)).toEqual([
+      { columnId: DONE, widgetCommonId: BOARD },
+    ]);
     expect(stand.cards.get(CARD)!.columnId).toBe(DONE);
   });
 
@@ -1278,7 +1280,7 @@ describe('a column move is confirmed by RE-READING the card, never by the PUT ec
     expect(stand.cards.get(CARD)!.assignments).toEqual([]);
     expect(puts(stand.received).map((r) => r.body)).toEqual([
       { addAssignmentIds: [ALICE] },
-      { columnId: DOING },
+      { columnId: DOING, widgetCommonId: BOARD },
       { removeAssignmentIds: [ALICE] },
     ]);
   });
@@ -1370,8 +1372,12 @@ describe('a column move is confirmed by RE-READING the card, never by the PUT ec
     // Both writes are undone, newest first, and the card ends where it started.
     expect(puts(stand.received).map((r) => r.body)).toEqual([
       { addAssignmentIds: [ALICE] },
-      { columnId: DOING },
-      { columnId: TODO },
+      { columnId: DOING, widgetCommonId: BOARD },
+      // The unwind carries the board too. It has to: `applyInverse` is a column
+      // write like any other, and without `widgetCommonId` Favro denies it with a
+      // 202 the stack reads as success — so before #162 this rollback could not
+      // land, on the one path whose whole job is landing.
+      { columnId: TODO, widgetCommonId: BOARD },
       { removeAssignmentIds: [ALICE] },
     ]);
     expect(stand.cards.get(CARD)!.columnId).toBe(TODO);

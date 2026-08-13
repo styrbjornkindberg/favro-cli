@@ -531,7 +531,9 @@ describe('each field goes out in the spelling Favro honours (#108)', () => {
 
     expect(cards.get(IN_CARD)!.columnId).toBe(DONE);
     const written = puts(received).map((r) => r.body);
-    expect(written).toEqual([{ columnId: DONE }]);
+    // `widgetCommonId` rides along because Favro resolves `columnId` against it —
+    // without it the move is denied with a 202 the stack reads as success (#162).
+    expect(written).toEqual([{ columnId: DONE, widgetCommonId: IN_BOARD }]);
     for (const body of written) expect(body).not.toHaveProperty('status');
     expect(said()).toContain(`✓ Card updated: ${IN_CARD} (status)`);
   });
@@ -659,7 +661,7 @@ describe('a part-way failure unwinds the fields already written (#108)', () => {
     // nothing would satisfy the assertions above.
     expect(puts(received).map((r) => r.body)).toEqual([
       { name: 'Renamed' },
-      { columnId: DONE },
+      { columnId: DONE, widgetCommonId: IN_BOARD },
       { name: 'Original name' },
     ]);
     // The wire named the failure (403), so the same call fails the same way.

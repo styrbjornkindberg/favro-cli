@@ -20,6 +20,11 @@
  *                               `parentCardId: null` → 400. Hence no `--parent`
  *                               on update and no unparent flag — nothing to test
  *                               here beyond the field being gone from the type.
+ * - `PUT {columnId}`          → 202 "Access denied", card unmoved;
+ *   (#162, 2026-08-13)          `PUT {columnId, widgetCommonId}` → 200 and moved;
+ *                               a WRONG `widgetCommonId` → 202 "Invalid column".
+ *                               See the last describe — the denial is a 2xx, which
+ *                               is the shape no other stand in this suite models.
  */
 import * as http from 'http';
 import { AddressInfo } from 'net';
@@ -283,7 +288,7 @@ describe('updateCard status writes are a column move (no client mock)', () => {
     try {
       await api.updateCard(CARD, { status: 'Done' });
       const body = putBody(received);
-      expect(body).toEqual({ columnId: DONE });
+      expect(body).toEqual({ columnId: DONE, widgetCommonId: BOARD });
       expect(body).not.toHaveProperty('status');
     } finally {
       await close();
@@ -294,7 +299,7 @@ describe('updateCard status writes are a column move (no client mock)', () => {
     const { api, received, close } = await startServer(favro());
     try {
       await api.updateCard(CARD, { status: 'done' });
-      expect(putBody(received)).toEqual({ columnId: DONE });
+      expect(putBody(received)).toEqual({ columnId: DONE, widgetCommonId: BOARD });
     } finally {
       await close();
     }
@@ -304,7 +309,7 @@ describe('updateCard status writes are a column move (no client mock)', () => {
     const { api, received, close } = await startServer(favro());
     try {
       await api.updateCard(CARD, { status: DONE });
-      expect(putBody(received)).toEqual({ columnId: DONE });
+      expect(putBody(received)).toEqual({ columnId: DONE, widgetCommonId: BOARD });
     } finally {
       await close();
     }
@@ -336,6 +341,105 @@ describe('updateCard status writes are a column move (no client mock)', () => {
     try {
       await api.updateCard(CARD, { boardId: OTHER_BOARD, status: 'Shipped' });
       expect(putBody(received)).toEqual({ widgetCommonId: OTHER_BOARD, columnId: SHIPPED });
+    } finally {
+      await close();
+    }
+  });
+});
+
+/**
+ * Favro as the COLUMN path actually behaves. Every other stand in this suite
+ * answers 200 to any PUT, which is why 3584 green tests could not see #162: the
+ * live API resolves `columnId` against `widgetCommonId`, and a PUT that names a
+ * column with no board to resolve it against is refused with
+ * `202 {"message":"Access denied"}`. 202 is a SUCCESS to axios, so the refusal
+ * arrives typed as a `Card` and nothing throws.
+ *
+ * Measured 2026-08-13 by raw HTTP against the live API (#162): bare `{columnId}`
+ * → 202 "Access denied" and the card does not move; `{columnId, widgetCommonId}`
+ * → 200 and it does; `widgetCommonId` naming the WRONG board → 202 "Invalid
+ * column", which is what proves the board is the resolution context rather than a
+ * rights check. All three branches are modelled below, so this stand can express
+ * a 2xx denial that the rest of the suite has no vocabulary for.
+ */
+function favroResolvingColumns(): { handler: (req: Received) => { status: number; body?: unknown }; state: { columnId: string } } {
+  const state = { columnId: TODO };
+  const routes = favro();
+  const row = () => ({
+    cardId: CARD,
+    name: 'probe',
+    widgetCommonId: BOARD,
+    columnId: state.columnId,
+    assignments: [{ userId: ALICE }],
+  });
+  return {
+    state,
+    handler: (req: Received) => {
+      if (req.method === 'PUT') {
+        const body = JSON.parse(req.body || '{}') as Record<string, unknown>;
+        if (body.columnId !== undefined) {
+          if (body.widgetCommonId === undefined) return { status: 202, body: { message: 'Access denied' } };
+          if (body.widgetCommonId !== BOARD) return { status: 202, body: { message: 'Invalid column' } };
+          state.columnId = String(body.columnId);
+        }
+        return { status: 200, body: row() };
+      }
+      // The card's own GET has to read the LIVE column, or "did it move" is
+      // unobservable and every assertion below would pass on a denied write.
+      if (req.url.startsWith(`/api/v1/cards/${CARD}`)) return { status: 200, body: row() };
+      return routes(req);
+    },
+  };
+}
+
+describe('a column move carries the board the column is resolved against (#162)', () => {
+  test('an explicit columnId ships with widgetCommonId, and the card actually moves', async () => {
+    // The shape `TxCards.moveColumn` sends — and its `applyInverse`, so this is
+    // also the arm standing behind the unwind of a column move.
+    const { handler, state } = favroResolvingColumns();
+    const { api, received, close } = await startServer(handler);
+    try {
+      await api.updateCard(CARD, { columnId: DONE });
+      expect(putBody(received)).toEqual({ columnId: DONE, widgetCommonId: BOARD });
+      // Not just the bytes: the stand refuses the bare shape, so a card that
+      // moved is proof the board was there.
+      expect(state.columnId).toBe(DONE);
+    } finally {
+      await close();
+    }
+  });
+
+  test('the `status` spelling lands the same way, through the read it already took', async () => {
+    const { handler, state } = favroResolvingColumns();
+    const { api, received, close } = await startServer(handler);
+    try {
+      await api.updateCard(CARD, { status: 'Done' });
+      expect(putBody(received)).toEqual({ columnId: DONE, widgetCommonId: BOARD });
+      expect(state.columnId).toBe(DONE);
+      // `status` already reads the card to resolve the name against its board, so
+      // the guard rides that read rather than buying one.
+      expect(cardReads(received)).toHaveLength(1);
+    } finally {
+      await close();
+    }
+  });
+
+  test('a 202 denial is handed back as a Card with no cardId — nothing throws at this seam', async () => {
+    // The wrong-board branch, which is the one that still reaches the live API:
+    // a board we resolved but whose columns do not include this one. It is the
+    // same 2xx-denial family, and the point of the arm is what the seam does with
+    // it — returns it. `updateCard` refuses a 202 only for `customFields`
+    // (`cards-api.ts`), so a caller here sees a row on which every field is
+    // undefined, and `TxCards.moveColumn`'s re-read is what catches it.
+    const { handler, state } = favroResolvingColumns();
+    const { api, close } = await startServer(handler);
+    try {
+      const answer = await api.updateCard(CARD, { columnId: DONE, boardId: OTHER_BOARD });
+      expect((answer as { cardId?: string }).cardId).toBeUndefined();
+      expect((answer as unknown as { message?: string }).message).toBe('Invalid column');
+      // And the card did not move, which is what makes the silence a defect
+      // rather than a cosmetic one.
+      expect(state.columnId).toBe(TODO);
     } finally {
       await close();
     }
@@ -411,6 +515,7 @@ describe('updateCard shared read and description bytes', () => {
       expect(cardReads(received)).toHaveLength(1);
       expect(putBody(received)).toEqual({
         columnId: DONE,
+        widgetCommonId: BOARD,
         addAssignmentIds: [BOB],
         removeAssignmentIds: [ALICE],
       });
