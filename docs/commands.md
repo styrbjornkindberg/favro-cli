@@ -249,7 +249,7 @@ favro auth check     — Show stored credential info
 | `favro scope show` | Display current lock |
 | `favro scope clear` | Remove lock |
 
-When scope is set, every write command checks the target board's parent collection. Mismatches exit with an error before any mutation.
+When scope is set, a write that lands on a board checks that board's parent collection, and a write that targets a collection checks the collection itself. Mismatches exit with an error before any mutation. Org-wide writes (tags, user groups, webhooks, `collections create`) land on no board, so the lock cannot narrow them — the three irreversible ones are refused outright while a lock is set.
 
 ---
 

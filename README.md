@@ -391,10 +391,10 @@ The CLI has three built-in safety layers that the LLM is instructed to use:
 | Layer | What it does |
 |-------|-------------|
 | **Scope lock** | Writes are blocked outside the collection you specify |
-| **Dry-run** | Every write is previewed before executing |
+| **Dry-run** | Most write commands take `--dry-run` and preview instead of writing |
 | **Confirmation** | The LLM shows you what it plans to do and asks before acting |
 
-The LLM will always `--dry-run` first, show you the result, and wait for you to say go.
+The LLM will `--dry-run` first wherever the command takes the flag, show you the result, and wait for you to say go. It is a preview, not a safety wall — the scope lock is what actually blocks a write, and it runs before the preview.
 
 ---
 

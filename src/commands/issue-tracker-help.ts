@@ -38,11 +38,12 @@ ROLLBACK GUARD — READ THIS FIRST
   does not settle retry: read the 'retryable' field, never the outcome.
 
 THE SCOPE LOCK, AND THE TWO GUARDS BESIDE IT
-  Every write resolves the board it lands on and checks it against the locked
-  collection first; a batch that straddles the lock refuses as a whole. It lives
-  in the shared dispatch table, so the CLI, 'skill run' and MCP all pass the same
-  one, and '--force' is the only escape hatch. Every write command also confirms
-  ('-y' skips the prompt) and takes '--dry-run' — a preview, never a safety wall.
+  A write that lands on a BOARD resolves it and checks it against the locked
+  collection first; a batch that straddles the lock refuses whole. The INTENTS
+  below take it in the shared dispatch table — the CLI, 'skill run' and MCP get
+  one check; every OTHER write (a comment, a task, a board, a column, a member)
+  takes it at its own call site. '--force' is the only escape hatch, and MOST
+  write commands confirm ('-y' skips) and take '--dry-run', a preview not a wall.
 
 INTENTS
   Thirteen, one call each — no chain to author. Each has a CLI spelling; the
@@ -120,10 +121,9 @@ BUILT-IN SKILLS
   Need a chain of your own? Author a skill ('favro skill create') rather than
   several CLI calls: a run is ONE transaction over ONE compensation log.
 
-NOT EVERY WRITE IS A SAGA
-  'cards create --csv/--bulk' and 'cards update --from-csv' are bulk edits, not
-  intents: same scope lock, no compensation log, a part-way failure reported per
-  row rather than unwound.
+BULK IS ONE TRANSACTION, NOT MANY
+  'cards create --csv/--bulk' and 'cards update --from-csv' dispatch the whole
+  file as ONE intent invocation capped at 20 rows: row 12 failing unwinds 1-11.
 `;
 
 /**
