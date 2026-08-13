@@ -777,13 +777,15 @@ describe('every command the docs teach is a command the binary answers to', () =
     // sitting 21 below the live count cannot notice a whole file's tables
     // vanishing.
     //
-    // 350/344 until #119 deleted the `--json` row from every migrated command's
-    // option tables — the flag stops existing when JSON becomes the DEFAULT and
-    // `--human` is the way out (ADR-0002), so the rows documented a flag the
-    // binary would refuse. Nothing was moved or reworded; the count is the
-    // deletion, re-measured with this expression at each step of the migration.
-    expect(DOC_ROWS_READ).toBeGreaterThan(336); // 337 today, over 5 files
-    expect(DOC_ROWS_SCOPED).toBeGreaterThan(330); // 331 today; the other 6 are `## Global Options`
+    // 350/344 until #119 deleted the `--json` row from EVERY migrated command's
+    // option tables. The flag stops existing when JSON becomes the DEFAULT and
+    // `--human` is the way out (ADR-0002), so those rows documented a flag the
+    // binary now refuses by name. 39 rows over `API-REFERENCE.md`, the skill
+    // reference and `docs/commands.md`; nothing was moved or reworded, so the
+    // whole drop is the deletion. Re-measured by instrumenting this expression
+    // on the finished tree rather than estimated from the diff.
+    expect(DOC_ROWS_READ).toBeGreaterThan(310); // 311 today, over 5 files
+    expect(DOC_ROWS_SCOPED).toBeGreaterThan(304); // 305 today; the other 6 are `## Global Options`
     // …and the `\`-continued commands were joined rather than read one line at a
     // time. Zero here means every flag past the first line went unchecked again.
     expect(DOC_CONTINUED).toBeGreaterThan(45); // 58 joins today

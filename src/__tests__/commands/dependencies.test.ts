@@ -24,7 +24,10 @@ const MockCardsAPI = CardsAPI as jest.MockedClass<typeof CardsAPI>;
 
 function buildProgram(): Command {
   const program = new Command();
-  program.option('--verbose', 'Show stack traces');
+  // `--human` and `--pretty` declared at the root, and `--human` PREPENDED to
+  // every drive: #119 moved this command onto `run()`, so JSON is the default
+  // (ADR-0002) and the prose these arms assert lives on the `human` formatter.
+  program.option('--human').option('--pretty').option('--verbose', 'Show stack traces');
   registerDependenciesCommands(program);
   return program;
 }
@@ -32,7 +35,7 @@ function buildProgram(): Command {
 async function runCli(args: string[]): Promise<void> {
   const program = buildProgram();
   program.exitOverride();
-  await program.parseAsync(['node', 'favro', ...args]);
+  await program.parseAsync(['node', 'favro', '--human', ...args]);
 }
 
 beforeEach(() => {
@@ -60,6 +63,18 @@ beforeEach(() => {
  * "created" and "already there" are decided by an observation of the edge rather
  * than by whether a response echoed anything.
  */
+/**
+ * `run()` sets `process.exitCode` instead of exiting, and jest shares one
+ * process per worker — an un-reset code leaks into the worker's own exit and
+ * into the next arm's assertion.
+ */
+beforeEach(() => {
+  process.exitCode = undefined;
+});
+afterEach(() => {
+  process.exitCode = undefined;
+});
+
 describe('favro dependencies add', () => {
   let consoleSpy: jest.SpyInstance;
   let exitSpy: jest.SpyInstance;
@@ -67,7 +82,9 @@ describe('favro dependencies add', () => {
   beforeEach(() => {
     consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
     jest.spyOn(console, 'error').mockImplementation(() => {});
-    exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {}) as any);
+    exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {
+    throw new Error('process.exit must not be called under run()');
+  }) as never);
   });
 
   afterEach(() => { jest.restoreAllMocks(); });
@@ -81,7 +98,7 @@ describe('favro dependencies add', () => {
     // card-2 with card-1 as its blocker — the arguments swap.
     expect(MockCardsAPI.prototype.linkCard).toHaveBeenCalledWith('card-2', { toCardId: 'card-1', isBefore: true });
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('✓ Dependency added'));
-    expect(exitSpy).not.toHaveBeenCalled();
+    expect(process.exitCode).toBeUndefined();
   });
 
   it('an edge already there is reported as such and NOT rewritten', async () => {
@@ -94,7 +111,7 @@ describe('favro dependencies add', () => {
 
     expect(MockCardsAPI.prototype.linkCard).not.toHaveBeenCalled();
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Already linked'));
-    expect(exitSpy).not.toHaveBeenCalled();
+    expect(process.exitCode).toBeUndefined();
   });
 
   it('the REVERSE edge refuses rather than claiming the direction it asked for', async () => {
@@ -106,7 +123,7 @@ describe('favro dependencies add', () => {
     await runCli(['dependencies', 'add', 'card-1', 'card-2', '--type', 'blocks', '--yes']);
 
     expect(MockCardsAPI.prototype.linkCard).not.toHaveBeenCalled();
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   /**
@@ -167,7 +184,7 @@ describe('favro dependencies add', () => {
     await runCli(['dependencies', 'add', 'card-1', 'card-2', '--type', 'blocks', '--yes']);
 
     expect(MockCardsAPI.prototype.linkCard).not.toHaveBeenCalled();
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 });
 
@@ -178,7 +195,9 @@ describe('favro dependencies delete', () => {
   beforeEach(() => {
     consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
     jest.spyOn(console, 'error').mockImplementation(() => {});
-    processExitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {}) as any);
+    processExitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {
+    throw new Error('process.exit must not be called under run()');
+  }) as never);
     MockCardsAPI.prototype.getCardLinks = jest.fn().mockResolvedValue([{ cardId: 'card-2', isBefore: true }]);
   });
 
@@ -221,7 +240,7 @@ describe('favro dependencies delete', () => {
     await runCli(['dependencies', 'delete', 'card-1', 'card-2', '--yes']);
 
     expect(MockCardsAPI.prototype.unlinkCard).not.toHaveBeenCalled();
-    expect(processExitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   it('with NO lock configured a --dry-run reads no card at all — the preview is free', async () => {
@@ -244,7 +263,9 @@ describe('favro dependencies delete-all', () => {
   beforeEach(() => {
     consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
     errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    processExitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {}) as any);
+    processExitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {
+    throw new Error('process.exit must not be called under run()');
+  }) as never);
   });
 
   afterEach(() => { jest.restoreAllMocks(); });
@@ -296,7 +317,7 @@ describe('favro dependencies delete-all', () => {
     expect(said).toMatch(/capped at 20/);
     expect(said).toMatch(/21 dependency edges/);
     expect(said).toMatch(/not a page size/);
-    expect(processExitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   it('aborts when user declines', async () => {

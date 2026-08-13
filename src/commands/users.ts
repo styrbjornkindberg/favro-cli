@@ -6,11 +6,25 @@
  * favro groups list
  */
 import { Command } from 'commander';
-import UsersAPI from '../lib/users-api';
-import { createFavroClient } from '../lib/client-factory';
-import { logError } from '../lib/error-handler';
+import { User, UserGroup } from '../lib/users-api';
+import { RefusalError } from '../lib/refusal';
 import { assertOrgScope, confirmAction, dryRunLog } from '../lib/safety';
-import { capRows, noteTruncation, writeEnvelope } from '../lib/read-shape';
+import { Ctx, run } from '../lib/run';
+
+/** The flag row the group writes share. */
+interface GroupWriteFlags {
+  name?: string;
+  members?: string;
+  addMembers?: string;
+  removeMembers?: string;
+  dryRun?: boolean;
+  yes?: boolean;
+  force?: boolean;
+}
+
+/** A comma-separated flag value, as the three group writes read it. */
+const idList = (value?: string): string[] | undefined =>
+  value ? value.split(',').map((s) => s.trim()) : undefined;
 
 export function registerUsersCommands(program: Command): void {
   const usersCommand = program.command('users').description('Manage organization users');
@@ -19,59 +33,33 @@ export function registerUsersCommands(program: Command): void {
     .command('list')
     .description('List all users in the organization')
     .option('--limit <n>', 'Cap how many rows are printed; sets "truncated"')
-    .option('--json', 'Output as JSON')
-    .action(async (options) => {
-      const verbose = usersCommand.opts()?.verbose ?? false;
-      try {
-        const client = await createFavroClient();
-        const api = new UsersAPI(client);
-        const users = await api.listUsers();
-        // The fetch already ran to completion; `--limit` cuts the PRINT (#99).
-        const envelope = capRows(users, options.limit);
-
-        if (options.json) {
-          writeEnvelope(envelope, Boolean(program.opts()?.pretty));
-        } else {
-          console.log(`Found ${envelope.rows.length} user(s):`);
-          const rows = envelope.rows.map(u => ({
-            ID: u.userId,
-            Name: u.name,
-            Email: u.email,
-            Role: u.organizationRole || 'member',
-          }));
-          console.table(rows);
-          noteTruncation(envelope, users.length);
-        }
-      } catch (error: any) {
-        logError(error, verbose);
-        process.exit(1);
-      }
-    });
+    .action(run(async (ctx: Ctx, options: { limit?: string }) => ({
+      // The fetch runs to completion; `--limit` cuts the PRINT (#99).
+      rows: await ctx.api.users.listUsers(),
+      limit: options.limit,
+      human: (users: User[]) => {
+        console.log(`Found ${users.length} user(s):`);
+        console.table(users.map(u => ({
+          ID: u.userId,
+          Name: u.name,
+          Email: u.email,
+          Role: u.organizationRole || 'member',
+        })));
+      },
+    })));
 
   usersCommand
     .command('get <user>')
     .description('Get one user by name, email or userId')
-    .option('--json', 'Output as JSON')
-    .action(async (user: string, options) => {
-      const verbose = usersCommand.opts()?.verbose ?? false;
-      try {
-        const client = await createFavroClient();
-        const api = new UsersAPI(client);
-        const found = await api.getUser(user);
-
-        if (options.json) {
-          console.log(JSON.stringify(found, null, 2));
-        } else {
-          console.log(`User: ${found.name}`);
-          console.log(`ID: ${found.userId}`);
-          console.log(`Email: ${found.email}`);
-          console.log(`Role: ${found.organizationRole || 'member'}`);
-        }
-      } catch (error: any) {
-        logError(error, verbose);
-        process.exit(1);
-      }
-    });
+    .action(run(async (ctx: Ctx, user: string) => ({
+      item: await ctx.api.users.getUser(user),
+      human: (found: User) => [
+        `User: ${found.name}`,
+        `ID: ${found.userId}`,
+        `Email: ${found.email}`,
+        `Role: ${found.organizationRole || 'member'}`,
+      ].join('\n'),
+    })));
 
   const groupsCommand = program.command('groups').description('Manage organization user groups');
 
@@ -79,59 +67,33 @@ export function registerUsersCommands(program: Command): void {
     .command('list')
     .description('List all user groups in the organization')
     .option('--limit <n>', 'Cap how many rows are printed; sets "truncated"')
-    .option('--json', 'Output as JSON')
-    .action(async (options) => {
-      const verbose = groupsCommand.opts()?.verbose ?? false;
-      try {
-        const client = await createFavroClient();
-        const api = new UsersAPI(client);
-        const groups = await api.listGroups();
-        // The fetch already ran to completion; `--limit` cuts the PRINT (#99).
-        const envelope = capRows(groups, options.limit);
-
-        if (options.json) {
-          writeEnvelope(envelope, Boolean(program.opts()?.pretty));
-        } else {
-          console.log(`Found ${envelope.rows.length} group(s):`);
-          const rows = envelope.rows.map(g => ({
-            ID: g.userGroupId,
-            Name: g.name,
-            Members: (g.userIds || []).length,
-          }));
-          console.table(rows);
-          noteTruncation(envelope, groups.length);
-        }
-      } catch (error: any) {
-        logError(error, verbose);
-        process.exit(1);
-      }
-    });
+    .action(run(async (ctx: Ctx, options: { limit?: string }) => ({
+      rows: await ctx.api.users.listGroups(),
+      limit: options.limit,
+      human: (groups: UserGroup[]) => {
+        console.log(`Found ${groups.length} group(s):`);
+        console.table(groups.map(g => ({
+          ID: g.userGroupId,
+          Name: g.name,
+          Members: (g.userIds || []).length,
+        })));
+      },
+    })));
 
   groupsCommand
     .command('get <groupId>')
     .description('Get a user group by ID')
-    .option('--json', 'Output as JSON')
-    .action(async (groupId: string, options) => {
-      const verbose = groupsCommand.opts()?.verbose ?? false;
-      try {
-        const client = await createFavroClient();
-        const api = new UsersAPI(client);
-        const group = await api.getGroup(groupId);
-
-        if (options.json) {
-          console.log(JSON.stringify(group, null, 2));
-        } else {
-          console.log(`Group: ${group.name} (${group.userGroupId})`);
-          console.log(`Members: ${(group.userIds || []).length}`);
-          if (group.userIds && group.userIds.length > 0) {
-            console.log(`User IDs: ${group.userIds.join(', ')}`);
-          }
-        }
-      } catch (error: any) {
-        logError(error, verbose);
-        process.exit(1);
-      }
-    });
+    .action(run(async (ctx: Ctx, groupId: string) => ({
+      item: await ctx.api.users.getGroup(groupId),
+      human: (group: UserGroup) =>
+        [
+          `Group: ${group.name} (${group.userGroupId})`,
+          `Members: ${(group.userIds || []).length}`,
+          ...(group.userIds && group.userIds.length > 0
+            ? [`User IDs: ${group.userIds.join(', ')}`]
+            : []),
+        ].join('\n'),
+    })));
 
   // The three group writes below (#104) skip the scope lock on purpose. The lock
   // is a COLLECTION lock — `assertScope` resolves the board a write lands on and
@@ -148,36 +110,23 @@ export function registerUsersCommands(program: Command): void {
     .description('Create a new user group')
     .requiredOption('--name <name>', 'Group name')
     .option('--members <userIds>', 'Comma-separated user IDs to add')
-    .option('--json', 'Output as JSON')
     .option('--dry-run', 'Preview without making API calls')
     .option('-y, --yes', 'Skip confirmation prompt')
-    .action(async (options) => {
-      const verbose = groupsCommand.opts()?.verbose ?? false;
-      try {
-        if (options.dryRun) {
-          dryRunLog('creating', 'group', options.name);
-          return;
-        }
-
-        if (!(await confirmAction(`Create group "${options.name}"?`, { yes: options.yes }))) {
-          return;
-        }
-
-        const client = await createFavroClient();
-        const api = new UsersAPI(client);
-        const memberIds = options.members ? options.members.split(',').map((s: string) => s.trim()) : undefined;
-        const group = await api.createGroup(options.name, memberIds);
-
-        if (options.json) {
-          console.log(JSON.stringify(group, null, 2));
-        } else {
-          console.log(`✓ Group created: ${group.userGroupId} (${group.name})`);
-        }
-      } catch (error: any) {
-        logError(error, verbose);
-        process.exit(1);
+    .action(run(async (ctx: Ctx, options: GroupWriteFlags) => {
+      if (options.dryRun) {
+        dryRunLog('creating', 'group', options.name!);
+        return;
       }
-    });
+
+      if (!(await confirmAction(`Create group "${options.name}"?`, { yes: options.yes }))) {
+        return;
+      }
+
+      return {
+        item: await ctx.api.users.createGroup(options.name!, idList(options.members)),
+        human: (group: UserGroup) => `✓ Group created: ${group.userGroupId} (${group.name})`,
+      };
+    }));
 
   groupsCommand
     .command('update <groupId>')
@@ -185,45 +134,32 @@ export function registerUsersCommands(program: Command): void {
     .option('--name <name>', 'New group name')
     .option('--add-members <userIds>', 'Comma-separated user IDs to add')
     .option('--remove-members <userIds>', 'Comma-separated user IDs to remove')
-    .option('--json', 'Output as JSON')
     .option('--dry-run', 'Preview without making API calls')
     .option('-y, --yes', 'Skip confirmation prompt')
-    .action(async (groupId: string, options) => {
-      const verbose = groupsCommand.opts()?.verbose ?? false;
-      try {
-        const updateData: { name?: string; addMembers?: string[]; removeMembers?: string[] } = {};
-        if (options.name) updateData.name = options.name;
-        if (options.addMembers) updateData.addMembers = options.addMembers.split(',').map((s: string) => s.trim());
-        if (options.removeMembers) updateData.removeMembers = options.removeMembers.split(',').map((s: string) => s.trim());
+    .action(run(async (ctx: Ctx, groupId: string, options: GroupWriteFlags) => {
+      const updateData: { name?: string; addMembers?: string[]; removeMembers?: string[] } = {};
+      if (options.name) updateData.name = options.name;
+      if (options.addMembers) updateData.addMembers = idList(options.addMembers);
+      if (options.removeMembers) updateData.removeMembers = idList(options.removeMembers);
 
-        if (Object.keys(updateData).length === 0) {
-          console.error('Error: Provide at least one field: --name, --add-members, or --remove-members');
-          process.exit(1);
-        }
-
-        if (options.dryRun) {
-          dryRunLog('updating', 'group', groupId, updateData);
-          return;
-        }
-
-        if (!(await confirmAction(`Update group ${groupId}?`, { yes: options.yes }))) {
-          return;
-        }
-
-        const client = await createFavroClient();
-        const api = new UsersAPI(client);
-        const group = await api.updateGroup(groupId, updateData);
-
-        if (options.json) {
-          console.log(JSON.stringify(group, null, 2));
-        } else {
-          console.log(`✓ Group updated: ${group.userGroupId} (${group.name})`);
-        }
-      } catch (error: any) {
-        logError(error, verbose);
-        process.exit(1);
+      if (Object.keys(updateData).length === 0) {
+        throw new RefusalError('Error: Provide at least one field: --name, --add-members, or --remove-members');
       }
-    });
+
+      if (options.dryRun) {
+        dryRunLog('updating', 'group', groupId, updateData);
+        return;
+      }
+
+      if (!(await confirmAction(`Update group ${groupId}?`, { yes: options.yes }))) {
+        return;
+      }
+
+      return {
+        item: await ctx.api.users.updateGroup(groupId, updateData),
+        human: (group: UserGroup) => `✓ Group updated: ${group.userGroupId} (${group.name})`,
+      };
+    }));
 
   groupsCommand
     .command('delete <groupId>')
@@ -231,31 +167,23 @@ export function registerUsersCommands(program: Command): void {
     .option('--dry-run', 'Preview without making API calls')
     .option('-y, --yes', 'Skip confirmation prompt')
     .option('--force', 'Allow this org-wide delete despite the scope lock')
-    .action(async (groupId: string, options) => {
-      const verbose = groupsCommand.opts()?.verbose ?? false;
-      try {
-        // #125: org-wide and irreversible, so the org guard applies even though
-        // the collection lock cannot. Before the dry-run, so a preview is not a
-        // way around it.
-        await assertOrgScope(`Deleting group ${groupId}`, options.force);
+    .action(run(async (ctx: Ctx, groupId: string, options: GroupWriteFlags) => {
+      // #125: org-wide and irreversible, so the org guard applies even though
+      // the collection lock cannot. Before the dry-run, so a preview is not a
+      // way around it.
+      await assertOrgScope(`Deleting group ${groupId}`, options.force);
 
-        if (options.dryRun) {
-          dryRunLog('deleting', 'group', groupId);
-          return;
-        }
-
-        if (!(await confirmAction(`Delete group ${groupId}? This cannot be undone.`, { yes: options.yes }))) {
-          return;
-        }
-
-        const client = await createFavroClient();
-        const api = new UsersAPI(client);
-        await api.deleteGroup(groupId);
-
-        console.log(`✓ Group deleted: ${groupId}`);
-      } catch (error: any) {
-        logError(error, verbose);
-        process.exit(1);
+      if (options.dryRun) {
+        dryRunLog('deleting', 'group', groupId);
+        return;
       }
-    });
+
+      if (!(await confirmAction(`Delete group ${groupId}? This cannot be undone.`, { yes: options.yes }))) {
+        return;
+      }
+
+      await ctx.api.users.deleteGroup(groupId);
+
+      return { item: { deleted: true, groupId }, human: () => `✓ Group deleted: ${groupId}` };
+    }));
 }

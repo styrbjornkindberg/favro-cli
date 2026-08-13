@@ -947,7 +947,7 @@ List all custom field definitions for a board.
 
 **Syntax:**
 ```
-favro custom-fields list <board-id> [--json]
+favro custom-fields list <board-id> [--limit <n>] [--human]
 ```
 
 **Arguments:**
@@ -960,7 +960,6 @@ favro custom-fields list <board-id> [--json]
 
 | Option | Description |
 |---|---|
-| `--json` | Output as JSON |
 
 **Output:**
 ```
@@ -977,7 +976,7 @@ Found 3 custom field(s) for board board-001:
 **Examples:**
 ```bash
 favro custom-fields list board-001
-favro custom-fields list board-001 --json
+favro custom-fields list board-001 --human
 ```
 
 ---
@@ -988,7 +987,7 @@ Get detailed definition for a specific custom field, including options for selec
 
 **Syntax:**
 ```
-favro custom-fields get <field-id> [--json]
+favro custom-fields get <field-id> [--human]
 ```
 
 **Arguments:**
@@ -1014,7 +1013,7 @@ Options:
 **Examples:**
 ```bash
 favro custom-fields get cf-001
-favro custom-fields get cf-001 --json
+favro custom-fields get cf-001 --human
 ```
 
 ---
@@ -1025,7 +1024,7 @@ Set a custom field value on a card.
 
 **Syntax:**
 ```
-favro custom-fields set <card-id> <field-id> <value> [--json]
+favro custom-fields set <card-id> <field-id> <value> [--human]
 ```
 
 **Arguments:**
@@ -1059,7 +1058,7 @@ favro custom-fields set <card-id> <field-id> <value> [--json]
 favro custom-fields set card-abc123 cf-001 "High"
 favro custom-fields set card-abc123 cf-002 "13"
 favro custom-fields set card-abc123 cf-003 "2026-06-30"
-favro custom-fields set card-abc123 cf-001 "High" --json
+favro custom-fields set card-abc123 cf-001 "High" --human
 ```
 
 ---
@@ -1070,7 +1069,7 @@ List all allowed option values for a select-type custom field.
 
 **Syntax:**
 ```
-favro custom-fields values <field-id> [--board <board-id>] [--json]
+favro custom-fields values <field-id> [--board <board-id>] [--limit <n>] [--human]
 ```
 
 **Arguments:**
@@ -1084,7 +1083,6 @@ favro custom-fields values <field-id> [--board <board-id>] [--json]
 | Option | Description |
 |---|---|
 | `--board <board-id>` | Board ID to scope the field lookup |
-| `--json` | Output as JSON |
 
 **Output:**
 ```
@@ -1103,7 +1101,7 @@ Found 4 option(s) for field cf-001:
 ```bash
 favro custom-fields values cf-001
 favro custom-fields values cf-001 --board board-001
-favro custom-fields values cf-001 --json
+favro custom-fields values cf-001 --human
 ```
 
 ---

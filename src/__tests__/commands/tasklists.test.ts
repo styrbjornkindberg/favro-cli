@@ -16,12 +16,25 @@ const MockTaskListsAPI = TaskListsAPI as jest.MockedClass<typeof TaskListsAPI>;
 
 function buildProgram(): Command {
   const program = new Command();
-  program.option('--verbose', 'Show stack traces');
+  // `--human` and `--pretty` declared at the root, and `--human` PREPENDED to
+  // every drive: #119 moved this command onto `run()`, so JSON is the default
+  // (ADR-0002) and the prose these arms assert lives on the `human` formatter.
+  program.option('--human').option('--pretty').option('--verbose', 'Show stack traces');
   registerTaskListsCommands(program);
   return program;
 }
 
 async function runCli(args: string[]): Promise<void> {
+  const program = buildProgram();
+  program.exitOverride();
+  await program.parseAsync(['node', 'favro', '--human', ...args]);
+}
+
+/**
+ * The machine path — the DEFAULT since #119 (ADR-0002). `runCli` above prepends
+ * `--human`; this one does not, which is the only difference.
+ */
+async function runJson(args: string[]): Promise<void> {
   const program = buildProgram();
   program.exitOverride();
   await program.parseAsync(['node', 'favro', ...args]);
@@ -32,6 +45,18 @@ beforeEach(() => {
   (config.resolveApiKey as jest.Mock).mockResolvedValue('test-token');
   (config.readConfig as jest.Mock).mockResolvedValue({});
   (safety.confirmAction as jest.Mock).mockResolvedValue(true);
+});
+
+/**
+ * `run()` sets `process.exitCode` instead of exiting, and jest shares one
+ * process per worker — an un-reset code leaks into the worker's own exit and
+ * into the next arm's assertion.
+ */
+beforeEach(() => {
+  process.exitCode = undefined;
+});
+afterEach(() => {
+  process.exitCode = undefined;
 });
 
 describe('favro tasklists list', () => {
@@ -61,7 +86,7 @@ describe('favro tasklists list', () => {
       { taskListId: 'tl-1', name: 'Checklist', cardCommonId: 'card-1' },
     ]);
 
-    await runCli(['tasklists', 'list', 'card-1', '--json']);
+    await runJson(['tasklists', 'list', 'card-1']);
 
     const jsonCall = consoleSpy.mock.calls.find(
       (call: any[]) => typeof call[0] === 'string' && call[0].includes('taskListId')
@@ -101,7 +126,9 @@ describe('favro tasklists create', () => {
   beforeEach(() => {
     consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
     jest.spyOn(console, 'error').mockImplementation(() => {});
-    processExitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {}) as any);
+    processExitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {
+    throw new Error('process.exit must not be called under run()');
+  }) as never);
   });
 
   afterEach(() => { jest.restoreAllMocks(); });
@@ -134,7 +161,9 @@ describe('favro tasklists update', () => {
   beforeEach(() => {
     consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
     jest.spyOn(console, 'error').mockImplementation(() => {});
-    processExitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {}) as any);
+    processExitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {
+    throw new Error('process.exit must not be called under run()');
+  }) as never);
   });
 
   afterEach(() => { jest.restoreAllMocks(); });
@@ -155,7 +184,7 @@ describe('favro tasklists update', () => {
   it('errors when no fields provided', async () => {
     await runCli(['tasklists', 'update', 'tl-1']);
 
-    expect(processExitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 });
 
@@ -166,7 +195,9 @@ describe('favro tasklists delete', () => {
   beforeEach(() => {
     consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
     jest.spyOn(console, 'error').mockImplementation(() => {});
-    processExitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {}) as any);
+    processExitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {
+    throw new Error('process.exit must not be called under run()');
+  }) as never);
   });
 
   afterEach(() => { jest.restoreAllMocks(); });

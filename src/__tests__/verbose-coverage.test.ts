@@ -157,10 +157,17 @@ describe('a deep subcommand prints a stack trace under --verbose', () => {
 
   afterEach(() => jest.restoreAllMocks());
 
+  /**
+   * `--human`: the stack trace is a `logError` rendering, and `logError` only
+   * runs on the human arm of the runner's boundary. Under the JSON default the
+   * same failure is `{"error":{…}}` on stdout — the arm below asserts that too,
+   * so the flag here is a choice of stream rather than a way around the check.
+   */
   async function run(args: string[]): Promise<string> {
     const program = buildProgram();
     exitOverrideDeep(program);
-    await program.parseAsync(['node', 'favro', ...args]);
+    process.exitCode = undefined;
+    await program.parseAsync(['node', 'favro', '--human', ...args]);
     return stderr.join('\n');
   }
 
@@ -168,12 +175,16 @@ describe('a deep subcommand prints a stack trace under --verbose', () => {
     const output = await run(['tags', 'list', '--verbose']);
     expect(output).toContain(BOOM);
     expect(output).toContain('Stack trace:');
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    // `process.exitCode`, not a hard exit: #119 put `tags list` on `run()`.
+    expect(process.exitCode).toBe(1);
+    expect(exitSpy).not.toHaveBeenCalled();
+    process.exitCode = undefined;
   });
 
   it('favro tags list without it shows only the message', async () => {
     const output = await run(['tags', 'list']);
     expect(output).toContain(BOOM);
     expect(output).not.toContain('Stack trace:');
+    process.exitCode = undefined;
   });
 });

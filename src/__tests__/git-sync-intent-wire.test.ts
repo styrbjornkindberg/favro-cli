@@ -557,9 +557,8 @@ describe('dependencies delete-all refuses above the cap rather than wiping', () 
     const { subject, cards: seed } = withEdges(MULTI_WRITE_CAP + 1);
     const { received, cards } = await startServer({ cards: seed });
 
-    const thrown = await attempt('dependencies', 'delete-all', subject, '--yes');
+    expect(await exitCodeAfter('dependencies', 'delete-all', subject, '--yes')).toBe(1);
 
-    expect(thrown).toBe('process.exit(1)');
     expect(said()).toContain(`capped at ${MULTI_WRITE_CAP}`);
     expect(said()).toContain('dependency edges');
     // The load-bearing one: the unbounded `DELETE /cards/{id}/dependencies` is
@@ -573,7 +572,7 @@ describe('dependencies delete-all refuses above the cap rather than wiping', () 
     const { subject, cards: seed } = withEdges(3);
     const { received, cards } = await startServer({ cards: seed });
 
-    await run('dependencies', 'delete-all', subject, '--yes');
+    await runHuman('dependencies', 'delete-all', subject, '--yes');
 
     expect(cards.get(subject)!.dependencies).toEqual([]);
     const deletes = writes(received).filter((r) => r.method === 'DELETE');
@@ -587,7 +586,7 @@ describe('dependencies delete-all refuses above the cap rather than wiping', () 
     const subject = cardId(90);
     const { received } = await startServer({ cards: [card({ cardId: subject })] });
 
-    await run('dependencies', 'delete-all', subject, '--yes');
+    await runHuman('dependencies', 'delete-all', subject, '--yes');
 
     expect(writes(received)).toEqual([]);
     expect(said()).toContain('no dependencies');

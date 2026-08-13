@@ -24,24 +24,27 @@
  * cost a file its place on the allowlist for one more step, which is cheap, and
  * a scanner nobody can predict is a scanner people work around.
  *
- * WHY THE ALLOWLIST FAILS IN BOTH DIRECTIONS
- * A non-allowlisted file containing a banned pattern fails — that is the
- * obvious half, and it is what stops a migrated command regressing. The other
- * half is the point: AN ALLOWLISTED FILE THAT IS ALREADY CLEAN ALSO FAILS,
- * until it is struck off. Without it the list rusts into permanent cover — it
- * would still be sixty lines long when only three files were dirty, and nobody
- * reading it could tell which. When the list empties, the ban is absolute.
+ * THE ALLOWLIST IS GONE, AND THE BAN IS NOW ABSOLUTE (#119)
+ * It held the files not yet migrated, and it failed in BOTH directions: a
+ * non-allowlisted file carrying a banned pattern failed, and an allowlisted file
+ * that had gone clean failed too, until it was struck off. The second direction
+ * is what stopped it rusting into permanent cover. #119 struck the last sixteen
+ * lines, so there is no list left to rust — every file scanned here must be
+ * clean, with no way to add an exception short of deleting this test.
+ *
+ * Four arms went with it, each of which existed only to police the list:
+ * `bans nothing that has already vanished` (its own comment named this moment as
+ * when to delete it), `no allowlisted file is already clean`, `no allowlisted
+ * file has been renamed or deleted out from under the list`, and the
+ * `!ALLOWLIST.includes` filters inside the two that remain.
  *
  * WHY THE BAN ALONE IS NOT ENOUGH
  * "Contains none of five strings" is not "migrated". A migrator who hoisted
  * `createFavroClient` into a shared helper instead of adopting `run()` would go
- * clean, get struck off, and leave the ratchet green over a command the runner
- * never touched. So a file leaving the allowlist must also IMPORT `run` —
- * unless it is named in `RUNNER_FREE` below, which is the short, argued list of
- * commands that legitimately have no runner to adopt.
- *
- * TO DISCHARGE AN ENTRY: migrate the file to `run()`, then delete its line.
- * Deleting the line is not optional; the build stays red until you do.
+ * clean and leave the ratchet green over a command the runner never touched. So
+ * every file here must also IMPORT `run` — unless it is named in `RUNNER_FREE`
+ * below, which is the short, argued list of commands that legitimately have no
+ * runner to adopt.
  */
 import * as fs from 'fs';
 import * as path from 'path';
@@ -73,32 +76,6 @@ const IMPORTS_RUN = /from '[./]*lib\/run'/;
  * a second entry should have to be argued on the issue.
  */
 const RUNNER_FREE: readonly string[] = ['src/commands/issue-tracker-help.ts'];
-
-/**
- * NOT YET MIGRATED to `run()`. Started as every file that had a preamble to
- * lose — all but one of the files scanned — and only ever shrinks, one line per
- * file, as #114 → #119 work through them.
- *
- * Do NOT add a line to make a red build green. A new name here is either a new
- * command written against the old preamble, which should be written against
- * `run()` instead, or a migrated command regressing, which should be fixed.
- */
-const ALLOWLIST: readonly string[] = [
-  'src/commands/attachments.ts',
-  // `batch-smart.ts` and `batch.ts` were here until #110 DELETED them. They were
-  // struck off by deletion rather than by migration, which is the other way a
-  // line leaves this list.
-  'src/commands/cards-archive.ts',
-  'src/commands/cards-delete.ts',
-  'src/commands/columns.ts',
-  'src/commands/custom-fields.ts',
-  'src/commands/dependencies.ts',
-  'src/commands/scope.ts',
-  'src/commands/tags.ts',
-  'src/commands/tasklists.ts',
-  'src/commands/tasks.ts',
-  'src/commands/users.ts',
-];
 
 // ─── the scan ────────────────────────────────────────────────────────────────
 
@@ -141,43 +118,49 @@ describe('the command-runner ratchet', () => {
     expect(files).toContain('src/cli.ts');
   });
 
-  it('bans nothing that has already vanished from the codebase', () => {
-    // A pattern matching nothing anywhere is a dead ban: it would keep passing
-    // if it were misspelled. Every one of the five must still have a live
-    // example somewhere, until the allowlist empties and this stops holding —
-    // at which point the ban is absolute and this assertion is what to delete.
-    const live = BANNED.filter(({ what }) =>
-      dirty.some((file) => offences.get(file)!.includes(what)),
-    );
-    expect(live.map(({ what }) => what)).toEqual(BANNED.map(({ what }) => what));
+  it('detects each banned spelling — the scan itself, on a known-dirty string', () => {
+    // The self-check that replaces `bans nothing that has already vanished`.
+    // That arm asserted every pattern still had a LIVE example, which is what
+    // stopped a misspelt pattern passing silently; with the allowlist empty
+    // there are no live examples left by design, so the same guarantee has to
+    // come from synthetic strings. Both polarities per pattern: it fires, and it
+    // does not fire on the sanctioned replacement. Same shape as the hard-exit
+    // scan's self-check below, which has always needed one for the same reason.
+    expect(offencesIn('const c = await createFavroClient();')).toEqual(['createFavroClient(']);
+    expect(offencesIn('  process.exit(1);')).toEqual(['process.exit(']);
+    expect(offencesIn('console.log(JSON.stringify(rows));')).toEqual([
+      'console.log(JSON.stringify',
+    ]);
+    expect(offencesIn('const v = cmd.opts()?.verbose ?? false;')).toEqual(['.opts()?.verbose']);
+    expect(offencesIn('const api = new CardsAPI(client);')).toEqual(['new […]API(']);
+    // What the runner replaced each of them with must NOT trip the scan.
+    expect(
+      offencesIn(
+        'const ctx = { client, api };\n' +
+          'process.exitCode = 1;\n' +
+          'writeEnvelope(envelope, pretty);\n' +
+          'const v = ctx.verbose;\n' +
+          'ctx.api.cards.getCard(id);\n',
+      ),
+    ).toEqual([]);
   });
 
-  it('no file outside the allowlist carries the old preamble', () => {
-    const violations = dirty
-      .filter((file) => !ALLOWLIST.includes(file))
-      .map((file) => `${file} — ${offences.get(file)!.join(', ')}`);
+  it('NO file carries the old preamble — the ban is absolute', () => {
+    // No allowlist and no filter: #119 struck the last sixteen entries, so
+    // every scanned file must be clean. A new command written against the old
+    // preamble fails here with nowhere to be excused.
+    const violations = dirty.map((file) => `${file} — ${offences.get(file)!.join(', ')}`);
     expect(violations).toEqual([]);
   });
 
-  it('no allowlisted file is already clean — a migrated file must be struck off', () => {
-    // The direction that stops the list rusting into permanent cover. If this
-    // fails, the fix is to DELETE the named lines, never to re-dirty the file.
-    const struck = ALLOWLIST.filter((file) => !dirty.includes(file));
-    expect(struck).toEqual([]);
-  });
-
-  it('every file off the allowlist actually adopted run()', () => {
+  it('every file actually adopted run()', () => {
     // The positive half. Without it the ban means "quiet", not "migrated": a
-    // file whose preamble moved into a shared helper reads clean and gets
-    // struck off while the runner governs nothing it does.
+    // file whose preamble moved into a shared helper reads clean while the
+    // runner governs nothing it does.
     const quiet = files
-      .filter((file) => !ALLOWLIST.includes(file) && !RUNNER_FREE.includes(file))
+      .filter((file) => !RUNNER_FREE.includes(file))
       .filter((file) => !IMPORTS_RUN.test(sources.get(file)!));
     expect(quiet).toEqual([]);
-  });
-
-  it('no allowlisted file has been renamed or deleted out from under the list', () => {
-    expect(ALLOWLIST.filter((file) => !files.includes(file))).toEqual([]);
   });
 
   it('no RUNNER_FREE entry is stale', () => {
@@ -215,9 +198,11 @@ describe('the command-runner ratchet', () => {
  * 3084 tests. `src/api/`, `src/test-support/` and the two server entry points
  * were as invisible as `src/lib/` had been. A ban that names the directory it
  * was written for is a ban on one bug, so the walk is now every non-test file
- * under `src/`, and the unmigrated commands are excused by the ALLOWLIST above
- * rather than by being out of scope — which means they lose the excuse
- * automatically when #115–#119 strike them off.
+ * under `src/`. The unmigrated commands were excused by the preamble allowlist
+ * above rather than by being out of scope, so they lost the excuse automatically
+ * as #115–#119 struck them off — and #119 struck the last sixteen, which is why
+ * that list and this union are both gone. `EXIT_ALLOWED` is the whole exception
+ * set now, and it is two argued entries.
  *
  * WHY TWO SPELLINGS
  * Same measurement: `import { exit } from 'node:process'` and then `exit(1)` is
@@ -268,10 +253,10 @@ const exitOffencesIn = (source: string): string[] =>
 describe('no module exits the process', () => {
   const production = productionFiles();
   const exiting = production.filter((file) => exitOffencesIn(sourceOf(file)).length > 0);
-  // An unmigrated command is expected to exit — that is what ALLOWLIST above
-  // records, and it shrinks as #115–#119 land. Reused rather than copied so the
-  // two lists cannot disagree.
-  const excused = (file: string) => EXIT_ALLOWED.includes(file) || ALLOWLIST.includes(file);
+  // `EXIT_ALLOWED` alone since #119. This used to union with the preamble
+  // ALLOWLIST above, because an unmigrated command was expected to exit; that
+  // list is empty and deleted, so the only exits left are the two argued ones.
+  const excused = (file: string) => EXIT_ALLOWED.includes(file);
 
   it('finds the files it is meant to be reading', () => {
     // A floor, not a count to keep updated. A scanner resolving nothing would

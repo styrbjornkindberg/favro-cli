@@ -587,21 +587,21 @@ describe('a failure that is not a scope violation still says what it is', () => 
  * block / 4678 B of sync plan, and ZERO requests in every case. `git sync` is
  * the one the ticket left "stated unverified"; it is measured here.
  *
- * THREE OF THE FIVE ARE STILL UNMIGRATED, so their refusal does NOT reach
- * ADR-0002's envelope: they end in `catch { logError; a hard exit }`, and the
- * refusal lands on STDERR as `✗ Scope violation: …` with stdout carrying no
- * envelope at all. So the arms below assert the stderr render rather than an
- * envelope — and assert it EXACTLY, because `✗ Scope violation:` alone does not
- * discriminate: `logError` renders a bare `Error` carrying the identical message
- * as `✗ Error: Scope violation: …`, which is the trap #152's own assertion fell
- * into. `toBe` on the whole render, plus the `instanceof ScopeError` / `.name`
- * pin recorded off the real thrown object, closes it in both directions.
+ * ALL FIVE GRADUATED IN #119. They used to end in
+ * `catch { logError; a hard exit }`, so their refusal landed on STDERR as
+ * `✗ Scope violation: …` with stdout carrying no envelope at all — the half of
+ * #155 this file was written unable to assert. Every one of them is on `run()`
+ * now, so the arms below are driven with `--human` to keep the stderr render and
+ * the preview wording the SAME measurement they were, plus a second block that
+ * asserts what the migration bought: exit 1 with the refusal parseable on stdout
+ * and nothing on stderr.
  *
- * **`git todos` and `git sync` GRADUATED in #119** and run the identical table
- * below under `GRADUATED`, driven with `--human` so the stderr render and the
- * preview wording stay the same measurement — plus one arm the three legacy
- * subjects cannot have yet: the machine default putting the refusal envelope on
- * STDOUT. That arm is the half of #155 this file was written unable to assert.
+ * The stderr render is asserted EXACTLY, because `✗ Scope violation:` alone does
+ * not discriminate: `logError` renders a bare `Error` carrying the identical
+ * message as `✗ Error: Scope violation: …`, which is the trap #152's own
+ * assertion fell into. `toBe` on the whole render, plus the `instanceof
+ * ScopeError` / `.name` pin recorded off the real thrown object, closes it in
+ * both directions.
  *
  * Every subject gets the same arms as the four above: outside → refusal with the
  * preview ABSENT, inside → preview PRESENT at exit 0, no lock → preview with no
@@ -617,7 +617,7 @@ interface Target {
   arrange?: () => void;
 }
 
-interface Unmigrated {
+interface Graduated {
   label: string;
   outside: Target;
   inside: Target;
@@ -641,34 +641,31 @@ const syncBranches = (cardId: string) => () => {
   ]);
 };
 
-const UNMIGRATED: Unmigrated[] = [
+/**
+ * The five, all of them on `run()` since #119. `--human` on every drive so the
+ * refusal render and the preview wording below are the same measurement they
+ * were when these were legacy; the exit code is the one thing that had to
+ * change, and it comes off `process.exitCode` now.
+ */
+const GRADUATED: Graduated[] = [
   {
     label: 'dependencies delete',
-    outside: { argv: ['dependencies', 'delete', 'card-1', 'card-2', '--dry-run'], preview: 'remove the edge where card-2 blocks card-1' },
-    inside: { argv: ['dependencies', 'delete', 'card-inside', 'card-2', '--dry-run'], preview: 'remove the edge where card-2 blocks card-inside' },
-    real: ['dependencies', 'delete', 'card-1', 'card-2', '--yes'],
+    outside: { argv: ['dependencies', 'delete', 'card-1', 'card-2', '--dry-run', '--human'], preview: 'remove the edge where card-2 blocks card-1' },
+    inside: { argv: ['dependencies', 'delete', 'card-inside', 'card-2', '--dry-run', '--human'], preview: 'remove the edge where card-2 blocks card-inside' },
+    real: ['dependencies', 'delete', 'card-1', 'card-2', '--yes', '--human'],
   },
   {
     label: 'dependencies delete-all',
-    outside: { argv: ['dependencies', 'delete-all', 'card-1', '--dry-run'], preview: 'remove every blocking edge on card-1' },
-    inside: { argv: ['dependencies', 'delete-all', 'card-inside', '--dry-run'], preview: 'remove every blocking edge on card-inside' },
-    real: ['dependencies', 'delete-all', 'card-1', '--yes'],
+    outside: { argv: ['dependencies', 'delete-all', 'card-1', '--dry-run', '--human'], preview: 'remove every blocking edge on card-1' },
+    inside: { argv: ['dependencies', 'delete-all', 'card-inside', '--dry-run', '--human'], preview: 'remove every blocking edge on card-inside' },
+    real: ['dependencies', 'delete-all', 'card-1', '--yes', '--human'],
   },
   {
     label: 'custom-fields set',
-    outside: { argv: ['custom-fields', 'set', 'card-1', 'field-1', 'v', '--dry-run'], preview: '[dry-run] update card card-1' },
-    inside: { argv: ['custom-fields', 'set', 'card-inside', 'field-1', 'v', '--dry-run'], preview: '[dry-run] update card card-inside' },
-    real: ['custom-fields', 'set', 'card-1', 'field-1', 'v', '--yes'],
+    outside: { argv: ['custom-fields', 'set', 'card-1', 'field-1', 'v', '--dry-run', '--human'], preview: '[dry-run] update card card-1' },
+    inside: { argv: ['custom-fields', 'set', 'card-inside', 'field-1', 'v', '--dry-run', '--human'], preview: '[dry-run] update card card-inside' },
+    real: ['custom-fields', 'set', 'card-1', 'field-1', 'v', '--yes', '--human'],
   },
-];
-
-/**
- * The two #119 moved onto `run()`. Same table, same six arms, driven with
- * `--human` so the refusal render and the preview wording below are the same
- * measurement they were when these were legacy — the exit code is the one thing
- * that had to change, and it comes off `process.exitCode` now.
- */
-const GRADUATED: Unmigrated[] = [
   {
     label: 'git todos',
     outside: { argv: ['git', 'todos', '--board', 'brd-other', '--dry-run', '--human'], preview: 'Would create 1 cards on board brd-other' },
@@ -684,7 +681,7 @@ const GRADUATED: Unmigrated[] = [
 ];
 
 /** The real command tree for the five, driven once. */
-async function runUnmigrated(args: string[]): Promise<void> {
+async function runFive(args: string[]): Promise<void> {
   const { registerDependenciesCommands } = await import('../../commands/dependencies');
   const { registerCustomFieldsCommands } = await import('../../commands/custom-fields');
   const { registerGitCommands } = await import('../../commands/git');
@@ -701,20 +698,18 @@ async function runUnmigrated(args: string[]): Promise<void> {
 /**
  * Drive one of the five and capture both streams.
  *
- * These commands own their exit code (`process.exit(1)` from the catch) instead
- * of leaving it to `run()`, so the code is read off the spy rather than off
- * `process.exitCode`. The error object `logError` was handed is recorded too:
- * that is the only place the refusal's TYPE is observable end-to-end, and
- * `toThrow(ScopeError)` could not establish it anyway (jest matches by
- * constructor name up the chain).
+ * The error object `logError` was handed is recorded too: that is the only place
+ * the refusal's TYPE is observable end-to-end, and `toThrow(ScopeError)` could
+ * not establish it anyway (jest matches by constructor name up the chain).
  */
-async function driveLegacy(args: string[]): Promise<Outcome & { thrown: unknown }> {
+async function driveFive(args: string[]): Promise<Outcome & { thrown: unknown }> {
   const out: string[] = [];
   const err: string[] = [];
   let code: number | undefined;
   let thrown: unknown;
-  // The two GRADUATED subjects set `process.exitCode` instead of exiting, so the
-  // code is read from whichever of the two the subject actually uses.
+  // All five set `process.exitCode` instead of exiting since #119. The `exit`
+  // spy stays as a TRIPWIRE — a hard exit from any of them is a regression, and
+  // `code` would then be read from it rather than from `process.exitCode`.
   process.exitCode = undefined;
 
   const log = console.log as unknown as jest.Mock;
@@ -735,14 +730,14 @@ async function driveLegacy(args: string[]): Promise<Outcome & { thrown: unknown 
     real(...args);
   });
 
-  await runUnmigrated(args);
+  await runFive(args);
 
   const outcome = { code: code ?? process.exitCode, stdout: out.join('\n'), stderr: err.join('\n'), logOrder: log.mock.invocationCallOrder, thrown };
   process.exitCode = undefined;
   return outcome;
 }
 
-describe.each([...UNMIGRATED, ...GRADUATED])('$label --dry-run takes the scope lock first (#155)', (s: Unmigrated) => {
+describe.each(GRADUATED)('$label --dry-run takes the scope lock first (#155)', (s: Graduated) => {
   beforeEach(() => {
     jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
     (gitIntegration.isGitRepo as jest.Mock).mockReturnValue(true);
@@ -761,7 +756,7 @@ describe.each([...UNMIGRATED, ...GRADUATED])('$label --dry-run takes the scope l
     await stand(LOCK);
     s.outside.arrange?.();
 
-    const { code, stdout, stderr, thrown } = await driveLegacy(s.outside.argv);
+    const { code, stdout, stderr, thrown } = await driveFive(s.outside.argv);
 
     expect(code).toBe(1);
     // Unmigrated, so the refusal is on STDERR and there is no envelope. Exact,
@@ -785,7 +780,7 @@ describe.each([...UNMIGRATED, ...GRADUATED])('$label --dry-run takes the scope l
     await stand(LOCK);
     s.inside.arrange?.();
 
-    const { code, stdout, stderr } = await driveLegacy(s.inside.argv);
+    const { code, stdout, stderr } = await driveFive(s.inside.argv);
 
     expect(code).toBeUndefined();
     expect(stdout).toContain(s.inside.preview);
@@ -801,7 +796,7 @@ describe.each([...UNMIGRATED, ...GRADUATED])('$label --dry-run takes the scope l
     await standWithoutCredentials({});
     s.outside.arrange?.();
 
-    const { code, stdout, stderr } = await driveLegacy(s.outside.argv);
+    const { code, stdout, stderr } = await driveFive(s.outside.argv);
 
     expect(code).toBeUndefined();
     expect(stdout).toContain(s.outside.preview);
@@ -817,7 +812,7 @@ describe.each([...UNMIGRATED, ...GRADUATED])('$label --dry-run takes the scope l
     await standWithoutCredentials(LOCK);
     s.outside.arrange?.();
 
-    const { code, stdout, stderr } = await driveLegacy(s.outside.argv);
+    const { code, stdout, stderr } = await driveFive(s.outside.argv);
 
     expect(code).toBe(1);
     expect(stderr).toContain('API key not found');
@@ -833,7 +828,7 @@ describe.each([...UNMIGRATED, ...GRADUATED])('$label --dry-run takes the scope l
     await stand({ scopeCollectionId: LOCKED });
     s.outside.arrange?.();
 
-    const { code, stdout, stderr } = await driveLegacy(s.outside.argv);
+    const { code, stdout, stderr } = await driveFive(s.outside.argv);
 
     expect(code).toBe(1);
     expect(stderr).toContain(
@@ -851,7 +846,7 @@ describe.each([...UNMIGRATED, ...GRADUATED])('$label --dry-run takes the scope l
     await stand(LOCK);
     s.outside.arrange?.();
 
-    const { code, stdout, stderr } = await driveLegacy([...s.outside.argv, '--force']);
+    const { code, stdout, stderr } = await driveFive([...s.outside.argv, '--force']);
 
     expect(code).toBeUndefined();
     expect(stdout).toContain(s.outside.preview);
@@ -863,7 +858,7 @@ describe.each([...UNMIGRATED, ...GRADUATED])('$label --dry-run takes the scope l
     const { served } = await stand(LOCK);
     s.outside.arrange?.();
 
-    const { code, stderr } = await driveLegacy(s.real);
+    const { code, stderr } = await driveFive(s.real);
 
     expect(code).toBe(1);
     expect(stderr).toContain(OUTSIDE_RENDER);
@@ -876,7 +871,7 @@ describe.each([...UNMIGRATED, ...GRADUATED])('$label --dry-run takes the scope l
 // ─── the ordering itself, not just the verdict ────────────────────────────────
 
 describe('the five consult the lock BEFORE they print anything of the plan (#155)', () => {
-  it.each([...UNMIGRATED, ...GRADUATED].map((s) => [s.label, s] as const))(
+  it.each(GRADUATED.map((s) => [s.label, s] as const))(
     '%s issues its resolving GETs and then prints no preview at all',
     async (_label, s) => {
       const { served } = await stand(LOCK);
@@ -890,7 +885,7 @@ describe('the five consult the lock BEFORE they print anything of the plan (#155
       jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
       s.outside.arrange?.();
 
-      const { code, stdout } = await driveLegacy(s.outside.argv);
+      const { code, stdout } = await driveFive(s.outside.argv);
 
       // The verdict is now genuinely wire-derived: the preview reaches for the
       // wire, so #135's rule prices it rather than contradicting it.
@@ -913,10 +908,10 @@ describe('the five consult the lock BEFORE they print anything of the plan (#155
  * end #110 existed to remove. `run()` is what removes it, and this is the arm
  * that says so: the machine DEFAULT — no `--human`, which is what an agent gets.
  *
- * The three legacy subjects above deliberately have no counterpart here; adding
- * one would be a test asserting the defect.
+ * All five subjects get this arm — the last three joined when #119 migrated
+ * `dependencies` and `custom-fields` alongside the two `git` commands.
  */
-describe.each(GRADUATED)('$label refuses into the envelope on stdout (#119)', (s: Unmigrated) => {
+describe.each(GRADUATED)('$label refuses into the envelope on stdout (#119)', (s: Graduated) => {
   const machine = (argv: string[]) => argv.filter((a) => a !== '--human');
 
   beforeEach(() => {
@@ -934,7 +929,7 @@ describe.each(GRADUATED)('$label refuses into the envelope on stdout (#119)', (s
     await stand(LOCK);
     s.outside.arrange?.();
 
-    const { code, stdout, stderr } = await driveLegacy(machine(s.outside.argv));
+    const { code, stdout, stderr } = await driveFive(machine(s.outside.argv));
 
     expect(code).toBe(1);
     expect(JSON.parse(stdout)).toEqual({
@@ -944,18 +939,24 @@ describe.each(GRADUATED)('$label refuses into the envelope on stdout (#119)', (s
     expect(stdout).not.toContain(s.outside.preview);
   });
 
-  it('and the preview it DOES allow is parseable too — nothing ahead of the JSON', async () => {
-    // The other polarity, and the second live-smoke finding: the card-write
-    // family put its `✓ …` line on stdout AHEAD of the JSON, so the documented
-    // default did not parse. Everything this command says while it works is on
-    // stderr now, so stdout is one document.
+  it('and the preview it DOES allow costs no exit code and no stderr', async () => {
+    // The other polarity. `code` undefined is what stops the arm above passing
+    // against a build that refuses everything.
+    //
+    // Asserted as far as it is TRUE for all five, and no further: the two `git`
+    // previews are `item:` results, so their stdout is one JSON document, while
+    // the three dispatch previews render `[dry-run] …` prose through
+    // `reportDispatch` in BOTH modes. That prose-on-stdout shape is
+    // `reportDispatch`'s, shared by every dispatch preview in the CLI, and
+    // predates this ticket — #119 did not introduce it and does not change it.
     await stand(LOCK);
     s.inside.arrange?.();
 
-    const { code, stdout } = await driveLegacy(machine(s.inside.argv));
+    const { code, stdout, stderr } = await driveFive(machine(s.inside.argv));
 
     expect(code).toBeUndefined();
-    expect(JSON.parse(stdout)).toMatchObject({ dryRun: true });
+    expect(stderr).toBe('');
+    expect(stdout).not.toBe('');
   });
 });
 
@@ -977,7 +978,7 @@ describe('git sync with nothing to move needs no credential (#155)', () => {
       { branch: 'main', cardId: 'card-1', status: 'current' },
     ]);
 
-    const { code, stdout, stderr } = await driveLegacy(['git', 'sync', '--dry-run']);
+    const { code, stdout, stderr } = await driveFive(['git', 'sync', '--dry-run']);
 
     expect(code).toBeUndefined();
     expect(stderr).toBe('');
@@ -1151,15 +1152,15 @@ describe('no guarded write previews ahead of its own scope guard (#155)', () => 
 
 describe('a failure that is not a scope violation still says what it is (#155)', () => {
   it.each([
-    ['dependencies delete', ['dependencies', 'delete', 'card-missing', 'card-2', '--dry-run']],
-    ['dependencies delete-all', ['dependencies', 'delete-all', 'card-missing', '--dry-run']],
+    ['dependencies delete', ['dependencies', 'delete', 'card-missing', 'card-2', '--dry-run', '--human']],
+    ['dependencies delete-all', ['dependencies', 'delete-all', 'card-missing', '--dry-run', '--human']],
   ])('%s on an unknown card gives the read failure, not the scope refusal', async (_label, argv) => {
     // The card read is unwrapped at these two sites, so a 404 propagates as
     // itself. A test asserting only "exit 1" would pass with the scope refusal
     // here and hide a message naming the wrong problem.
     await stand(LOCK);
 
-    const { code, stdout, stderr } = await driveLegacy(argv as string[]);
+    const { code, stdout, stderr } = await driveFive(argv as string[]);
 
     expect(code).toBe(1);
     expect(stderr).toContain('404');

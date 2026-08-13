@@ -41,8 +41,19 @@ describe('columns list', () => {
     jest.restoreAllMocks();
   });
 
+  // `--human`, since #119 made JSON the default (ADR-0002) and these arms read
+  // the `console.table` the human formatter draws.
   const run = async (...argv: string[]) => {
     const program = new Command();
+    program.option('--human').option('--pretty');
+    registerColumnsCommands(program);
+    await program.parseAsync(['node', 'test', '--human', 'columns', 'list', ...argv]);
+  };
+
+  /** The machine path — the DEFAULT. */
+  const runJson = async (...argv: string[]) => {
+    const program = new Command();
+    program.option('--human').option('--pretty');
     registerColumnsCommands(program);
     await program.parseAsync(['node', 'test', 'columns', 'list', ...argv]);
   };
@@ -69,7 +80,7 @@ describe('columns list', () => {
   });
 
   test('--json keeps the three fields untouched', async () => {
-    await run('board-1', '--json');
+    await runJson('board-1');
 
     // An envelope, not a bare array — the shape every list read emits (#99).
     const printed = JSON.parse(logSpy.mock.calls.map((c) => c[0]).find((c: string) => c.startsWith('{')));
@@ -98,7 +109,9 @@ describe('columns update — scope lock', () => {
     jest.spyOn(config, 'readConfig').mockResolvedValue({} as any);
     jest.spyOn(console, 'log').mockImplementation(() => {});
     jest.spyOn(console, 'error').mockImplementation(() => {});
-    jest.spyOn(process, 'exit').mockImplementation((() => {}) as any);
+    jest.spyOn(process, 'exit').mockImplementation((() => {
+    throw new Error('process.exit must not be called under run()');
+  }) as never);
     (safety.confirmAction as jest.Mock).mockResolvedValue(true);
     (safety.checkScope as jest.Mock).mockResolvedValue(undefined);
     (FavroHttpClient as jest.MockedClass<typeof FavroHttpClient>).mockImplementation(() => ({} as any));
@@ -116,8 +129,9 @@ describe('columns update — scope lock', () => {
 
   const run = async (...argv: string[]) => {
     const program = new Command();
+    program.option('--human').option('--pretty');
     registerColumnsCommands(program);
-    await program.parseAsync(['node', 'test', 'columns', 'update', ...argv]);
+    await program.parseAsync(['node', 'test', '--human', 'columns', 'update', ...argv]);
   };
 
   test('still checks scope when the column metadata cannot be resolved', async () => {

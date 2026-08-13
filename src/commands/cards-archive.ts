@@ -17,9 +17,8 @@
  */
 import { Command } from 'commander';
 import { dispatch } from '../lib/dispatch';
-import { reportDispatch } from '../lib/report-dispatch';
-import { logError } from '../lib/error-handler';
-import { createFavroClient } from '../lib/client-factory';
+import { confirmAction } from '../lib/safety';
+import { Ctx, run } from '../lib/run';
 
 type ArchiveResult = { cardId: string; archived: boolean };
 
@@ -60,47 +59,39 @@ const UNARCHIVE_DESCRIPTION =
  * duplicating the confirm/dispatch/report chain per spelling is how the two would
  * drift apart on the guardrail.
  */
-function archiveAction(cardsCmd: Command, archived: boolean) {
-  return async (card: string, options: Record<string, any>): Promise<void> => {
-    const verbose = cardsCmd.parent?.opts()?.verbose ?? cardsCmd.opts()?.verbose ?? false;
-    const verb = archived ? 'Archive' : 'Un-archive';
-    try {
-      const client = await createFavroClient();
-      const { readConfig } = await import('../lib/config');
-      const { confirmAction } = await import('../lib/safety');
-
-      // Previewing is not writing, so `--dry-run` skips the prompt. Everything
-      // else prompts, exactly as every other write command in this CLI does.
-      if (
-        !options.dryRun &&
-        !(await confirmAction(
-          `${verb} card ${card}? This moves ONE board instance across the archive line. ` +
-            `Reversible with 'favro cards ${archived ? 'unarchive' : 'archive'} ${card}'.`,
-          { yes: options.yes },
-        ))
-      ) {
-        console.log('Aborted.');
-        return;
-      }
-
-      const result = await dispatch<ArchiveResult>('archive', { card, archived }, {
-        client,
-        config: (await readConfig()) ?? {},
-        force: options.force,
-        dryRun: options.dryRun,
-      });
-
-      if (reportDispatch(result, options.json)) process.exit(1);
-      if (result.outcome === 'ok' && result.value !== undefined) {
-        const { cardId, archived: side } = result.value;
-        console.log(`✓ Card ${cardId} is ${side ? 'archived' : 'un-archived'}`);
-        if (options.json) console.log(JSON.stringify(result.value, null, 2));
-      }
-    } catch (error) {
-      logError(error, verbose);
-      process.exit(1);
+function archiveAction(archived: boolean) {
+  const verb = archived ? 'Archive' : 'Un-archive';
+  return run(async (
+    ctx: Ctx,
+    card: string,
+    options: { dryRun?: boolean; force?: boolean; yes?: boolean },
+  ) => {
+    // Previewing is not writing, so `--dry-run` skips the prompt. Everything
+    // else prompts, exactly as every other write command in this CLI does.
+    if (
+      !options.dryRun &&
+      !(await confirmAction(
+        `${verb} card ${card}? This moves ONE board instance across the archive line. ` +
+          `Reversible with 'favro cards ${archived ? 'unarchive' : 'archive'} ${card}'.`,
+        { yes: options.yes },
+      ))
+    ) {
+      return { item: { archived: null, aborted: true, card }, human: () => 'Aborted.' };
     }
-  };
+
+    const result = await dispatch<ArchiveResult>('archive', { card, archived }, {
+      client: ctx.client,
+      config: ctx.config,
+      force: options.force,
+      dryRun: options.dryRun,
+    });
+
+    return {
+      dispatch: result,
+      human: ({ cardId, archived: side }: ArchiveResult) =>
+        `✓ Card ${cardId} is ${side ? 'archived' : 'un-archived'}`,
+    };
+  });
 }
 
 export function registerCardsArchiveCommands(cardsCmd: Command): void {
@@ -110,8 +101,7 @@ export function registerCardsArchiveCommands(cardsCmd: Command): void {
     .option('--dry-run', 'Preview the archive without writing')
     .option('--force', 'Bypass scope check')
     .option('-y, --yes', 'Skip confirmation prompt')
-    .option('--json', 'Output as JSON')
-    .action(archiveAction(cardsCmd, true));
+    .action(archiveAction(true));
 
   cardsCmd
     .command('unarchive <card>')
@@ -119,8 +109,7 @@ export function registerCardsArchiveCommands(cardsCmd: Command): void {
     .option('--dry-run', 'Preview the un-archive without writing')
     .option('--force', 'Bypass scope check')
     .option('-y, --yes', 'Skip confirmation prompt')
-    .option('--json', 'Output as JSON')
-    .action(archiveAction(cardsCmd, false));
+    .action(archiveAction(false));
 }
 
 export default registerCardsArchiveCommands;

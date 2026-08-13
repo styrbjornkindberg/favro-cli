@@ -16,7 +16,10 @@ const MockTasksAPI = TasksAPI as jest.MockedClass<typeof TasksAPI>;
 
 function buildProgram(): Command {
   const program = new Command();
-  program.option('--verbose', 'Show stack traces');
+  // `--human` and `--pretty` declared at the root, and `--human` PREPENDED to
+  // every drive: #119 moved this command onto `run()`, so JSON is the default
+  // (ADR-0002) and the prose these arms assert lives on the `human` formatter.
+  program.option('--human').option('--pretty').option('--verbose', 'Show stack traces');
   registerTasksCommands(program);
   return program;
 }
@@ -24,7 +27,7 @@ function buildProgram(): Command {
 async function runCli(args: string[]): Promise<void> {
   const program = buildProgram();
   program.exitOverride();
-  await program.parseAsync(['node', 'favro', ...args]);
+  await program.parseAsync(['node', 'favro', '--human', ...args]);
 }
 
 beforeEach(() => {
@@ -34,6 +37,18 @@ beforeEach(() => {
   (safety.confirmAction as jest.Mock).mockResolvedValue(true);
 });
 
+/**
+ * `run()` sets `process.exitCode` instead of exiting, and jest shares one
+ * process per worker — an un-reset code leaks into the worker's own exit and
+ * into the next arm's assertion.
+ */
+beforeEach(() => {
+  process.exitCode = undefined;
+});
+afterEach(() => {
+  process.exitCode = undefined;
+});
+
 describe('favro tasks update', () => {
   let consoleSpy: jest.SpyInstance;
   let processExitSpy: jest.SpyInstance;
@@ -41,7 +56,9 @@ describe('favro tasks update', () => {
   beforeEach(() => {
     consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
     jest.spyOn(console, 'error').mockImplementation(() => {});
-    processExitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {}) as any);
+    processExitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {
+    throw new Error('process.exit must not be called under run()');
+  }) as never);
   });
 
   afterEach(() => {
@@ -84,7 +101,7 @@ describe('favro tasks update', () => {
   it('errors when no fields provided', async () => {
     await runCli(['tasks', 'update', 'task-1']);
 
-    expect(processExitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 });
 
@@ -95,7 +112,9 @@ describe('favro tasks delete', () => {
   beforeEach(() => {
     consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
     jest.spyOn(console, 'error').mockImplementation(() => {});
-    processExitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {}) as any);
+    processExitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {
+    throw new Error('process.exit must not be called under run()');
+  }) as never);
   });
 
   afterEach(() => {

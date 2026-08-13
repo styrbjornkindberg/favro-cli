@@ -88,6 +88,18 @@ const SPELLINGS: Array<[string, string[], string]> = [
   ],
 ];
 
+/**
+ * `run()` sets `process.exitCode` instead of exiting, and jest shares one
+ * process per worker — an un-reset code leaks into the worker's own exit and
+ * into the next arm's assertion.
+ */
+beforeEach(() => {
+  process.exitCode = undefined;
+});
+afterEach(() => {
+  process.exitCode = undefined;
+});
+
 describe('every removed spelling exits 1 naming its replacement', () => {
   it.each(SPELLINGS)('%s', async (_label, argv, pointer) => {
     const { out, err, code } = await driven(argv);

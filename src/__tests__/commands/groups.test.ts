@@ -16,12 +16,25 @@ const MockUsersAPI = UsersAPI as jest.MockedClass<typeof UsersAPI>;
 
 function buildProgram(): Command {
   const program = new Command();
-  program.option('--verbose', 'Show stack traces');
+  // `--human` and `--pretty` declared at the root, and `--human` PREPENDED to
+  // every drive: #119 moved this command onto `run()`, so JSON is the default
+  // (ADR-0002) and the prose these arms assert lives on the `human` formatter.
+  program.option('--human').option('--pretty').option('--verbose', 'Show stack traces');
   registerUsersCommands(program);
   return program;
 }
 
 async function runCli(args: string[]): Promise<void> {
+  const program = buildProgram();
+  program.exitOverride();
+  await program.parseAsync(['node', 'favro', '--human', ...args]);
+}
+
+/**
+ * The machine path — the DEFAULT since #119 (ADR-0002). `runCli` above prepends
+ * `--human`; this one does not, which is the only difference.
+ */
+async function runJson(args: string[]): Promise<void> {
   const program = buildProgram();
   program.exitOverride();
   await program.parseAsync(['node', 'favro', ...args]);
@@ -32,6 +45,18 @@ beforeEach(() => {
   (config.resolveApiKey as jest.Mock).mockResolvedValue('test-token');
   (config.readConfig as jest.Mock).mockResolvedValue({});
   (safety.confirmAction as jest.Mock).mockResolvedValue(true);
+});
+
+/**
+ * `run()` sets `process.exitCode` instead of exiting, and jest shares one
+ * process per worker — an un-reset code leaks into the worker's own exit and
+ * into the next arm's assertion.
+ */
+beforeEach(() => {
+  process.exitCode = undefined;
+});
+afterEach(() => {
+  process.exitCode = undefined;
 });
 
 describe('favro groups get', () => {
@@ -64,7 +89,7 @@ describe('favro groups get', () => {
       userIds: [],
     });
 
-    await runCli(['groups', 'get', 'grp-1', '--json']);
+    await runJson(['groups', 'get', 'grp-1']);
 
     const jsonCall = consoleSpy.mock.calls.find(
       (call: any[]) => typeof call[0] === 'string' && call[0].includes('userGroupId')
@@ -80,7 +105,9 @@ describe('favro groups create', () => {
   beforeEach(() => {
     consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
     jest.spyOn(console, 'error').mockImplementation(() => {});
-    processExitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {}) as any);
+    processExitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {
+    throw new Error('process.exit must not be called under run()');
+  }) as never);
   });
 
   afterEach(() => { jest.restoreAllMocks(); });
@@ -124,7 +151,9 @@ describe('favro groups update', () => {
   beforeEach(() => {
     consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
     jest.spyOn(console, 'error').mockImplementation(() => {});
-    processExitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {}) as any);
+    processExitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {
+    throw new Error('process.exit must not be called under run()');
+  }) as never);
   });
 
   afterEach(() => { jest.restoreAllMocks(); });
@@ -144,7 +173,7 @@ describe('favro groups update', () => {
   it('errors when no fields provided', async () => {
     await runCli(['groups', 'update', 'grp-1']);
 
-    expect(processExitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 });
 
@@ -155,7 +184,9 @@ describe('favro groups delete', () => {
   beforeEach(() => {
     consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
     jest.spyOn(console, 'error').mockImplementation(() => {});
-    processExitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {}) as any);
+    processExitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {
+    throw new Error('process.exit must not be called under run()');
+  }) as never);
   });
 
   afterEach(() => { jest.restoreAllMocks(); });

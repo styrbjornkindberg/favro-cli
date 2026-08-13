@@ -30,14 +30,25 @@ let logSpy: jest.SpyInstance;
 let errorSpy: jest.SpyInstance;
 let exitSpy: jest.SpyInstance;
 
-async function runCli(args: string[]): Promise<void> {
+function buildProgram(): Command {
   const program = new Command();
-  program.option('--verbose', 'Show stack traces');
+  // `--human` and `--pretty` declared at the root: #119 moved this command onto
+  // `run()`, so JSON is the default (ADR-0002) and the prose most arms assert
+  // lives on the `human` formatter.
+  program.option('--human').option('--pretty').option('--verbose', 'Show stack traces');
   registerAttachmentsCommands(program);
   program.exitOverride();
-  await program.parseAsync(['node', 'favro', ...args]).catch((e) => {
-    if (!(e instanceof ExitCalled)) throw e;
-  });
+  return program;
+}
+
+/** The human path — `--human` prepended. */
+async function runCli(args: string[]): Promise<void> {
+  await buildProgram().parseAsync(['node', 'favro', '--human', ...args]);
+}
+
+/** The machine path — the DEFAULT since #119 (ADR-0002). */
+async function runJson(args: string[]): Promise<void> {
+  await buildProgram().parseAsync(['node', 'favro', ...args]);
 }
 
 const output = () => logSpy.mock.calls.map((c) => String(c[0])).join('\n');
@@ -47,8 +58,8 @@ beforeEach(() => {
   jest.clearAllMocks();
   logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
   errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-  exitSpy = jest.spyOn(process, 'exit').mockImplementation(((code?: number) => {
-    throw new ExitCalled(code ?? 0);
+  exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {
+    throw new Error('process.exit must not be called under run()');
   }) as never);
 
   (config.resolveApiKey as jest.Mock).mockResolvedValue('test-token');
@@ -71,6 +82,18 @@ afterEach(() => {
   jest.restoreAllMocks();
 });
 
+/**
+ * `run()` sets `process.exitCode` instead of exiting, and jest shares one
+ * process per worker — an un-reset code leaks into the worker's own exit and
+ * into the next arm's assertion.
+ */
+beforeEach(() => {
+  process.exitCode = undefined;
+});
+afterEach(() => {
+  process.exitCode = undefined;
+});
+
 describe('attachments upload', () => {
   test('uploads the named file to the named card and reports the new attachment', async () => {
     await runCli(['attachments', 'upload', 'card-1', '--file', './error.log', '-y']);
@@ -84,7 +107,7 @@ describe('attachments upload', () => {
 
     expect(MockAttachments.prototype.uploadAttachment).not.toHaveBeenCalled();
     expect(output()).toContain('[dry-run]');
-    expect(exitSpy).toHaveBeenCalledWith(0);
+    expect(process.exitCode).toBeUndefined();
   });
 
   test('the lock runs BEFORE the preview — a preview is not a way around it', async () => {
@@ -107,11 +130,11 @@ describe('attachments upload', () => {
     await runCli(['attachments', 'upload', 'card-1', '--file', './error.log']);
 
     expect(MockAttachments.prototype.uploadAttachment).not.toHaveBeenCalled();
-    expect(exitSpy).toHaveBeenCalledWith(0);
+    expect(process.exitCode).toBeUndefined();
   });
 
   test('--json emits the attachment record instead of the human line', async () => {
-    await runCli(['attachments', 'upload', 'card-1', '--file', './error.log', '-y', '--json']);
+    await runJson(['attachments', 'upload', 'card-1', '--file', './error.log', '-y']);
 
     expect(JSON.parse(output())).toEqual({ attachmentId: 'att-1', name: 'error.log' });
   });
@@ -123,7 +146,7 @@ describe('attachments upload', () => {
 
     expect(MockAttachments.prototype.uploadAttachment).not.toHaveBeenCalled();
     expect(errors()).toContain('Scope violation');
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   test('a failed upload exits 1 rather than reporting success', async () => {
@@ -133,7 +156,7 @@ describe('attachments upload', () => {
 
     expect(output()).not.toContain('✓ Attachment uploaded');
     expect(errors()).toContain('413 payload too large');
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 });
 

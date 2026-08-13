@@ -43,10 +43,13 @@ class ExitCalled extends Error {
 
 async function runCli(args: string[]): Promise<void> {
   const program = new Command();
-  program.option('--verbose', 'Show stack traces');
+  // `--human` and `--pretty` declared at the root, and `--human` PREPENDED to
+  // every drive: #119 moved this command onto `run()`, so JSON is the default
+  // (ADR-0002) and the prose these arms assert lives on the `human` formatter.
+  program.option('--human').option('--pretty').option('--verbose', 'Show stack traces');
   registerScopeCommand(program);
   program.exitOverride();
-  await program.parseAsync(['node', 'favro', ...args]).catch((e) => {
+  await program.parseAsync(['node', 'favro', '--human', ...args]).catch((e) => {
     if (!(e instanceof ExitCalled)) throw e;
   });
 }
@@ -55,8 +58,8 @@ beforeEach(() => {
   jest.clearAllMocks();
   logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
   errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-  exitSpy = jest.spyOn(process, 'exit').mockImplementation(((code?: number) => {
-    throw new ExitCalled(code ?? 0);
+  exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {
+    throw new Error('process.exit must not be called under run()');
   }) as never);
 
   stored = {};
@@ -73,6 +76,18 @@ afterEach(() => {
 });
 
 const output = () => logSpy.mock.calls.map((c) => String(c[0])).join('\n');
+
+/**
+ * `run()` sets `process.exitCode` instead of exiting, and jest shares one
+ * process per worker — an un-reset code leaks into the worker's own exit and
+ * into the next arm's assertion.
+ */
+beforeEach(() => {
+  process.exitCode = undefined;
+});
+afterEach(() => {
+  process.exitCode = undefined;
+});
 
 describe('scope set', () => {
   test('persists the id AND the verified name, and says what is now locked', async () => {
@@ -92,7 +107,7 @@ describe('scope set', () => {
 
     expect(config.writeConfig).not.toHaveBeenCalled();
     expect(errorSpy.mock.calls.map((c) => String(c[0])).join('\n')).toContain('404 collection not found');
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 });
 

@@ -475,7 +475,20 @@ describe('the detector stays able to detect', () => {
     // would not go red — it would go quiet, which is worse. The fix when this
     // fails is to type the value, never to widen `isArrayish`.
     expect(stdoutJson.filter((s) => s.type === 'any').map((s) => s.where)).toEqual([]);
-    expect(stdoutJson.length).toBeGreaterThan(20);
+    // ONE site, and 21 before #119. That floor read `> 20` because that many
+    // commands stringified to stdout themselves; the runner does it now, so the
+    // population collapsed to `cards export`, which writes a FORMAT and is in
+    // `OUT_OF_REMIT` above for that reason. Set to the measured value rather
+    // than deleted: the `any` assertion above is the arm that matters and it
+    // needs a non-empty population to mean anything.
+    //
+    // What the collapse costs, stated rather than hidden: this detector cannot
+    // see `writeValue` in `run.ts`, whose value is a generic `T`, so the type of
+    // what a migrated command emits is no longer checkable from here. The
+    // `enveloped` half above still reaches those commands — `returnsRows` reads
+    // the `rows:` property off a `run()` handler's return — and `run.test.ts`
+    // is what pins the writer itself.
+    expect(stdoutJson.length).toBeGreaterThanOrEqual(1);
   });
 });
 

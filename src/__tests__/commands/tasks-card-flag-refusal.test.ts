@@ -91,10 +91,13 @@ let exit: jest.SpyInstance;
 
 async function runCli(args: string[]): Promise<void> {
   const program = new Command();
-  program.option('--verbose', 'Show stack traces');
+  // `--human` and `--pretty` declared at the root, and `--human` PREPENDED to
+  // every drive: #119 moved this command onto `run()`, so JSON is the default
+  // (ADR-0002) and the prose these arms assert lives on the `human` formatter.
+  program.option('--human').option('--pretty').option('--verbose', 'Show stack traces');
   registerTasksCommands(program);
   program.exitOverride();
-  await program.parseAsync(['node', 'favro', ...args]);
+  await program.parseAsync(['node', 'favro', '--human', ...args]);
 }
 
 /** The one error that reached the reporter. Fails loudly on none, or on two. */
@@ -118,7 +121,9 @@ beforeEach(() => {
   consoleLog = jest.spyOn(console, 'log').mockImplementation(() => {});
   consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
   consoleWarn = jest.spyOn(console, 'warn').mockImplementation(() => {});
-  exit = jest.spyOn(process, 'exit').mockImplementation((() => {}) as any);
+  exit = jest.spyOn(process, 'exit').mockImplementation((() => {
+    throw new Error('process.exit must not be called under run()');
+  }) as never);
 
   (config.resolveApiKey as jest.Mock).mockResolvedValue('test-token');
   (config.readConfig as jest.Mock).mockResolvedValue(LOCK);
@@ -221,14 +226,14 @@ describe.each(WRITES)('tasks %s under a lock with --card omitted', (_name, argv,
   it('writes the refusal to stderr and exits 1, with nothing on stdout', async () => {
     await runCli(argv);
 
-    // ADR-0002: `tasks` is still an unmigrated `catch { logError; exit(1) }`
-    // caller, so its refusal renders to stderr rather than as a stdout envelope.
-    // That is #115–#119's job, not this one's; the stream asserted is the one
-    // measured on the built CLI.
+    // ADR-0002: driven `--human`, which is where `logError` renders. #119
+    // migrated `tasks`, so the machine DEFAULT now puts this same refusal on
+    // STDOUT as `{"error":{…}}` — the arm below is that half, which this file
+    // was written unable to assert.
     expect(consoleError).toHaveBeenCalledWith(expect.stringContaining('Scope violation'));
     expect(consoleError).toHaveBeenCalledWith(expect.stringContaining('--card <cardCommonId>'));
     expect(consoleLog).not.toHaveBeenCalled();
-    expect(exit).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   it('refuses BEFORE the write, and spends no request resolving nothing', async () => {
@@ -239,6 +244,18 @@ describe.each(WRITES)('tasks %s under a lock with --card omitted', (_name, argv,
     expect(writeFn()).not.toHaveBeenCalled();
     expect(MockCardsAPI.prototype.getCard).not.toHaveBeenCalled();
   });
+});
+
+/**
+ * `run()` sets `process.exitCode` instead of exiting, and jest shares one
+ * process per worker — an un-reset code leaks into the worker's own exit and
+ * into the next arm's assertion.
+ */
+beforeEach(() => {
+  process.exitCode = undefined;
+});
+afterEach(() => {
+  process.exitCode = undefined;
 });
 
 describe('the lock the refusal names falls back the way the shared guard does', () => {
@@ -275,7 +292,7 @@ describe.each(WRITES)('tasks %s under a lock, --card omitted, --force given', (_
     // Not the warning-only pass-through `--force` buys on a resolved board.
     expect(consoleWarn).not.toHaveBeenCalled();
     expect(writeFn()).not.toHaveBeenCalled();
-    expect(exit).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 });
 
@@ -292,7 +309,7 @@ describe.each(WRITES)('tasks %s with no lock configured and --card omitted', (_n
     // The opposite polarity of arm 1's "nothing on stdout". Without this, that
     // assertion would hold against a build that never printed anything at all.
     expect(consoleLog).toHaveBeenCalled();
-    expect(exit).not.toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBeUndefined();
     // #102/#104's criterion: no lock means no extra request on that path.
     expect(MockCardsAPI.prototype.getCard).not.toHaveBeenCalled();
   });
@@ -312,7 +329,7 @@ describe.each(WRITES)('tasks %s with --card at a board outside the lock', (_name
     expect(error.message).not.toContain('--card <cardCommonId>');
     expect(error.message).not.toContain('names no card');
     expect(writeFn()).not.toHaveBeenCalled();
-    expect(exit).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   it('and --force DOES rescue it, warning first — the contrast arm 2 needs', async () => {
@@ -367,7 +384,7 @@ describe.each(WRITES)('tasks %s with --card at a card that has no board instance
     expect(error.message).toContain('assignment fork');
     expect(error.message).not.toContain('--card <cardCommonId>');
     expect(writeFn()).not.toHaveBeenCalled();
-    expect(exit).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 });
 

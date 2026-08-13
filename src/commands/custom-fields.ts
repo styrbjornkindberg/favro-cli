@@ -9,15 +9,16 @@
  *   favro custom-fields values <field-id>            — List all possible values for a field
  */
 import { Command } from 'commander';
-import CustomFieldsAPI, {
+import {
   CustomFieldDefinition,
   CustomFieldValue,
   CustomFieldOption,
   formatFieldType,
 } from '../lib/custom-fields-api';
-import { createFavroClient } from '../lib/client-factory';
-import { logError } from '../lib/error-handler';
-import { capRows, noteTruncation, writeEnvelope } from '../lib/read-shape';
+import { confirmAction } from '../lib/safety';
+import { dispatch } from '../lib/dispatch';
+import { previewOnly } from '../lib/report-dispatch';
+import { Ctx, run } from '../lib/run';
 
 // ─── Formatters ──────────────────────────────────────────────────────────────
 
@@ -105,55 +106,24 @@ export function registerCustomFieldsCommands(program: Command): void {
     .command('list <board-id>')
     .description('List all custom fields defined for a board')
     .option('--limit <n>', 'Cap how many rows are printed; sets "truncated"')
-    .option('--json', 'Output as JSON')
-    .action(async (boardId: string, options) => {
-      const verbose = program.opts()?.verbose ?? false;
-      try {
-
-        const client = await createFavroClient();
-        const api = new CustomFieldsAPI(client);
-
-        const fields = await api.listFields(boardId);
-        // The fetch already ran to completion; `--limit` cuts the PRINT (#99).
-        const envelope = capRows(fields, options.limit);
-
-        if (options.json) {
-          writeEnvelope(envelope, Boolean(program.opts()?.pretty));
-        } else {
-          console.log(`Found ${envelope.rows.length} custom field(s) for board ${boardId}:`);
-          formatFieldsTable(envelope.rows);
-          noteTruncation(envelope, fields.length);
-        }
-      } catch (error) {
-        logError(error, verbose);
-        process.exit(1);
-      }
-    });
+    .action(run(async (ctx: Ctx, boardId: string, options: { limit?: string }) => ({
+      // The fetch runs to completion; `--limit` cuts the PRINT (#99).
+      rows: await ctx.api.customFields.listFields(boardId),
+      limit: options.limit,
+      human: (fields: CustomFieldDefinition[]) => {
+        console.log(`Found ${fields.length} custom field(s) for board ${boardId}:`);
+        formatFieldsTable(fields);
+      },
+    })));
 
   // ─── custom-fields get <field-id> ──────────────────────────────────────────
   cfCmd
     .command('get <field-id>')
     .description('Get details for a specific custom field')
-    .option('--json', 'Output as JSON')
-    .action(async (fieldId: string, options) => {
-      const verbose = program.opts()?.verbose ?? false;
-      try {
-
-        const client = await createFavroClient();
-        const api = new CustomFieldsAPI(client);
-
-        const field = await api.getField(fieldId);
-
-        if (options.json) {
-          console.log(JSON.stringify(field, null, 2));
-        } else {
-          formatFieldDetail(field);
-        }
-      } catch (error) {
-        logError(error, verbose);
-        process.exit(1);
-      }
-    });
+    .action(run(async (ctx: Ctx, fieldId: string) => ({
+      item: await ctx.api.customFields.getField(fieldId),
+      human: formatFieldDetail,
+    })));
 
   // ─── custom-fields set <card> <field-id> <value> ────────────────────────
   cfCmd
@@ -164,37 +134,34 @@ export function registerCustomFieldsCommands(program: Command): void {
       'For date fields, use ISO 8601 format (e.g. "2024-12-31").\n' +
       'For text/user/link fields, pass the string value directly.'
     )
-    .option('--json', 'Output updated field value as JSON')
     .option('--dry-run', 'Preview the write. Reads the card first to check the scope lock')
     .option('-y, --yes', 'Skip confirmation prompt')
     .option('--force', 'Bypass scope check')
-    .action(async (cardId: string, fieldId: string, value: string, options) => {
-      const verbose = program.opts()?.verbose ?? false;
-      try {
-        const { readConfig } = await import('../lib/config');
-        const { confirmAction } = await import('../lib/safety');
-        const { dispatch } = await import('../lib/dispatch');
-        const { previewOnly, reportDispatch } = await import('../lib/report-dispatch');
-        const config = (await readConfig()) ?? {};
+    .action(run(async (
+      ctx: Ctx,
+      cardId: string,
+      fieldId: string,
+      value: string,
+      options: { dryRun?: boolean; yes?: boolean; force?: boolean },
+    ) => {
+        const config = ctx.config;
         const args = { card: cardId, customField: { field: fieldId, value } };
 
         // A dry run with NO lock configured previews from the intent's own pure
         // `preview()` and touches no wire — see `previewOnly`. #155 pinned this
         // command's dry run at zero requests and no credential, and routing it
-        // must not take that away.
+        // must not take that away. `ctx.client` is untouched on this arm, which
+        // is what keeps the credential deferred (#135).
         if (options.dryRun && !config.scopeCollectionId) {
           previewOnly('update', args, config);
           return;
         }
 
-        const client = await createFavroClient();
-
         if (
           !options.dryRun &&
           !(await confirmAction(`Set custom field ${fieldId} on card ${cardId}?`, { yes: options.yes }))
         ) {
-          console.log('Aborted.');
-          process.exit(0);
+          return { item: { set: false, aborted: true }, human: () => 'Aborted.' };
         }
 
         // Through the ONE dispatch table (#109). This was the last card write
@@ -214,34 +181,26 @@ export function registerCustomFieldsCommands(program: Command): void {
         // The lock runs BEFORE the preview because it runs inside the intent,
         // which takes it before the `dryRun` return — the ordering #155 fixed
         // here by hand is now structural.
-        const result = await dispatch<{ cardId: string; wrote: string[] }>(
-          'update',
-          args,
-          { client, config, force: options.force, dryRun: options.dryRun },
-        );
-        if (reportDispatch(result, options.json)) process.exit(1);
-        // `value !== undefined` is what keeps this off a dry run: the table's
-        // preview return carries a `preview` and no `value`.
-        if (result.outcome !== 'ok' || result.value === undefined) return;
-
-        if (options.json) {
-          console.log(JSON.stringify(result.value, null, 2));
-        } else {
+        return {
+          dispatch: await dispatch<{ cardId: string; wrote: string[] }>(
+            'update',
+            args,
+            { client: ctx.client, config, force: options.force, dryRun: options.dryRun },
+          ),
           // The ✓ is spent on a write the facade OBSERVED, which is why the
           // requested value may be printed here at all: `setFieldValue` matches
           // the echo on `customFieldId` and throws when it does not carry what it
-          // sent, so reaching this line IS the observation. The old
+          // sent, so reaching this formatter IS the observation. The old
           // "accepted (200) but UNCONFIRMED" arm is gone with it — that case is
-          // now a failure the table reports and `reportDispatch` has exited on.
-          console.log(`✓ Custom field updated successfully.`);
-          console.log(`  Field: ${fieldId}`);
-          console.log(`  Value: ${value}`);
-        }
-      } catch (error) {
-        logError(error, verbose);
-        process.exit(1);
-      }
-    });
+          // now a failure the table reports and `reportDispatch` renders.
+          human: () =>
+            [
+              '✓ Custom field updated successfully.',
+              `  Field: ${fieldId}`,
+              `  Value: ${value}`,
+            ].join('\n'),
+        };
+    }));
 
   // ─── custom-fields values <field-id> ────────────────────────────────────────
   cfCmd
@@ -249,34 +208,19 @@ export function registerCustomFieldsCommands(program: Command): void {
     .description('List all possible values (options) for a select-type custom field')
     .option('--board <board-id>', 'Board ID to scope the field lookup')
     .option('--limit <n>', 'Cap how many rows are printed; sets "truncated"')
-    .option('--json', 'Output as JSON')
-    .action(async (fieldId: string, options) => {
-      const verbose = program.opts()?.verbose ?? false;
-      try {
-
-        const client = await createFavroClient();
-        const api = new CustomFieldsAPI(client);
-
-        const opts = await api.listFieldValues(fieldId, options.board);
-        // The fetch already ran to completion; `--limit` cuts the PRINT (#99).
-        const envelope = capRows(opts, options.limit);
-
-        if (options.json) {
-          writeEnvelope(envelope, Boolean(program.opts()?.pretty));
-        } else {
-          if (envelope.rows.length === 0) {
-            console.log('No options found. This field may not be a select type.');
-          } else {
-            console.log(`Found ${envelope.rows.length} option(s) for field ${fieldId}:`);
-            formatOptionsTable(envelope.rows);
-            noteTruncation(envelope, opts.length);
-          }
+    .action(run(async (ctx: Ctx, fieldId: string, options: { board?: string; limit?: string }) => ({
+      // The fetch runs to completion; `--limit` cuts the PRINT (#99).
+      rows: await ctx.api.customFields.listFieldValues(fieldId, options.board),
+      limit: options.limit,
+      human: (opts: CustomFieldOption[]) => {
+        if (opts.length === 0) {
+          console.log('No options found. This field may not be a select type.');
+          return;
         }
-      } catch (error) {
-        logError(error, verbose);
-        process.exit(1);
-      }
-    });
+        console.log(`Found ${opts.length} option(s) for field ${fieldId}:`);
+        formatOptionsTable(opts);
+      },
+    })));
 }
 
 export default registerCustomFieldsCommands;

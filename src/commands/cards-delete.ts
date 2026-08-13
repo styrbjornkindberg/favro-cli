@@ -14,9 +14,8 @@
  */
 import { Command } from 'commander';
 import { dispatch, DeleteResult } from '../lib/dispatch';
-import { reportDispatch } from '../lib/report-dispatch';
-import { logError } from '../lib/error-handler';
-import { createFavroClient } from '../lib/client-factory';
+import { confirmAction } from '../lib/safety';
+import { Ctx, run } from '../lib/run';
 
 const DESCRIPTION =
   'Delete a card — DESTRUCTIVE and IRREVERSIBLE. There is no undo and no\n' +
@@ -46,49 +45,40 @@ export function registerCardsDeleteCommand(cardsCmd: Command): void {
     .option('--dry-run', 'Preview the delete without writing')
     .option('--force', 'Bypass scope check')
     .option('-y, --yes', 'Skip confirmation prompt')
-    .option('--json', 'Output as JSON')
-    .action(async (card: string, options) => {
-      const verbose = cardsCmd.parent?.opts()?.verbose ?? cardsCmd.opts()?.verbose ?? false;
-      try {
-        const client = await createFavroClient();
-        const { readConfig } = await import('../lib/config');
-        const { confirmAction } = await import('../lib/safety');
-
-        // Previewing is not writing, so `--dry-run` skips the prompt. Everything
-        // else prompts, exactly as every other write command in this CLI does.
-        if (
-          !options.dryRun &&
-          !(await confirmAction(
-            `Delete card ${card}? This removes ONE board instance and CANNOT be undone.`,
-            { yes: options.yes },
-          ))
-        ) {
-          console.log('Aborted.');
-          return;
-        }
-
-        const result = await dispatch<DeleteResult>(
-          'delete',
-          { card },
-          {
-            client,
-            config: (await readConfig()) ?? {},
-            force: options.force,
-            dryRun: options.dryRun,
-          },
-        );
-
-        if (reportDispatch(result, options.json)) process.exit(1);
-        if (result.outcome === 'ok' && result.value !== undefined) {
-          const { cardId, boardId } = result.value;
-          console.log(`✓ Card instance deleted: ${cardId}${boardId ? ` (board ${boardId})` : ''}`);
-          if (options.json) console.log(JSON.stringify(result.value, null, 2));
-        }
-      } catch (error) {
-        logError(error, verbose);
-        process.exit(1);
+    .action(run(async (
+      ctx: Ctx,
+      card: string,
+      options: { dryRun?: boolean; force?: boolean; yes?: boolean },
+    ) => {
+      // Previewing is not writing, so `--dry-run` skips the prompt. Everything
+      // else prompts, exactly as every other write command in this CLI does.
+      if (
+        !options.dryRun &&
+        !(await confirmAction(
+          `Delete card ${card}? This removes ONE board instance and CANNOT be undone.`,
+          { yes: options.yes },
+        ))
+      ) {
+        return { item: { deleted: false, aborted: true, card }, human: () => 'Aborted.' };
       }
-    });
+
+      const result = await dispatch<DeleteResult>(
+        'delete',
+        { card },
+        {
+          client: ctx.client,
+          config: ctx.config,
+          force: options.force,
+          dryRun: options.dryRun,
+        },
+      );
+
+      return {
+        dispatch: result,
+        human: ({ cardId, boardId }: DeleteResult) =>
+          `✓ Card instance deleted: ${cardId}${boardId ? ` (board ${boardId})` : ''}`,
+      };
+    }));
 }
 
 export default registerCardsDeleteCommand;

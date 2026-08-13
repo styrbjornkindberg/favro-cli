@@ -74,12 +74,25 @@ const SAMPLE_FIELD_VALUE = {
 
 function buildProgram(): Command {
   const program = new Command();
-  program.option('--verbose', 'Show stack traces');
+  // `--human` and `--pretty` declared at the root, and `--human` PREPENDED to
+  // every drive: #119 moved this command onto `run()`, so JSON is the default
+  // (ADR-0002) and the prose these arms assert lives on the `human` formatter.
+  program.option('--human').option('--pretty').option('--verbose', 'Show stack traces');
   registerCustomFieldsCommands(program);
   return program;
 }
 
 async function runCli(args: string[]): Promise<void> {
+  const program = buildProgram();
+  program.exitOverride();
+  await program.parseAsync(['node', 'favro', '--human', ...args]);
+}
+
+/**
+ * The machine path — the DEFAULT since #119 (ADR-0002). `runCli` above prepends
+ * `--human`; this one does not, which is the only difference.
+ */
+async function runJson(args: string[]): Promise<void> {
   const program = buildProgram();
   program.exitOverride();
   await program.parseAsync(['node', 'favro', ...args]);
@@ -88,6 +101,10 @@ async function runCli(args: string[]): Promise<void> {
 beforeEach(() => {
   jest.clearAllMocks();
   (config.resolveApiKey as jest.Mock).mockResolvedValue('test-token');
+  // `run()` reads the config before it calls the handler and puts it on `ctx`,
+  // so the auto-mock's `undefined` is not a stand-in for "no lock" any more —
+  // it is a `TypeError` the runner's boundary swallows into an empty preview.
+  (config.readConfig as jest.Mock).mockResolvedValue({});
   // The resolution half of a custom-field write, split out of `setFieldValue`
   // for #109 so the transactional facade can do it on the read side. A text
   // field spells its value under `value`.
@@ -100,6 +117,18 @@ beforeEach(() => {
 // =============================================================================
 // custom-fields list <board-id>
 // =============================================================================
+
+/**
+ * `run()` sets `process.exitCode` instead of exiting, and jest shares one
+ * process per worker — an un-reset code leaks into the worker's own exit and
+ * into the next arm's assertion.
+ */
+beforeEach(() => {
+  process.exitCode = undefined;
+});
+afterEach(() => {
+  process.exitCode = undefined;
+});
 
 describe('favro custom-fields list', () => {
   let consoleSpy: jest.SpyInstance;
@@ -130,7 +159,7 @@ describe('favro custom-fields list', () => {
 
   it('lists fields as JSON with --json flag', async () => {
     MockCustomFieldsAPI.prototype.listFields = jest.fn().mockResolvedValue([SAMPLE_TEXT_FIELD]);
-    await runCli(['custom-fields', 'list', 'board-1', '--json']);
+    await runJson(['custom-fields', 'list', 'board-1']);
     expect(consoleSpy).toHaveBeenCalledWith(
       expect.stringContaining('"fieldId"')
     );
@@ -149,7 +178,8 @@ describe('favro custom-fields list', () => {
     const mockExit = jest.spyOn(process, 'exit').mockImplementation(() => {
       throw new Error('process.exit called');
     });
-    await expect(runCli(['custom-fields', 'list', 'board-1'])).rejects.toThrow();
+    await runCli(['custom-fields', 'list', 'board-1']);
+    expect(process.exitCode).toBe(1);
     mockExit.mockRestore();
   });
 
@@ -160,7 +190,8 @@ describe('favro custom-fields list', () => {
     const mockExit = jest.spyOn(process, 'exit').mockImplementation(() => {
       throw new Error('process.exit called');
     });
-    await expect(runCli(['custom-fields', 'list', 'board-1'])).rejects.toThrow();
+    await runCli(['custom-fields', 'list', 'board-1']);
+    expect(process.exitCode).toBe(1);
     mockExit.mockRestore();
   });
 });
@@ -192,7 +223,7 @@ describe('favro custom-fields get', () => {
 
   it('gets a field as JSON with --json flag', async () => {
     MockCustomFieldsAPI.prototype.getField = jest.fn().mockResolvedValue(SAMPLE_SELECT_FIELD);
-    await runCli(['custom-fields', 'get', 'field-2', '--json']);
+    await runJson(['custom-fields', 'get', 'field-2']);
     expect(consoleSpy).toHaveBeenCalledWith(
       expect.stringContaining('"fieldId"')
     );
@@ -205,7 +236,8 @@ describe('favro custom-fields get', () => {
     const mockExit = jest.spyOn(process, 'exit').mockImplementation(() => {
       throw new Error('process.exit called');
     });
-    await expect(runCli(['custom-fields', 'get', 'nonexistent'])).rejects.toThrow();
+    await runCli(['custom-fields', 'get', 'nonexistent']);
+    expect(process.exitCode).toBe(1);
     mockExit.mockRestore();
   });
 
@@ -214,7 +246,8 @@ describe('favro custom-fields get', () => {
     const mockExit = jest.spyOn(process, 'exit').mockImplementation(() => {
       throw new Error('process.exit called');
     });
-    await expect(runCli(['custom-fields', 'get', 'field-1'])).rejects.toThrow();
+    await runCli(['custom-fields', 'get', 'field-1']);
+    expect(process.exitCode).toBe(1);
     mockExit.mockRestore();
   });
 });
@@ -277,23 +310,22 @@ describe('favro custom-fields set', () => {
   it('an echo that does not carry the value is a FAILURE, not a notice, and exits 1', async () => {
     mockUpdateCard.mockResolvedValueOnce({ cardId: 'card-1', customFields: [] } as never);
     const mockExit = jest.spyOn(process, 'exit').mockImplementation(() => {
-      throw new Error('process.exit called');
+      throw new Error('process.exit must not be called under run()');
     });
 
-    await expect(
-      runCli(['custom-fields', 'set', 'card-1', 'field-1', 'Some text']),
-    ).rejects.toThrow('process.exit called');
+    await runCli(['custom-fields', 'set', 'card-1', 'field-1', 'Some text']);
 
     const printed = consoleSpy.mock.calls.map((c) => String(c[0])).join('\n');
     expect(printed).not.toContain('✓');
     const errored = consoleErrorSpy.mock.calls.map((c) => String(c[0])).join('\n');
     expect(errored).toContain('✗ update failed');
-    expect(mockExit).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
+    expect(mockExit).not.toHaveBeenCalled();
     mockExit.mockRestore();
   });
 
   it('--json prints the intent result', async () => {
-    await runCli(['custom-fields', 'set', 'card-1', 'field-1', 'text', '--json']);
+    await runJson(['custom-fields', 'set', 'card-1', 'field-1', 'text']);
 
     const printed = consoleSpy.mock.calls.map((c) => String(c[0])).join('\n');
     expect(JSON.parse(printed)).toMatchObject({ cardId: 'card-1', wrote: ['customField:field-1'] });
@@ -315,7 +347,8 @@ describe('favro custom-fields set', () => {
     const mockExit = jest.spyOn(process, 'exit').mockImplementation(() => {
       throw new Error('process.exit called');
     });
-    await expect(runCli(['custom-fields', 'set', 'card-1', 'field-1', 'bad'])).rejects.toThrow();
+    await runCli(['custom-fields', 'set', 'card-1', 'field-1', 'bad']);
+    expect(process.exitCode).toBe(1);
     mockExit.mockRestore();
   });
 
@@ -324,7 +357,8 @@ describe('favro custom-fields set', () => {
     const mockExit = jest.spyOn(process, 'exit').mockImplementation(() => {
       throw new Error('process.exit called');
     });
-    await expect(runCli(['custom-fields', 'set', 'card-1', 'field-1', 'val'])).rejects.toThrow();
+    await runCli(['custom-fields', 'set', 'card-1', 'field-1', 'val']);
+    expect(process.exitCode).toBe(1);
     mockExit.mockRestore();
   });
 });
@@ -371,7 +405,7 @@ describe('favro custom-fields values', () => {
     MockCustomFieldsAPI.prototype.listFieldValues = jest.fn().mockResolvedValue(
       SAMPLE_SELECT_FIELD.options
     );
-    await runCli(['custom-fields', 'values', 'field-2', '--json']);
+    await runJson(['custom-fields', 'values', 'field-2']);
     expect(consoleSpy).toHaveBeenCalledWith(
       expect.stringContaining('"optionId"')
     );
@@ -392,7 +426,8 @@ describe('favro custom-fields values', () => {
     const mockExit = jest.spyOn(process, 'exit').mockImplementation(() => {
       throw new Error('process.exit called');
     });
-    await expect(runCli(['custom-fields', 'values', 'nonexistent'])).rejects.toThrow();
+    await runCli(['custom-fields', 'values', 'nonexistent']);
+    expect(process.exitCode).toBe(1);
     mockExit.mockRestore();
   });
 
@@ -401,7 +436,8 @@ describe('favro custom-fields values', () => {
     const mockExit = jest.spyOn(process, 'exit').mockImplementation(() => {
       throw new Error('process.exit called');
     });
-    await expect(runCli(['custom-fields', 'values', 'field-1'])).rejects.toThrow();
+    await runCli(['custom-fields', 'values', 'field-1']);
+    expect(process.exitCode).toBe(1);
     mockExit.mockRestore();
   });
 });

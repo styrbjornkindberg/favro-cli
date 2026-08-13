@@ -6,15 +6,25 @@
  * favro tasks add <card> "Create new DB schema"
  */
 import { Command } from 'commander';
-import TasksAPI from '../lib/tasks-api';
-import TaskListsAPI from '../lib/tasklists-api';
-import CardsAPI from '../lib/cards-api';
+import { Task } from '../lib/tasks-api';
 import type FavroHttpClient from '../lib/http-client';
-import { createFavroClient } from '../lib/client-factory';
 import { readConfig } from '../lib/config';
-import { logError } from '../lib/error-handler';
+import { RefusalError } from '../lib/refusal';
 import { boardOfCard, checkResolvedScope, confirmAction, dryRunLog, ScopeError } from '../lib/safety';
-import { capRows, noteTruncation, writeEnvelope } from '../lib/read-shape';
+import { Ctx, run } from '../lib/run';
+
+/** The flag row the task writes share. */
+interface TaskWriteFlags {
+  name?: string;
+  completed?: boolean;
+  notCompleted?: boolean;
+  position?: string;
+  tasklist?: string;
+  card?: string;
+  dryRun?: boolean;
+  yes?: boolean;
+  force?: boolean;
+}
 
 /**
  * The shared scope check for the three writes named only by a `taskId`, plus the
@@ -77,84 +87,56 @@ export function registerTasksCommands(program: Command): void {
     .command('list <card>')
     .description('List all tasks (checklist items) on a card')
     .option('--limit <n>', 'Cap how many rows are printed; sets "truncated"')
-    .option('--json', 'Output as JSON')
-    .action(async (cardCommonId: string, options) => {
-      const verbose = tasksCommand.opts()?.verbose ?? false;
-      try {
-        const client = await createFavroClient();
-        const api = new TasksAPI(client);
-        const tasks = await api.listTasks(cardCommonId);
-        // The fetch already ran to completion; `--limit` cuts the PRINT (#99).
-        const envelope = capRows(tasks, options.limit);
-
-        if (options.json) {
-          writeEnvelope(envelope, Boolean(program.opts()?.pretty));
-        } else {
-          console.log(`Found ${envelope.rows.length} task(s) on card ${cardCommonId}:`);
-          const rows = envelope.rows.map(t => ({
-            Status: t.completed ? '[x]' : '[ ]',
-            Name: t.name,
-            ID: t.taskId,
-          }));
-          console.table(rows);
-          noteTruncation(envelope, tasks.length);
-        }
-      } catch (error: any) {
-        logError(error, verbose);
-        process.exit(1);
-      }
-    });
+    .action(run(async (ctx: Ctx, cardCommonId: string, options: { limit?: string }) => ({
+      // The fetch runs to completion; `--limit` cuts the PRINT (#99).
+      rows: await ctx.api.tasks.listTasks(cardCommonId),
+      limit: options.limit,
+      human: (tasks: Task[]) => {
+        console.log(`Found ${tasks.length} task(s) on card ${cardCommonId}:`);
+        console.table(tasks.map(t => ({
+          Status: t.completed ? '[x]' : '[ ]',
+          Name: t.name,
+          ID: t.taskId,
+        })));
+      },
+    })));
 
   tasksCommand
     .command('add <card> <name>')
     .description('Create a new task on a card')
     .option('--tasklist <taskListId>', 'Target task list ID (auto-selects first if omitted)')
-    .option('--json', 'Output as JSON')
     .option('--dry-run', 'Preview without making API calls')
     .option('-y, --yes', 'Skip confirmation prompt')
     .option('--force', 'Bypass scope check')
-    .action(async (cardCommonId: string, name: string, options) => {
-      const verbose = tasksCommand.opts()?.verbose ?? false;
-      try {
-        const client = await createFavroClient();
-        await checkResolvedScope(client, () => boardOfCard(client, cardCommonId), options.force);
+    .action(run(async (ctx: Ctx, cardCommonId: string, name: string, options: TaskWriteFlags) => {
+      await checkResolvedScope(ctx.client, () => boardOfCard(ctx.client, cardCommonId), options.force);
 
-        if (options.dryRun) {
-          dryRunLog('adding', 'task', `"${name}" to card ${cardCommonId}`);
-          process.exit(0);
-        }
-
-        if (!(await confirmAction(`Add task "${name}" to card ${cardCommonId}?`, { yes: options.yes }))) {
-          process.exit(0);
-        }
-
-        const api = new TasksAPI(client);
-        const taskListsApi = new TaskListsAPI(client);
-
-        let taskListId = options.tasklist;
-        if (!taskListId) {
-          // Auto-select first task list, or create a default one
-          const lists = await taskListsApi.listTaskLists(cardCommonId);
-          if (lists.length > 0) {
-            taskListId = lists[0].taskListId;
-          } else {
-            const newList = await taskListsApi.createTaskList(cardCommonId, 'Checklist');
-            taskListId = newList.taskListId;
-          }
-        }
-
-        const task = await api.createTask(cardCommonId, name, taskListId);
-
-        if (options.json) {
-          console.log(JSON.stringify(task, null, 2));
-        } else {
-          console.log(`✓ Task created: ${task.taskId} (${task.name})`);
-        }
-      } catch (error: any) {
-        logError(error, verbose);
-        process.exit(1);
+      if (options.dryRun) {
+        dryRunLog('adding', 'task', `"${name}" to card ${cardCommonId}`);
+        return;
       }
-    });
+
+      if (!(await confirmAction(`Add task "${name}" to card ${cardCommonId}?`, { yes: options.yes }))) {
+        return;
+      }
+
+      let taskListId = options.tasklist;
+      if (!taskListId) {
+        // Auto-select first task list, or create a default one
+        const lists = await ctx.api.tasklists.listTaskLists(cardCommonId);
+        if (lists.length > 0) {
+          taskListId = lists[0].taskListId;
+        } else {
+          const newList = await ctx.api.tasklists.createTaskList(cardCommonId, 'Checklist');
+          taskListId = newList.taskListId;
+        }
+      }
+
+      return {
+        item: await ctx.api.tasks.createTask(cardCommonId, name, taskListId),
+        human: (task: Task) => `✓ Task created: ${task.taskId} (${task.name})`,
+      };
+    }));
 
   tasksCommand
     .command('update <taskId>')
@@ -163,7 +145,6 @@ export function registerTasksCommands(program: Command): void {
     .option('--completed', 'Mark as completed')
     .option('--not-completed', 'Mark as not completed')
     .option('--position <number>', 'New position (0-based)')
-    .option('--json', 'Output as JSON')
     .option('--dry-run', 'Preview without making API calls')
     .option('-y, --yes', 'Skip confirmation prompt')
     .option('--force', 'Bypass scope check')
@@ -183,82 +164,58 @@ export function registerTasksCommands(program: Command): void {
     // `GET /tasks/:taskId`; if it carries `cardCommonId`, delete this flag and
     // resolve like everywhere else.
     .option('--card <card>', 'Card the task belongs to — required under a scope lock, since a taskId names no board')
-    .action(async (taskId: string, options) => {
-      const verbose = tasksCommand.opts()?.verbose ?? false;
-      try {
-        const updateData: { name?: string; completed?: boolean; position?: number } = {};
-        if (options.name) updateData.name = options.name;
-        if (options.completed) updateData.completed = true;
-        if (options.notCompleted) updateData.completed = false;
-        if (options.position !== undefined) updateData.position = parseInt(options.position, 10);
+    .action(run(async (ctx: Ctx, taskId: string, options: TaskWriteFlags) => {
+      const updateData: { name?: string; completed?: boolean; position?: number } = {};
+      if (options.name) updateData.name = options.name;
+      if (options.completed) updateData.completed = true;
+      if (options.notCompleted) updateData.completed = false;
+      if (options.position !== undefined) updateData.position = parseInt(options.position, 10);
 
-        if (Object.keys(updateData).length === 0) {
-          console.error('Error: Provide at least one field: --name, --completed, --not-completed, or --position');
-          process.exit(1);
-        }
-
-        const client = await createFavroClient();
-        await checkTaskScope(client, options.card, options.force);
-
-        if (options.dryRun) {
-          dryRunLog('updating', 'task', taskId, updateData);
-          return;
-        }
-
-        if (!(await confirmAction(`Update task ${taskId}?`, { yes: options.yes }))) {
-          return;
-        }
-
-        const api = new TasksAPI(client);
-        const task = await api.updateTask(taskId, updateData);
-
-        if (options.json) {
-          console.log(JSON.stringify(task, null, 2));
-        } else {
-          console.log(`✓ Task updated: ${task.taskId} (${task.name})`);
-        }
-      } catch (error: any) {
-        logError(error, verbose);
-        process.exit(1);
+      if (Object.keys(updateData).length === 0) {
+        throw new RefusalError('Error: Provide at least one field: --name, --completed, --not-completed, or --position');
       }
-    });
+
+      await checkTaskScope(ctx.client, options.card, options.force);
+
+      if (options.dryRun) {
+        dryRunLog('updating', 'task', taskId, updateData);
+        return;
+      }
+
+      if (!(await confirmAction(`Update task ${taskId}?`, { yes: options.yes }))) {
+        return;
+      }
+
+      return {
+        item: await ctx.api.tasks.updateTask(taskId, updateData),
+        human: (task: Task) => `✓ Task updated: ${task.taskId} (${task.name})`,
+      };
+    }));
 
   tasksCommand
     .command('complete <taskId>')
     .description('Mark a task as completed')
-    .option('--json', 'Output as JSON')
     .option('--dry-run', 'Preview without making API calls')
     .option('-y, --yes', 'Skip confirmation prompt')
     .option('--force', 'Bypass scope check')
     .option('--card <card>', 'Card the task belongs to — required under a scope lock, since a taskId names no board')
-    .action(async (taskId: string, options) => {
-      const verbose = tasksCommand.opts()?.verbose ?? false;
-      try {
-        const client = await createFavroClient();
-        await checkTaskScope(client, options.card, options.force);
+    .action(run(async (ctx: Ctx, taskId: string, options: TaskWriteFlags) => {
+      await checkTaskScope(ctx.client, options.card, options.force);
 
-        if (options.dryRun) {
-          dryRunLog('completing', 'task', taskId);
-          process.exit(0);
-        }
-
-        if (!(await confirmAction(`Complete task ${taskId}?`, { yes: options.yes }))) {
-          process.exit(0);
-        }
-
-        const api = new TasksAPI(client);
-        const task = await api.updateTask(taskId, true);
-
-        if (options.json) {
-          console.log(JSON.stringify(task, null, 2));
-        } else {
-          console.log(`✓ Task completed: ${task.taskId}`);
-        }
-      } catch (error: any) {
-        logError(error, verbose);
-        process.exit(1);
+      if (options.dryRun) {
+        dryRunLog('completing', 'task', taskId);
+        return;
       }
-    });
+
+      if (!(await confirmAction(`Complete task ${taskId}?`, { yes: options.yes }))) {
+        return;
+      }
+
+      return {
+        item: await ctx.api.tasks.updateTask(taskId, true),
+        human: (task: Task) => `✓ Task completed: ${task.taskId}`,
+      };
+    }));
 
   tasksCommand
     .command('delete <taskId>')
@@ -267,28 +224,20 @@ export function registerTasksCommands(program: Command): void {
     .option('-y, --yes', 'Skip confirmation prompt')
     .option('--force', 'Bypass scope check')
     .option('--card <card>', 'Card the task belongs to — required under a scope lock, since a taskId names no board')
-    .action(async (taskId: string, options) => {
-      const verbose = tasksCommand.opts()?.verbose ?? false;
-      try {
-        const client = await createFavroClient();
-        await checkTaskScope(client, options.card, options.force);
+    .action(run(async (ctx: Ctx, taskId: string, options: TaskWriteFlags) => {
+      await checkTaskScope(ctx.client, options.card, options.force);
 
-        if (options.dryRun) {
-          dryRunLog('deleting', 'task', taskId);
-          return;
-        }
-
-        if (!(await confirmAction(`Delete task ${taskId}? This cannot be undone.`, { yes: options.yes }))) {
-          return;
-        }
-
-        const api = new TasksAPI(client);
-        await api.deleteTask(taskId);
-
-        console.log(`✓ Task deleted: ${taskId}`);
-      } catch (error: any) {
-        logError(error, verbose);
-        process.exit(1);
+      if (options.dryRun) {
+        dryRunLog('deleting', 'task', taskId);
+        return;
       }
-    });
+
+      if (!(await confirmAction(`Delete task ${taskId}? This cannot be undone.`, { yes: options.yes }))) {
+        return;
+      }
+
+      await ctx.api.tasks.deleteTask(taskId);
+
+      return { item: { deleted: true, taskId }, human: () => `✓ Task deleted: ${taskId}` };
+    }));
 }

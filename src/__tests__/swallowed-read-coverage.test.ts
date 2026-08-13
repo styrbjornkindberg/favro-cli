@@ -632,12 +632,13 @@ describe('no read answers a failure with emptiness, outside the two lists', () =
     //
     // #119 is the second deletion of the same kind and a much bigger one: every
     // `catch { logError; a hard exit }` in the sixteen migrating command files
-    // is the runner's boundary now, so the clause simply stops existing. The
-    // floor is re-measured by instrumenting THIS expression at each step of that
-    // migration rather than being slackened once to cover it — a floor with room
-    // for a whole file's clauses to vanish cannot notice the walk collapsing,
-    // which is the only thing it is for.
-    expect(catchClauses).toBeGreaterThanOrEqual(113);
+    // is the runner's boundary now, so the clause simply stops existing. 135
+    // before it, 73 after — 62 clauses, which is roughly the 60 the migration
+    // was scoped at. Re-measured by instrumenting THIS expression on the
+    // finished tree rather than slackened once to cover the whole migration: a
+    // floor with room for a whole file's clauses to vanish cannot notice the
+    // walk collapsing, which is the only thing it is for.
+    expect(catchClauses).toBeGreaterThanOrEqual(73);
   });
 
   it('no read swallows its failure outside DEBT and DECIDED', () => {

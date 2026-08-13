@@ -322,7 +322,6 @@ Set a custom field value on a card.
 
 | Flag | Description |
 |------|-------------|
-| `--json` | Output raw JSON |
 | `--dry-run` | Preview only |
 | `-y, --yes` | Skip confirmation |
 | `--force` | Bypass scope check |
@@ -403,7 +402,6 @@ List all columns on a board.
 
 | Flag | Description |
 |------|-------------|
-| `--json` | Output raw JSON |
 
 ### `columns create <boardId>` ⚠️ WRITE
 
@@ -415,7 +413,6 @@ Create a new column on a board.
 | `--position <n>` | Column position (0-based) |
 | `--dry-run` | Preview only |
 | `-y, --yes` | Skip confirmation |
-| `--json` | Output raw JSON |
 
 ### `columns update <columnId>` ⚠️ WRITE
 
@@ -427,7 +424,6 @@ Update an existing column.
 | `--position <n>` | New position |
 | `--dry-run` | Preview only |
 | `-y, --yes` | Skip confirmation |
-| `--json` | Output raw JSON |
 
 ---
 
@@ -466,7 +462,6 @@ List all tags in the workspace.
 
 | Flag | Description |
 |------|-------------|
-| `--json` | Output raw JSON |
 
 ### `tags create` ⚠️ WRITE
 
@@ -478,7 +473,6 @@ Create a new global tag.
 | `--color <color>` | Tag color |
 | `--dry-run` | Preview only |
 | `-y, --yes` | Skip confirmation |
-| `--json` | Output raw JSON |
 
 ### `tags update <tagId>` ⚠️ WRITE
 
@@ -490,7 +484,6 @@ Update a tag's name and/or color.
 | `--color <color>` | New tag color |
 | `--dry-run` | Preview only |
 | `-y, --yes` | Skip confirmation |
-| `--json` | Output raw JSON |
 
 ### `tags delete <tagId>` ⚠️ WRITE
 
@@ -513,7 +506,6 @@ List all tasks (checklist items) on a card.
 
 | Flag | Description |
 |------|-------------|
-| `--json` | Output raw JSON |
 
 ### `tasks add <cardCommonId> <name>` ⚠️ WRITE
 
@@ -524,7 +516,6 @@ Create a new task on a card.
 | `--dry-run` | Preview only |
 | `-y, --yes` | Skip confirmation |
 | `--force` | Bypass scope check |
-| `--json` | Output raw JSON |
 
 ### `tasks complete <taskId>` ⚠️ WRITE
 
@@ -536,7 +527,6 @@ Mark a task as completed.
 | `--dry-run` | Preview only |
 | `-y, --yes` | Skip confirmation |
 | `--force` | Bypass scope check |
-| `--json` | Output raw JSON |
 
 ### `tasks update <taskId>` ⚠️ WRITE
 
@@ -552,7 +542,6 @@ Update a task's name, completed state, or position.
 | `--dry-run` | Preview only |
 | `-y, --yes` | Skip confirmation |
 | `--force` | Bypass scope check |
-| `--json` | Output raw JSON |
 
 ### `tasks delete <taskId>` ⚠️ WRITE
 
@@ -577,7 +566,6 @@ List all task lists on a card.
 
 | Flag | Description |
 |------|-------------|
-| `--json` | Output raw JSON |
 
 ### `tasklists get <taskListId>` 📖 READ
 
@@ -585,7 +573,6 @@ Get a task list by ID.
 
 | Flag | Description |
 |------|-------------|
-| `--json` | Output raw JSON |
 
 ### `tasklists create <cardCommonId>` ⚠️ WRITE
 
@@ -597,7 +584,6 @@ Create a new task list on a card.
 | `--position <n>` | Position (0-based) |
 | `--dry-run` | Preview only |
 | `-y, --yes` | Skip confirmation |
-| `--json` | Output raw JSON |
 
 ### `tasklists update <taskListId>` ⚠️ WRITE
 
@@ -609,7 +595,6 @@ Update a task list.
 | `--position <n>` | New position |
 | `--dry-run` | Preview only |
 | `-y, --yes` | Skip confirmation |
-| `--json` | Output raw JSON |
 
 ### `tasklists delete <taskListId>` ⚠️ WRITE
 
@@ -631,7 +616,6 @@ List dependencies for a card.
 
 | Flag | Description |
 |------|-------------|
-| `--json` | Output raw JSON |
 
 ### `dependencies add <sourceId> <targetId>` ⚠️ WRITE
 
@@ -642,7 +626,6 @@ Add a dependency link between two cards.
 | `--type <type>` | **Required.** Dependency type: `blocks`, `depends-on`, `related` |
 | `--dry-run` | Preview only |
 | `-y, --yes` | Skip confirmation |
-| `--json` | Output raw JSON |
 
 ### `dependencies delete <cardId> <targetId>` ⚠️ WRITE
 
@@ -676,7 +659,6 @@ Upload a file attachment to a card.
 | `--file <path>` | **Required.** File path to upload |
 | `--dry-run` | Preview only |
 | `-y, --yes` | Skip confirmation |
-| `--json` | Output raw JSON |
 
 ### `attachments upload-to-comment <commentId>` ⚠️ WRITE
 
@@ -687,7 +669,6 @@ Upload a file attachment to a comment.
 | `--file <path>` | **Required.** File path to upload |
 | `--dry-run` | Preview only |
 | `-y, --yes` | Skip confirmation |
-| `--json` | Output raw JSON |
 
 ---
 
@@ -698,21 +679,18 @@ List all workspace members.
 
 | Flag | Description |
 |------|-------------|
-| `--json` | Output raw JSON |
 
 ### `groups list` 📖 READ
 List all user groups.
 
 | Flag | Description |
 |------|-------------|
-| `--json` | Output raw JSON |
 
 ### `groups get <groupId>` 📖 READ
 Get a group by ID.
 
 | Flag | Description |
 |------|-------------|
-| `--json` | Output raw JSON |
 
 ### `groups create` ⚠️ WRITE
 Create a new user group.
@@ -723,7 +701,6 @@ Create a new user group.
 | `--members <ids>` | Comma-separated user IDs to add |
 | `--dry-run` | Preview only |
 | `-y, --yes` | Skip confirmation |
-| `--json` | Output raw JSON |
 
 ### `groups update <groupId>` ⚠️ WRITE
 Update a user group.
@@ -735,7 +712,6 @@ Update a user group.
 | `--remove-members <ids>` | Comma-separated user IDs to remove |
 | `--dry-run` | Preview only |
 | `-y, --yes` | Skip confirmation |
-| `--json` | Output raw JSON |
 
 ### `groups delete <groupId>` ⚠️ WRITE
 Delete a user group.

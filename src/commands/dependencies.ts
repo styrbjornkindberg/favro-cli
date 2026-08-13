@@ -13,15 +13,20 @@
  * what it removed.
  */
 import { Command } from 'commander';
-import CardsAPI from '../lib/cards-api';
+import { CardLink } from '../lib/cards-api';
 import { linkTypeToIsBefore } from '../lib/dependency-direction';
-import { createFavroClient } from '../lib/client-factory';
-import { logError } from '../lib/error-handler';
 import { confirmAction } from '../lib/safety';
 import { AddedEdge, dispatch, EdgeArgs, RemovedEdges } from '../lib/dispatch';
-import { previewOnly, reportDispatch } from '../lib/report-dispatch';
-import { capRows, noteTruncation, writeEnvelope } from '../lib/read-shape';
-import { readConfig } from '../lib/config';
+import { previewOnly } from '../lib/report-dispatch';
+import { Ctx, run } from '../lib/run';
+
+/** The flag row the three writes share. */
+interface EdgeFlags {
+  type?: string;
+  dryRun?: boolean;
+  yes?: boolean;
+  force?: boolean;
+}
 
 export function registerDependenciesCommands(program: Command): void {
   const depsCommand = program.command('dependencies').description('Manage card dependencies (blockers/related)');
@@ -30,53 +35,34 @@ export function registerDependenciesCommands(program: Command): void {
     .command('list <card>')
     .description('List dependencies for a card')
     .option('--limit <n>', 'Cap how many rows are printed; sets "truncated"')
-    .option('--json', 'Output as JSON')
-    .action(async (cardId: string, options) => {
-      const verbose = depsCommand.opts()?.verbose ?? false;
-      try {
-        const client = await createFavroClient();
-        const api = new CardsAPI(client);
-        const links = await api.getCardLinks(cardId);
-        // The fetch already ran to completion; `--limit` cuts the PRINT (#99).
-        const envelope = capRows(links, options.limit);
-
-        if (options.json) {
-          writeEnvelope(envelope, Boolean(program.opts()?.pretty));
-        } else {
-          console.log(`Found ${envelope.rows.length} dependencies for card ${cardId}:`);
-          const rows = envelope.rows.map(lnk => ({
-            Direction: lnk.isBefore ? 'before (blocks this card)' : 'after (blocked by this card)',
-            Target: lnk.cardId,
-            Name: lnk.cardName || '—',
-          }));
-          console.table(rows);
-          noteTruncation(envelope, links.length);
-        }
-      } catch (error: any) {
-        logError(error, verbose);
-        process.exit(1);
-      }
-    });
+    .action(run(async (ctx: Ctx, cardId: string, options: { limit?: string }) => ({
+      // The fetch runs to completion; `--limit` cuts the PRINT (#99).
+      rows: await ctx.api.cards.getCardLinks(cardId),
+      limit: options.limit,
+      human: (links: CardLink[]) => {
+        console.log(`Found ${links.length} dependencies for card ${cardId}:`);
+        console.table(links.map(lnk => ({
+          Direction: lnk.isBefore ? 'before (blocks this card)' : 'after (blocked by this card)',
+          Target: lnk.cardId,
+          Name: lnk.cardName || '—',
+        })));
+      },
+    })));
 
   depsCommand
     .command('add <sourceId> <targetId>')
     .description('Add a dependency link between two cards')
     .requiredOption('--type <type>', 'Link type: depends-on, blocks')
-    .option('--json', 'Output as JSON')
     .option('--dry-run', 'Preview without making API calls')
     .option('-y, --yes', 'Skip confirmation prompt')
     .option('--force', 'Bypass bounds checking')
     .addHelpText('after', '\nIntent contract: run `favro help issue-tracker`.')
-    .action(async (sourceId: string, targetId: string, options) => {
-      const verbose = depsCommand.opts()?.verbose ?? false;
-      try {
-        const client = await createFavroClient();
-
+    .action(run(async (ctx: Ctx, sourceId: string, targetId: string, options: EdgeFlags) => {
         if (
           !options.dryRun &&
           !(await confirmAction(`Link ${sourceId} -> ${targetId} (${options.type})?`, { yes: options.yes }))
         ) {
-          process.exit(0);
+          return { item: { added: false, aborted: true }, human: () => 'Aborted.' };
         }
 
         // The `add-blocking-edge` intent, exactly as `cards link` uses it — one
@@ -90,62 +76,48 @@ export function registerDependenciesCommands(program: Command): void {
         // bounded pre-read so an edge already present is REPORTED rather than
         // rewritten, a structured refusal when the pair holds the REVERSE edge,
         // and a compensating write.
-        const args: EdgeArgs = linkTypeToIsBefore(options.type)
+        const args: EdgeArgs = linkTypeToIsBefore(options.type!)
           ? { card: sourceId, blockedBy: targetId }
           : { card: targetId, blockedBy: sourceId };
 
-        const result = await dispatch<AddedEdge>('add-blocking-edge', { ...args }, {
-          client,
-          config: (await readConfig()) ?? {},
-          force: options.force,
-          dryRun: options.dryRun,
-        });
-        if (reportDispatch(result, options.json)) process.exit(1);
-        if (result.outcome !== 'ok' || result.value === undefined) return;
-
-        if (options.json) {
-          console.log(JSON.stringify(result.value, null, 2));
-        } else {
+        return {
+          dispatch: await dispatch<AddedEdge>('add-blocking-edge', { ...args }, {
+            client: ctx.client,
+            config: ctx.config,
+            force: options.force,
+            dryRun: options.dryRun,
+          }),
           // "Created" and "already there" stay distinguishable, as the intent
           // keeps them. The old line here was built entirely from ARGUMENTS and
           // printed a ✓ whether or not the response carried an edge; the intent
           // answers what it observed.
-          console.log(
-            result.value.created
+          human: (value: AddedEdge) =>
+            value.created
               ? `✓ Dependency added: ${sourceId} -> ${targetId} (${options.type})`
               : `✓ Already linked: ${sourceId} -> ${targetId} (${options.type}) — nothing written`,
-          );
-        }
-      } catch (error: any) {
-        logError(error, verbose);
-        process.exit(1);
-      }
-    });
+        };
+    }));
 
   depsCommand
     .command('delete <card> <targetId>')
     .description('Remove a single dependency link between two cards')
-    .option('--json', 'Output as JSON')
     .option('--dry-run', 'Preview the removal. Reads the card first to check the scope lock')
     .option('-y, --yes', 'Skip confirmation prompt')
     .option('--force', 'Bypass bounds checking')
     .addHelpText('after', '\nIntent contract: run `favro help issue-tracker`.')
-    .action(async (cardId: string, targetId: string, options) => {
-      const verbose = depsCommand.opts()?.verbose ?? false;
-      try {
-        const config = (await readConfig()) ?? {};
+    .action(run(async (ctx: Ctx, cardId: string, targetId: string, options: EdgeFlags) => {
+        const config = ctx.config;
         const args = { card: cardId, blockedBy: targetId } as EdgeArgs;
 
         // A dry run with NO lock configured previews from the intent's own pure
         // `preview()` and touches no wire — see `previewOnly`. #155 pinned this
         // command's dry run at zero requests and no credential, and routing it
-        // must not take that away.
+        // must not take that away. `ctx.client` is untouched on this arm, which
+        // is what keeps the credential deferred (#135).
         if (options.dryRun && !config.scopeCollectionId) {
           previewOnly('remove-blocking-edge', { ...args }, config);
           return;
         }
-
-        const client = await createFavroClient();
 
         if (
           !options.dryRun &&
@@ -159,41 +131,28 @@ export function registerDependenciesCommands(program: Command): void {
         // (#155's ordering, now structural rather than hand-rolled here), and the
         // removal captures the edge's DIRECTION before deleting it — which is the
         // only thing that makes re-adding it an inverse rather than a guess.
-        const result = await dispatch<{ removed: boolean; isBefore?: boolean }>(
-          'remove-blocking-edge',
-          { ...args },
-          { client, config, force: options.force, dryRun: options.dryRun },
-        );
-        if (reportDispatch(result, options.json)) process.exit(1);
-        if (result.outcome !== 'ok' || result.value === undefined) return;
-
-        if (options.json) {
-          console.log(JSON.stringify(result.value, null, 2));
-        } else {
-          console.log(
-            result.value.removed
+        return {
+          dispatch: await dispatch<{ removed: boolean; isBefore?: boolean }>(
+            'remove-blocking-edge',
+            { ...args },
+            { client: ctx.client, config, force: options.force, dryRun: options.dryRun },
+          ),
+          human: (value: { removed: boolean }) =>
+            value.removed
               ? `✓ Dependency removed: ${cardId} -> ${targetId}`
               : `✓ No edge between ${cardId} and ${targetId} — nothing written`,
-          );
-        }
-      } catch (error: any) {
-        logError(error, verbose);
-        process.exit(1);
-      }
-    });
+        };
+    }));
 
   depsCommand
     .command('delete-all <card>')
     .description('Remove all dependencies from a card (at most 20 — more refuses)')
-    .option('--json', 'Output as JSON')
     .option('--dry-run', 'Preview the removal. Reads the card first to check the scope lock')
     .option('-y, --yes', 'Skip confirmation prompt')
     .option('--force', 'Bypass bounds checking')
     .addHelpText('after', '\nIntent contract: run `favro help issue-tracker`.')
-    .action(async (cardId: string, options) => {
-      const verbose = depsCommand.opts()?.verbose ?? false;
-      try {
-        const config = (await readConfig()) ?? {};
+    .action(run(async (ctx: Ctx, cardId: string, options: EdgeFlags) => {
+        const config = ctx.config;
 
         // As on `delete` above: an unlocked dry run stays free. It therefore
         // cannot say whether this card is over the cap — that takes the read this
@@ -203,8 +162,6 @@ export function registerDependenciesCommands(program: Command): void {
           previewOnly('clear-blocking-edges', { card: cardId }, config);
           return;
         }
-
-        const client = await createFavroClient();
 
         if (
           !options.dryRun &&
@@ -222,28 +179,18 @@ export function registerDependenciesCommands(program: Command): void {
         // the ones already gone and the run reports `rolled-back`.
         //
         // The prompt no longer says "This cannot be undone", because it now can.
-        const result = await dispatch<RemovedEdges>(
-          'clear-blocking-edges',
-          { card: cardId },
-          { client, config, force: options.force, dryRun: options.dryRun },
-        );
-        if (reportDispatch(result, options.json)) process.exit(1);
-        if (result.outcome !== 'ok' || result.value === undefined) return;
-
-        if (options.json) {
-          console.log(JSON.stringify(result.value, null, 2));
-        } else {
+        return {
+          dispatch: await dispatch<RemovedEdges>(
+            'clear-blocking-edges',
+            { card: cardId },
+            { client: ctx.client, config, force: options.force, dryRun: options.dryRun },
+          ),
           // The COUNT is an observation — how many edges `removeBlockingEdge`
           // actually found and deleted — not the length of the list we read.
-          console.log(
-            result.value.removed.length > 0
-              ? `✓ Removed ${result.value.removed.length} dependencies from card ${cardId}`
+          human: (value: RemovedEdges) =>
+            value.removed.length > 0
+              ? `✓ Removed ${value.removed.length} dependencies from card ${cardId}`
               : `✓ Card ${cardId} had no dependencies — nothing written`,
-          );
-        }
-      } catch (error: any) {
-        logError(error, verbose);
-        process.exit(1);
-      }
-    });
+        };
+    }));
 }

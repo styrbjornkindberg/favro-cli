@@ -95,28 +95,32 @@ const READS: ListRead[] = [
     stub: proto(ColumnsAPI, 'listColumns'),
     register: registerColumnsCommands,
     argv: ['columns', 'list', 'board-1'],
-    json: ['--json'],
+    // `--json` left the leaf with #119's migration; JSON is the default.
+    json: [],
   },
   {
     name: 'users list',
     stub: proto(UsersAPI, 'listUsers'),
     register: registerUsersCommands,
     argv: ['users', 'list'],
-    json: ['--json'],
+    // `--json` left the leaf with #119's migration; JSON is the default.
+    json: [],
   },
   {
     name: 'tasks list',
     stub: proto(TasksAPI, 'listTasks'),
     register: registerTasksCommands,
     argv: ['tasks', 'list', 'card-1'],
-    json: ['--json'],
+    // `--json` left the leaf with #119's migration; JSON is the default.
+    json: [],
   },
   {
     name: 'tags list',
     stub: proto(TagsAPI, 'listTags'),
     register: registerTagsCommands,
     argv: ['tags', 'list'],
-    json: ['--json'],
+    // `--json` left the leaf with #119's migration; JSON is the default.
+    json: [],
   },
   {
     name: 'webhooks list',

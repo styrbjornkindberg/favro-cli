@@ -44,14 +44,20 @@ afterAll(() => {
 
 function buildProgram(): Command {
   const program = new Command();
-  program.option('--verbose', 'Show stack traces');
+  // `--human`/`--pretty` at the root: #119 put this command on `run()`, so JSON
+  // is the default (ADR-0002) and the ✓ lines below live on the formatter.
+  program.option('--human').option('--pretty').option('--verbose', 'Show stack traces');
   const cards = program.command('cards').description('Card operations');
   registerCardsDeleteCommand(cards);
   program.exitOverride();
   return program;
 }
 
-const runCli = (args: string[]) => buildProgram().parseAsync(['node', 'favro', ...args]);
+const runCli = (args: string[]) =>
+  buildProgram().parseAsync(['node', 'favro', '--human', ...args]);
+
+/** The machine path — the DEFAULT since #119. */
+const runJson = (args: string[]) => buildProgram().parseAsync(['node', 'favro', ...args]);
 
 let logSpy: jest.SpyInstance;
 
@@ -66,7 +72,9 @@ beforeEach(() => {
   });
   logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
   jest.spyOn(console, 'error').mockImplementation(() => {});
-  jest.spyOn(process, 'exit').mockImplementation((() => {}) as any);
+  jest.spyOn(process, 'exit').mockImplementation((() => {
+    throw new Error('process.exit must not be called under run()');
+  }) as never);
 });
 
 afterEach(() => { jest.restoreAllMocks(); });
