@@ -735,7 +735,10 @@ function isUnblocked(card: Record<string, any>, ctx: EvalContext): boolean {
 
 /** Match a dependency edge against a card reference, in any identifier shape. */
 function linkMatches(link: Record<string, any>, ref: string): boolean {
-  if (ref === 'true' || ref === '') return true; // bare `blocked-by` — any blocker
+  // `blocked-by:true` — any blocker. NOT the bare spelling: `unblocked` is the
+  // only member of `BARE_KEYWORDS`, so a bare `blocked-by` refuses as an
+  // unrecognised token rather than arriving here (measured, #162).
+  if (ref === 'true' || ref === '') return true;
   const wanted = ref.trim().toLowerCase();
   return [link.cardId, link.cardCommonId, link.cardSequentialId]
     .some(id => id !== undefined && String(id).toLowerCase() === wanted);

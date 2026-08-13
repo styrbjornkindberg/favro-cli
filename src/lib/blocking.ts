@@ -2,8 +2,10 @@
  * Is a blocker still blocking? (#47)
  *
  * Favro has exactly ONE dependency edge — `isBefore`, describing the far card
- * relative to the card queried — and `GET /cards` inlines it, keyed by the far
- * card's `cardCommonId`. So "what blocks this card" is free: it arrives with the
+ * relative to the card queried — and `GET /cards` inlines it whole: the same
+ * `{cardId, isBefore, cardCommonId, reverseCardId}` that
+ * `/cards/:id/dependencies` returns, measured byte-identical on 2026-08-13
+ * (#162). So "what blocks this card" is free: it arrives with the
  * card. What is NOT free is "is that blocker finished", because **Favro has no
  * board-independent completion signal**: no `completed`, no `status`, no `state`
  * on any card; `assignments[].completed` is per person; and `position` is
@@ -49,15 +51,26 @@ export interface BlockerJudgement {
 const NOTHING: BlockerJudgement = { done: new Set(), unreachable: [] };
 
 /**
- * The far-end ids of a card's edges, split by direction.
+ * The far-end ids of a card's edges, split by direction — as `cardCommonId`s.
  *
- * An edge inlined by `GET /cards` carries only `cardCommonId`; one read from
- * `/cards/:id/dependencies` carries `cardId`. Take whichever is there — the
- * reverse lookup between them costs a call and is ambiguous across board
- * instances, so it is not faked.
+ * Both shapes carry both ids: `GET /cards` inlines an edge byte-identically to
+ * `/cards/:id/dependencies`, `{cardId, isBefore, cardCommonId, reverseCardId}`
+ * (measured 2026-08-13, #162). So this is a CHOICE, not a fallback, and the
+ * choice is `cardCommonId` for two reasons:
+ *
+ *   - it is the id every consumer already indexes on. `findTopBlockers`
+ *     (`commands/overview.ts`) builds its index from `AggregateCard.commonId`
+ *     and looks these ids up in it; `judgeBlockers` below keys its `done` set
+ *     the same way. Reporting a `cardId` here would miss both indexes and read
+ *     as "blocker outside the fetch" rather than as an error;
+ *   - it is board-independent. A `cardId` names one board instance of a card
+ *     that may have several, so two edges onto the same card from different
+ *     boards would count as two different blockers.
+ *
+ * `cardId` is the fallback only, for an edge that arrived without the common id.
  */
 export function blockingEdges(card: Card): { blockedBy: string[]; blocking: string[] } {
-  const farId = (l: { cardId?: string; cardCommonId?: string }) => l.cardId ?? l.cardCommonId;
+  const farId = (l: { cardId?: string; cardCommonId?: string }) => l.cardCommonId ?? l.cardId;
   const ids = (links: Array<{ cardId?: string; cardCommonId?: string }>) =>
     links.map(farId).filter((id): id is string => Boolean(id));
   return { blockedBy: ids(blockersOf(card)), blocking: ids(blockedByThis(card)) };

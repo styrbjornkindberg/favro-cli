@@ -56,11 +56,24 @@ interface RawCard {
 }
 
 /**
- * A dependency edge as `GET /cards` inlines it. The wire key `cardCommonId`
- * carries the **far** card's value; there is no `cardId` on an inlined edge.
+ * A dependency edge as `GET /cards` inlines it.
+ *
+ * MEASURED 2026-08-13 (#162), live, board `abf5860049452d51cacb8162`: the
+ * inlined edge is **byte-identical** to what `/cards/:id/dependencies` returns —
+ * `{cardId, isBefore, cardCommonId, reverseCardId}`. `cardId` and `cardCommonId`
+ * both name the **far** card; `reverseCardId` is the near one. An earlier
+ * version of this comment claimed the inlined edge carries no `cardId`, and
+ * `normalizeInlinedDependency` was built on that premise — which is the whole of
+ * the #162 item-3 defect.
+ *
+ * `cardSequentialId` is declared because `CardLink` has always declared it, and
+ * it passes through if it ever arrives. **Neither endpoint has ever been
+ * measured sending it.**
  */
 interface RawDependency {
+  cardId?: string;
   cardCommonId?: string;
+  reverseCardId?: string;
   isBefore?: boolean;
   unique?: string;
   cardSequentialId?: string;
@@ -109,16 +122,20 @@ function normalizeCard(raw: RawCard): Card {
 }
 
 /**
- * Map an inlined dependency onto a `CardLink`, keyed by `cardCommonId` with
- * `cardId` left undefined. The reverse lookup (cardCommonId → cardId) costs a
- * call and is ambiguous across board instances, so it is not faked here.
+ * Map an inlined dependency onto a `CardLink`, **passing every key through**.
+ *
+ * It enumerated three keys until #162 and dropped the `cardId` Favro puts on
+ * every edge. `linksOf` in `query-parser.ts` reads `card.links ?? card.dependencies`
+ * and `normalizeCard` always sets `links`, so the intact raw array was
+ * unreachable on every list path: `blocked-by:`/`blocks:` matched a
+ * `cardCommonId` and answered zero rows for the `cardId` that `cards list`
+ * prints as the card's own identity.
+ *
+ * Only `isBefore` is computed, and only to make the direction flag a definite
+ * boolean rather than `undefined` — every predicate here reads it with `===`.
  */
 function normalizeInlinedDependency(dep: RawDependency): CardLink {
-  return {
-    cardCommonId: dep.cardCommonId,
-    isBefore: dep.isBefore === true,
-    cardSequentialId: dep.cardSequentialId,
-  };
+  return { ...dep, isBefore: dep.isBefore === true };
 }
 
 export interface CustomField {
@@ -136,15 +153,16 @@ export interface CustomField {
  */
 export interface CardLink {
   /**
-   * cardId of the dependency card (the other end of the edge).
-   * Undefined on an edge inlined by `GET /cards`, which carries only
-   * `cardCommonId` — the reverse lookup is the expensive, ambiguous
-   * direction and is not faked.
+   * cardId of the dependency card (the other end of the edge). Present on both
+   * shapes — `GET /cards` inlines it exactly as `/cards/:id/dependencies`
+   * returns it (measured 2026-08-13, #162). Optional because it is the wire's
+   * key and nothing forces Favro to keep sending it.
    */
   cardId?: string;
   /** True when the dependency card comes before the card you queried. */
   isBefore: boolean;
   cardCommonId?: string;
+  /** Never observed on either endpoint. Passed through if it ever appears. */
   cardSequentialId?: string;
   /** cardId of the card you queried — the near end of the edge. */
   reverseCardId?: string;

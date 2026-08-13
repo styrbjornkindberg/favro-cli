@@ -413,8 +413,10 @@ describe('parseQuery — dependency predicates', () => {
     // (an assignment entity with no column), and a fork is never takeable — so
     // these fixtures have to be board instances to mean anything (#47).
     const board = { widgetCommonId: 'board-1' };
-    const blocked = { ...board, name: 'a', links: [{ isBefore: true, cardSequentialId: 'CLA-1' }] };
-    const blocking = { ...board, name: 'b', links: [{ isBefore: false, cardSequentialId: 'CLA-2' }] };
+    // Edges carry `cardCommonId`, never a `cardSequentialId` — see the note on
+    // `EDGE` below, and #162.
+    const blocked = { ...board, name: 'a', links: [{ isBefore: true, cardCommonId: 'common-1' }] };
+    const blocking = { ...board, name: 'b', links: [{ isBefore: false, cardCommonId: 'common-2' }] };
     const q = parseQuery('unblocked');
     expect(evaluateNode(q.ast!, blocked)).toBe(false);
     expect(evaluateNode(q.ast!, blocking)).toBe(true);
@@ -445,17 +447,37 @@ describe('parseQuery — dependency predicates', () => {
     expect(evaluateNode(q.ast!, { cardId: 'c1', name: 'fork' })).toBe(false);
   });
 
-  test('blocked-by matches an incoming edge by any identifier shape', () => {
-    const card = { name: 'a', links: [{ isBefore: true, cardCommonId: 'abc', cardSequentialId: 'CLA-1' }] };
-    expect(evaluateNode(parseQuery('blocked-by:CLA-1').ast!, card)).toBe(true);
-    expect(evaluateNode(parseQuery('blocked-by:abc').ast!, card)).toBe(true);
-    expect(evaluateNode(parseQuery('blocked-by:CLA-9').ast!, card)).toBe(false);
+  // The two arms below used to assert over a hand-written `links` array that
+  // omitted the `cardId` Favro puts on every edge and invented a
+  // `cardSequentialId` Favro has never been measured sending. They were green
+  // across the whole of #162 item 3 — proving the predicate over a shape that
+  // does not exist, which reads as coverage of the exact defect. The fixture is
+  // now the MEASURED edge (live, 2026-08-13, board abf5860049452d51cacb8162),
+  // and the paired-polarity arm that enters through `normalizeCard` lives in
+  // `cards-api-dependencies-wire.test.ts`.
+  const EDGE = {
+    cardId: '621a8a2e7a2eb278bf008484',
+    isBefore: true,
+    cardCommonId: 'ed952c352c7022ead230856c',
+    reverseCardId: 'b9303e90cb9db9e78ce6f9bf',
+  };
+
+  test('blocked-by matches an incoming edge by cardId AND by cardCommonId', () => {
+    const card = { name: 'a', links: [EDGE] };
+    expect(evaluateNode(parseQuery(`blocked-by:${EDGE.cardId}`).ast!, card)).toBe(true);
+    expect(evaluateNode(parseQuery(`blocked-by:${EDGE.cardCommonId}`).ast!, card)).toBe(true);
+    // The NEAR end is not the far end: an edge must not match the card it hangs
+    // off, or `blocked-by:<self>` would answer with every card that has an edge.
+    expect(evaluateNode(parseQuery(`blocked-by:${EDGE.reverseCardId}`).ast!, card)).toBe(false);
+    expect(evaluateNode(parseQuery('blocked-by:e02593ea450619b793f7d610').ast!, card)).toBe(false);
   });
 
-  test('blocks reads the same edge from the other end', () => {
-    const card = { name: 'a', links: [{ isBefore: false, cardSequentialId: 'CLA-2' }] };
-    expect(evaluateNode(parseQuery('blocks:CLA-2').ast!, card)).toBe(true);
-    expect(evaluateNode(parseQuery('blocked-by:CLA-2').ast!, card)).toBe(false);
+  test('blocks reads the same edge from the other end, on both identifiers', () => {
+    const card = { name: 'a', links: [{ ...EDGE, isBefore: false }] };
+    for (const id of [EDGE.cardId, EDGE.cardCommonId]) {
+      expect(evaluateNode(parseQuery(`blocks:${id}`).ast!, card)).toBe(true);
+      expect(evaluateNode(parseQuery(`blocked-by:${id}`).ast!, card)).toBe(false);
+    }
   });
 });
 

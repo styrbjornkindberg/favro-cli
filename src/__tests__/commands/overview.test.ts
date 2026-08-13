@@ -8,6 +8,8 @@
  */
 import { findTopBlockers, formatHuman, overviewHandler, OverviewResult } from '../../commands/overview';
 import { AggregateCard } from '../../api/aggregate';
+import { blockingEdges } from '../../lib/blocking';
+import type { Card } from '../../lib/cards-api';
 import { SWEEP_CAP } from '../../lib/read-shape';
 import type { Ctx } from '../../lib/run';
 
@@ -28,6 +30,37 @@ describe('findTopBlockers', () => {
     expect(topBlockers).toEqual([
       { id: 'id-A', title: 'card id-A', board: 'Board A', blockingCount: 2 },
       { id: 'id-B', title: 'card id-B', board: 'Board A', blockingCount: 1 },
+    ]);
+    expect(unreachable).toEqual([]);
+  });
+
+  /**
+   * The join this file never tested: every `blockedBy` above is hand-written, so
+   * nothing pinned that the id `blockingEdges` EMITS is the id this index looks
+   * up. It is not — the index is built from `commonId`, and a `blockingEdges`
+   * that reported `cardId` would send every blocker to `unreachable` while
+   * `topBlockers` came back empty. That is a silent wrong answer wearing the
+   * exact shape of a correct one ("all blockers are off-board"). Measured as a
+   * mutation while writing this arm (#162): flipping `blockingEdges` to report a
+   * `cardId` reddens THIS test and nothing else in the repo — 3 failures against
+   * the 2-failure baseline, across all 176 suites. Before it existed, nothing
+   * caught the flip at all.
+   *
+   * The edge below is the live shape, measured 2026-08-13: both ids present, so
+   * the choice between them is a real choice and not a fallback.
+   */
+  it('indexes the ids blockingEdges actually emits, not a hand-written commonId', async () => {
+    const blocker = { cardId: 'id-A', commonId: 'A' };
+    const edge = { cardId: blocker.cardId, cardCommonId: blocker.commonId, isBefore: true };
+    const cards = [
+      card({ id: blocker.cardId, commonId: blocker.commonId, boardName: 'Board A' }),
+      card({ id: 'id-1', commonId: '1', ...blockingEdges({ links: [edge] } as unknown as Card) }),
+    ];
+
+    const { topBlockers, unreachable } = findTopBlockers(cards);
+
+    expect(topBlockers).toEqual([
+      { id: 'id-A', title: 'card id-A', board: 'Board A', blockingCount: 1 },
     ]);
     expect(unreachable).toEqual([]);
   });
