@@ -354,8 +354,13 @@ describe('applyFilter', () => {
     await expect(applyFilter(sampleCards, 'unblocked', ctx()))
       .rejects.toBeInstanceOf(ParseError);
 
-    // A specific edge needs no judgement, so it still works.
-    await expect(applyFilter(sampleCards, 'blocked-by:CLA-1', ctx())).resolves.toEqual([]);
+    // A specific edge needs no judgement, so it still works. The reference is a
+    // hex id deliberately: since #162 a sequentialId (`CLA-1`) is RESOLVED
+    // before the filter runs — one `GET /cards` this stand does not answer —
+    // while a `cardId`/`cardCommonId` is settled against the edge itself and
+    // still costs nothing. The resolution is pinned in `lib/query-values.test.ts`.
+    await expect(applyFilter(sampleCards, 'blocked-by:ed952c352c7022ead230856c', ctx()))
+      .resolves.toEqual([]);
   });
 });
 

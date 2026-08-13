@@ -7,6 +7,10 @@
  * `assignee:` from the org's users — are checked against that list before any
  * query runs, so a typo refuses instead of answering a plausible `0 rows`.
  *
+ * `blocked-by:`/`blocks:` join them for the same reason on a narrower axis
+ * (#162): their values are card references, and the one spelling a card carries
+ * no key for — a sequentialId label — is resolved here or refused here.
+ *
  * A cache miss is never the answer on its own: every refusal refills first.
  * `status:` needs `--board`, because a column name is only unique within one.
  *
@@ -15,6 +19,7 @@
 import FavroHttpClient from './http-client';
 import ColumnDirectory from './column-directory';
 import { cachedTags } from './tags-api';
+import CardReferenceResolver, { isSequentialReference } from './card-reference';
 import { foldName } from './fold-name';
 import { invalidateCache } from './name-cache';
 import { resolveAssignee } from './assignee';
@@ -169,9 +174,43 @@ async function walk(node: QueryNode, ctx: ValueContext): Promise<QueryNode> {
       return mapValues(node, (v) => resolveStatus(v, ctx));
     case 'assignee':
       return mapValues(node, (v) => resolveAssignee(ctx.client, v));
+    case 'blocked-by':
+    case 'blocks':
+      return mapValues(node, (v) => resolveCardReference(v, ctx));
     default:
       return node;
   }
+}
+
+/**
+ * A `blocked-by:`/`blocks:` value, rewritten to something an edge can carry.
+ *
+ * `query-parser.ts` documents `blocked-by:CLA-1804` and it had never worked:
+ * the predicate compares the value against the edge's own keys, and
+ * `cardSequentialId` is a key **Favro has never been measured sending** on
+ * either dependency shape (#162). So the sequential spelling matched nothing —
+ * silently, as a plausible zero rows, which is the fail-open this module exists
+ * to abolish.
+ *
+ * A hex reference passes through untouched and costs no call: an edge carries
+ * `cardId` AND `cardCommonId`, so `linkMatches` settles either one locally. Only
+ * a sequential reference needs the wire, and it resolves to `cardCommonId`
+ * rather than `cardId` — the common id is board-independent, so it still matches
+ * an edge onto a card that lives on several boards.
+ *
+ * An unresolvable reference now REFUSES, in `CardReferenceResolver`'s own
+ * wording, instead of answering zero rows.
+ */
+async function resolveCardReference(value: string, ctx: ValueContext): Promise<string> {
+  // `blocked-by:true` is "any blocker at all", not a reference —
+  // `isSequentialReference` already declines it, along with every hex id.
+  // (Bare `blocked-by` with no value does not reach here at all: `unblocked` is
+  // the only entry in the parser's `BARE_KEYWORDS`, so the bare spelling refuses
+  // as an unrecognised token.)
+  if (!isSequentialReference(value)) return value;
+  return new CardReferenceResolver(ctx.client).toCardCommonId(value, {
+    widgetCommonId: ctx.boardId,
+  });
 }
 
 /** Apply a per-value check across `=`/`~` and the comma list of `in(…)`. */

@@ -239,6 +239,66 @@ describe('refuseEmpty', () => {
   });
 });
 
+/**
+ * `blocked-by:`/`blocks:` take a card reference, and one spelling of it —
+ * a sequentialId label — matches no key a dependency edge carries. Favro has
+ * never been measured sending `cardSequentialId` on either dependency shape,
+ * so `blocked-by:CLA-1804` (documented at `query-parser.ts:361`) matched
+ * nothing at all, silently, for as long as it has been documented (#162).
+ *
+ * It is resolved here now, to a `cardCommonId` — board-independent, so it still
+ * matches an edge onto a card that lives on several boards.
+ */
+describe('blocked-by: / blocks: settle a sequentialId reference (#162)', () => {
+  const CARD = { cardId: 'card-hex-1', cardCommonId: 'common-hex-1', widgetCommonId: 'board-1' };
+
+  function makeCardClient(entities: unknown[]) {
+    const get = jest.fn(async (url: string) => {
+      if (url === '/cards') return { entities };
+      throw new Error(`unexpected GET ${url}`);
+    });
+    return { client: { get, organizationId: 'org-a' } as any, get };
+  }
+
+  test.each(['blocked-by', 'blocks'])('%s:CLA-1804 resolves to the card\'s cardCommonId', async (field) => {
+    const { client, get } = makeCardClient([CARD]);
+    const q = await validateQueryValues(parseQuery(`${field}:CLA-1804`), { client });
+    expect(pred(q.ast).value).toBe(CARD.cardCommonId);
+    // Favro's own filter is the NUMBER; the label prefix is ours.
+    expect(get).toHaveBeenCalledWith('/cards', {
+      params: expect.objectContaining({ cardSequentialId: 1804 }),
+    });
+  });
+
+  test('a reference that resolves to nothing REFUSES instead of matching nothing', async () => {
+    const { client } = makeCardClient([]);
+    await expect(validateQueryValues(parseQuery('blocked-by:CLA-9999'), { client }))
+      .rejects.toThrow(/CLA-9999/);
+  });
+
+  test('a hex id is passed through untouched and costs no call', async () => {
+    // An edge carries BOTH `cardId` and `cardCommonId`, so either settles
+    // locally — paying a round-trip to convert between them would buy nothing.
+    for (const ref of [CARD.cardId, CARD.cardCommonId]) {
+      const { client, get } = makeCardClient([]);
+      const q = await validateQueryValues(parseQuery(`blocked-by:${ref}`), { client });
+      expect(pred(q.ast).value).toBe(ref);
+      expect(get).not.toHaveBeenCalled();
+    }
+  });
+
+  test('`blocked-by:true` still means "any blocker", and makes no call', async () => {
+    const { client, get } = makeCardClient([]);
+    const q = await validateQueryValues(parseQuery('blocked-by:true'), { client });
+    expect(pred(q.ast).value).toBe('true');
+    expect(get).not.toHaveBeenCalled();
+  });
+
+  test('the BARE spelling refuses at parse — `unblocked` is the only bare keyword', () => {
+    expect(() => parseQuery('blocked-by')).toThrow(ParseError);
+  });
+});
+
 describe('everything else passes through', () => {
   test('an open-vocabulary field is untouched', async () => {
     const { client } = makeClient();
