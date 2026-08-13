@@ -1,6 +1,7 @@
 import FavroHttpClient, { PaginatedResponse } from './http-client';
 import { Getter, getAllPages } from './paginate';
 import BoardsAPI from './boards-api';
+import CollectionsAPI from './collections-api';
 import { Tag, cachedTags } from './tags-api';
 import ColumnDirectory, { ColumnResolutionError } from './column-directory';
 import CardReferenceResolver, {
@@ -877,7 +878,11 @@ export class CardsAPI {
     if (includes.includes('collection') && card.collectionId && !card.collection) {
       const collection = await orElse<Card['collection']>(
         'collection',
-        new BoardsAPI(this.client)
+        // `CollectionsAPI`, not `BoardsAPI`: the deleted twin took ids only, so
+        // this facet was the one card-path read that could not settle a name
+        // (#123). Favro sends `collectionId` here, but the escalation is what
+        // makes the pair one behaviour rather than two.
+        new CollectionsAPI(this.client)
           .getCollection(card.collectionId)
           .then((raw) => raw as unknown as Card['collection']),
         undefined,

@@ -8,13 +8,9 @@ import FavroHttpClient from './http-client';
 import { getAllPages } from './paginate';
 import { Board } from './boards-api';
 import { classifyThrownError } from './favro-error';
-import { looksLikeName, resolveNameToId } from './name-resolve';
+import { looksLikeName, resolveCollectionId } from './name-resolve';
 
-/**
- * The wider of the two `Collection` interfaces, and the one to keep — see the
- * twin at `boards-api.ts` for why both still exist and who collapses them
- * (#123).
- */
+/** The one `Collection` since #123 — `boards-api`'s narrower twin is gone. */
 export interface Collection {
   collectionId: string;
   name: string;
@@ -39,17 +35,11 @@ export class CollectionsAPI {
   /**
    * Resolve a collection name to its `collectionId`. An exact id passes
    * straight through. Refuses an unknown or a duplicated name — never picks one.
+   * The implementation is `name-resolve`'s, shared with
+   * `BoardsAPI.listBoardsByCollection` (#123).
    */
-  async resolveCollectionId(collection: string, useIdWith = 'favro collections get <collectionId>'): Promise<string> {
-    return resolveNameToId({
-      organizationId: this.client.organizationId,
-      kind: 'collections',
-      fetch: async () => (await this.listCollections(100)).map(c => ({ id: c.collectionId, name: c.name })),
-      value: collection,
-      label: 'collection',
-      listCommand: 'favro collections list',
-      useIdWith,
-    });
+  async resolveCollectionId(collection: string, useIdWith?: string): Promise<string> {
+    return resolveCollectionId(this.client, collection, useIdWith);
   }
 
   /**
@@ -92,6 +82,19 @@ export class CollectionsAPI {
 
   async deleteCollection(collectionId: string): Promise<void> {
     await this.client.delete(`/collections/${collectionId}`);
+  }
+
+  /**
+   * Board membership, moved off `BoardsAPI` with the rest of its collections
+   * surface (#123). Both endpoints are `/collections/…`, so this was always the
+   * module they belonged to; no command calls either one today.
+   */
+  async addBoardToCollection(collectionId: string, boardId: string): Promise<Collection> {
+    return this.client.post<Collection>(`/collections/${collectionId}/boards/${boardId}`, {});
+  }
+
+  async removeBoardFromCollection(collectionId: string, boardId: string): Promise<void> {
+    await this.client.delete(`/collections/${collectionId}/boards/${boardId}`);
   }
 }
 

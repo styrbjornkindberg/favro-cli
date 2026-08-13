@@ -8,7 +8,7 @@ import {
   listBoardsHandler,
   formatBoardsTable,
 } from '../../commands/boards-list';
-import BoardsAPI, { Board, Collection } from '../../lib/boards-api';
+import BoardsAPI, { Board } from '../../lib/boards-api';
 import FavroHttpClient from '../../lib/http-client';
 import * as config from '../../lib/config';
 import type { Ctx } from '../../lib/run';
@@ -58,37 +58,15 @@ const sampleBoards: Board[] = [
   },
 ];
 
-const sampleCollections: Collection[] = [
-  {
-    collectionId: 'coll-1',
-    name: 'Marketing',
-    createdAt: '2026-01-01T00:00:00Z',
-    updatedAt: '2026-01-01T00:00:00Z',
-  },
-  {
-    collectionId: 'coll-2',
-    name: 'Engineering',
-    createdAt: '2026-01-01T00:00:00Z',
-    updatedAt: '2026-01-01T00:00:00Z',
-  },
-];
-
-function buildProgram(mockListBoards: jest.Mock, mockListCollections?: jest.Mock, mockListBoardsByCollection?: jest.Mock) {
+function buildProgram(mockListBoards: jest.Mock, mockListBoardsByCollection?: jest.Mock) {
   (FavroHttpClient as jest.MockedClass<typeof FavroHttpClient>).mockImplementation(() => ({} as any));
   (BoardsAPI as jest.MockedClass<typeof BoardsAPI>).mockImplementation(() => ({
     listBoards: mockListBoards,
-    listCollections: mockListCollections ?? jest.fn().mockResolvedValue(sampleCollections),
     listBoardsByCollection: mockListBoardsByCollection ?? jest.fn().mockResolvedValue([]),
     getBoard: jest.fn(),
     createBoard: jest.fn(),
     updateBoard: jest.fn(),
     deleteBoard: jest.fn(),
-    getCollection: jest.fn(),
-    createCollection: jest.fn(),
-    updateCollection: jest.fn(),
-    deleteCollection: jest.fn(),
-    addBoardToCollection: jest.fn(),
-    removeBoardFromCollection: jest.fn(),
   } as any));
 
   const program = new Command();
@@ -252,7 +230,7 @@ function envelopeCall(spy: jest.SpyInstance): string {
   test('--collection hands the collection straight to the wire-filtered listing', async () => {
     const mockListBoards = jest.fn().mockResolvedValue(sampleBoards);
     const mockByCollection = jest.fn().mockResolvedValue([sampleBoards[0], sampleBoards[2]]);
-    const program = buildProgram(mockListBoards, undefined, mockByCollection);
+    const program = buildProgram(mockListBoards, mockByCollection);
 
     await program.parseAsync(['node', 'cli', 'boards', 'list', '--collection', 'Marketing', '--human']);
 
@@ -265,7 +243,7 @@ function envelopeCall(spy: jest.SpyInstance): string {
   test('the positional collection takes the same wire-filtered path', async () => {
     const mockListBoards = jest.fn().mockResolvedValue(sampleBoards);
     const mockByCollection = jest.fn().mockResolvedValue([sampleBoards[1]]);
-    const program = buildProgram(mockListBoards, undefined, mockByCollection);
+    const program = buildProgram(mockListBoards, mockByCollection);
 
     await program.parseAsync(['node', 'cli', 'boards', 'list', 'coll-2', '--human']);
 
@@ -278,7 +256,7 @@ function envelopeCall(spy: jest.SpyInstance): string {
     const mockByCollection = jest.fn().mockRejectedValue(
       new Error('No collection named "NonExistent" — it is missing or not visible to your key.')
     );
-    const program = buildProgram(mockListBoards, undefined, mockByCollection);
+    const program = buildProgram(mockListBoards, mockByCollection);
 
     await program.parseAsync(['node', 'cli', 'boards', 'list', '--collection', 'NonExistent', '--human']);
 
@@ -292,7 +270,7 @@ function envelopeCall(spy: jest.SpyInstance): string {
   test('--collection outputs the narrowed boards as an envelope', async () => {
     const mockListBoards = jest.fn().mockResolvedValue(sampleBoards);
     const mockByCollection = jest.fn().mockResolvedValue([sampleBoards[1]]);
-    const program = buildProgram(mockListBoards, undefined, mockByCollection);
+    const program = buildProgram(mockListBoards, mockByCollection);
 
     await program.parseAsync(['node', 'cli', 'boards', 'list', '--collection', 'Engineering']);
 

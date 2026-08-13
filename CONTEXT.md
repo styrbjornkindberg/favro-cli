@@ -335,16 +335,19 @@ decision** — #120 exists because recording a mismatch had been standing in for
 one. Every entry names the issue that will close it; a resolved entry leaves the list
 rather than being struck through, because git remembers.
 
-1. **Two `Collection` interfaces.** `src/lib/collections-api.ts` (with `boardCount`,
-   `memberCount`) and `src/lib/boards-api.ts` (without). Same name, different shape, and
-   the type is only the symptom — `resolveCollectionId`, `listCollections` and
-   `getCollection` all exist twice too. **#123** collapses the surface; both declarations
-   carry a comment saying so. Structurally harmless meanwhile (the narrow shape is a
-   strict subset, so the two are mutually assignable). The live defect in the pair is
-   behavioural, and also #123's: one `resolveCollectionId` accepts names, the other does
-   not, and the card path calls the one that does not.
-
-The other four entries were discharged by #120 and #122. One was not a mismatch at all
+The list is **empty**. Four entries were discharged by #120 and #122, and the fifth —
+two `Collection` interfaces, with `resolveCollectionId`, `listCollections` and
+`getCollection` all declared twice — by #123. One of the four was not a mismatch at all
 but a bug: `ScopeError` extended bare `Error`, so a scope violation reported
 `retryable: true` and told agents to retry a decline only `favro scope set` can change.
 See `src/lib/safety.ts` for the trace, and `refusal-drift.test.ts` for the ratchet.
+
+One correction the fifth entry earned on its way out, recorded because the entry stated
+it as fact for three tickets: **the behavioural half of it named the wrong function.**
+It said "one `resolveCollectionId` accepts names, the other does not". Measured on HEAD
+before #123 touched anything, the two `resolveCollectionId` bodies were byte-identical
+and BOTH resolved names — the divergent pair was `getCollection`, where
+`collections-api`'s escalated an id to a name lookup on a classified not-found and
+`boards-api`'s did not. The rest of the entry held: the card path
+(`cards get --include collection`) did call the one without the escalation, and now
+calls the one with it.

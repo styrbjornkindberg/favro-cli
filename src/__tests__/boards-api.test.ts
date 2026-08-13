@@ -5,11 +5,11 @@
  */
 import BoardsAPI, {
   Board,
-  Collection,
   ExtendedBoard,
   aggregateBoardStats,
   calculateVelocity,
 } from '../lib/boards-api';
+import { Collection } from '../lib/collections-api';
 import FavroHttpClient from '../lib/http-client';
 
 describe('Boards API', () => {
@@ -334,91 +334,6 @@ describe('Boards API', () => {
     mockClient.delete.mockResolvedValue(undefined);
     await api.deleteBoard('board-1');
     expect(mockClient.delete).toHaveBeenCalledWith('/widgets/board-1');
-  });
-
-  // --- listCollections ---
-
-  test('listCollections returns array', async () => {
-    mockClient.get.mockResolvedValue({ entities: [sampleCollection] });
-    const result = await api.listCollections();
-    expect(result).toHaveLength(1);
-    expect(result[0].collectionId).toBe('coll-1');
-  });
-
-  test('listCollections returns empty array when none', async () => {
-    mockClient.get.mockResolvedValue({ entities: [] });
-    const result = await api.listCollections();
-    expect(result).toEqual([]);
-  });
-
-  test('listCollections returns empty array when entities missing', async () => {
-    mockClient.get.mockResolvedValue({});
-    const result = await api.listCollections();
-    expect(result).toEqual([]);
-  });
-
-  test('listCollections uses default limit', async () => {
-    mockClient.get.mockResolvedValue({ entities: [] });
-    await api.listCollections();
-    expect(mockClient.get).toHaveBeenCalledWith('/collections', { params: { limit: 50 } });
-  });
-
-  test('listCollections passes custom limit', async () => {
-    mockClient.get.mockResolvedValue({ entities: [] });
-    await api.listCollections(25);
-    expect(mockClient.get).toHaveBeenCalledWith('/collections', { params: { limit: 25 } });
-  });
-
-  // --- getCollection ---
-
-  test('getCollection fetches single collection', async () => {
-    mockClient.get.mockResolvedValue(sampleCollection);
-    const result = await api.getCollection('coll-1');
-    expect(result.name).toBe('Collection 1');
-    expect(mockClient.get).toHaveBeenCalledWith('/collections/coll-1');
-  });
-
-  // --- createCollection ---
-
-  test('createCollection posts data', async () => {
-    mockClient.post.mockResolvedValue(sampleCollection);
-    const result = await api.createCollection({ name: 'My Collection' });
-    expect(result.collectionId).toBe('coll-1');
-    expect(mockClient.post).toHaveBeenCalledWith('/collections', { name: 'My Collection' });
-  });
-
-  // --- updateCollection ---
-
-  test('updateCollection patches collection', async () => {
-    const updated = { ...sampleCollection, name: 'Updated Collection' };
-    mockClient.patch.mockResolvedValue(updated);
-    const result = await api.updateCollection('coll-1', { name: 'Updated Collection' });
-    expect(result.name).toBe('Updated Collection');
-    expect(mockClient.patch).toHaveBeenCalledWith('/collections/coll-1', { name: 'Updated Collection' });
-  });
-
-  // --- deleteCollection ---
-
-  test('deleteCollection calls DELETE', async () => {
-    mockClient.delete.mockResolvedValue(undefined);
-    await api.deleteCollection('coll-1');
-    expect(mockClient.delete).toHaveBeenCalledWith('/collections/coll-1');
-  });
-
-  // --- addBoardToCollection ---
-
-  test('addBoardToCollection posts link', async () => {
-    mockClient.post.mockResolvedValue(sampleCollection);
-    await api.addBoardToCollection('coll-1', 'board-1');
-    expect(mockClient.post).toHaveBeenCalledWith('/collections/coll-1/boards/board-1', {});
-  });
-
-  // --- removeBoardFromCollection ---
-
-  test('removeBoardFromCollection calls DELETE', async () => {
-    mockClient.delete.mockResolvedValue(undefined);
-    await api.removeBoardFromCollection('coll-1', 'board-1');
-    expect(mockClient.delete).toHaveBeenCalledWith('/collections/coll-1/boards/board-1');
   });
 
   // --- Collection filter on boards ---

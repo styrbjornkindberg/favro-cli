@@ -16,6 +16,8 @@
  * that finds nothing refetches before answering "no", so a cache miss is never
  * evidence on its own.
  */
+import FavroHttpClient from './http-client';
+import { getAllPages } from './paginate';
 import { CacheKind, readCache, writeCache } from './name-cache';
 import { foldName } from './fold-name';
 import { MISSING_WORDING } from './favro-error';
@@ -145,4 +147,42 @@ export async function resolveNameToId(options: ResolveOptions): Promise<string> 
     options.label,
     found
   );
+}
+
+/**
+ * Settle a collection NAME or id to a `collectionId` — the one implementation,
+ * called by `CollectionsAPI.resolveCollectionId` and by
+ * `BoardsAPI.listBoardsByCollection` (#123).
+ *
+ * It existed twice, byte-identically, and neither copy could import the other's
+ * module: `boards-api` needs it for `listBoardsByCollection` and
+ * `collections-api` already imports `boards-api` for `Board`, so putting the
+ * survivor in either one is a cycle `madge --circular` fails on. Here it is a
+ * cycle for nobody — `http-client` and `paginate` are not API classes, which is
+ * the only import ADR-0003 barred from the resolver.
+ *
+ * It takes a `client` rather than the `fetch` callback the ADR's other callers
+ * pass, because the listing is not the caller's to vary: both sites want exactly
+ * `GET /collections` paged to completion, and a second `fetch` spelling is the
+ * duplicate this deletes in miniature.
+ *
+ * `useIdWith` names the caller's own flag, so the refusal points at a command
+ * that exists rather than at a generic one.
+ */
+export async function resolveCollectionId(
+  client: FavroHttpClient,
+  collection: string,
+  useIdWith = 'favro collections get <collectionId>'
+): Promise<string> {
+  return resolveNameToId({
+    organizationId: client.organizationId,
+    kind: 'collections',
+    fetch: async () =>
+      (await getAllPages<{ collectionId: string; name: string }>(client, '/collections', { limit: 100 }))
+        .map(c => ({ id: c.collectionId, name: c.name })),
+    value: collection,
+    label: 'collection',
+    listCommand: 'favro collections list',
+    useIdWith,
+  });
 }

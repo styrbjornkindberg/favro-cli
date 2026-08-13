@@ -325,7 +325,7 @@ describe('cards get --include: an empty facet and an unreadable one are distingu
     expect(payload.cardId).toBe(CARD);
     expect(process.exitCode).toBeUndefined();
 
-    // The REASON, and the one asymmetry it has. Three facets are plain
+    // The REASON, and the one asymmetry it has. `links` and `comments` are plain
     // `client.get`s, so the reason is the classified 403 verbatim.
     //
     // `board` is not: `BoardsAPI.getBoard` routes through `byBoard`, which reads
@@ -334,15 +334,26 @@ describe('cards get --include: an empty facet and an unreadable one are distingu
     // that was never a name but the `widgetCommonId` the card itself carried.
     // It also costs an extra `/widgets?limit=100` listing.
     //
-    // Pinned rather than fixed: `byBoard` is shared by `boards get <boardId>`,
-    // which has always answered the same way, so the misattribution predates this
-    // change and lives in a file this branch does not own. Pinned so a fix there
-    // comes back HERE — the id is what an agent branches on and it is correct
-    // either way, but the wording tells a caller "no such board" when the truth is
-    // "your key cannot see it".
+    // `collection` JOINED IT IN #123, and that is the measurement of the switch
+    // rather than a claim about it: this facet used to call
+    // `BoardsAPI.getCollection`, which took ids only and had no escalation, and
+    // it now calls `CollectionsAPI.getCollection`, which escalates exactly as
+    // `byBoard` does. That is the only difference the card path can OBSERVE —
+    // Favro sends `collectionId` off the card, so the name branch the deleted
+    // twin lacked is not reachable from here by a user's input.
+    //
+    // Pinned rather than fixed, for both: the escalation is shared with
+    // `boards get <boardId>` and `collections get <collectionId>`, which have
+    // always answered this way, so the misattribution predates this change.
+    // Pinned so a fix there comes back HERE — the id is what an agent branches
+    // on and it is correct either way, but the wording tells a caller "no such
+    // board" when the truth is "your key cannot see it".
     const reason = payload.unreachable?.[0].reason ?? '';
     if (broken === 'board') {
       expect(reason).toContain(`No board named "${BOARD}"`);
+      expect(reason).not.toContain('Access denied');
+    } else if (broken === 'collection') {
+      expect(reason).toContain(`No collection named "${COLLECTION}"`);
       expect(reason).not.toContain('Access denied');
     } else {
       expect(reason).toBe('Favro said "Access denied" — the resource is missing or not visible to your key.');

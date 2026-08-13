@@ -149,4 +149,29 @@ describe('CollectionsAPI', () => {
     mockClient.patch.mockRejectedValue(err);
     await expect(api.updateCollection('bad-id', { name: 'x' })).rejects.toThrow('Not Found');
   });
+
+  // --- deleteCollection / board membership ---
+  //
+  // These three came off `boards-api.test.ts` with the methods #123 moved. The
+  // eight beside them there were dropped rather than moved: `listCollections`
+  // (×5), `getCollection`, `createCollection` and `updateCollection` all had a
+  // twin in this file already, which is the duplication the ticket is about.
+
+  test('deleteCollection calls DELETE', async () => {
+    mockClient.delete.mockResolvedValue(undefined);
+    await api.deleteCollection('coll-1');
+    expect(mockClient.delete).toHaveBeenCalledWith('/collections/coll-1');
+  });
+
+  test('addBoardToCollection posts link', async () => {
+    mockClient.post.mockResolvedValue(sampleCollection);
+    await api.addBoardToCollection('coll-1', 'board-1');
+    expect(mockClient.post).toHaveBeenCalledWith('/collections/coll-1/boards/board-1', {});
+  });
+
+  test('removeBoardFromCollection calls DELETE', async () => {
+    mockClient.delete.mockResolvedValue(undefined);
+    await api.removeBoardFromCollection('coll-1', 'board-1');
+    expect(mockClient.delete).toHaveBeenCalledWith('/collections/coll-1/boards/board-1');
+  });
 });
