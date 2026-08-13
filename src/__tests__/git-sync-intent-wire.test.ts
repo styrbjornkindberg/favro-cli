@@ -116,6 +116,17 @@ interface Stand { received: Received[]; cards: Map<string, StoredCard> }
 const running: http.Server[] = [];
 
 /**
+ * A fresh organizationId per stand, so every arm starts on a COLD name cache.
+ *
+ * `name-cache.ts` partitions by organizationId and memoises the parsed file by
+ * PATH, and only this process's own `writeFile` clears that memo — so deleting
+ * the file between arms does not work, measured. The create arms below count
+ * `/widgets` requests, and a warm partition would make that count a fact about
+ * test order rather than about the code.
+ */
+let orgSeq = 0;
+
+/**
  * A 24-hex `cardId`. The leading letters are not decoration: an all-DIGIT
  * reference is a sequentialId to `CardReferences`, so `000…001` goes out as
  * `?cardSequentialId=1` and never finds the card. Measured, on this stand.
@@ -216,6 +227,17 @@ function startServer(seed: { cards: StoredCard[]; deaf?: Set<string> } ): Promis
         }
       }
 
+      if (pathOnly === '/cards' && r.method === 'POST') {
+        const made = card({
+          cardId: `made-${cards.size}`,
+          name: String(r.body?.name ?? ''),
+          widgetCommonId: r.body?.widgetCommonId,
+          columnId: r.body?.columnId ?? TODO,
+        });
+        cards.set(made.cardId, made);
+        return send(200, { ...made });
+      }
+
       if (pathOnly === '/cards') {
         const query = new URLSearchParams(url.split('?')[1] ?? '');
         const commonId = query.get('cardCommonId');
@@ -261,7 +283,7 @@ function startServer(seed: { cards: StoredCard[]; deaf?: Set<string> } ): Promis
       const { port } = server.address() as AddressInfo;
       injected = new FavroHttpClient({
         baseURL: `http://127.0.0.1:${port}/api/v1`,
-        auth: { organizationId: ORG },
+        auth: { organizationId: `${ORG}-${++orgSeq}` },
       });
       resolve({ received, cards });
     });
@@ -368,6 +390,43 @@ describe('git sync writes a column move that actually lands', () => {
     expect(cards.get(A)!.columnId).toBe(TODO);
     expect(said()).toContain('did not land there');
     expect(said()).not.toContain('✓ Updated');
+  });
+
+  it('a card that cannot be read aborts the pass and NAMES the branch that pointed at it', async () => {
+    // The abort is right — the pass is one transaction, and a card that cannot be
+    // read cannot be scope-checked — but `board()` runs outside the table's try,
+    // so the wire's own bare `404 Not Found` was all the user got: no card, no
+    // branch, no next step. A refusal that does not name the fix is half a
+    // refusal, and only the socket arm can tell "named it" from "aborted".
+    const A = cardId(1);
+    const { received } = await startServer({ cards: [card({ cardId: A })] });
+    branches([
+      { branch: 'feature/a', cardId: A, status: 'merged' },
+      { branch: 'feature/gone', cardId: cardId(99), status: 'merged' },
+    ]);
+
+    const thrown = await attempt('git', 'sync', '--yes');
+
+    expect(thrown).toBe('process.exit(1)');
+    expect(writes(received)).toEqual([]);
+    expect(said()).toContain('feature/gone');
+    expect(said()).toContain('.favro.json');
+    expect(said()).toContain('NOTHING was written');
+  });
+
+  it('a SCOPE refusal keeps its own message — the abort wrapper is narrow', async () => {
+    // The polarity that stops the wrapper swallowing precise refusals: every
+    // `RefusalError` already names its own fix, so rewrapping one would replace it
+    // with a guess about card reads.
+    const A = cardId(1);
+    await startServer({ cards: [card({ cardId: A, widgetCommonId: OUT_BOARD })] });
+    await lock(LOCK);
+    branches([{ branch: 'feature/a', cardId: A, status: 'merged' }]);
+
+    await attempt('git', 'sync', '--yes');
+
+    expect(said()).toContain('Scope violation');
+    expect(said()).not.toContain('.favro.json');
   });
 
   it('a failure on the second card moves the FIRST one back', async () => {
@@ -523,5 +582,68 @@ describe('dependencies delete-all refuses above the cap rather than wiping', () 
 
     expect(writes(received)).toEqual([]);
     expect(said()).toContain('no dependencies');
+  });
+});
+
+// ─── cards create settles its board before the lock sees it ──────────────────
+
+describe('cards create --board <name> under a lock (#82, closed in #109)', () => {
+  const lists = (received: Received[]) => received.filter((r) => r.path === '/widgets');
+
+  it('the lock is handed the settled id, never the name', async () => {
+    // The `create` intent used to pass its board argument through unresolved, and
+    // `assertScope` GETs `/widgets/<id>` — handed "Board Inside" it 404s into
+    // "Board … not found", a refusal naming the wrong problem. Asserted on the
+    // socket, because only the URL can tell a settled id from a name.
+    const { received, cards } = await startServer({ cards: [] });
+    await lock(LOCK);
+
+    await run('cards', 'create', 'A new card', '--board', 'Board Inside', '--yes');
+
+    expect(received.map((r) => r.path)).toContain(`/widgets/${IN_BOARD}`);
+    expect(received.filter((r) => r.path.includes('Board Inside'))).toEqual([]);
+    expect([...cards.values()].map((c) => c.name)).toContain('A new card');
+  });
+
+  it('settling twice costs ONE board list — `createCard` shares the cache', async () => {
+    // THE MEASUREMENT behind "no extra request on the real create": `board()`
+    // settles the name, then `createCard`'s own `boardIdOf` settles it again, and
+    // `resolveNameToId` reads a memoised disk cache between them. The cache file
+    // is deleted before every arm, so this counts a COLD start.
+    const { received } = await startServer({ cards: [] });
+    await lock(LOCK);
+
+    await run('cards', 'create', 'A new card', '--board', 'Board Inside', '--yes');
+
+    expect(lists(received)).toHaveLength(1);
+  });
+
+  it('a board ID still settles, and still costs one list — no shape shortcut', async () => {
+    // `looksLikeName` is NOT used to skip the settle, and this arm is why: it is
+    // deliberately weak — a one-word board name ("Backlog") is shape-identical to
+    // an id — so gating on it would pass such a name through unresolved and
+    // reopen #82 for exactly the names most likely to be typed.
+    const { received, cards } = await startServer({ cards: [] });
+    await lock(LOCK);
+
+    await run('cards', 'create', 'A new card', '--board', IN_BOARD, '--yes');
+
+    expect(lists(received)).toHaveLength(1);
+    expect([...cards.values()].map((c) => c.name)).toContain('A new card');
+  });
+
+  it('an UNLOCKED --dry-run now costs one board list where it cost none', async () => {
+    // The price of moving the settling inside the intent, MEASURED rather than
+    // claimed: `board()` runs before the `dryRun` return, so a preview that made
+    // no request now makes one. It is the #102/#104/#135 pricing rule and this
+    // arm is where the exception is recorded — the alternative was leaving #82
+    // open on `cards create`.
+    const { received } = await startServer({ cards: [] });
+
+    await run('cards', 'create', 'A new card', '--board', 'Board Inside', '--dry-run');
+
+    expect(lists(received)).toHaveLength(1);
+    expect(writes(received)).toEqual([]);
+    expect(said()).toContain('[dry-run]');
   });
 });

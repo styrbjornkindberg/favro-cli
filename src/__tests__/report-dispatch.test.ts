@@ -12,8 +12,8 @@
  * The other half of the contract is unchanged: the "Left behind:" header is a
  * promise of a list, so it is only printed when there is one.
  */
-import { reportDispatch } from '../lib/report-dispatch';
-import { DispatchResult } from '../lib/dispatch';
+import { previewOnly, reportDispatch } from '../lib/report-dispatch';
+import { DispatchResult, RefusalError } from '../lib/dispatch';
 
 const result = (over: Partial<DispatchResult>): DispatchResult => ({
   intent: 'retag',
@@ -97,5 +97,46 @@ describe('the reporter never promises safety over an incomplete unwind', () => {
     expect(out).not.toContain('safe to retry');
     expect(out).toContain('do NOT retry');
     expect(out).not.toContain('Left behind');
+  });
+});
+
+/**
+ * `previewOnly` renders an intent's preview WITHOUT dispatching, for the one case
+ * where dispatching to reach a preview costs a caller money it should not owe: a
+ * `--dry-run` with no scope lock configured (#109).
+ *
+ * The guard is the interesting half. All three callers gate on
+ * `!scopeCollectionId` correctly, and that gate is invisible from inside — a
+ * fourth call site calling this unconditionally would rebuild #155's hole
+ * exactly, a preview promising a write the lock refuses.
+ */
+describe('previewOnly refuses to preview around a configured lock', () => {
+  // The preview goes to stdout, not to the error stream the arms above read.
+  let logged: string[];
+  let logSpy: jest.SpyInstance;
+  beforeEach(() => {
+    logged = [];
+    logSpy = jest.spyOn(console, 'log').mockImplementation((m?: unknown) => { logged.push(String(m)); });
+  });
+  afterEach(() => logSpy.mockRestore());
+
+  it('throws a RefusalError when a lock is configured, and prints nothing', () => {
+    expect(() => previewOnly('update', { card: 'c1', name: 'x' }, { scopeCollectionId: 'coll-1' }))
+      .toThrow(RefusalError);
+    expect(() => previewOnly('update', { card: 'c1', name: 'x' }, { scopeCollectionId: 'coll-1' }))
+      .toThrow(/#155/);
+    expect(logged).toEqual([]);
+    expect(lines).toEqual([]);
+  });
+
+  it('renders the intent\'s own lines when nothing is locked — the falsifying half', () => {
+    previewOnly('update', { card: 'c1', name: 'x' }, {});
+    const out = logged.join('\n');
+    expect(out).toContain('[dry-run] update card c1');
+    expect(out).toContain('name: "x"');
+  });
+
+  it('an unknown intent refuses rather than previewing nothing at all', () => {
+    expect(() => previewOnly('no-such-intent', {}, undefined)).toThrow(/No such intent/);
   });
 });

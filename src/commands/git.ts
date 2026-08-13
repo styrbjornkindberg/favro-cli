@@ -424,23 +424,30 @@ export function registerGitCommands(program: Command): void {
           // name the fix is only half a refusal, so this adds the mapping and the
           // repair, and nothing else.
           //
-          // Narrow on purpose. Every REFUSAL — the scope lock, the cap, the
-          // boardless-write rule — already names its own fix, so rewrapping one
-          // would replace a precise message with a guess about card reads. What
-          // is left is a throw out of `board()`, which is the read.
-          if (error instanceof RefusalError) throw error;
+          // APPENDS, and does not rewrap. The failures that reach here already
+          // say something precise — a deleted card raises a structured
+          // `CardResolutionError` naming the reference — and replacing that with
+          // a message of our own would trade a good refusal for a guess. What
+          // only THIS command knows is which branch pointed at that card, and
+          // that nothing was written; that is all this adds.
+          //
+          // Two exemptions, both because the addition would be noise rather than
+          // help: the scope lock's refusal is complete and `error-handler` reads
+          // its TYPE to head the line `Scope violation:`, and the cap's refusal is
+          // about the batch's size, so listing twenty-one branch mappings under it
+          // buries the one sentence that matters.
+          if (error instanceof ScopeError || /capped at/.test(String(error?.message))) throw error;
           const mapping = cards
             .map((c) => `${branchOf.get(c.card) ?? '(no branch)'} → ${c.card}`)
             .join('\n    ');
           throw new Error(
-            `git sync could not read one of the ${cards.length} cards its branches point at, so the ` +
-              `whole pass was refused and NOTHING was written.\n` +
-              `  The pass is ONE transaction: a card that cannot be read cannot be checked against the ` +
-              `scope lock, and syncing the rest would report a success count for a batch that was never whole.\n` +
+            `${error instanceof Error ? error.message : String(error)}\n` +
+              `  git sync refused the WHOLE pass over this, and NOTHING was written: the pass is ONE ` +
+              `transaction, and syncing the rest would report a success count for a batch that was ` +
+              `never whole.\n` +
               `  Branch → card:\n    ${mapping}\n` +
-              `  Underlying error: ${error instanceof Error ? error.message : String(error)}\n` +
-              `  A stale mapping lives in this repo's .favro.json, under "branches" — remove the entry (or ` +
-              `the branch) and re-run, or run 'favro git branch <card>' to re-point it.`,
+              `  A stale mapping lives in this repo's .favro.json, under "branches" — remove that entry, ` +
+              `or delete the branch, then re-run.`,
           );
         });
         if (reportDispatch(result)) process.exit(1);
@@ -584,7 +591,10 @@ export function registerGitCommands(program: Command): void {
             config: favroConfig,
             force: options.force,
           }).catch((error) => {
-            if (error instanceof RefusalError && cards.length > MULTI_WRITE_CAP) {
+            // Matched on the cap's own sentence rather than on a re-derived
+            // length test: `boundEntries` owns when the cap fires, and a second
+            // predicate here is a second place for that to drift.
+            if (error instanceof RefusalError && /capped at/.test(error.message)) {
               throw new RefusalError(
                 `${error.message}\n` +
                   `This list is a codebase SCAN, so there is nothing to split: re-run with ` +

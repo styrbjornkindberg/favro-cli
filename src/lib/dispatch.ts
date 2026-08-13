@@ -582,9 +582,20 @@ registerIntent<CreateArgs | MultiCreateArgs, Card | Card[]>({
     ]),
   // SETTLED, not passed through (#109). `--board` takes a NAME or an id, and
   // `assertScope` GETs `/widgets/<id>`: handed a name it 404s into "Board … not
-  // found", a refusal naming the wrong problem (#82). `createCard` already
-  // resolves the same value through the same cache, so the second resolve is a
-  // cache hit and costs no request — measured in `cards-create-wire.test.ts`.
+  // found", a refusal naming the wrong problem (#82).
+  //
+  // UNCONDITIONAL, and `looksLikeName` is deliberately not used as a gate: it is
+  // weak by design — a one-word board name ("Backlog") is shape-identical to an
+  // id — so skipping the settle on it would reopen #82 for exactly the names most
+  // likely to be typed.
+  //
+  // What it costs, measured on a socket in `git-sync-intent-wire.test.ts` and not
+  // inferred: on a REAL create, nothing. `createCard`'s own `boardIdOf` settles
+  // the same value through the same 15-minute name cache, so the two settlings
+  // are one `/widgets` list even from cold. On a `--dry-run` with no lock it is
+  // one list where there were none, because `board()` runs before the preview
+  // returns — an exception to the #102/#104 pricing rule, taken because the
+  // alternative is leaving #82 open on `cards create`.
   board: async (a, tx) =>
     Promise.all(
       createEntries(a)
