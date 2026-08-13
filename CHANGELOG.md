@@ -12,6 +12,72 @@ and streams are real and no request reached a live org.
 
 ### Changed
 
+- **Seven more write paths go through the one dispatch table (#109).** `git branch`'s
+  auto-move, `git sync`, `git todos --create`, `custom-fields set`, `widgets add`,
+  `cards move` and all three `dependencies` subcommands reached the wire directly, each
+  dropping a different guarantee. They now take the mandatory scope lock **inside** the
+  intent, so the CLI, `skill run` and MCP cannot disagree about it, and they inherit the
+  boardless-write refusal, the 20-write cap and a compensation log.
+
+- **`git sync` is now ONE transaction, not a loop with a success counter.** A failure on
+  card 4 of 6 moves cards 1–3 back and reports `rolled-back`, where it used to print
+  `✗ Could not update card X` alongside `✓ Updated 5/6 cards.` and leave the five standing.
+  Two branches naming the same card are collapsed to one write. Over twenty cards it
+  REFUSES, naming the cap, rather than moving the first twenty — and the refusal costs no
+  requests. `git todos --create` gets the same treatment: the scan is an enumerated list,
+  so more than twenty TODOs refuses (use `--limit`) and a part-way failure deletes the
+  cards already made.
+
+  The ticket's premise that `git sync` was silently writing nothing —
+  `PUT {status: 'Done'}` being a measured no-op — turned out to be **false**, and the
+  correction is pinned rather than argued: `CardsAPI.updateCard` already translated
+  `status` into a `columnId` before anything reached the wire.
+  `git-sync-intent-wire.test.ts` asserts the bytes are `{columnId}` and that the card
+  MOVED, read back off the stand's own store.
+
+- **A card that cannot be read now aborts the whole `git sync`.** A stale branch mapping
+  onto a deleted card used to sync the rest and report a partial count; a batch is one
+  transaction now, so it refuses as a whole and writes nothing. Under a configured lock the
+  old code aborted here too — what changes is the unlocked case.
+
+- **`dependencies delete-all` no longer wipes an unbounded edge set.** It was one
+  `DELETE /cards/{id}/dependencies` with no record of what it removed and no way back. It
+  now enumerates the edges, refuses above twenty rather than wiping, and removes each one
+  through a write that captured its direction first — so a failure part-way through re-adds
+  the ones already gone.
+
+- **`dependencies add` takes the scope lock even when the card has no board.** The check
+  sat behind `if (sourceCard && sourceCard.boardId)`, so an assignment fork — the exact
+  case the lock exists for — skipped it. It also gains the bounded pre-read: an edge that
+  is already there is reported rather than rewritten, and a pair holding the REVERSE edge
+  refuses instead of 403-ing off the wire.
+
+- **`custom-fields set` no longer has an "accepted (200) but UNCONFIRMED" arm.** The write
+  is read back and matched on `customFieldId`, so an echo that does not carry what was sent
+  is a failure the table reports with retry advice, not a success-shaped notice. The value
+  is still resolved against the field's own definition, and still sent under the payload key
+  that field's TYPE spells — only `Single select` is measured on this path (#106) and
+  nothing here widens that.
+
+- **`cards move` checks BOTH boards, and gains `--dry-run`.** The origin and the settled
+  destination are checked before anything is written, so a move out of the locked collection
+  and a move into it refuse alike, and a fork can no longer ride in on the destination. A
+  destination board that does not resolve now refuses by name before the write, instead of
+  taking a 404 off the wire and reporting "card or board not found" for two different
+  problems. The move is marked IRREVERSIBLE in the table: the column the card held on the
+  old board is not captured, so nothing here can honestly claim `rolled-back`.
+
+- **`widgets add` is inside the table as the one write allowed to manufacture a board
+  instance.** That absence is what makes a card boardless, which is the shape every other
+  write is refused on. Also IRREVERSIBLE: the new instance's own id is not measured on this
+  response, so nothing can name it to undo it.
+
+- An unlocked `--dry-run` on `dependencies delete`, `dependencies delete-all` and
+  `custom-fields set` still makes no request and needs no credential. It previews from the
+  intent's own pure preview, so the wording cannot drift from the run that writes. It
+  therefore cannot report anything only a read could know — an unlocked
+  `delete-all --dry-run` will not tell you the card is over the cap.
+
 - **`cards update` writes through the one dispatch table (#108).** The field writes were a
   private path with no compensation log; they now go through the `update` intent, so they
   inherit the mandatory scope lock, the boardless-write refusal, the 20-write cap and a
