@@ -850,7 +850,9 @@ describe('evaluateNode — direct evaluation', () => {
       { name: 'Score', value: '90' },
     ],
     links: [
-      { isBefore: false, cardSequentialId: 'CLA-999' },
+      // The measured edge shape, not an invented one (#162): a dependency
+      // carries `cardId` and `cardCommonId`, and never a `cardSequentialId`.
+      { isBefore: false, cardId: 'far-card-id', cardCommonId: 'far-common-id' },
     ],
   };
 
@@ -967,17 +969,18 @@ describe('evaluateNode — direct evaluation', () => {
     expect(evaluateNode(q.ast!, cardAlt)).toBe(true);
   });
 
-  test('blocks: matches the outgoing edge', () => {
-    expect(evaluateNode(parseQuery('blocks:CLA-999').ast!, card)).toBe(true);
+  test.each(['far-card-id', 'far-common-id'])('blocks: matches the outgoing edge by %s', (id) => {
+    expect(evaluateNode(parseQuery(`blocks:${id}`).ast!, card)).toBe(true);
   });
 
   test('blocks: wrong target no match', () => {
-    expect(evaluateNode(parseQuery('blocks:CLA-000').ast!, card)).toBe(false);
+    expect(evaluateNode(parseQuery('blocks:some-other-id').ast!, card)).toBe(false);
   });
 
   test('a card that only blocks is itself unblocked', () => {
     expect(evaluateNode(parseQuery('unblocked').ast!, card)).toBe(true);
-    expect(evaluateNode(parseQuery('blocked-by:CLA-999').ast!, card)).toBe(false);
+    expect(evaluateNode(parseQuery('blocked-by:far-card-id').ast!, card)).toBe(false);
+    expect(evaluateNode(parseQuery('blocked-by:far-common-id').ast!, card)).toBe(false);
   });
 
   test('reads dependencies when links has not been aliased', () => {
