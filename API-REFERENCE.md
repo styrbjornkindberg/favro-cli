@@ -654,7 +654,7 @@ favro cards get card-abc123 --include board,collection,custom-fields,links,comme
 ```
 
 **Error cases:**
-- Card not found → `Error: Card '<id>' not found.`
+- Card not found → `Card '<id>' not found.`
 - Invalid include → `Error: Invalid include value(s): <value>. Valid: board,collection,...`
 
 ---
@@ -705,10 +705,10 @@ favro cards link CARD-A CARD-B --type related --human
 ```
 
 **Error cases:**
-- Self-link → `Error: Cannot link a card to itself.`
+- Self-link → `Cannot link a card to itself.`
 - Circular dependency → `Error: Linking would create a circular dependency. Aborting.`
-- Invalid type → `Error: Invalid link type '<type>'. Valid: depends-on, blocks, related, duplicates`
-- Card not found → `Error: Card '<id>' or target '<id>' not found.`
+- Invalid type → `Invalid link type '<type>'. Valid: depends-on, blocks`
+- Card not found → `Card '<id>' or target '<id>' not found.`
 
 ---
 
@@ -734,7 +734,7 @@ favro cards unlink CARD-A CARD-B
 ```
 
 **Error cases:**
-- Card or link not found → `Error: Card '<id>' or link to '<id>' not found.`
+- Card or link not found → `Card '<id>' or link to '<id>' not found.`
 
 ---
 
@@ -768,8 +768,8 @@ favro cards move card-abc123 --to-board board-456 --position bottom --human
 ```
 
 **Error cases:**
-- Card or board not found → `Error: Card '<id>' or board '<id>' not found.`
-- Invalid position → `Error: Invalid position '<pos>'. Valid: top, bottom`
+- Card or board not found → `Card '<id>' or board '<id>' not found.`
+- Invalid position → `Invalid position '<pos>'. Valid: top, bottom`
 
 ---
 
@@ -826,7 +826,7 @@ favro cards dependencies CARD-A --human
 ```
 
 **Error cases:**
-- Card not found → `Error: Card '<id>' not found.`
+- Card not found → `Card '<id>' not found.`
 
 ---
 
@@ -1750,7 +1750,7 @@ favro collections list  # Find valid IDs
 favro boards list  # Find valid IDs
 ```
 
-**`Error: Card '<id>' not found`**
+**`Card '<id>' not found`**
 ```bash
 favro cards list --board <boardId>  # Find valid card IDs
 ```

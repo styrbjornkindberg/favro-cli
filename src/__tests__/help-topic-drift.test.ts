@@ -199,10 +199,23 @@ describe('the topic is reachable the way its consumers reach it', () => {
     // lines to the block header, which gained one, and `update`'s row gained
     // one) and the WIRE NOTES reflow removed five lines and added five. Both
     // were once claimed here as savings; a grep falsifies that, so it is gone.
-    // 88 is the true floor with zero slack, which is what makes it a ratchet.
+    //
+    // 88 → 89 in #119, and NOTHING WAS EVICTED — stated plainly rather than
+    // dressed as a saving, which is the mistake the paragraph above records.
+    // The one line pays for the two facts ADR-0002's default flip makes an agent
+    // need and the old wording contradicted: JSON is the DEFAULT with `--human`
+    // opting out, and a FAILURE is an envelope on stdout too. The second is what
+    // a live smoke run measured missing — a refusal that exited 1 having written
+    // nothing an agent could parse — and the topic is where an agent is told it
+    // can now parse one. The WIRE NOTES block reflows at ~84 columns and its
+    // three facts do not fit in the two lines they replaced; reclaiming a line
+    // from the `unreachable` paragraph next to it needs 230 characters in 168,
+    // so there was no honest eviction available.
+    //
+    // 89 is the true floor with zero slack, which is what makes it a ratchet.
     const content = TOPIC_LINES.filter((l) => l.trim() !== '');
     expect(content.length).toBeGreaterThanOrEqual(60);
-    expect(content.length).toBeLessThanOrEqual(88);
+    expect(content.length).toBeLessThanOrEqual(89);
   });
 
   it('keeps the contract facts the line cap makes tempting to cut', () => {

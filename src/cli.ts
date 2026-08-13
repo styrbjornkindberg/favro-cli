@@ -368,12 +368,12 @@ cards
       const boardRef = boardArg ?? options.board;
 
       if (!boardRef) {
-        throw new RefusalError('Error: A board is required. Pass it as the positional argument or use --board <board> — a name or a boardId.');
+        throw new RefusalError('A board is required. Pass it as the positional argument or use --board <board> — a name or a boardId.');
       }
 
       const archived = String(options.archived ?? 'false').toLowerCase();
       if (archived !== 'true' && archived !== 'false' && archived !== 'all') {
-        throw new RefusalError(`Error: --archived takes true, false or all — got "${options.archived}"`);
+        throw new RefusalError(`--archived takes true, false or all — got "${options.archived}"`);
       }
 
       const include: string[] = options.include
@@ -381,7 +381,7 @@ cards
         : [];
       const unknownIncludes = include.filter((key) => key !== 'custom-fields');
       if (unknownIncludes.length > 0) {
-        throw new RefusalError(`Error: unknown --include value(s): ${unknownIncludes.join(', ')}. Valid: custom-fields`);
+        throw new RefusalError(`unknown --include value(s): ${unknownIncludes.join(', ')}. Valid: custom-fields`);
       }
 
       // Parsed BEFORE the fetch, not left to `capRows` inside the runner: a
@@ -552,7 +552,7 @@ cards
       // A `RefusalError`, so the runner owns the stream and the code. It was
       // OUTSIDE the try before, so under the JSON default `console.error` plus a
       // return would have been exit 0 with an empty stdout.
-      throw new RefusalError('Error: provide a title or use --csv/--bulk for bulk import');
+      throw new RefusalError('provide a title or use --csv/--bulk for bulk import');
     }
       const fs = await import('fs/promises');
 
@@ -596,7 +596,7 @@ cards
           .filter((c) => c.name);
 
         if (cards.length === 0) {
-          throw new RefusalError(`Error: ${source} has no rows with a name`);
+          throw new RefusalError(`${source} has no rows with a name`);
         }
 
         const result = await dispatch<Card[]>('create', { cards }, {
@@ -832,7 +832,7 @@ const updateCard = run(async (
 
     // ── Single card update ────────────────────────────────────────────────────
     if (!cardId) {
-      throw new RefusalError('Error: provide a card ID, --from-csv <file>, or --board <board> for batch operations');
+      throw new RefusalError('provide a card ID, --from-csv <file>, or --board <board> for batch operations');
     }
 
     {
@@ -993,14 +993,14 @@ cards
   .action(run(async (ctx: Ctx, board: string, options: CardsExportFlags) => {
     const format = (options.format ?? 'json').toLowerCase() as ExportFormat;
     if (format !== 'json' && format !== 'csv') {
-      throw new RefusalError(`Error: Invalid format "${options.format}". Use --format json or --format csv`);
+      throw new RefusalError(`Invalid format "${options.format}". Use --format json or --format csv`);
     }
 
     if (options.out) {
       const resolved = path.resolve(options.out);
       const cwd = process.cwd();
       if (!resolved.startsWith(cwd + path.sep) && resolved !== cwd) {
-        throw new RefusalError(`Error: Output path must be within current directory: ${options.out}`);
+        throw new RefusalError(`Output path must be within current directory: ${options.out}`);
       }
     }
 

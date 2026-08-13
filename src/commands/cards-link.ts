@@ -74,7 +74,7 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
     ) => {
       // Self-link prevention
       if (cardId === toCardId) {
-        throw new RefusalError('Error: Cannot link a card to itself.');
+        throw new RefusalError('Cannot link a card to itself.');
       }
 
       const type = options.type.toLowerCase();
@@ -83,7 +83,7 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
       // narrow union, and the guard exported beside it is the published test.
       if (!isLinkType(type)) {
         throw new RefusalError(
-          `Error: Invalid link type '${options.type}'. Valid: ${VALID_LINK_TYPES.join(', ')}`,
+          `Invalid link type '${options.type}'. Valid: ${VALID_LINK_TYPES.join(', ')}`,
         );
       }
 
@@ -109,7 +109,7 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
         config: ctx.config,
         force: options.force,
         dryRun: options.dryRun,
-      }).catch(rewrite404(`Error: Card '${cardId}' or target '${toCardId}' not found.`));
+      }).catch(rewrite404(`Card '${cardId}' or target '${toCardId}' not found.`));
 
       return {
         dispatch: result,
@@ -165,7 +165,7 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
           force: options.force,
           dryRun: options.dryRun,
         },
-      ).catch(rewrite404(`Error: Card '${cardId}' or link to '${fromCardId}' not found.`));
+      ).catch(rewrite404(`Card '${cardId}' or link to '${fromCardId}' not found.`));
 
       return {
         dispatch: result,
@@ -200,7 +200,7 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
     ) => {
       if (options.position && !VALID_POSITIONS.includes(options.position.toLowerCase())) {
         throw new RefusalError(
-          `Error: Invalid position '${options.position}'. Valid: ${VALID_POSITIONS.join(', ')}`,
+          `Invalid position '${options.position}'. Valid: ${VALID_POSITIONS.join(', ')}`,
         );
       }
 
@@ -233,7 +233,7 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
           position: options.position?.toLowerCase() as 'top' | 'bottom' | undefined,
         },
         { client: ctx.client, config: ctx.config, force: options.force, dryRun: options.dryRun },
-      ).catch(rewrite404(`Error: Card '${cardId}' or board '${options.toBoard}' not found.`));
+      ).catch(rewrite404(`Card '${cardId}' or board '${options.toBoard}' not found.`));
 
       return {
         dispatch: result,
@@ -281,7 +281,7 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
       const includes = options.relationships ? ['links'] : [];
       const card = await ctx.api.cards
         .getCard(cardId, { include: includes })
-        .catch(rewrite404(`Error: Card '${cardId}' not found.`));
+        .catch(rewrite404(`Card '${cardId}' not found.`));
 
       return {
         item: card,
@@ -318,7 +318,7 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
     .action(run(async (ctx: Ctx, cardId: string, options: { limit?: string }) => {
       const links = await ctx.api.cards
         .getCardLinks(cardId)
-        .catch(rewrite404(`Error: Card '${cardId}' not found.`));
+        .catch(rewrite404(`Card '${cardId}' not found.`));
 
       return {
         // The filter runs over the WHOLE edge set, then the cap runs over the
@@ -351,7 +351,7 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
     .action(run(async (ctx: Ctx, cardId: string, options: { limit?: string }) => {
       const links = await ctx.api.cards
         .getCardLinks(cardId)
-        .catch(rewrite404(`Error: Card '${cardId}' not found.`));
+        .catch(rewrite404(`Card '${cardId}' not found.`));
 
       return {
         // Cards this card blocks come after it: isBefore === false.
@@ -382,7 +382,7 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
       // isBefore === true. Same edge set as `cards dependencies`.
       const links = await ctx.api.cards
         .getCardLinks(cardId)
-        .catch(rewrite404(`Error: Card '${cardId}' not found.`));
+        .catch(rewrite404(`Card '${cardId}' not found.`));
 
       return {
         rows: links.filter((l) => l.isBefore),

@@ -93,7 +93,7 @@ export function registerColumnsCommands(program: Command): void {
     .option('--force', 'Bypass bounds checking')
     .action(run(async (ctx: Ctx, columnId: string, options: ColumnWriteFlags) => {
       if (!options.name && options.position === undefined) {
-        throw new RefusalError('Error: specify --name or --position to update.');
+        throw new RefusalError('specify --name or --position to update.');
       }
 
       // Fetch column to check scope via its board

@@ -112,7 +112,7 @@ export function registerTagsCommands(program: Command): void {
     .option('-y, --yes', 'Skip confirmation prompt')
     .action(run(async (ctx: Ctx, tagId: string, options: TagWriteFlags) => {
       if (!options.name && !options.color) {
-        throw new RefusalError('Error: Provide at least one field to update: --name or --color');
+        throw new RefusalError('Provide at least one field to update: --name or --color');
       }
 
       const updateData: { name?: string; color?: string } = {};

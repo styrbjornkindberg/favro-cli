@@ -143,7 +143,7 @@ export function registerUsersCommands(program: Command): void {
       if (options.removeMembers) updateData.removeMembers = idList(options.removeMembers);
 
       if (Object.keys(updateData).length === 0) {
-        throw new RefusalError('Error: Provide at least one field: --name, --add-members, or --remove-members');
+        throw new RefusalError('Provide at least one field: --name, --add-members, or --remove-members');
       }
 
       if (options.dryRun) {

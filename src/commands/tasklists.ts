@@ -115,7 +115,7 @@ export function registerTaskListsCommands(program: Command): void {
       if (options.position !== undefined) updateData.position = parseInt(options.position, 10);
 
       if (Object.keys(updateData).length === 0) {
-        throw new RefusalError('Error: Provide at least one field: --name or --position');
+        throw new RefusalError('Provide at least one field: --name or --position');
       }
 
       await checkResolvedScope(ctx.client, () => boardOfTaskList(taskListId, ctx), options.force);

@@ -172,7 +172,7 @@ export function registerTasksCommands(program: Command): void {
       if (options.position !== undefined) updateData.position = parseInt(options.position, 10);
 
       if (Object.keys(updateData).length === 0) {
-        throw new RefusalError('Error: Provide at least one field: --name, --completed, --not-completed, or --position');
+        throw new RefusalError('Provide at least one field: --name, --completed, --not-completed, or --position');
       }
 
       await checkTaskScope(ctx.client, options.card, options.force);

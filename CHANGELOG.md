@@ -166,6 +166,48 @@ dependency edges all used to write, and each refuses as a whole now.
   through a write that captured its direction first — so a failure part-way through re-adds
   the ones already gone.
 
+#### `--json` is gone from every remaining command (#119)
+
+3.0.0 removed it from the commands migrated by then; #119 finishes the job. Every
+command in `src/commands/` and `src/cli.ts` is on the one runner now, so **JSON is the
+default everywhere and `--human` is the only way out** (ADR-0002). A leaf `--json` is
+`error: unknown option '--json'` at exit 1.
+
+Three of them meant something other than "format", and those are behaviour changes
+rather than a flag rename:
+
+- **`git sync --json` reported the branch analysis and synced NOTHING**, because the arm
+  sat above the confirm and the write. With JSON becoming the default, renaming the flag
+  would have made the plain `favro git sync` a command that reports and never writes. The
+  flag is deleted and `--dry-run` is the successor: same `{branches, linkedBoard}` payload
+  plus the moves it plans, and unlike `--json` it takes the scope lock first (#155).
+- **`git todos --create --json` printed the scan and created nothing**, same shape. The
+  listing arm's payload is now the `{rows, truncated?}` envelope every list read emits.
+- **`cards update --from-csv` answered in HUMAN by default** while the refusal at the top
+  of the same action answered in JSON — one command, two output defaults depending on
+  which branch you hit. Both are the runner's now.
+
+#### A card write's JSON output parses, and its refusal reaches stdout (#119)
+
+Measured against the real API before the fix: `cards create … ` put `✓ Card created: …`
+on **stdout ahead of** the JSON, so the documented default did not parse —
+`Unexpected token '✓'`. Every `✓` line is on the human formatter now, and stdout carries
+one document. Affected `cards create/update/retag/link/unlink/archive/unarchive/delete/move`
+and `widgets add`.
+
+The same run measured a scope violation exiting 1 with **stdout empty** and the refusal
+on stderr — the dead end #110 existed to remove, still open on any path that got far
+enough to build a real client. Every migrated command's refusal is now
+`{"error":{"message","retryable"}}` on stdout under the default, `✗ …` on stderr under
+`--human`.
+
+#### Two commands answer a non-zero code as a FINDING, not a failure (#119)
+
+`cards move` and `widgets add` exit 1 when the write is accepted (200) but the response
+carries no `widgetCommonId` — nothing observed the card on that board, and exit 0 is a
+positive claim. Unchanged behaviour, recorded because migrating them naively would have
+made both exit 0 and lost the finding silently.
+
 ### Changed
 
 - **`favro tracker init --board "<name>"` refuses in the shared wording (#123).** It
@@ -308,6 +350,17 @@ dependency edges all used to write, and each refuses as a whole now.
 
 ### Removed
 
+- **The command-runner allowlist is deleted (#119).** `command-runner-ratchet.test.ts`
+  held the files not yet migrated to `run()`, and failed in both directions — a listed
+  file that had gone clean failed too, so the list could not rust into cover. #119 struck
+  the last sixteen entries, so the ban on the five preamble spellings
+  (`createFavroClient(`, `process.exit(`, `console.log(JSON.stringify`, `.opts()?.verbose`,
+  `new […]API(`) is now **absolute** over `src/cli.ts` and `src/commands/`: a new command
+  written against the old preamble fails with nowhere to be excused. Four arms that
+  existed only to police the list went with it, and the arm asserting every pattern still
+  had a LIVE example is replaced by a self-check on synthetic strings — with the list
+  empty there are no live examples left by design.
+
 - **`src/commands/batch.ts`, `src/commands/batch-smart.ts` and `src/lib/bulk.ts` are
   deleted (#110)** — 1 117 lines, and with them `BulkTransaction`, the CSV-to-operation
   mapping, the bulk preview/summary formatters, and `batch-smart`'s goal parser and
@@ -325,6 +378,18 @@ dependency edges all used to write, and each refuses as a whole now.
   reachable is one the next command takes without touching the table. The payload
   resolution `setFieldValue` did survives as `CustomFieldsAPI.fieldWrite`, which makes no
   WRITE of its own — it still reads the field definition, from cache where it can.
+
+### Internal
+
+- **#99 and #85 are not "closed by this sequence", and the record says so rather than
+  repeating the ticket.** Both were already CLOSED before #119 started. #99 ("route every
+  list read through the envelope") became a verification pass rather than a migration
+  when the runner took over `capRows`/`writeEnvelope`, and #119 is where the last list
+  reads arrive — but there was nothing left to re-scope. #85 ("`--verbose` is resolved in
+  fifteen syntactically distinct forms") was fixed at the root by the `isVerbose()` latch;
+  deleting the 47 `.opts()?.verbose` reads dotted through `src/commands/` is cleanup of a
+  resolved bug, not the fix, exactly as `error-handler.ts` says — *"the reads still dotted
+  through `src/commands` are redundant rather than wrong"*.
 
 ### Fixed
 

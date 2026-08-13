@@ -124,7 +124,9 @@ export function createMcpServer(opts: { credsEnv?: Record<string, string> } = {}
     {
       description:
         'Execute any favro CLI command. Pass arguments after "favro", ' +
-        'e.g. "cards list --board abc123 --json". The CLI\'s own --dry-run, ' +
+        'e.g. "cards list --board abc123". JSON is the default output and errors ' +
+        'come back as {"error":{"message","retryable"}} on stdout, so do not pass ' +
+        '--json — it is not a flag any more. The CLI\'s own --dry-run, ' +
         'scope, and confirmation flags control safety. ' +
         'Quoted strings (single or double) are supported for arguments containing spaces.',
       inputSchema: z.object({

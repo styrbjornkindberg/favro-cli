@@ -105,8 +105,9 @@ WIRE NOTES THAT CHANGE WHAT YOU SEND
   List reads answer an envelope, '{rows, truncated?, unreachable?}', a single read
   the bare entity. 'unreachable' is ALWAYS objects — '{id, reason}', never bare
   strings — under that one key on every command that reports one.
-  Card bodies are out of output by default — '--body' returns them — and '--json'
-  prints THIS CLI's answer, never Favro's raw entity. Write tags BY NAME; an
+  Card bodies are out of output by default — '--body' returns them — and JSON is
+  the DEFAULT ('--human' opts out), printing THIS CLI's answer, never Favro's raw
+  entity. A failure is an envelope on stdout too. Write tags BY NAME; an
   unknown name is refused, never created. Assignment is by userId and ADDED, never
   replaced; '--assignee' takes a name, an email, a userId or '@me'.
   'columns list' already carries cardCount / timeSum / estimationSum.
