@@ -485,7 +485,7 @@ describe('`cards claim` reaches the claim intent, not a hand-rolled update', () 
     expect(bodies).toContainEqual(expect.objectContaining({ addAssignmentIds: [ALICE] }));
     expect(stand.cards.get(CARD)!.assignments).toEqual([{ userId: ALICE }]);
     expect(stand.cards.get(CARD)!.columnId).toBe(DOING);
-    expect(exitSpy).not.toHaveBeenCalled();
+    expect(process.exitCode).toBeUndefined();
   });
 
   it('refuses a card that is not on the tracker board, writing nothing', async () => {
@@ -495,7 +495,7 @@ describe('`cards claim` reaches the claim intent, not a hand-rolled update', () 
     const fork = card({ cardId: CARD, widgetCommonId: undefined, columnId: undefined });
     const stand = await startServer({ cards: [fork] });
 
-    await expect(run('claim', CARD, '--assignee', 'alice@example.com')).rejects.toThrow('process.exit(1)');
+    expect(await exitCodeAfter('claim', CARD, '--assignee', 'alice@example.com')).toBe(1);
 
     expect(writes(stand.received)).toEqual([]);
     expect(said()).toContain('not on the tracker board');
@@ -534,7 +534,11 @@ describe('the three new commands confirm before writing, like every sibling writ
     const asked = jest.spyOn(safety, 'confirmAction').mockResolvedValue(false);
 
     try {
-      await expect(run(cmd, ...(argv as string[]))).rejects.toThrow('process.exit(0)');
+      // A decline is exit 0 — under `run()`, the code nobody set. It was a
+      // literal `process.exit(0)` until #119, which is what the
+      // `rejects.toThrow('process.exit(0)')` this replaces was reading.
+      await runHuman(cmd, ...(argv as string[]));
+      expect(process.exitCode).toBeUndefined();
       expect(asked).toHaveBeenCalled();
       expect(writes(stand.received)).toEqual([]);
       expect(said()).toContain('Aborted.');
@@ -584,7 +588,7 @@ describe('`cards retag` enforces the triage vocabulary before the wire', () => {
   it('an unknown role never reaches the wire — an unknown name there is a tag CREATION', async () => {
     const stand = await startServer({ cards: [card({ cardId: CARD, tags: ['tag-bug'] })] });
 
-    await expect(run('retag', CARD, '--state', 'in-progress')).rejects.toThrow('process.exit(1)');
+    expect(await exitCodeAfter('retag', CARD, '--state', 'in-progress')).toBe(1);
 
     expect(writes(stand.received)).toEqual([]);
     expect(said()).toContain('is not a state role');

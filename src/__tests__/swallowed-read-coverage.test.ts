@@ -628,9 +628,16 @@ describe('no read answers a failure with emptiness, outside the two lists', () =
     // `lib/bulk.ts`, and 3 that left `cli.ts` with the batch branches (11 → 8).
     // That is 18 of the 20; the last two are not accounted for here, and grep is
     // not the scan's own walk, so read this as the shape of the drop rather than
-    // its ledger. The floor stays at 120 — 15 under the live count, still enough
-    // to catch a collapse.
-    expect(catchClauses).toBeGreaterThanOrEqual(120);
+    // its ledger.
+    //
+    // #119 is the second deletion of the same kind and a much bigger one: every
+    // `catch { logError; a hard exit }` in the sixteen migrating command files
+    // is the runner's boundary now, so the clause simply stops existing. The
+    // floor is re-measured by instrumenting THIS expression at each step of that
+    // migration rather than being slackened once to cover it — a floor with room
+    // for a whole file's clauses to vanish cannot notice the walk collapsing,
+    // which is the only thing it is for.
+    expect(catchClauses).toBeGreaterThanOrEqual(119);
   });
 
   it('no read swallows its failure outside DEBT and DECIDED', () => {

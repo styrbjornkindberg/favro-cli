@@ -2,11 +2,15 @@
  * `cards claim` / `cards resolve` / `cards retag` — the CLI surface of three
  * tracker intents (#100).
  *
- * The intents themselves are covered at the dispatch layer. What was not:
- * the commander wiring (which flags reach the table, in what shape), the
- * confirmation the docs promise on every write, and the `process.exit`-string
- * workaround in the catch — a swallowed re-throw there would turn a clean
- * "Aborted." into a logged error.
+ * The intents themselves are covered at the dispatch layer. What was not: the
+ * commander wiring (which flags reach the table, in what shape) and the
+ * confirmation the docs promise on every write.
+ *
+ * The three `"process.exit"` string-matches these actions carried are gone with
+ * #119 — they existed only to stop a MOCKED exit being re-logged as a command
+ * failure, and `run()` neither exits nor throws, so there is nothing to survive.
+ * The abort arms below therefore assert what they always meant: nothing
+ * dispatched, "Aborted." printed, and no error dressed up around it.
  *
  * `reportDispatch` is deliberately NOT mocked: the rendered line is the
  * observable behaviour under test.
@@ -27,22 +31,27 @@ const mockDispatch = dispatch as jest.MockedFunction<typeof dispatch>;
 
 let logSpy: jest.SpyInstance;
 let errorSpy: jest.SpyInstance;
-let exitSpy: jest.SpyInstance;
 
-/** `process.exit` really does stop the action; a returning stub does not. */
-class ExitCalled extends Error {
-  constructor(readonly code: number) {
-    super(`process.exit(${code})`);
-  }
+/** The human path — `--human`, since JSON is the default (ADR-0002). */
+async function runCli(args: string[]): Promise<unknown> {
+  return drive(['--human', ...args]);
 }
 
-async function runCli(args: string[]): Promise<unknown> {
+/** The machine path — the DEFAULT for a real invocation. */
+async function runJson(args: string[]): Promise<unknown> {
+  return drive(args);
+}
+
+async function drive(args: string[]): Promise<unknown> {
   const program = new Command();
-  program.option('--verbose', 'Show stack traces');
+  program.option('--human').option('--pretty').option('--verbose', 'Show stack traces');
   const cardsCmd = program.command('cards');
   registerCardsTrackerCommands(cardsCmd);
   program.exitOverride();
-  return program.parseAsync(['node', 'favro', 'cards', ...args]).catch((e) => e);
+  const [first, ...rest] = args;
+  return first === '--human'
+    ? program.parseAsync(['node', 'favro', '--human', 'cards', ...rest])
+    : program.parseAsync(['node', 'favro', 'cards', ...args]);
 }
 
 const ok = (value: unknown) => ({ intent: 'claim', outcome: 'ok' as const, retryable: false, value });
@@ -51,8 +60,9 @@ beforeEach(() => {
   jest.clearAllMocks();
   logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
   errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-  exitSpy = jest.spyOn(process, 'exit').mockImplementation(((code?: number) => {
-    throw new ExitCalled(code ?? 0);
+  process.exitCode = undefined;
+  jest.spyOn(process, 'exit').mockImplementation((() => {
+    throw new Error('process.exit must not be called under run()');
   }) as never);
 
   (clientFactory.createFavroClient as jest.Mock).mockResolvedValue({});
@@ -62,6 +72,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  process.exitCode = undefined;
   jest.restoreAllMocks();
 });
 
@@ -96,19 +107,23 @@ describe('cards claim', () => {
 
     expect(mockDispatch).not.toHaveBeenCalled();
     expect(output()).toContain('Aborted.');
-    expect(exitSpy).toHaveBeenCalledWith(0);
+    // A decline is not a failure: exit 0, which under `run()` is the code
+    // nobody set. It used to be a literal `process.exit(0)`.
+    expect(process.exitCode).toBeUndefined();
   });
 
-  test('the abort exit is re-thrown, not logged as a command failure', async () => {
-    // The catch matches on the `process.exit` message prefix. If that guard
-    // regressed, the clean abort above would be dressed up as "Error: …" and
-    // the process would exit 1 instead of 0.
+  test('the abort is not logged as a command failure', async () => {
+    // This used to pin the `"process.exit"` string-match in the catch: without
+    // it, the mocked exit's own Error was caught and the clean abort came out
+    // as "Error: …" at exit 1. #119 deleted the workaround with the catch, and
+    // what the arm was always about — a decline is not a failure — is what is
+    // left to assert.
     (safety.confirmAction as jest.Mock).mockResolvedValue(false);
 
     await runCli(['claim', 'CLA-1804']);
 
     expect(errors()).not.toMatch(/Error:/);
-    expect(exitSpy).not.toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBeUndefined();
   });
 
   test('-y skips the prompt but still dispatches', async () => {
@@ -140,11 +155,15 @@ describe('cards claim', () => {
     expect(mockDispatch).toHaveBeenCalledWith('claim', expect.anything(), expect.objectContaining({ force: true }));
   });
 
-  test('--json prints the intent value as JSON alongside the human line', async () => {
-    await runCli(['claim', 'CLA-1804', '--json', '-y']);
+  test('the machine DEFAULT prints the intent value, with nothing ahead of it', async () => {
+    // `--json` left the leaf with #119. It used to print the value AFTER the
+    // `✓ Claimed …` line, on the same stream — a live smoke run measured
+    // exactly that shape failing `JSON.parse` on the real API. The ✓ is on the
+    // `human` formatter now, so stdout is one document.
+    await runJson(['claim', 'CLA-1804', '-y']);
 
-    const printed = logSpy.mock.calls.map((c) => String(c[0])).find((l) => l.trim().startsWith('{'));
-    expect(JSON.parse(printed!)).toEqual({ cardId: 'card-1', columnId: 'col-active', assignee: 'alice' });
+    expect(JSON.parse(output())).toEqual({ cardId: 'card-1', columnId: 'col-active', assignee: 'alice' });
+    expect(output()).not.toContain('✓');
   });
 
   test('a failed intent exits 1 with the table\'s retry advice, not a success line', async () => {
@@ -160,7 +179,7 @@ describe('cards claim', () => {
     expect(errors()).toContain('✗ claim failed: card is not on the tracker board');
     expect(errors()).toContain('Do NOT retry it unchanged.');
     expect(output()).not.toContain('✓ Claimed');
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   test('a thrown refusal is logged and exits 1', async () => {
@@ -169,7 +188,7 @@ describe('cards claim', () => {
     await runCli(['claim', 'CLA-1804', '-y']);
 
     expect(errors()).toContain('Scope violation');
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 });
 

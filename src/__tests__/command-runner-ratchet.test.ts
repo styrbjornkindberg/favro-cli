@@ -91,7 +91,6 @@ const ALLOWLIST: readonly string[] = [
   // line leaves this list.
   'src/commands/cards-archive.ts',
   'src/commands/cards-delete.ts',
-  'src/commands/cards-tracker.ts',
   'src/commands/columns.ts',
   'src/commands/custom-fields.ts',
   'src/commands/dependencies.ts',

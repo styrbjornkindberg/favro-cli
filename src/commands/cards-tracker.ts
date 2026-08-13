@@ -14,54 +14,56 @@
  * which command spells it.
  */
 import { Command } from 'commander';
-import { dispatch } from '../lib/dispatch';
-import { reportDispatch } from '../lib/report-dispatch';
-import { logError } from '../lib/error-handler';
-import { createFavroClient } from '../lib/client-factory';
+import { dispatch, DispatchResult } from '../lib/dispatch';
+import { confirmAction } from '../lib/safety';
 import { CATEGORY_TAGS, STATE_TAGS } from '../lib/tracker-config';
+import { Ctx, DispatchArm, run } from '../lib/run';
 
 const HELP_POINTER = '\nIntent contract: run `favro help issue-tracker`.';
 
+interface TrackerFlags {
+  force?: boolean;
+  dryRun?: boolean;
+  yes?: boolean;
+}
+
 /**
- * Everything the three actions share: a client, the config, and the flags.
+ * Everything the three actions share: the confirm, the dispatch and the result.
+ *
+ * Renamed from `run` in #119 — importing the command runner into this file made
+ * the old name a redeclaration, and `dispatchAndReport` is what it does anyway.
+ * What it no longer does is own the output or the exit code: it RETURNS the
+ * dispatch arm and `run()` reports it, which is what took the three
+ * `"process.exit"` string-matches out of the actions below.
  *
  * The confirmation is not decoration. Every other write in this CLI — `cards
- * link`, `cards unlink`, `cards move`, `cards update`, the bulk paths — prompts
- * and takes `-y`, and the docs teach that trio (scope lock, `--dry-run`,
- * confirm) as one thing. Three new commands that wrote straight through would
- * make the trio a lie on exactly the commands an agent reads about first.
- * `--dry-run` skips it: previewing is not writing.
+ * link`, `cards unlink`, `cards move`, `cards update` — prompts and takes `-y`,
+ * and the docs teach that trio (scope lock, `--dry-run`, confirm) as one thing.
+ * Three commands that wrote straight through would make the trio a lie on
+ * exactly the commands an agent reads about first. `--dry-run` skips it:
+ * previewing is not writing.
  */
-async function run<T>(
+async function dispatchAndReport<T>(
+  ctx: Ctx,
   intent: string,
   args: Record<string, unknown>,
   prompt: string,
-  options: { force?: boolean; dryRun?: boolean; json?: boolean; yes?: boolean },
-  onOk: (value: T) => void,
-): Promise<void> {
-  const client = await createFavroClient();
-  const { readConfig } = await import('../lib/config');
-  const { confirmAction } = await import('../lib/safety');
+  options: TrackerFlags,
+  human: (value: T) => string,
+): Promise<DispatchArm<T> | { item: { aborted: true }; human: () => string }> {
   if (!options.dryRun && !(await confirmAction(prompt, { yes: options.yes }))) {
-    console.log('Aborted.');
-    process.exit(0);
+    return { item: { aborted: true }, human: () => 'Aborted.' };
   }
-  const result = await dispatch<T>(intent, args, {
-    client,
-    config: (await readConfig()) ?? {},
+  const result: DispatchResult<T> = await dispatch<T>(intent, args, {
+    client: ctx.client,
+    config: ctx.config,
     force: options.force,
     dryRun: options.dryRun,
   });
-  if (reportDispatch(result, options.json)) process.exit(1);
-  if (result.outcome === 'ok' && result.value !== undefined) {
-    onOk(result.value);
-    if (options.json) console.log(JSON.stringify(result.value, null, 2));
-  }
+  return { dispatch: result, human };
 }
 
 export function registerCardsTrackerCommands(cardsCmd: Command): void {
-  const verboseOf = () => cardsCmd.parent?.opts()?.verbose ?? cardsCmd.opts()?.verbose ?? false;
-
   // ─── cards claim ───────────────────────────────────────────────────────────
   cardsCmd
     .command('claim <card>')
@@ -80,23 +82,16 @@ export function registerCardsTrackerCommands(cardsCmd: Command): void {
     .option('--dry-run', 'Preview the claim without writing')
     .option('--force', 'Bypass scope check')
     .option('-y, --yes', 'Skip confirmation prompt')
-    .option('--json', 'Output as JSON')
     .addHelpText('after', HELP_POINTER)
-    .action(async (card: string, options) => {
-      try {
-        await run<{ cardId: string; columnId?: string; assignee: string }>(
-          'claim',
-          { card, assignee: options.assignee },
-          `Claim card ${card}${options.assignee ? ` for ${options.assignee}` : ''}?`,
-          options,
-          (v) => console.log(`✓ Claimed ${v.cardId} for ${v.assignee} (column ${v.columnId ?? '—'})`),
-        );
-      } catch (error) {
-        if (String((error as { message?: string })?.message).startsWith('process.exit')) throw error;
-        logError(error, verboseOf());
-        process.exit(1);
-      }
-    });
+    .action(run((ctx: Ctx, card: string, options: TrackerFlags & { assignee?: string }) =>
+      dispatchAndReport<{ cardId: string; columnId?: string; assignee: string }>(
+        ctx,
+        'claim',
+        { card, assignee: options.assignee },
+        `Claim card ${card}${options.assignee ? ` for ${options.assignee}` : ''}?`,
+        options,
+        (v) => `✓ Claimed ${v.cardId} for ${v.assignee} (column ${v.columnId ?? '—'})`,
+      )));
 
   // ─── cards resolve ─────────────────────────────────────────────────────────
   cardsCmd
@@ -112,23 +107,16 @@ export function registerCardsTrackerCommands(cardsCmd: Command): void {
     .option('--dry-run', 'Preview the move without writing')
     .option('--force', 'Bypass scope check')
     .option('-y, --yes', 'Skip confirmation prompt')
-    .option('--json', 'Output as JSON')
     .addHelpText('after', HELP_POINTER)
-    .action(async (card: string, options) => {
-      try {
-        await run<{ cardId: string; columnId?: string }>(
-          'resolve',
-          { card },
-          `Resolve card ${card}?`,
-          options,
-          (v) => console.log(`✓ Resolved ${v.cardId} (column ${v.columnId ?? '—'})`),
-        );
-      } catch (error) {
-        if (String((error as { message?: string })?.message).startsWith('process.exit')) throw error;
-        logError(error, verboseOf());
-        process.exit(1);
-      }
-    });
+    .action(run((ctx: Ctx, card: string, options: TrackerFlags) =>
+      dispatchAndReport<{ cardId: string; columnId?: string }>(
+        ctx,
+        'resolve',
+        { card },
+        `Resolve card ${card}?`,
+        options,
+        (v) => `✓ Resolved ${v.cardId} (column ${v.columnId ?? '—'})`,
+      )));
 
   // ─── cards retag ───────────────────────────────────────────────────────────
   cardsCmd
@@ -152,23 +140,16 @@ export function registerCardsTrackerCommands(cardsCmd: Command): void {
     .option('--dry-run', 'Preview the retag without writing')
     .option('--force', 'Bypass scope check')
     .option('-y, --yes', 'Skip confirmation prompt')
-    .option('--json', 'Output as JSON')
     .addHelpText('after', HELP_POINTER)
-    .action(async (card: string, options) => {
-      try {
-        await run<{ cardId: string; category: string; state: string; tags: string[] }>(
-          'retag',
-          { card, category: options.category, state: options.state },
-          `Retag card ${card}?`,
-          options,
-          (v) => console.log(`✓ Retagged ${v.cardId}: category=${v.category} state=${v.state}`),
-        );
-      } catch (error) {
-        if (String((error as { message?: string })?.message).startsWith('process.exit')) throw error;
-        logError(error, verboseOf());
-        process.exit(1);
-      }
-    });
+    .action(run((ctx: Ctx, card: string, options: TrackerFlags & { category?: string; state?: string }) =>
+      dispatchAndReport<{ cardId: string; category: string; state: string; tags: string[] }>(
+        ctx,
+        'retag',
+        { card, category: options.category, state: options.state },
+        `Retag card ${card}?`,
+        options,
+        (v) => `✓ Retagged ${v.cardId}: category=${v.category} state=${v.state}`,
+      )));
 }
 
 export default registerCardsTrackerCommands;
