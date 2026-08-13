@@ -393,6 +393,25 @@ made both exit 0 and lost the finding silently.
 
 ### Fixed
 
+- **Every column move was refused by the live API, and so was the rollback of one
+  (#162).** Favro resolves `columnId` against `widgetCommonId`, so a `PUT` naming a
+  column with no board had nothing to resolve it against and answered
+  `202 {"message":"Access denied"}` — a resolution failure wearing a rights message.
+  202 is a success to the HTTP stack, so the write seam handed the refusal back typed as
+  a card and only `TxCards.moveColumn`'s re-read noticed the card had not moved.
+  `cards update --status` / `--column`, `cards resolve`, `cards claim`'s move arm and
+  bulk CSV `status` rows all funnel through that one `PUT` — and so does `moveColumn`'s
+  own compensating write, so a batch that failed part-way could not put a moved card
+  back: this release's rollback guarantee held for names, assignees and tags but not for
+  the column. The move now carries the card's own board. Measured on the scratch board
+  with the same card and the same command: before, `cards update <card> --status
+  "Doing"` answered `{"intent":"update","outcome":"rolled-back","retryable":true,…}` and
+  a board read left the card in Todo; after, it answers
+  `{"cardId":…,"wrote":["status"]}` and the board read shows Doing. The unwind was
+  driven too — a two-row CSV whose second row names an unknown owner now restores the
+  first row's column, which is the path no test and no live run had ever seen work.
+  `CardsAPI.moveCard` (a board move) never had this: it already sent `widgetCommonId`.
+
 - **`favro help issue-tracker` stopped promising three things the code does not hold
   (#111).** All three were falsifiable with `git grep`, and the topic is what an agent
   reads to decide whether it can trust a write. "Every write … lives in the shared
