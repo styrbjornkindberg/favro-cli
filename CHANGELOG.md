@@ -407,6 +407,50 @@ caller as a failure rather than as a finding, and the exit code is the failure's
 
 ### Fixed
 
+- **`blocked-by:` and `blocks:` returned zero rows for a live dependency edge (#162).**
+  `normalizeCard` mapped each inlined edge through a normaliser that enumerated three
+  keys and dropped the `cardId` Favro puts on every one of them; `linksOf` reads
+  `card.links` before `card.dependencies`, and `normalizeCard` always sets `links`, so
+  the intact array was unreachable on every list path. The filters therefore matched a
+  `cardCommonId` only — while `cards list` prints `cardId` as the card's identity, and
+  `cards blocked-by <card>` (which reads `/cards/:id/dependencies` raw) prints a
+  `cardId` too. Pasting the id one command printed into the filter of the same name
+  returned nothing. Measured live on board `abf5860049452d51cacb8162`, before → after:
+
+  | filter | before | after |
+  |---|---|---|
+  | `blocked-by:<cardId>` | 0 rows | **2** (T2, T3) |
+  | `blocked-by:<cardCommonId>` | 2 rows | 2 (T2, T3) |
+  | `blocks:<cardId>` | 0 rows | **1** (T1) |
+  | `blocks:<cardCommonId>` | 1 row | 1 (T1) |
+
+  The premise the normaliser was built on was false and four comments asserted it:
+  `GET /cards` inlines an edge **byte-identical** to what `/cards/:id/dependencies`
+  returns — `{cardId, isBefore, cardCommonId, reverseCardId}` — and *neither* endpoint
+  carries `cardSequentialId`. The normaliser now passes every key through.
+
+  **No command's output changed.** `unblocked` and `parentcardid:` were measured
+  correct and are untouched. The one surface that could have moved is `blockingEdges`,
+  which feeds `context`'s `blockedBy`/`blocking` arrays — it now states outright that it
+  reports a `cardCommonId`, where before it took a `cardId` first and only ever saw the
+  common id because the normaliser had dropped the other. That is the id `overview`
+  builds its top-blocker index from, so reporting the `cardId` instead would have sent
+  every blocker to `unreachable` with an empty ranking — a wrong answer shaped exactly
+  like a right one, which no test in the repo caught until this release added one.
+  `context` was measured byte-identical before and after; `standup`, `health`,
+  `workload` and `team` read only the LENGTH of those arrays, so they cannot move at
+  all. `cards export --filter` shares the fix, since it shares `filterCards`.
+
+- **`blocked-by:CLA-1804` had never matched anything, and said nothing about it (#162).**
+  The documented sequentialId spelling was compared against `cardSequentialId`, a key
+  Favro has never been measured sending on either dependency shape — so it silently
+  matched no card, which is indistinguishable from an unblocked board. A sequentialId is
+  now resolved to a `cardCommonId` before the filter runs, through the same
+  `CardReferenceResolver` every other command uses, and an unresolvable reference
+  refuses at exit 1 instead. Measured live: `blocked-by:24523` returns T2 and T3,
+  `blocks:24524` returns T1, `blocked-by:99999` refuses. A `cardId` or `cardCommonId`
+  still costs no call — the edge carries both, so either settles locally.
+
 - **`cards retag` refused a tag that resolves, and blamed a reason that was not the
   reason (#164).** The refusal itself was right — `retag` carries two closed
   vocabularies, `bug|enhancement` and the five triage states, and writes nothing outside

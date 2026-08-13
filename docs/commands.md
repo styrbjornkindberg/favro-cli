@@ -141,6 +141,14 @@ mirror-Favro-terminology rule — mapped exactly once, here: an edge whose far c
 There is one edge, with one direction flag. No `depends-on`, no `related`, no
 `duplicates` — the API cannot store them.
 
+`blocks:<ref>` and `blocked-by:<ref>` take a `cardId`, a `cardCommonId` or a
+`sequentialId` (`CLA-1804`, or the bare number). The first two are settled
+against the edge itself and cost no call; a `sequentialId` is resolved to a
+`cardCommonId` first, and a reference that resolves to nothing **refuses**
+rather than answering an empty board. Until #162 only a `cardCommonId` matched:
+`cards blocked-by <card>` printed a `cardId`, and pasting that same id into
+`--filter "blocked-by:…"` returned zero rows.
+
 `--filter "unblocked"` is the frontier: takeable now.
 
 - **Board-agnostic.** A blocker is a blocker wherever it lives.
