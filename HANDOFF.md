@@ -5,14 +5,16 @@ State as of main after #117. The prose below is that snapshot; the counts are no
 #110's review round, where the header still read `152 suites / 2857 tests`. Re-run
 `npm test` before quoting these; nothing keeps them honest but the next reader.
 
-## 0. START HERE — #118 is next, and nothing is left mid-flight
+## 0. START HERE — #119 is next, and nothing is left mid-flight
 
 No branch is unreviewed. Every worktree branch is merged or abandoned; `git branch
 --list 'worktree-agent-*'` with `git log main..<branch>` shows what is genuinely ahead.
 
-Next in the chain is **#118** (step 6: the streaming commands and the four anonymous
-ones), then **#119** (step 7, which is the one allowed to delete the runner allowlist).
-Steps 1–5 are merged. Read #116's and #117's diffs first — they are the shape to match.
+Next in the chain is **#119** (step 7: the write commands, and the one allowed to delete
+the runner allowlist). **#118** (step 6: the streaming commands and the four anonymous
+ones) is CLOSED — this line said it was next until #110's review, which is what a handoff
+header does when nobody re-reads it. Steps 1–6 are merged. Read #116's and #117's diffs
+first — they are the shape to match.
 
 Two things #117 leaves for a human, both recorded on the issue:
 - **`health` still has no exit code**, deliberately. Its cut is red-versus-yellow, a

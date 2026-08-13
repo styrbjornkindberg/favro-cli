@@ -797,8 +797,10 @@ cards
           // JSON with `--human` opting out. Greppable from the two `options.json`
           // reads; what is NOT measured is the successful `--json` shape off a
           // real wire, which needs credentials. Closing it means migrating this
-          // action to `run()`, which is #118's business, not a side effect of a
-          // removal.
+          // action to `run()`, which is #119's business — step 7, the one that
+          // migrates the inline `cli.ts` write actions and deletes the ratchet
+          // allowlist — not a side effect of a removal. (#118 is step 6, the
+          // streaming and anonymous commands; it is closed and never owned this.)
           if (options.json) console.log(JSON.stringify(result));
         }
       } catch (error) {

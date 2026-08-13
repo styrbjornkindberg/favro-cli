@@ -13,9 +13,10 @@ and streams are real and no request reached a live org.
 **This section was headed `3.1.0` until #110 landed in it.** The map (#80) planned the
 whole write-seam collapse as one `3.0.0`, but `3.0.0` was dated in this file and tagged
 `v3.0.0` on 2026-08-12, before any of the removals below existed — so they cannot go
-there. A major after a released major is `4.0.0`. Two entries already under this heading
-were breaking and mis-filed under a minor (`git sync` and `git todos --create` gaining a
-cap that refuses); they are now under `### Breaking`.
+there. A major after a released major is `4.0.0`. **Four** entries already under this
+heading were breaking and mis-filed under a minor — #109's two new caps, its wholesale
+abort on an unreadable `git sync` card, and `dependencies delete-all` refusing above
+twenty; all four are under `### Breaking` now.
 
 ### Breaking
 
@@ -106,11 +107,12 @@ old parser's own comment said "stored but not directly mapped". A CSV naming a c
 field reported success having written none of it. Refusing is the fail-closed half of
 the same fact.
 
-#### `git sync` and `git todos --create` refuse above twenty (#109)
+#### Four writes that used to go through now refuse (#109)
 
-Both break invocations that worked in 3.0.0, so they are here and not under
-`### Changed`, where they sat until #110's review: a repo with 21 mapped branches
-or 21 TODOs used to write, and now refuses as a whole.
+All four break invocations that worked in 3.0.0, so they are here and not under
+`### Changed`, where they sat until #110's review: a repo with 21 mapped branches,
+a repo with 21 TODOs, a `git sync` over a deleted card, and a card carrying 21
+dependency edges all used to write, and each refuses as a whole now.
 
 - **`git sync` is now ONE transaction, not a loop with a success counter.** A failure on
   card 4 of 6 moves cards 1–3 back and reports `rolled-back`, where it used to print
@@ -134,6 +136,17 @@ or 21 TODOs used to write, and now refuses as a whole.
   `git-sync-intent-wire.test.ts` asserts the bytes are `{columnId}` and that the card
   MOVED, read back off the stand's own store.
 
+- **A card that cannot be read now aborts the whole `git sync`.** A stale branch mapping
+  onto a deleted card used to sync the rest and report a partial count; a batch is one
+  transaction now, so it refuses as a whole and writes nothing. Under a configured lock the
+  old code aborted here too — what changes is the unlocked case.
+
+- **`dependencies delete-all` no longer wipes an unbounded edge set.** It was one
+  `DELETE /cards/{id}/dependencies` with no record of what it removed and no way back. It
+  now enumerates the edges, refuses above twenty rather than wiping, and removes each one
+  through a write that captured its direction first — so a failure part-way through re-adds
+  the ones already gone.
+
 ### Changed
 
 - **`cards update` writes `dueDate` (#110).** The field was measured in #106 —
@@ -153,17 +166,6 @@ or 21 TODOs used to write, and now refuses as a whole.
   dropping a different guarantee. They now take the mandatory scope lock **inside** the
   intent, so the CLI, `skill run` and MCP cannot disagree about it, and they inherit the
   boardless-write refusal, the 20-write cap and a compensation log.
-
-- **A card that cannot be read now aborts the whole `git sync`.** A stale branch mapping
-  onto a deleted card used to sync the rest and report a partial count; a batch is one
-  transaction now, so it refuses as a whole and writes nothing. Under a configured lock the
-  old code aborted here too — what changes is the unlocked case.
-
-- **`dependencies delete-all` no longer wipes an unbounded edge set.** It was one
-  `DELETE /cards/{id}/dependencies` with no record of what it removed and no way back. It
-  now enumerates the edges, refuses above twenty rather than wiping, and removes each one
-  through a write that captured its direction first — so a failure part-way through re-adds
-  the ones already gone.
 
 - **`dependencies add` takes the scope lock even when the card has no board.** The check
   sat behind `if (sourceCard && sourceCard.boardId)`, so an assignment fork — the exact
