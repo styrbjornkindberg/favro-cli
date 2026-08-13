@@ -663,7 +663,7 @@ describe('overview\'s envelope stops contradicting its own #86 promise (#149)', 
     expect(human).toContain(`columns:${DARK}`);
     // …and the horizon really is in force, so this is not passing because
     // everything happens to be printed.
-    expect(human).toContain('… +4 more (use --json for all)');
+    expect(human).toContain('… +4 more (drop --human for all)');
     expect(human).not.toContain('ghost-7');
   });
 

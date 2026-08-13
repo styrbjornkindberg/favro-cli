@@ -437,6 +437,21 @@ caller as a failure rather than as a finding, and the exit code is the failure's
   still call retryable has already been retried four times in-process. The same command
   now answers `"retryable":false` and *"the failure is deterministic"*.
 
+- **Five places still taught a `--json` flag no command takes any more (#162).** The
+  report this fixes said the opposite — that the root `--human` line claimed a JSON
+  default the read commands lacked — and that was true when it was filed and is not true
+  now: #119 finished the ADR-0002 migration, so `boards list`, `cards list`, `columns
+  list`, `scope show`, `comments list`, `my-cards`, `overview` and `cards update
+  --from-csv` all answer `error: unknown option '--json'`, and every one of them this
+  run could drive to an answer printed JSON on stdout — measured one by one on the built
+  binary against the live org. What survived was the advice pointing the
+  other way: four `--json` examples in `cards list --help`, a `cards update` tip telling
+  the reader to run `cards list` with a `--json` on it, an `overview --human` line offering
+  *"(use --json for all)"* for a flag that command has never had, and the same claim in
+  `EXAMPLES.md`, `API-REFERENCE.md` and `docs/commands.md`. All now say what the binary
+  does. `favro init`, `favro board` and `favro tracker init` still declare a real
+  `--json` and are untouched.
+
 - **`cards move --to-board` never moved anything — it FORKED the card onto a second
   board (#161).** `PUT /cards/{cardId}` defaults `dragMode` to `commit`, and `commit`
   adds a board instance instead of moving one. The command sent no `dragMode`, so every

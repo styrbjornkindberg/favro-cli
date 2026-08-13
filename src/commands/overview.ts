@@ -180,7 +180,8 @@ export function formatHuman(data: OverviewResult): string {
     // ~20 boards cross-board edges are routine and this list runs to hundreds of
     // ~150-char lines that differ only in an id and a number, drowning a ranking
     // of five. Shown at the ranking's own horizon; the rest is a remainder, and
-    // `--json` still carries every one for a machine reader.
+    // the DEFAULT JSON output still carries every one for a machine reader —
+    // this formatter runs only under `--human` (ADR-0002).
     const all = data.unreachable;
     // "item(s) this report could not reach", not "blocker(s) outside this
     // scope": since #149 this list also carries the snapshot's own failed
@@ -191,7 +192,7 @@ export function formatHuman(data: OverviewResult): string {
       lines.push(`    • ${u.id} — ${u.reason}`);
     }
     if (all.length > UNREACHABLE_HUMAN_LIMIT) {
-      lines.push(`    … +${all.length - UNREACHABLE_HUMAN_LIMIT} more (use --json for all)`);
+      lines.push(`    … +${all.length - UNREACHABLE_HUMAN_LIMIT} more (drop --human for all)`);
     }
   }
 

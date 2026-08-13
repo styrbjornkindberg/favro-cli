@@ -153,7 +153,7 @@ describe('formatHuman — the unreachable list', () => {
     // reader the ranking above is incomplete.
     expect(out).toContain('147 item(s) this report could not reach');
     expect(bullets(out)).toHaveLength(5);
-    expect(out).toContain('… +142 more (use --json for all)');
+    expect(out).toContain('… +142 more (drop --human for all)');
     // First named, last only counted.
     expect(out).toContain('g-0');
     expect(out).not.toContain('g-146');

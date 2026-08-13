@@ -343,11 +343,11 @@ cards
     'under "unreachable" as not attempted.\n\n' +
     'Examples:\n' +
     '  favro cards list <board>\n' +
-    '  favro cards list <board> --filter "unblocked" --json\n' +
+    '  favro cards list <board> --filter "unblocked"\n' +
     '  favro cards list <board> --status "In Progress" --limit 100\n' +
-    '  favro cards list <board> --archived all --json\n' +
-    '  favro cards list <board> --filter "status:done AND tag:bug" --json\n' +
-    '  favro cards list <board> --body --include custom-fields --json\n\n' +
+    '  favro cards list <board> --archived all\n' +
+    '  favro cards list <board> --filter "status:done AND tag:bug"\n' +
+    '  favro cards list <board> --body --include custom-fields --human\n\n' +
     'Tip: The board takes a name or a boardId. Run `favro boards list` to see both.'
   )
   .option('--board <board>', 'Board to list cards from, by name or boardId (alternative to positional arg)')
@@ -697,7 +697,7 @@ cards
     '  unwinds rows 1-11 rather than leaving them standing.\n\n' +
     'Removed in 4.0 — the predicate batch (`--board` with no card):\n' +
     '  Enumerate first with `favro cards list --filter …`, then --from-csv.\n\n' +
-    'Tip: Use `favro cards list --json` to find card IDs.'
+    'Tip: Use `favro cards list <board>` to find card IDs — JSON is the default.'
   )
   .option('--name <name>', 'New card name (single card update)')
   .option('--description <desc>', 'Card description (single card update)')

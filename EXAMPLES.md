@@ -516,7 +516,7 @@ favro cards update card-001 --status "Done" --assignees "alice" --dry-run
 
 ## Tips & Tricks
 
-- **Use `--json` for scripting:** Append `--json` to any command to get JSON output
+- **JSON is already the output:** read commands print JSON by default; `--human` opts out. The `--json` flag is gone from them — passing one answers `error: unknown option '--json'`
 - **Get help on any command:** `favro <command> --help`
 - **Export for offline work:** Use `--format json` and process locally
 - **Dry-run is free:** Always preview destructive changes with `--dry-run`

@@ -559,7 +559,8 @@ CSV columns: `card_id` (required), `status`, `owner`, `due_date`. `cardId`,
 `assignee` and `dueDate` are accepted aliases. **Any other column refuses** —
 including `custom_field_*`, which the old parser accepted and then never sent.
 
-Supports `--dry-run`, `--yes`, `--force`, `--json`.
+Supports `--dry-run`, `--yes`, `--force`. JSON is the default output; `--human`
+opts out, and a leaf `--json` is `error: unknown option '--json'`.
 
 The whole file is **one transaction**, capped at **20 rows**: over the cap it
 refuses rather than writing the first twenty, and a failure on row 12 unwinds
@@ -591,7 +592,8 @@ These commands work across boards via `--collection <name>` or the scoped collec
 | `health` | CTO | Per-board health scores 0-100 |
 | `team` | CTO | Team utilization + bottleneck analysis |
 
-Common flags: `--collection <name>`, `--human` (formatted output), `--json` (default)
+Common flags: `--collection <name>`, `--human` (formatted output). JSON is the
+default; there is no `--json` flag.
 
 No `--limit` on any of them, and none of them ever had a working one — see
 [`--limit` caps output, not the fetch](#--limit-caps-output-not-the-fetch). The

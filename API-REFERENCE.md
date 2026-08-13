@@ -1318,8 +1318,9 @@ count as the total:
 💬 Comments on card "card-abc123" — showing 100 of 150 comment(s):
 ```
 
-`--json` emits the list envelope every list read emits, not a bare array —
-`truncated: true` is present only when `--limit` cut rows off a complete fetch:
+The default output (the block above is `--human`) is the list envelope every
+list read emits, not a bare array — `truncated: true` is present only when
+`--limit` cut rows off a complete fetch:
 ```json
 {"rows":[{"commentId":"comment-001","...":"..."}],"truncated":true}
 ```
