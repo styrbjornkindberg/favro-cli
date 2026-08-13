@@ -45,7 +45,16 @@
  * There is no opt-out flag on the guard. Under the honest-failure posture that
  * would be a licence to clobber in silence.
  */
-import CardsAPI, { Card, CardLink, CreateCardRequest, unknownTagMessage } from './cards-api';
+import CardsAPI, {
+  Card,
+  CardLink,
+  CreateCardRequest,
+  CustomFieldWrite,
+  unknownTagMessage,
+} from './cards-api';
+import BoardsAPI from './boards-api';
+import CustomFieldsAPI from './custom-fields-api';
+import WidgetsAPI, { CommittedWidget } from './widgets-api';
 import FavroHttpClient from './http-client';
 import { classifyThrownError } from './favro-error';
 import { isUserId } from './users-api';
@@ -376,7 +385,9 @@ export interface ReadTx {
   resolveCardId(cardRef: string, options?: { widgetCommonId?: string }): Promise<string>;
   resolveCardCommonId(cardRef: string, options?: { widgetCommonId?: string }): Promise<string>;
   resolveColumnId(value: string, boardId?: string): Promise<string>;
+  resolveBoardId(board: string): Promise<string>;
   resolveAssignee(value: string): Promise<string>;
+  customFieldWrite(fieldId: string, value: string): Promise<CustomFieldWriteValue>;
   tracker(): Promise<VerifiedTracker>;
   liveEdge(cardId: string, farId: string): Promise<LiveEdge | null>;
 }
@@ -431,10 +442,30 @@ function cardFieldValue(card: Card, fieldId: string): unknown {
 }
 
 /**
+ * Which of the four payload keys a custom-field write spells. The field's TYPE
+ * decides it, never the caller — `custom-fields-api.ts` owns that mapping and
+ * `customFieldWrite` below is the only way to get one.
+ *
+ * Only `value`, on a `Single select`, is measured (#106). The other three are the
+ * keys that module already builds for `Members`, `Link` and `Number` fields; they
+ * are spelled here so routing those types through this facade keeps sending the
+ * shape they were sent before, not because this path has probed them.
+ */
+export type CustomFieldKey = 'value' | 'members' | 'link' | 'total';
+
+/** One custom-field value in the wire's own shape: which key, and what under it. */
+export interface CustomFieldWriteValue {
+  key: CustomFieldKey;
+  value: unknown;
+}
+
+/**
  * The only card surface an intent gets: every read, and only instrumented
  * writes. Ten reversible ops, each declared once, capture + mutate + push fused
- * — plus `deleteCard`, the one write with no inverse, which logs nothing and
- * says why.
+ * — plus THREE writes with no inverse, which log nothing and each say why:
+ * `deleteCard`, `moveToBoard` and `commitToBoard`. Every one of the three is
+ * called from an intent marked `terminal`, and must be the last write its `run`
+ * makes.
  *
  * The `CardsAPI` is `private`, and an intent is handed neither a client nor a
  * config, so it cannot build one either. A raw un-instrumented write from an
@@ -518,9 +549,42 @@ export class TxCards implements ReadTx {
     return this.api.resolveColumnId(value, boardId);
   }
 
+  /**
+   * A board NAME or id, settled to the `widgetCommonId` the lock and the wire
+   * both want.
+   *
+   * Here because two intents take a board as an ARGUMENT rather than reading it
+   * off a card (`move-board`, `add-board-instance`), and `board()` runs before
+   * `assertScope` — which GETs `/widgets/{id}` and, handed a name, 404s into
+   * "Board … not found", a refusal naming the wrong problem (#82).
+   */
+  resolveBoardId(board: string): Promise<string> {
+    return new BoardsAPI(this.client).resolveBoardId(board);
+  }
+
   /** One `userId`, from a name, an email, a `userId` or `@me`. One home (#42). */
   resolveAssignee(value: string): Promise<string> {
     return resolveAssignee(this.client, value);
+  }
+
+  /**
+   * What a custom-field value looks like on the wire, resolved against the
+   * field's OWN definition: an option name becomes `[optionId]`, a number
+   * becomes a number, a date is validated, a link becomes `{url}`.
+   *
+   * A read — one `GET` for the definition, nothing written — so it is
+   * uninstrumented like every other read here. It lives on the facade because an
+   * intent is handed no client and cannot build a `CustomFieldsAPI` of its own,
+   * and the resolution has to happen on the same side of the seam as the write:
+   * `custom-fields set` used to resolve and PUT in one uninstrumented call.
+   *
+   * The KEY travels with the value because the field families spell it
+   * differently, and `setFieldValue` has to send the same key back to undo the
+   * write. Only `value` on a `Single select` is measured (#106) — see
+   * `CustomFieldKey`.
+   */
+  async customFieldWrite(fieldId: string, value: string): Promise<CustomFieldWriteValue> {
+    return new CustomFieldsAPI(this.client).fieldWrite(fieldId, value);
   }
 
   /**
@@ -1212,8 +1276,25 @@ export class TxCards implements ReadTx {
    * and orphan every rollback. Serialising is the one-line fix that keeps the
    * compare rule itself untouched; `applyInverse` closes over the real prior value,
    * so nothing is restored from the serialisation.
+   *
+   * `key` says which of the four payload keys the field's type spells, and
+   * defaults to the one measured spelling. It exists because `custom-fields set`
+   * routes through here (#109) and already sent `members` / `link` / `total` for
+   * three of the types; forcing those onto `value` would have been a silent change
+   * of wire shape on three paths nobody has probed. The read-back reads all four
+   * keys either way (`cardFieldValue`), and the inverse sends the value back under
+   * the same key it was written with.
    */
-  async setFieldValue(cardRef: string, fieldId: string, value: unknown): Promise<Card> {
+  async setFieldValue(
+    cardRef: string,
+    fieldId: string,
+    value: unknown,
+    key: CustomFieldKey = 'value',
+  ): Promise<Card> {
+    // A computed key, cast once: `CustomFieldWrite` is a CLOSED shape whose four
+    // value keys have four different types, and `CustomFieldKey` is exactly its
+    // key set, so the cast widens nothing a caller could not already spell.
+    const write = (v: unknown) => ({ customFieldId: fieldId, [key]: v } as CustomFieldWrite);
     const before = await this.api.getCard(cardRef);
     const cardId = before.cardId;
     const was = cardFieldValue(before, fieldId);
@@ -1224,9 +1305,7 @@ export class TxCards implements ReadTx {
     // an entry whose `applyInverse` is guaranteed to throw.
     if (JSON.stringify(was) === JSON.stringify(value)) return before;
 
-    const after = await this.api.updateCard(cardId, {
-      customFields: [{ customFieldId: fieldId, value }],
-    });
+    const after = await this.api.updateCard(cardId, { customFields: [write(value)] });
     const stored = cardFieldValue(after, fieldId);
     // Checked BEFORE the log push: an entry built on a value we could not read
     // would send an inverse nobody can predict.
@@ -1265,10 +1344,69 @@ export class TxCards implements ReadTx {
               `writes nothing (#106). The value we set is still there.`,
           );
         }
-        await this.api.updateCard(cardId, { customFields: [{ customFieldId: fieldId, value: was }] });
+        await this.api.updateCard(cardId, { customFields: [write(was)] });
       },
     });
     return after;
+  }
+
+  // ── 11/12. the two board-instance writes, neither with an inverse ─────────
+
+  /**
+   * Move ONE card to another board — `PUT /cards/{cardId} {widgetCommonId}`, the
+   * write behind `cards move`.
+   *
+   * **Pushes nothing onto the compensation log**, and the intent that calls it is
+   * `terminal` for that reason. The move-back is spellable — the origin board is
+   * in hand before the write — and it is still not an INVERSE:
+   *
+   *  - The card's COLUMN on the origin board is not carried by this write and is
+   *    not captured. Where a card lands when it arrives on a board is unmeasured,
+   *    so a move-back restores the board and leaves the column wherever Favro puts
+   *    it. `rolled-back` means the world is back where it was; that would be a lie
+   *    about the column, and there is no fourth outcome to tell the truth with.
+   *  - `position` has the same problem and is not even readable back.
+   *
+   * Nothing here is a claim that a move cannot be undone by hand — `favro cards
+   * move` the other way is right there. It is a claim that this facade cannot
+   * undo it and say `rolled-back` honestly.
+   *
+   * So the caller must honour `deleteCard`'s two consequences: this must be the
+   * LAST thing an intent's `run` does (a `RefusalError` after it would be misread
+   * as pre-write, since `log.depth` is unchanged), and the intent is `terminal`.
+   *
+   * The echo is UNMEASURED — whether this PUT answers with `widgetCommonId` has
+   * never been probed (`CardsAPI.moveCard`) — so this does not read the write back
+   * and never throws on a silent echo. The caller reports the board it observed,
+   * or reports the write unconfirmed.
+   */
+  async moveToBoard(cardRef: string, toBoard: string, position?: 'top' | 'bottom'): Promise<Card> {
+    return this.api.moveCard(cardRef, { toBoardId: toBoard, position });
+  }
+
+  /**
+   * Give a card a board instance it did not have — `PUT /cards/{cardId}
+   * {widgetCommonId, dragMode:'commit'}`, the write behind `widgets add`.
+   *
+   * The same endpoint as `moveToBoard`, and NOT the same write: `dragMode:
+   * 'commit'` ADDS the instance and leaves every existing one alone, where a move
+   * takes the card off the board it was on. Two names because mis-selecting one
+   * for the other silently removes a card from a board.
+   *
+   * This is the fork factory. A card's `boardId` is its `widgetCommonId`, and the
+   * boardless card `dispatch` refuses writes to is a card with no instance at all;
+   * this is the write that manufactures one, which is why it belongs inside the
+   * table rather than beside it.
+   *
+   * **Pushes nothing onto the compensation log**, for `moveToBoard`'s reason and
+   * one more: the inverse would be deleting the instance this commit created, and
+   * the new instance's `cardId` is not something the response has been measured to
+   * carry — `CommittedWidget.widgetCommonId` is optional precisely because the
+   * echo is unprobed. An inverse that cannot name its target is not an inverse.
+   * The intent is `terminal`, and this must be the last write its `run` makes.
+   */
+  async commitToBoard(board: string, cardCommonId: string, columnId?: string): Promise<CommittedWidget> {
+    return new WidgetsAPI(this.client).addWidgetToBoard(board, cardCommonId, columnId);
   }
 
   /**

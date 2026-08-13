@@ -7,7 +7,7 @@
  * table exists to prevent: the retry advice ("safe to retry" vs "do NOT retry")
  * must read identically whichever command produced it.
  */
-import { DispatchResult } from './dispatch';
+import { DispatchResult, getIntent, UnknownIntentError, intentNames } from './dispatch';
 
 /**
  * Print the result, and say whether the caller should exit non-zero.
@@ -52,6 +52,37 @@ export function reportDispatch(result: DispatchResult<unknown>, json?: boolean):
   }
   if (json) console.log(JSON.stringify(result));
   return true;
+}
+
+/**
+ * The intent's own preview lines, with NO dispatch — the `--dry-run` path for a
+ * caller with **no scope lock configured** (#109).
+ *
+ * `dispatch(…, {dryRun: true})` is the normal preview, and it is what runs when a
+ * lock IS configured: it takes the lock before previewing, which is the ordering
+ * #155 exists for. With no lock there is nothing to take, and everything the
+ * dispatch does on the way to the preview costs the caller money —
+ * `createFavroClient()` resolves a credential eagerly and `intent.board()` makes a
+ * request per card. #102/#104 price an unlocked path at zero extra requests and
+ * #135 keeps a preview free; `dependencies delete`, `dependencies delete-all` and
+ * `custom-fields set` all have that property pinned in
+ * `dry-run-scope-order-wire.test.ts`, and routing them must not quietly take it
+ * away.
+ *
+ * `preview()` is a PURE function of its args by design — every intent's is, and
+ * `archive`'s comment says why one may not read — so producing the lines here
+ * touches no wire and needs no credential. They are the same lines through the
+ * same renderer, so the two paths cannot word a preview differently.
+ *
+ * What it deliberately does NOT show: anything only a read could know. An
+ * unlocked `dependencies delete-all --dry-run` will not tell you the card is over
+ * the cap, because finding that out is the request this exists to avoid. The
+ * refusal is on the real run.
+ */
+export function previewOnly(intent: string, args: Record<string, unknown>): void {
+  const known = getIntent(intent);
+  if (!known) throw new UnknownIntentError(intent, intentNames());
+  reportDispatch({ intent, outcome: 'ok', retryable: false, preview: known.preview(args) });
 }
 
 export default reportDispatch;

@@ -10,11 +10,17 @@
 import { Command } from 'commander';
 import { logError } from '../lib/error-handler';
 import { createFavroClient } from '../lib/client-factory';
-import { boardOfCard, checkResolvedScope, checkScope, confirmAction, dryRunLog } from '../lib/safety';
+import { boardOfCard, checkResolvedScope, confirmAction, dryRunLog, ScopeError } from '../lib/safety';
 import { RefusalError } from '../lib/refusal';
 import { readConfig } from '../lib/config';
-import CardsAPI from '../lib/cards-api';
+import CardsAPI, { Card } from '../lib/cards-api';
 import BoardsAPI from '../lib/boards-api';
+// The three card writes in this file go through the ONE dispatch table (#109),
+// so they inherit the mandatory scope lock, the boardless-write refusal, the
+// multi-write cap and a compensation log — none of which a raw
+// `api.updateCard` / `api.createCard` here ever had.
+import { dispatch, UpdateResult } from '../lib/dispatch';
+import { reportDispatch } from '../lib/report-dispatch';
 import { CommentsApiClient } from '../api/comments';
 import { parseLimit } from '../lib/read-shape';
 import {
@@ -119,13 +125,35 @@ export function registerGitCommands(program: Command): void {
           cardError = err;
         }
 
+        const favroConfig = (await readConfig()) ?? {};
+
         // Only the move writes to Favro — `--no-move` creates a local branch and
-        // nothing else, so it has no board for the lock to hold. Checked before
-        // the confirm and before the branch exists: a batch of one still refuses
-        // as a whole. An unreadable card resolves to '' and refuses through the
-        // shared check, which is a no-op when no lock is configured.
-        if (options.move !== false) {
-          await checkScope(card?.boardId ?? '', client, await readConfig(), options.force);
+        // nothing else, so it has no board for the lock to hold.
+        //
+        // The lock now lives INSIDE the `update` intent (#109), and this is the
+        // same intent invoked with `dryRun` so the check happens BEFORE the
+        // confirm and before the branch exists — the ordering the hand-rolled
+        // `checkScope` here bought, kept, without a second spelling of the check
+        // beside the one that governs the write. A dry dispatch resolves the
+        // board and runs `assertScope`, and returns before writing anything; its
+        // preview is deliberately discarded, because the branch prompt below is
+        // this command's preview.
+        //
+        // GATED ON A CONFIGURED LOCK, like every sibling hoist in this file: the
+        // dry dispatch reads the card, and an ungated one would bill an unlocked
+        // user a request for a verdict there is no lock to produce (#102/#104).
+        //
+        // What changes when the card cannot be read: this used to hand `''` to
+        // `checkScope` and refuse with "this write names no board". The intent's
+        // `board()` makes the read itself, so an unreadable card now refuses with
+        // the wire's own error. Both refuse; the second names the real problem.
+        if (options.move !== false && favroConfig.scopeCollectionId) {
+          await dispatch('update', { card: cardId, status: 'In Progress' }, {
+            client,
+            config: favroConfig,
+            force: options.force,
+            dryRun: true,
+          });
         }
         if (!card) throw cardError;
 
@@ -149,12 +177,28 @@ export function registerGitCommands(program: Command): void {
           writeProjectConfig(config);
         }
 
-        // Move card to In Progress
+        // Move card to In Progress — through the table, so the write carries the
+        // lock and a compensating write of its own.
         if (options.move !== false) {
           try {
-            await cardsApi.updateCard(cardId, { status: 'In Progress' });
-            console.log('✓ Card moved to "In Progress"');
-          } catch {
+            const moved = await dispatch<UpdateResult>('update', { card: cardId, status: 'In Progress' }, {
+              client,
+              config: favroConfig,
+              force: options.force,
+            });
+            if (moved.outcome === 'ok') console.log('✓ Card moved to "In Progress"');
+            else console.log(`  (Could not move card — ${moved.error})`);
+          } catch (error) {
+            // A SCOPE REFUSAL IS NOT A FAILED MOVE — the same rule #133 landed
+            // for `git commit --comment` next door. This catch is best-effort for
+            // the move (no such column, a 500, a dropped socket); swallowing the
+            // lock's refusal would turn the write guardrail into a notice and
+            // exit 0. Rethrown to the outer boundary, which owns the exit code.
+            //
+            // Narrower than that catch on purpose: `ColumnResolutionError` is a
+            // `RefusalError` too, and it is exactly the "status column may not
+            // exist" case this arm has always reported as a notice.
+            if (error instanceof ScopeError) throw error;
             console.log('  (Could not move card — status column may not exist)');
           }
         }
@@ -299,61 +343,57 @@ export function registerGitCommands(program: Command): void {
           for (const m of current) console.log(`    ${m.branch} → card ${m.cardId}`);
         }
 
+        // ONE entry per DISTINCT card, which is also what the old scope pass
+        // counted: two branches naming the same card are one write, and letting
+        // the duplicate through would spend two of the twenty the cap allows on
+        // the same move. First mapping wins; `merged` and `open` are disjoint by
+        // construction, so the only duplicates are two branches of one status.
         const targets = [
-          ...merged.map(m => ({ cardId: m.cardId!, status: 'Done' })),
-          ...open.map(m => ({ cardId: m.cardId!, status: 'In Progress' })),
+          ...merged.map(m => ({ card: m.cardId!, status: 'Done' })),
+          ...open.map(m => ({ card: m.cardId!, status: 'In Progress' })),
         ];
+        const cards = [...new Map(targets.map(t => [t.card, t])).values()];
 
-        // The branch mappings carry only card IDs, so the board has to be
-        // resolved per card. Scope-check the whole pass first: a batch that
-        // straddles the lock must refuse as a whole rather than half-write.
-        // Once per DISTINCT card and once per DISTINCT board — two branches on
-        // the same card, or two cards on the same board, are not two of
-        // everything.
+        // ONE `update` invocation over the enumerated list, so the whole pass is
+        // one transaction (#109). What that replaces, and why each half mattered:
         //
-        // And BEFORE the preview (#155). This block sat below the `--dry-run`
-        // return, so a repo whose branches point at cards outside the lock
-        // planned the whole sweep at exit 0 — measured on the built CLI, 4678
-        // bytes ending `Would move cards "56 card(s) to \"Done\""`, zero
-        // requests — while the real run refused. The largest preview of the five
-        // in #155 after `git todos`.
+        //  - a hand-rolled per-card scope pass beside the writes. The lock is now
+        //    inside the intent, over every DISTINCT board of the batch, and it
+        //    still refuses as a WHOLE before anything is written.
+        //  - a write loop with no bound. Twenty is the cap, and over it the intent
+        //    refuses rather than moving the first twenty — `boundEntries` runs
+        //    before the intent's first request, so an over-cap sync costs nothing.
+        //  - a write loop with no inverse. A failure on card 4 of 6 now moves 1–3
+        //    back, LIFO, and the run reports `rolled-back`.
+        //  - `updated++` counted PUTs that answered 200. `moveColumn` re-reads the
+        //    card and throws if it did not land there, so the count below counts
+        //    observations.
         //
-        // GATED ON A CONFIGURED LOCK for the reason `dependencies.ts` spells
-        // out: the client and the per-card GETs are eager, so an ungated hoist
-        // would charge a credential and N requests to a `--dry-run` for a user
-        // with no lock, for a verdict there is no lock to produce. Gated on
-        // there being targets too — with nothing to move there is nothing to
-        // check, and the `total === 0` arm below still answers for itself.
-        const globalConfig = await readConfig();
-        if (targets.length > 0 && globalConfig?.scopeCollectionId) {
-          const client = await createFavroClient();
-          const cardsApi = new CardsAPI(client);
-          const targetBoards = new Set<string>();
-          for (const cardId of new Set(targets.map(t => t.cardId))) {
-            try {
-              const card = await cardsApi.getCard(cardId);
-              targetBoards.add(card?.boardId ?? '');
-            } catch {
-              // A stale mapping onto a deleted card resolves no board, and an
-              // unknown board is not an allowed one. The empty string hands it to
-              // the shared refusal — a no-op when no lock is configured, so the
-              // rest of the batch still syncs and the write loop below reports the
-              // bad card, exactly as it did before the lock existed.
-              targetBoards.add('');
-            }
-          }
-          for (const boardId of targetBoards) {
-            await checkScope(boardId, client, globalConfig, options.force);
-          }
-        }
+        // The preview goes through the same intent with `dryRun`, so it can no
+        // longer promise a sweep the real run refuses (#155). It stays GATED ON A
+        // CONFIGURED LOCK, unchanged: `createFavroClient()` is eager, so an
+        // ungated preview would demand a credential from a user who has none and
+        // bill them N reads for a verdict there is no lock to produce.
+        // Consequence, recorded rather than hidden: an UNLOCKED `--dry-run` still
+        // makes no request, so it does not preview the cap refusal either — the
+        // real run is where an over-cap sync refuses.
+        const globalConfig = (await readConfig()) ?? {};
 
         if (options.dryRun) {
+          if (cards.length > 0 && globalConfig.scopeCollectionId) {
+            await dispatch('update', { cards }, {
+              client: await createFavroClient(),
+              config: globalConfig,
+              force: options.force,
+              dryRun: true,
+            });
+          }
           if (merged.length) dryRunLog('move', 'cards', `${merged.length} card(s) to "Done"`);
           if (open.length) dryRunLog('move', 'cards', `${open.length} card(s) to "In Progress"`);
           return;
         }
 
-        const total = targets.length;
+        const total = cards.length;
         if (total === 0) {
           console.log('\nNo card status changes needed.');
           return;
@@ -364,20 +404,14 @@ export function registerGitCommands(program: Command): void {
           return;
         }
 
-        const client = await createFavroClient();
-        const cardsApi = new CardsAPI(client);
+        const result = await dispatch<UpdateResult[]>('update', { cards }, {
+          client: await createFavroClient(),
+          config: globalConfig,
+          force: options.force,
+        });
+        if (reportDispatch(result)) process.exit(1);
 
-        let updated = 0;
-        for (const t of targets) {
-          try {
-            await cardsApi.updateCard(t.cardId, { status: t.status });
-            updated++;
-          } catch {
-            console.error(`  ✗ Could not update card ${t.cardId}`);
-          }
-        }
-
-        console.log(`\n✓ Updated ${updated}/${total} cards.`);
+        console.log(`\n✓ Updated ${result.value?.length ?? 0}/${total} cards.`);
       } catch (error) {
         logError(error);
         process.exit(1);
@@ -468,7 +502,8 @@ export function registerGitCommands(program: Command): void {
           // guard's "is a lock configured" test, the same duplication #152 was
           // reviewed for; the arm that keys on `scopeCollectionName` instead is
           // pinned in `dry-run-scope-order-wire.test.ts`.
-          if ((await readConfig())?.scopeCollectionId) {
+          const favroConfig = (await readConfig()) ?? {};
+          if (favroConfig.scopeCollectionId) {
             const client = await createFavroClient();
             await checkResolvedScope(client, () => new BoardsAPI(client).resolveBoardId(boardId), options.force);
           }
@@ -484,29 +519,41 @@ export function registerGitCommands(program: Command): void {
           }
 
           const client = await createFavroClient();
-          const cardsApi = new CardsAPI(client);
 
           if (!(await confirmAction(`Create ${limited.length} cards from TODOs?`, { yes: options.yes }))) {
             console.log('Aborted.');
             return;
           }
 
-          let created = 0;
+          // ONE `create` invocation over the enumerated TODO list (#109), which
+          // is what the file already is: every card the scan will make is named
+          // before the first write. So the batch is one transaction — a failure
+          // on card 7 of 12 deletes 1–6 and reports `rolled-back`, where the old
+          // loop left them and printed "Created 6/12".
+          //
+          // It also inherits the cap: more than twenty TODOs REFUSES rather than
+          // creating twenty and dropping the rest. `--limit <n>` is how a caller
+          // brings the batch under it, and the refusal says as much.
+          //
+          // The board is RESOLVED above and the resolved id is what the intent
+          // sees: `--board` and the repo link config both take a NAME, and the
+          // lock GETs `/widgets/<id>` — handed a name it 404s into "Board … not
+          // found", a refusal naming the wrong problem (#82). The `create`
+          // intent's own `board()` passes its argument through unresolved, so the
+          // resolution has to happen before the call, not inside it.
+          const resolvedBoard = favroConfig.scopeCollectionId
+            ? await new BoardsAPI(client).resolveBoardId(boardId)
+            : boardId;
+          const result = await dispatch<Card[]>('create', {
+            cards: limited.map((item) => ({
+              name: todoToCardTitle(item),
+              description: formatTodoAsCardDescription(item),
+              board: resolvedBoard,
+            })),
+          }, { client, config: favroConfig, force: options.force });
+          if (reportDispatch(result)) process.exit(1);
 
-          for (const item of limited) {
-            try {
-              await cardsApi.createCard({
-                name: todoToCardTitle(item),
-                description: formatTodoAsCardDescription(item),
-                boardId,
-              });
-              created++;
-            } catch (error) {
-              console.error(`  ✗ Failed to create card for ${item.file}:${item.line}`);
-            }
-          }
-
-          console.log(`\n✓ Created ${created}/${limited.length} cards.`);
+          console.log(`\n✓ Created ${result.value?.length ?? 0}/${limited.length} cards.`);
         }
       } catch (error) {
         logError(error);

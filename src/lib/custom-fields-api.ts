@@ -241,6 +241,25 @@ export class CustomFieldsAPI {
   }
 
   /**
+   * The wire payload one value takes on one field, WITHOUT making the write —
+   * `setFieldValue`'s first two steps, and nothing else.
+   *
+   * Split out for `TxCards.customFieldWrite` (#109), which needs the resolution
+   * on the read side of the transactional facade so the PUT can be the
+   * instrumented one. Nothing about the mapping changes: `buildFieldPayload`
+   * stays the single owner of "which key does this field type spell", and it
+   * always returns exactly one, which is what makes the destructure below total.
+   */
+  async fieldWrite(
+    fieldId: string,
+    value: string
+  ): Promise<{ key: 'value' | 'members' | 'link' | 'total'; value: unknown }> {
+    const payload = this.buildFieldPayload(await this.getField(fieldId), value);
+    const [key, resolved] = Object.entries(payload)[0] as ['value' | 'members' | 'link' | 'total', unknown];
+    return { key, value: resolved };
+  }
+
+  /**
    * Build the correct API payload object for a custom field value.
    *
    * Favro returns many different type strings for option-based fields

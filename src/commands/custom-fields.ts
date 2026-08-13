@@ -172,63 +172,71 @@ export function registerCustomFieldsCommands(program: Command): void {
       const verbose = program.opts()?.verbose ?? false;
       try {
         const { readConfig } = await import('../lib/config');
-        const { checkScope, confirmAction } = await import('../lib/safety');
-        const config = await readConfig();
+        const { confirmAction } = await import('../lib/safety');
+        const { dispatch } = await import('../lib/dispatch');
+        const { previewOnly, reportDispatch } = await import('../lib/report-dispatch');
+        const config = (await readConfig()) ?? {};
+        const args = { card: cardId, customField: { field: fieldId, value } };
 
-        // Before the preview and gated on the lock (#155) — see
-        // `dependencies.ts` for why the gate is required rather than tidy. This
-        // one previewed 64 bytes at exit 0 for a card on a board outside the
-        // lock while the real run refused, measured on the built CLI.
-        if (config?.scopeCollectionId) {
-          const client = await createFavroClient();
-          const { default: CardsAPI } = await import('../lib/cards-api');
-          const card = await new CardsAPI(client).getCard(cardId);
-          await checkScope(card.boardId ?? '', client, config, options.force);
-        }
-
-        if (options.dryRun) {
-          console.log(`[dry-run] Would set custom field ${fieldId} on ${cardId} to "${value}"`);
+        // A dry run with NO lock configured previews from the intent's own pure
+        // `preview()` and touches no wire — see `previewOnly`. #155 pinned this
+        // command's dry run at zero requests and no credential, and routing it
+        // must not take that away.
+        if (options.dryRun && !config.scopeCollectionId) {
+          previewOnly('update', args);
           return;
         }
 
         const client = await createFavroClient();
 
-        if (!(await confirmAction(`Set custom field ${fieldId} on card ${cardId}?`, { yes: options.yes }))) {
+        if (
+          !options.dryRun &&
+          !(await confirmAction(`Set custom field ${fieldId} on card ${cardId}?`, { yes: options.yes }))
+        ) {
           console.log('Aborted.');
           process.exit(0);
         }
 
-        const api = new CustomFieldsAPI(client);
-
-        const result = await api.setFieldValue(cardId, fieldId, value);
+        // Through the ONE dispatch table (#109). This was the last card write
+        // that resolved its value and PUT it in the same un-instrumented call —
+        // `CustomFieldsAPI.setFieldValue` — so it had no scope lock of its own
+        // beyond the hand-rolled hoist that used to sit above, no boardless-write
+        // refusal, and no undo handle.
+        //
+        // The resolution (option NAME → `[optionId]`, and which payload key the
+        // field's type spells) now happens inside the transaction, as
+        // `TxCards.customFieldWrite`; the PUT is `TxCards.setFieldValue`, which
+        // carries a real compensating write — except on a field that had NO prior
+        // value, where a select has no measured spelling for "clear" and the
+        // unwind says so rather than sending a write measured to do nothing
+        // (#106).
+        //
+        // The lock runs BEFORE the preview because it runs inside the intent,
+        // which takes it before the `dryRun` return — the ordering #155 fixed
+        // here by hand is now structural.
+        const result = await dispatch<{ cardId: string; wrote: string[] }>(
+          'update',
+          args,
+          { client, config, force: options.force, dryRun: options.dryRun },
+        );
+        if (reportDispatch(result, options.json)) process.exit(1);
+        // `value !== undefined` is what keeps this off a dry run: the table's
+        // preview return carries a `preview` and no `value`.
+        if (result.outcome !== 'ok' || result.value === undefined) return;
 
         if (options.json) {
-          console.log(JSON.stringify(result, null, 2));
-        } else if (result.confirmed === false) {
-          // No ✓, and NO value line: the only value we could print here is the
-          // one we sent. Printing it read exactly like a confirmed write, which
-          // is the fabrication — `Value: High` whether or not the field changed.
-          console.log(`Custom field write was accepted (200) but is UNCONFIRMED.`);
-          console.log(`  Field: ${fieldId}`);
-          console.log(`  Sent:  ${value}`);
-          console.log(
-            `  The response carried no value for this field, so nothing here observed what is stored.\n` +
-            `  Whether this PUT echoes customFields is unmeasured, so an absent echo is not by itself a failure.\n` +
-            `  Verify with: favro cards get ${cardId}\n` +
-            `  (customFields come back inline on the card row, keyed by customFieldId.)`
-          );
+          console.log(JSON.stringify(result.value, null, 2));
         } else {
+          // The ✓ is spent on a write the facade OBSERVED, which is why the
+          // requested value may be printed here at all: `setFieldValue` matches
+          // the echo on `customFieldId` and throws when it does not carry what it
+          // sent, so reaching this line IS the observation. The old
+          // "accepted (200) but UNCONFIRMED" arm is gone with it — that case is
+          // now a failure the table reports and `reportDispatch` has exited on.
           console.log(`✓ Custom field updated successfully.`);
           console.log(`  Field: ${fieldId}`);
-          console.log(`  Value: ${result.displayValue ?? result.value}`);
+          console.log(`  Value: ${value}`);
         }
-        // An unconfirmed write is a HOLE, and a hole forbids a clean exit code —
-        // exit 0 is a positive claim (#148; `diff.ts` gates exit 1 on
-        // `holes.length`). `confirmed: false` in the report and exit 0 next to it
-        // contradict each other, and `favro custom-fields set … && next-step`
-        // believes the exit code. Non-zero reports a finding, not a failure — the
-        // report is still on stdout either way (#117).
-        if (result.confirmed === false) process.exit(1);
       } catch (error) {
         logError(error, verbose);
         process.exit(1);

@@ -45,19 +45,19 @@ THE SCOPE LOCK, AND THE TWO GUARDS BESIDE IT
   ('-y' skips the prompt) and takes '--dry-run' — a preview, never a safety wall.
 
 INTENTS
-  Ten, one call each — no chain to author. Each has a CLI spelling, and all but
-  'delete' can also be a skill 'command:'.
+  Thirteen, one call each — no chain to author. Each has a CLI spelling; the
+  three IRREVERSIBLE ones — delete, move-board, add-board-instance — log no
+  compensating write, so none can be a skill step: a run is ONE transaction.
   create                Card plus every composite — parent, both dependency
                         directions, column, tags, assignees — in ONE POST, so a
                         bad value leaves no card behind. CLI: cards create.
   update                Named fields, one card or an enumerated batch — a field
-                        per primitive, so a field per undo. CLI: cards update.
+                        per primitive, so a field per undo. Custom fields too,
+                        by customFieldId. CLI: cards update, custom-fields set.
   read                  One card, optionally with its children. Writes nothing.
                         CLI: cards get, minus the children arm.
   delete                Remove ONE board instance; other instances of the same
-                        cardCommonId survive. IRREVERSIBLE, and logs no
-                        compensating write — so it CANNOT be a skill step: a run
-                        is one transaction. CLI ONLY: cards delete.
+                        cardCommonId survive. CLI ONLY: cards delete.
   archive               Move ONE instance across the archive line. REVERSIBLE,
                         so it CAN be a skill step. CLI: cards archive/unarchive.
   claim                 Assign yourself and move to the active column, on the
@@ -69,6 +69,14 @@ INTENTS
                         unknown name as a tag CREATION. CLI: cards retag.
   add-blocking-edge     Record that one card blocks another. CLI: cards link.
   remove-blocking-edge  Remove the edge between two cards. CLI: cards unlink.
+  clear-blocking-edges  EVERY edge on one card, capped at 20 — over that it
+                        REFUSES rather than wiping. CLI: dependencies delete-all.
+  move-board            Card OFF its board and onto another; BOTH boards are
+                        checked. IRREVERSIBLE: the old column is not captured.
+                        CLI: cards move.
+  add-board-instance    A new instance, existing ones untouched — the one write
+                        allowed to make the boardless shape every other write is
+                        refused on. CLI: widgets add.
 
 THE TWO RELATIONSHIPS, AND THE ONE THAT DOES NOT EXIST
   Ordering is 'add-blocking-edge'; Favro says before/after where this CLI says
@@ -96,11 +104,11 @@ WIRE NOTES THAT CHANGE WHAT YOU SEND
   List reads answer an envelope, '{rows, truncated?, unreachable?}', a single read
   the bare entity. 'unreachable' is ALWAYS objects — '{id, reason}', never bare
   strings — under that one key on every command that reports one.
-  Card bodies are out of output by default — '--body' returns
-  them — and '--json' prints THIS CLI's answer, never Favro's raw entity. Write
-  tags BY NAME; an unknown name is refused, never created. Assignment is by
-  userId and ADDED, never replaced; '--assignee' takes a name, an email, a userId
-  or '@me'. 'columns list' already carries cardCount / timeSum / estimationSum.
+  Card bodies are out of output by default — '--body' returns them — and '--json'
+  prints THIS CLI's answer, never Favro's raw entity. Write tags BY NAME; an
+  unknown name is refused, never created. Assignment is by userId and ADDED, never
+  replaced; '--assignee' takes a name, an email, a userId or '@me'.
+  'columns list' already carries cardCount / timeSum / estimationSum.
   Tasklist lines Favro injects into a body are PERMANENT: a read-modify-write of
   the description re-persists them as literal body text.
 

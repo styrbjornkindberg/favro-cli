@@ -9,8 +9,7 @@ import { Command } from 'commander';
 import WidgetsAPI from '../lib/widgets-api';
 import { createFavroClient } from '../lib/client-factory';
 import { logError } from '../lib/error-handler';
-import BoardsAPI from '../lib/boards-api';
-import { checkResolvedScope, confirmAction, dryRunLog } from '../lib/safety';
+import { confirmAction } from '../lib/safety';
 import { capRows, noteTruncation, writeEnvelope } from '../lib/read-shape';
 
 export function registerWidgetsCommands(program: Command): void {
@@ -62,24 +61,38 @@ export function registerWidgetsCommands(program: Command): void {
       const verbose = widgetsCommand.opts()?.verbose ?? false;
       try {
         const client = await createFavroClient();
+        const { readConfig } = await import('../lib/config');
+        const { dispatch } = await import('../lib/dispatch');
+        const { reportDispatch } = await import('../lib/report-dispatch');
 
-        // The lock checks a `widgetCommonId`, so a NAME has to settle before it
-        // — `GET /widgets/Backlog - Web Hub` 404s and the lock then reports
-        // "Board … not found", a refusal naming the wrong problem (#82). The
-        // thunk keeps an unlocked user off the network entirely.
-        await checkResolvedScope(client, () => new BoardsAPI(client).resolveBoardId(board), options.force);
-
-        if (options.dryRun) {
-          dryRunLog('adding', 'widget', `card "${cardCommonId}" to board ${board}`);
+        if (
+          !options.dryRun &&
+          !(await confirmAction(`Add card ${cardCommonId} to board ${board}?`, { yes: options.yes }))
+        ) {
           process.exit(0);
         }
 
-        if (!(await confirmAction(`Add card ${cardCommonId} to board ${board}?`, { yes: options.yes }))) {
-          process.exit(0);
-        }
-
-        const api = new WidgetsAPI(client);
-        const widget = await api.addWidgetToBoard(board, cardCommonId, options.column);
+        // Through the ONE dispatch table, as the `add-board-instance` intent
+        // (#109). This is the write that MANUFACTURES a card's board instance —
+        // the thing whose absence makes a card boardless, which is the shape
+        // `dispatch` refuses every other write to. Outside the table it was a
+        // write creating the case the table exists to refuse; inside it, it is
+        // the one write allowed to.
+        //
+        // The lock is inside the intent now, over the board the intent itself
+        // settles: it checks a `widgetCommonId`, so a NAME has to resolve first
+        // or `GET /widgets/Backlog - Web Hub` 404s into "Board … not found", a
+        // refusal naming the wrong problem (#82). And it runs before the `dryRun`
+        // return, so the preview can no longer promise a commit the real run
+        // refuses.
+        const result = await dispatch<{ widgetCommonId?: string }>(
+          'add-board-instance',
+          { board, card: cardCommonId, column: options.column },
+          { client, config: (await readConfig()) ?? {}, force: options.force, dryRun: options.dryRun },
+        );
+        if (reportDispatch(result, options.json)) process.exit(1);
+        if (result.outcome !== 'ok' || result.value === undefined) return;
+        const widget = result.value;
 
         if (options.json) {
           console.log(JSON.stringify(widget, null, 2));

@@ -3,8 +3,7 @@
  * CLA-1786 (FAVRO-024): Card Relationship Operations
  */
 import { Command } from 'commander';
-import CardsAPI from '../lib/cards-api';
-import BoardsAPI from '../lib/boards-api';
+import CardsAPI, { Card } from '../lib/cards-api';
 import { LINK_TYPES, linkTypeToIsBefore } from '../lib/dependency-direction';
 import { logError } from '../lib/error-handler';
 import { createFavroClient } from '../lib/client-factory';
@@ -204,8 +203,10 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
     .requiredOption('--to-board <board>', 'Destination board, by name or boardId')
     .option('--position <pos>', `Position on board: ${VALID_POSITIONS.join('|')}`)
     .option('--json', 'Output updated card as JSON')
+    .option('--dry-run', 'Preview the move. Takes the scope lock on both boards first')
     .option('-y, --yes', 'Skip confirmation prompt')
     .option('--force', 'Bypass scope check')
+    .addHelpText('after', '\nIntent contract: run `favro help issue-tracker`.')
     .action(async (cardId: string, options) => {
       const verbose = cardsCmd.parent?.opts()?.verbose ?? cardsCmd.opts()?.verbose ?? false;
       try {
@@ -216,31 +217,43 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
         }
 
         const client = await createFavroClient();
-        const api = new CardsAPI(client);
-        
-        const cardOrigin = await api.getCard(cardId);
-        
         const { readConfig } = await import('../lib/config');
-        const { checkScope, checkResolvedScope, confirmAction } = await import('../lib/safety');
-        const config = await readConfig();
+        const { confirmAction } = await import('../lib/safety');
 
-        // Check scope of both origin board and destination board. The origin is
-        // already a `widgetCommonId`; `--to-board` is whatever the user typed,
-        // so it settles FIRST — the lock GETs `/widgets/<id>`, and handed a name
-        // it 404s into "Board Backlog - Web Hub not found", a refusal naming the
-        // wrong problem (#82). The thunk keeps an unlocked user off the network.
-        await checkScope(cardOrigin.boardId ?? '', client, config, options.force);
-        await checkResolvedScope(client, () => new BoardsAPI(client).resolveBoardId(options.toBoard), options.force);
-        
-        if (!(await confirmAction(`Move card ${cardId} to board ${options.toBoard}?`, { yes: options.yes }))) {
+        if (
+          !options.dryRun &&
+          !(await confirmAction(`Move card ${cardId} to board ${options.toBoard}?`, { yes: options.yes }))
+        ) {
           console.log('Aborted.');
           process.exit(0);
         }
 
-        const card = await api.moveCard(cardId, {
-          toBoardId: options.toBoard,
-          position: options.position?.toLowerCase() as 'top' | 'bottom' | undefined,
-        });
+        // Through the ONE dispatch table, as the `move-board` intent (#109).
+        // BOTH board locks live inside it now: the intent's `board()` returns the
+        // card's origin board and the SETTLED destination, and the table checks
+        // every distinct one before anything is written — so a move out of the
+        // locked collection and a move into it refuse alike, and a fork (no
+        // origin `widgetCommonId`) still refuses rather than riding in on the
+        // destination. The destination settles inside the intent for #82's
+        // reason: the lock GETs `/widgets/<id>` and a NAME 404s into "Board … not
+        // found", a refusal naming the wrong problem.
+        //
+        // The move is IRREVERSIBLE as far as this facade is concerned and the
+        // intent is `terminal` — the card's column on the old board is not
+        // captured, so nothing here can claim `rolled-back` honestly. See
+        // `TxCards.moveToBoard`.
+        const result = await dispatch<Card>(
+          'move-board',
+          {
+            card: cardId,
+            toBoard: options.toBoard,
+            position: options.position?.toLowerCase() as 'top' | 'bottom' | undefined,
+          },
+          { client, config: (await readConfig()) ?? {}, force: options.force, dryRun: options.dryRun },
+        );
+        if (reportDispatch(result, options.json)) process.exit(1);
+        if (result.outcome !== 'ok' || result.value === undefined) return;
+        const card = result.value;
 
         // The ✓ is spent only on an OBSERVED board. The old line — `✓ Card …
         // moved to board ${options.toBoard}` — echoed the argument as an outcome:

@@ -26,6 +26,7 @@ import { assertScope } from './safety';
 import { classifyThrownError, isWireFailure } from './favro-error';
 import { foldName } from './fold-name';
 import { CompensationLog, Orphan, ReadTx, TxCards, TxOutcome } from './tx-cards';
+import { CommittedWidget } from './widgets-api';
 import { CATEGORY_TAGS, STATE_TAGS, VerifiedTracker } from './tracker-config';
 import { RefusalError, TransientError } from './refusal';
 import { capRows, ListEnvelope, parseLimit } from './read-shape';
@@ -493,18 +494,24 @@ export const MULTI_WRITE_CAP = 20;
  *
  * @param verb the intent's own verb, for the wording. The rule is the same for
  *   all of them; only the sentence naming what was refused differs.
+ * @param noun what the entries ARE. `create` and `update` batch cards;
+ *   `clear-blocking-edges` batches edges on one card (#109), and calling
+ *   those "cards" would name the wrong thing in the one sentence a caller acts
+ *   on. The REASON below is what must not be re-typed per intent, so only the
+ *   noun moves.
  */
-function boundEntries<T>(verb: string, entries: readonly T[]): readonly T[] {
+function boundEntries<T>(verb: string, entries: readonly T[], noun = 'cards'): readonly T[] {
   if (entries.length === 0) {
-    throw new RefusalError(`Nothing to ${verb}: the enumerated card list is empty.`);
+    throw new RefusalError(`Nothing to ${verb}: the enumerated ${noun.replace(/s$/, '')} list is empty.`);
   }
   if (entries.length > MULTI_WRITE_CAP) {
     throw new RefusalError(
-      `Refusing to ${verb} ${entries.length} cards in one call — a multi-${verb} is capped at ` +
+      `Refusing to ${verb} ${entries.length} ${noun} in one call — a multi-${verb} is capped at ` +
         `${MULTI_WRITE_CAP}.\n` +
         `The cap is not a page size: the whole batch is one transaction, so writing only the first ` +
-        `${MULTI_WRITE_CAP} and dropping the rest would report success for cards that were never ` +
-        `touched. Split the list into batches of ${MULTI_WRITE_CAP} or fewer and run them one at a time.`,
+        `${MULTI_WRITE_CAP} and dropping the rest would report success for ${noun} that were never ` +
+        `touched. Bring the batch to ${MULTI_WRITE_CAP} or fewer — split an enumerated list, or act ` +
+        `on a derived one entry at a time — and run them separately.`,
     );
   }
   return entries;
@@ -1155,6 +1162,19 @@ export interface UpdateArgs {
   tags?: string[] | string;
   /** A name, an email, a `userId` or `@me` — resolved here, not by the caller. */
   assignees?: string[] | string;
+  /**
+   * ONE custom field, by `customFieldId`, and the value to put in it — an option
+   * NAME for a select, a URL for a link, a numeric string for a number.
+   *
+   * The value is resolved against the field's own DEFINITION inside the intent
+   * (`TxCards.customFieldWrite`), never by the caller: an option name has to
+   * become `[optionId]` before it reaches the wire, and which payload key the
+   * value goes under is a property of the field's type.
+   *
+   * One, not a list, because one is what `custom-fields set` writes and a list is
+   * not needed yet. A second field on the same card is a second `update`.
+   */
+  customField?: { field: string; value: string };
 }
 
 /** The multi form: an ENUMERATED list, never a derived one — as `create`'s is. */
@@ -1178,6 +1198,7 @@ function fieldsOf(a: UpdateArgs): string[] {
     ...(a.description !== undefined ? ['description'] : []),
     ...(oneOrMany(a.tags)?.length ? ['tags'] : []),
     ...(oneOrMany(a.assignees)?.length ? ['assignees'] : []),
+    ...(a.customField ? [`customField:${a.customField.field}`] : []),
     ...(a.status !== undefined && a.status !== '' ? ['status'] : []),
   ];
 }
@@ -1200,7 +1221,7 @@ function updateEntries(a: UpdateArgs | MultiUpdateArgs): readonly UpdateArgs[] {
     if (fieldsOf(entry).length === 0) {
       throw new RefusalError(
         `Nothing to update on ${entry.card}: no field was given.\n` +
-          `Pass at least one of name, description, status, tags or assignees. An entry naming no ` +
+          `Pass at least one of name, description, status, tags, assignees or a custom field. An entry naming no ` +
           `field is refused rather than skipped: in a batch, skipping it would report success for a ` +
           `card that was never written.`,
       );
@@ -1236,20 +1257,27 @@ function updateEntries(a: UpdateArgs | MultiUpdateArgs): readonly UpdateArgs[] {
  * to raise — and raising last means the field writes before it are already logged
  * and get unwound, rather than a failed move stranding them un-recorded.
  *
- * **THE SEAM: `dueDate` and custom fields are not here.** `name` and `description`
- * route through `TxCards.setText`, which is #106's two methods fused into one
- * because the measurement did not split them (see its own note).
+ * **THE SEAM: custom fields are here as of #109; `dueDate` still is not.** `name`
+ * and `description` route through `TxCards.setText`, which is #106's two methods
+ * fused into one because the measurement did not split them (see its own note).
  *
- * `dueDate` was left out because its round trip was a normalisation nobody had
- * observed: the write shape was `YYYY-MM-DD`, a card reads back a full ISO
+ * `customField` arrived with #109 because `custom-fields set` routes here: that
+ * command resolved the value and made the PUT in one un-instrumented
+ * `CustomFieldsAPI.setFieldValue` call, so it had no lock, no log and no undo
+ * handle. It now spends `TxCards.customFieldWrite` (the resolution, a read) and
+ * `TxCards.setFieldValue` (the write, logged). Only `Single select` is measured on
+ * that path (#106) and nothing here widens that — see `CustomFieldKey`.
+ *
+ * `dueDate` was left out of #108 because its round trip was a normalisation nobody
+ * had observed: the write shape was `YYYY-MM-DD`, a card reads back a full ISO
  * timestamp (#132, 853 cards, zero date-only), and whether the WRITE side accepted
  * an ISO string was unmeasured — so a captured pre-state could not be shown to be
- * restorable, and an undo handle that may not undo is worse than a refused field.
- * **#106 measured it and the answer is yes**: an ISO timestamp is honoured and
- * echoed verbatim, `null` clears, `""` is a silent no-op. `TxCards.setDueDate` and
- * `setFieldValue` exist now and carry real compensation entries. Routing the
- * commands through them is #109's; the field stays absent from this intent's args
- * until then rather than half-wired here.
+ * restorable. **#106 measured it and the answer is yes**: an ISO timestamp is
+ * honoured and echoed verbatim, `null` clears, `""` is a silent no-op, and
+ * `TxCards.setDueDate` carries a real compensation entry. It stays absent from
+ * these args for a different reason now — no command #109 routes writes one, and
+ * an arg nothing passes is a surface with no caller to keep it honest. It arrives
+ * with the command that needs it.
  */
 registerIntent<UpdateArgs | MultiUpdateArgs, UpdateResult | UpdateResult[]>({
   name: 'update',
@@ -1261,6 +1289,7 @@ registerIntent<UpdateArgs | MultiUpdateArgs, UpdateResult | UpdateResult[]>({
       ...(c.description !== undefined ? [`  description: ${c.description.length} characters`] : []),
       ...(oneOrMany(c.tags)?.length ? [`  tags: ${oneOrMany(c.tags)!.join(', ')}`] : []),
       ...(oneOrMany(c.assignees)?.length ? [`  assignees: ${oneOrMany(c.assignees)!.join(', ')}`] : []),
+      ...(c.customField ? [`  custom field ${c.customField.field}: "${c.customField.value}"`] : []),
       ...(c.status !== undefined && c.status !== '' ? [`  column: "${c.status}"`] : []),
       `  reversible: each field carries its own compensating write`,
     ]),
@@ -1311,6 +1340,18 @@ registerIntent<UpdateArgs | MultiUpdateArgs, UpdateResult | UpdateResult[]>({
         await tx.setAssignees(cardId, ids);
         wrote.push('assignees');
       }
+      if (entry.customField) {
+        // Two steps, both inside the transaction: resolve the value against the
+        // field's definition (a read), then write it (instrumented). The old
+        // `custom-fields set` did both inside one un-instrumented
+        // `CustomFieldsAPI.setFieldValue`, which is what put this write outside
+        // the seam. `key` travels with the value because the payload key follows
+        // the field's TYPE — see `CustomFieldKey`.
+        const { field } = entry.customField;
+        const { key, value } = await tx.customFieldWrite(field, entry.customField.value);
+        await tx.setFieldValue(cardId, field, value, key);
+        wrote.push(`customField:${field}`);
+      }
       if (entry.status !== undefined && entry.status !== '') {
         await tx.moveColumn(cardId, entry.status);
         wrote.push('status');
@@ -1319,5 +1360,166 @@ registerIntent<UpdateArgs | MultiUpdateArgs, UpdateResult | UpdateResult[]>({
       results.push({ cardId, wrote });
     }
     return isMultiUpdate(a) ? results : results[0];
+  },
+});
+
+// ─── the board-instance intents ──────────────────────────────────────────────
+
+export interface MoveBoardArgs {
+  card: string;
+  /** The destination board, by NAME or `widgetCommonId`. Settled in `board()`. */
+  toBoard: string;
+  position?: 'top' | 'bottom';
+}
+
+/**
+ * `move-board` — take one card OFF the board it is on and put it on another.
+ * The CLI surface of `cards move` (#109).
+ *
+ * **Two boards, both checked, both inside the intent.** `board()` returns the
+ * origin AND the settled destination, and the table checks every distinct one
+ * before anything is written — so a move OUT of the locked collection and a move
+ * INTO it refuse alike. The destination is settled here rather than passed
+ * through raw because `assertScope` GETs `/widgets/{id}`: handed a board NAME it
+ * 404s into "Board … not found", a refusal naming the wrong problem (#82).
+ *
+ * The origin is deliberately spelled `?? ''` rather than filtered away. A card
+ * with no `widgetCommonId` is an assignment fork, and `''` is what makes the lock
+ * REFUSE it — filtering it out would leave the destination as the only board
+ * checked, and the fork would ride in on it. `--force` does not rescue that, for
+ * the reason `assertScope` gives: there is no board for the escape hatch to
+ * escape.
+ *
+ * **`terminal: true`, and the write logs nothing** — see `TxCards.moveToBoard`.
+ * The move-back is spellable but is not an inverse: the card's column on the
+ * origin board is neither captured nor restorable, so `rolled-back` would be a
+ * lie about where the card ended up. The move is the last statement in `run` for
+ * `delete`'s `depthAtEntry` reason.
+ */
+registerIntent<MoveBoardArgs, Card>({
+  name: 'move-board',
+  summary: 'Move a card to a different board — irreversible, with no compensating write',
+  terminal: true,
+  preview: (a) => [
+    `move card ${a.card} to board ${a.toBoard}${a.position ? ` (${a.position})` : ''}`,
+    `  it LEAVES the board it is on: this is a move, not a second instance — 'widgets add' is that`,
+    `  IRREVERSIBLE here — the column it held on the old board is not captured, so no later failure can put it back`,
+  ],
+  board: async (a, tx) => [
+    (await tx.getCard(a.card)).boardId ?? '',
+    await tx.resolveBoardId(a.toBoard),
+  ],
+  // Last statement, deliberately: `moveToBoard` logs nothing, so `log.depth` is
+  // unchanged and a RefusalError raised after it would be rethrown as pre-write.
+  run: (a, tx) => tx.moveToBoard(a.card, a.toBoard, a.position),
+});
+
+export interface AddBoardInstanceArgs {
+  /** The board to put the card on, by NAME or `widgetCommonId`. */
+  board: string;
+  /** The `cardCommonId` whose instance set gains a member. */
+  card: string;
+  /** Optional column on the destination board, by `columnId`. */
+  column?: string;
+}
+
+/**
+ * `add-board-instance` — give a card a board instance it did not have. The CLI
+ * surface of `widgets add` (#109).
+ *
+ * **This is the fork factory, and that is why it is in the table.** A card's
+ * `boardId` is its `widgetCommonId`; the boardless card `dispatch` refuses writes
+ * to is a card with no instance at all. This is the one write that manufactures
+ * one, so it is the one thing allowed to — outside the table it was a write that
+ * created the very shape the table exists to refuse.
+ *
+ * **The DESTINATION board is the only one checked**, which is what the command
+ * did before and is not an oversight: `dragMode: 'commit'` adds an instance and
+ * leaves every existing one alone, so no other board's contents change. The card
+ * argument is a `cardCommonId` and has no single board to name.
+ *
+ * **`terminal: true`, and the write logs nothing** — see `TxCards.commitToBoard`.
+ * The inverse would be deleting the instance this created, and the new instance's
+ * `cardId` is not something the response has been measured to carry.
+ */
+registerIntent<AddBoardInstanceArgs, CommittedWidget>({
+  name: 'add-board-instance',
+  summary: 'Put an existing card on another board as a new instance — irreversible',
+  terminal: true,
+  preview: (a) => [
+    `add card ${a.card} to board ${a.board}${a.column ? ` in column ${a.column}` : ''}`,
+    `  a NEW board instance: every existing instance is left where it is`,
+    `  IRREVERSIBLE — the new instance's own id is not measured on this response, so nothing can name it to undo it`,
+  ],
+  board: async (a, tx) => tx.resolveBoardId(a.board),
+  // Last statement, for `move-board`'s reason.
+  run: (a, tx) => tx.commitToBoard(a.board, a.card, a.column),
+});
+
+export interface RemoveAllEdgesArgs {
+  card: string;
+}
+
+export interface RemovedEdges {
+  cardId: string;
+  /** The far card of every edge actually removed. Empty means there were none. */
+  removed: string[];
+}
+
+/**
+ * `clear-blocking-edges` — clear every blocking edge on one card, bounded.
+ * The CLI surface of `dependencies delete-all` (#109).
+ *
+ * **A DERIVED list, capped, and that is the whole point of registering it.** The
+ * multi-write rule elsewhere is "enumerated N, never derived N", and this is the
+ * deliberate exception: the caller cannot enumerate what it is asking to destroy,
+ * because "all of them" is the request. So the list is derived from ONE bounded
+ * read and then held to the same `MULTI_WRITE_CAP` — over the cap it REFUSES
+ * rather than wiping, because `DELETE /cards/{id}/dependencies` is a single
+ * unbounded call whose blast radius nobody sees until afterwards.
+ *
+ * An EMPTY edge set is not a refusal. `boundEntries`' empty arm is about an
+ * enumerated list the caller typed and got wrong; here it means the card has no
+ * dependencies, which is an honest `ok` with nothing written — the same answer
+ * `remove-blocking-edge` gives for an absent edge, so a retry after a failed run
+ * can still reach a clean result.
+ *
+ * Reversible, unlike the two above: each edge goes through
+ * `TxCards.removeBlockingEdge`, which captures the direction before the delete
+ * and pushes a real compensating write. A failure on edge 4 of 6 re-adds edges
+ * 1–3, LIFO, and the invocation reports `rolled-back`. That is the whole
+ * difference from the one-shot `DELETE .../dependencies` it replaces, which had
+ * no per-edge record and no inverse.
+ */
+registerIntent<RemoveAllEdgesArgs, RemovedEdges>({
+  name: 'clear-blocking-edges',
+  summary: 'Remove every blocking edge on a card, at most 20, in one transaction',
+  // A pure function of the args, like every other preview: it makes no read, so
+  // it cannot say how many edges there are. It says what bounds the write instead.
+  preview: (a) => [
+    `remove every blocking edge on ${a.card}`,
+    `  bounded: a card holding more than ${MULTI_WRITE_CAP} edges refuses rather than wiping`,
+    `  reversible: each edge removed carries its own compensating write`,
+  ],
+  board: async (a, tx) => (await tx.getCard(a.card)).boardId,
+  run: async (a, tx) => {
+    const cardId = await tx.resolveCardId(a.card);
+    const edges = await tx.getCardLinks(cardId);
+    if (edges.length === 0) return { cardId, removed: [] };
+    boundEntries('remove', edges, 'dependency edges');
+
+    const removed: string[] = [];
+    // Sequential, as every batched intent here is: the cap bounds it, and a
+    // parallel wipe would make "which edges exist now" a race with the log.
+    for (const edge of edges) {
+      // An inlined edge carries `cardCommonId`; one read from `/dependencies`
+      // carries `cardId`. `liveEdge` matches either, so take whichever is there
+      // rather than resolving a second time.
+      const far = edge.cardId ?? edge.cardCommonId;
+      if (!far) continue;
+      const outcome = await tx.removeBlockingEdge(cardId, far);
+      if (outcome.removed) removed.push(far);
+    }
+    return { cardId, removed };
   },
 });
