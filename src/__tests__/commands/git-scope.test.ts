@@ -26,9 +26,23 @@ jest.mock('../../lib/todo-scanner');
 const MockCardsAPI = CardsAPI as jest.MockedClass<typeof CardsAPI>;
 const MockBoardsAPI = BoardsAPI as jest.MockedClass<typeof BoardsAPI>;
 
+/**
+ * The human path. `--human` is explicit since #119 moved `git.ts` onto `run()`:
+ * JSON is the default, so a refusal now reaches STDOUT as an envelope and the
+ * `✗ …` wording these arms assert only exists under `--human`.
+ */
 async function runCli(args: string[]): Promise<void> {
+  await drive(['--human', ...args]);
+}
+
+/** The machine path — the DEFAULT, and where the refusal envelope lands. */
+async function runJson(args: string[]): Promise<void> {
+  await drive(args);
+}
+
+async function drive(args: string[]): Promise<void> {
   const program = new Command();
-  program.option('--verbose', 'Show stack traces');
+  program.option('--human').option('--pretty').option('--verbose', 'Show stack traces');
   registerGitCommands(program);
   program.exitOverride();
   await program.parseAsync(['node', 'favro', ...args]);
@@ -36,10 +50,13 @@ async function runCli(args: string[]): Promise<void> {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  process.exitCode = undefined;
   jest.spyOn(console, 'log').mockImplementation(() => {});
   jest.spyOn(console, 'error').mockImplementation(() => {});
   jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
-  jest.spyOn(process, 'exit').mockImplementation((() => {}) as any);
+  jest.spyOn(process, 'exit').mockImplementation((() => {
+    throw new Error('process.exit must not be called under run()');
+  }) as never);
 
   (config.resolveApiKey as jest.Mock).mockResolvedValue('test-token');
   (config.readConfig as jest.Mock).mockResolvedValue({ scopeCollectionId: 'coll-1' });
@@ -62,7 +79,10 @@ beforeEach(() => {
   (gitIntegration.readProjectConfig as jest.Mock).mockReturnValue({ boardId: 'board-a' });
 });
 
-afterEach(() => { jest.restoreAllMocks(); });
+afterEach(() => {
+  process.exitCode = undefined;
+  jest.restoreAllMocks();
+});
 
 describe('favro git sync — scope lock', () => {
   // `git sync` is routed through the `update` intent (#109), so the lock it takes
@@ -115,6 +135,33 @@ describe('favro git sync — scope lock', () => {
     await runCli(['git', 'sync', '--yes']);
 
     expect(MockCardsAPI.prototype.updateCard).not.toHaveBeenCalled();
+  });
+
+  it('the refusal is an ENVELOPE on stdout under the machine default, not stderr silence', async () => {
+    // The defect a live smoke run found on the unmigrated write family: with
+    // real credentials the command got far enough to reach the legacy
+    // `catch { logError; exit(1) }`, which is stderr-only — exit 1, STDOUT
+    // EMPTY. That is the dead end ADR-0002's boundary exists to remove, and
+    // moving this file onto `run()` is what removes it. Driven WITHOUT
+    // `--human`, which is the default a real agent gets.
+    (safety.assertScope as jest.Mock).mockRejectedValue(
+      Object.assign(new RefusalError('Scope violation: board "board-b" is outside the lock.'), {
+        name: 'ScopeError',
+      }),
+    );
+
+    await runJson(['git', 'sync', '--yes']);
+
+    const stdout = (console.log as unknown as jest.Mock).mock.calls.map((c) => String(c[0])).join('\n');
+    expect(JSON.parse(stdout)).toEqual({
+      error: {
+        message: expect.stringContaining('Scope violation: board "board-b" is outside the lock.'),
+        // Deterministic: the lock will refuse the same call the same way.
+        retryable: false,
+      },
+    });
+    expect(MockCardsAPI.prototype.updateCard).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
   });
 
   it('forwards --force to the lock', async () => {
@@ -225,7 +272,7 @@ describe('favro git sync — scope lock', () => {
     const said = (console.error as unknown as jest.Mock).mock.calls.map((c) => String(c[0])).join('\n');
     expect(said).toMatch(/capped at 20/);
     expect(said).toMatch(/not a page size/);
-    expect(process.exit).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 });
 
@@ -353,7 +400,7 @@ describe('favro git commit --comment — a refusal is not a failed comment', () 
 
     expect(errored()).toContain('Scope violation: board "board-out" is outside the lock.');
     expect(logged()).not.toContain(NOTICE);
-    expect(process.exit).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   it('still swallows an ORDINARY comment failure, exit code untouched', async () => {
@@ -365,7 +412,7 @@ describe('favro git commit --comment — a refusal is not a failed comment', () 
     await runCli(['git', 'commit', '-m', 'msg', '--card', 'card-1', '--comment']);
 
     expect(logged()).toContain(NOTICE);
-    expect(process.exit).not.toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBeUndefined();
   });
 
   it('takes the lock at all on this path — and only under a lock', async () => {
@@ -379,6 +426,6 @@ describe('favro git commit --comment — a refusal is not a failed comment', () 
 
     expect(safety.checkScope).not.toHaveBeenCalled();
     expect(MockCardsAPI.prototype.getCard).not.toHaveBeenCalled();
-    expect(process.exit).not.toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBeUndefined();
   });
 });

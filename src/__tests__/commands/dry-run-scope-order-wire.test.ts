@@ -587,16 +587,21 @@ describe('a failure that is not a scope violation still says what it is', () => 
  * block / 4678 B of sync plan, and ZERO requests in every case. `git sync` is
  * the one the ticket left "stated unverified"; it is measured here.
  *
- * THEY ARE UNMIGRATED, so their refusal does NOT reach ADR-0002's envelope: they
- * end in `catch { logError; process.exit(1) }`, and the refusal lands on STDERR
- * as `✗ Scope violation: …` with stdout carrying no envelope at all. That is
- * #119's half of the work, not this one's, so the arms below assert the stderr
- * render rather than an envelope — and assert it EXACTLY, because `✗ Scope
- * violation:` alone does not discriminate: `logError` renders a bare `Error`
- * carrying the identical message as `✗ Error: Scope violation: …`, which is the
- * trap #152's own assertion fell into. `toBe` on the whole render, plus the
- * `instanceof ScopeError` / `.name` pin recorded off the real thrown object,
- * closes it in both directions.
+ * THREE OF THE FIVE ARE STILL UNMIGRATED, so their refusal does NOT reach
+ * ADR-0002's envelope: they end in `catch { logError; a hard exit }`, and the
+ * refusal lands on STDERR as `✗ Scope violation: …` with stdout carrying no
+ * envelope at all. So the arms below assert the stderr render rather than an
+ * envelope — and assert it EXACTLY, because `✗ Scope violation:` alone does not
+ * discriminate: `logError` renders a bare `Error` carrying the identical message
+ * as `✗ Error: Scope violation: …`, which is the trap #152's own assertion fell
+ * into. `toBe` on the whole render, plus the `instanceof ScopeError` / `.name`
+ * pin recorded off the real thrown object, closes it in both directions.
+ *
+ * **`git todos` and `git sync` GRADUATED in #119** and run the identical table
+ * below under `GRADUATED`, driven with `--human` so the stderr render and the
+ * preview wording stay the same measurement — plus one arm the three legacy
+ * subjects cannot have yet: the machine default putting the refusal envelope on
+ * STDOUT. That arm is the half of #155 this file was written unable to assert.
  *
  * Every subject gets the same arms as the four above: outside → refusal with the
  * preview ABSENT, inside → preview PRESENT at exit 0, no lock → preview with no
@@ -655,17 +660,26 @@ const UNMIGRATED: Unmigrated[] = [
     inside: { argv: ['custom-fields', 'set', 'card-inside', 'field-1', 'v', '--dry-run'], preview: '[dry-run] update card card-inside' },
     real: ['custom-fields', 'set', 'card-1', 'field-1', 'v', '--yes'],
   },
+];
+
+/**
+ * The two #119 moved onto `run()`. Same table, same six arms, driven with
+ * `--human` so the refusal render and the preview wording below are the same
+ * measurement they were when these were legacy — the exit code is the one thing
+ * that had to change, and it comes off `process.exitCode` now.
+ */
+const GRADUATED: Unmigrated[] = [
   {
     label: 'git todos',
-    outside: { argv: ['git', 'todos', '--board', 'brd-other', '--dry-run'], preview: 'Would create 1 cards on board brd-other' },
-    inside: { argv: ['git', 'todos', '--board', 'brd-inside', '--dry-run'], preview: 'Would create 1 cards on board brd-inside' },
-    real: ['git', 'todos', '--board', 'brd-other', '--create', '--yes'],
+    outside: { argv: ['git', 'todos', '--board', 'brd-other', '--dry-run', '--human'], preview: 'Would create 1 cards on board brd-other' },
+    inside: { argv: ['git', 'todos', '--board', 'brd-inside', '--dry-run', '--human'], preview: 'Would create 1 cards on board brd-inside' },
+    real: ['git', 'todos', '--board', 'brd-other', '--create', '--yes', '--human'],
   },
   {
     label: 'git sync',
-    outside: { argv: ['git', 'sync', '--dry-run'], preview: 'Would move cards', arrange: syncBranches('card-1') },
-    inside: { argv: ['git', 'sync', '--dry-run'], preview: 'Would move cards', arrange: syncBranches('card-inside') },
-    real: ['git', 'sync', '--yes'],
+    outside: { argv: ['git', 'sync', '--dry-run', '--human'], preview: 'Would move cards', arrange: syncBranches('card-1') },
+    inside: { argv: ['git', 'sync', '--dry-run', '--human'], preview: 'Would move cards', arrange: syncBranches('card-inside') },
+    real: ['git', 'sync', '--yes', '--human'],
   },
 ];
 
@@ -699,6 +713,9 @@ async function driveLegacy(args: string[]): Promise<Outcome & { thrown: unknown 
   const err: string[] = [];
   let code: number | undefined;
   let thrown: unknown;
+  // The two GRADUATED subjects set `process.exitCode` instead of exiting, so the
+  // code is read from whichever of the two the subject actually uses.
+  process.exitCode = undefined;
 
   const log = console.log as unknown as jest.Mock;
   const error = console.error as unknown as jest.Mock;
@@ -720,10 +737,12 @@ async function driveLegacy(args: string[]): Promise<Outcome & { thrown: unknown 
 
   await runUnmigrated(args);
 
-  return { code, stdout: out.join('\n'), stderr: err.join('\n'), logOrder: log.mock.invocationCallOrder, thrown };
+  const outcome = { code: code ?? process.exitCode, stdout: out.join('\n'), stderr: err.join('\n'), logOrder: log.mock.invocationCallOrder, thrown };
+  process.exitCode = undefined;
+  return outcome;
 }
 
-describe.each(UNMIGRATED)('$label --dry-run takes the scope lock first (#155)', (s: Unmigrated) => {
+describe.each([...UNMIGRATED, ...GRADUATED])('$label --dry-run takes the scope lock first (#155)', (s: Unmigrated) => {
   beforeEach(() => {
     jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
     (gitIntegration.isGitRepo as jest.Mock).mockReturnValue(true);
@@ -857,7 +876,7 @@ describe.each(UNMIGRATED)('$label --dry-run takes the scope lock first (#155)', 
 // ─── the ordering itself, not just the verdict ────────────────────────────────
 
 describe('the five consult the lock BEFORE they print anything of the plan (#155)', () => {
-  it.each(UNMIGRATED.map((s) => [s.label, s] as const))(
+  it.each([...UNMIGRATED, ...GRADUATED].map((s) => [s.label, s] as const))(
     '%s issues its resolving GETs and then prints no preview at all',
     async (_label, s) => {
       const { served } = await stand(LOCK);
@@ -882,6 +901,64 @@ describe('the five consult the lock BEFORE they print anything of the plan (#155
   );
 });
 
+// ─── what graduating onto run() bought: the envelope (#119) ──────────────────
+
+/**
+ * The half of #155 this file was written unable to assert.
+ *
+ * The two `git` previews refused correctly and wrote the refusal to STDERR with
+ * ZERO bytes on stdout, because they ended in the legacy
+ * `catch { logError; a hard exit }`. A live smoke run against the real API
+ * re-measured exactly that on the sibling write family and called it the dead
+ * end #110 existed to remove. `run()` is what removes it, and this is the arm
+ * that says so: the machine DEFAULT — no `--human`, which is what an agent gets.
+ *
+ * The three legacy subjects above deliberately have no counterpart here; adding
+ * one would be a test asserting the defect.
+ */
+describe.each(GRADUATED)('$label refuses into the envelope on stdout (#119)', (s: Unmigrated) => {
+  const machine = (argv: string[]) => argv.filter((a) => a !== '--human');
+
+  beforeEach(() => {
+    jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    (gitIntegration.isGitRepo as jest.Mock).mockReturnValue(true);
+    (gitIntegration.findProjectRoot as jest.Mock).mockReturnValue('/repo');
+    (gitIntegration.readProjectConfig as jest.Mock).mockReturnValue({ boardId: 'brd-other' });
+    (todoScanner.scanTodos as jest.Mock).mockReturnValue([TODO]);
+    (todoScanner.groupByFile as jest.Mock).mockReturnValue([{ file: TODO.file, items: [TODO] }]);
+    (todoScanner.todoToCardTitle as jest.Mock).mockReturnValue('TODO: fix me');
+    (todoScanner.formatTodoAsCardDescription as jest.Mock).mockReturnValue('src/a.ts:3');
+  });
+
+  it('exit 1, the refusal parseable on stdout, and NOTHING on stderr', async () => {
+    await stand(LOCK);
+    s.outside.arrange?.();
+
+    const { code, stdout, stderr } = await driveLegacy(machine(s.outside.argv));
+
+    expect(code).toBe(1);
+    expect(JSON.parse(stdout)).toEqual({
+      error: { message: expect.stringContaining(OUTSIDE_MESSAGE), retryable: false },
+    });
+    expect(stderr).toBe('');
+    expect(stdout).not.toContain(s.outside.preview);
+  });
+
+  it('and the preview it DOES allow is parseable too — nothing ahead of the JSON', async () => {
+    // The other polarity, and the second live-smoke finding: the card-write
+    // family put its `✓ …` line on stdout AHEAD of the JSON, so the documented
+    // default did not parse. Everything this command says while it works is on
+    // stderr now, so stdout is one document.
+    await stand(LOCK);
+    s.inside.arrange?.();
+
+    const { code, stdout } = await driveLegacy(machine(s.inside.argv));
+
+    expect(code).toBeUndefined();
+    expect(JSON.parse(stdout)).toMatchObject({ dryRun: true });
+  });
+});
+
 // ─── git sync's second conjunct: a lock is not enough, there must be work ─────
 
 describe('git sync with nothing to move needs no credential (#155)', () => {
@@ -904,8 +981,10 @@ describe('git sync with nothing to move needs no credential (#155)', () => {
 
     expect(code).toBeUndefined();
     expect(stderr).toBe('');
-    // The local report still prints — it describes the repo, not the write.
-    expect(stdout).toContain('Branch analysis (1 card-linked branches)');
+    // The local report still runs — it describes the repo, not the write — but
+    // #119 moved it to STDERR, so stdout is the envelope alone and what it
+    // reports is an empty plan.
+    expect(JSON.parse(stdout)).toMatchObject({ dryRun: true, wouldMove: [] });
     expect(stdout).not.toContain('Would move cards');
   });
 });

@@ -96,7 +96,6 @@ const ALLOWLIST: readonly string[] = [
   'src/commands/columns.ts',
   'src/commands/custom-fields.ts',
   'src/commands/dependencies.ts',
-  'src/commands/git.ts',
   'src/commands/scope.ts',
   'src/commands/tags.ts',
   'src/commands/tasklists.ts',

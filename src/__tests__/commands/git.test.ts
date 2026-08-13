@@ -32,39 +32,49 @@ const MockComments = CommentsApiClient as jest.MockedClass<typeof CommentsApiCli
 
 let logSpy: jest.SpyInstance;
 let errorSpy: jest.SpyInstance;
-let exitSpy: jest.SpyInstance;
+let stderrSpy: jest.SpyInstance;
 
 /**
- * `process.exit` really does stop the action. A stub that returns lets the code
- * after a guard keep running, which would let "refuse and exit 1" pass while
- * the write it was guarding still happened.
+ * The human path, which is what almost every arm below asserts on. `--human` is
+ * explicit since #119 moved this file onto `run()`: JSON is the default, so a
+ * bare `runCli` would hand every one of these a machine envelope.
  */
-class ExitCalled extends Error {
-  constructor(readonly code: number) {
-    super(`process.exit(${code})`);
-  }
+async function runCli(args: string[]): Promise<void> {
+  await drive(['--human', ...args]);
 }
 
-async function runCli(args: string[]): Promise<void> {
+/** The machine path — the DEFAULT for a real invocation (ADR-0002). */
+async function runJson(args: string[]): Promise<void> {
+  await drive(args);
+}
+
+async function drive(args: string[]): Promise<void> {
   const program = new Command();
-  program.option('--verbose', 'Show stack traces');
+  program.option('--human').option('--pretty').option('--verbose', 'Show stack traces');
   registerGitCommands(program);
   program.exitOverride();
-  await program.parseAsync(['node', 'favro', ...args]).catch((e) => {
-    if (!(e instanceof ExitCalled)) throw e;
-  });
+  await program.parseAsync(['node', 'favro', ...args]);
 }
 
 const output = () => logSpy.mock.calls.map((c) => String(c[0])).join('\n');
 const errors = () => errorSpy.mock.calls.map((c) => String(c[0])).join('\n');
+/**
+ * What the command wrote to STDERR while it was still working — the branch
+ * analysis, the TODO listing under `--create`, the progress lines. #119 moved
+ * all of it off stdout, which now carries the envelope alone.
+ */
+const noted = () => stderrSpy.mock.calls.map((c) => String(c[0])).join('');
+/** The one JSON document on stdout. Nothing may precede it. */
+const parsed = () => JSON.parse(output());
 
 beforeEach(() => {
   jest.clearAllMocks();
+  process.exitCode = undefined;
   logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
   errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-  jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
-  exitSpy = jest.spyOn(process, 'exit').mockImplementation(((code?: number) => {
-    throw new ExitCalled(code ?? 0);
+  stderrSpy = jest.spyOn(process.stderr, 'write').mockImplementation(() => true);
+  jest.spyOn(process, 'exit').mockImplementation((() => {
+    throw new Error('process.exit must not be called under run()');
   }) as never);
 
   (config.resolveApiKey as jest.Mock).mockResolvedValue('test-token');
@@ -80,6 +90,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  process.exitCode = undefined;
   jest.restoreAllMocks();
 });
 
@@ -104,7 +115,7 @@ describe('git link', () => {
     await runCli(['git', 'link', '--board', 'board-a']);
 
     expect(gitIntegration.writeProjectConfig).not.toHaveBeenCalled();
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   test('an unreadable board links nothing', async () => {
@@ -114,7 +125,7 @@ describe('git link', () => {
 
     expect(gitIntegration.writeProjectConfig).not.toHaveBeenCalled();
     expect(errors()).toContain('404 board not found');
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 });
 
@@ -188,7 +199,7 @@ describe('git branch', () => {
     await runCli(['git', 'branch', 'card-1', '-y']);
 
     expect(output()).toContain('(Could not move card');
-    expect(exitSpy).not.toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBeUndefined();
   });
 
   test('an unreadable card exits 1 and creates no branch', async () => {
@@ -198,7 +209,7 @@ describe('git branch', () => {
 
     expect(gitIntegration.createBranch).not.toHaveBeenCalled();
     expect(errors()).toContain('404 card not found');
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 });
 
@@ -218,7 +229,7 @@ describe('git commit', () => {
 
     expect(gitIntegration.commitWithMessage).not.toHaveBeenCalled();
     expect(errors()).toContain('No staged changes');
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   test('prefers the explicit --card over the branch mapping', async () => {
@@ -296,7 +307,7 @@ describe('git commit', () => {
 
     expect(output()).toContain('✓ Committed: abc1234 [card-9] wip');
     expect(output()).toContain('(Could not add comment to card)');
-    expect(exitSpy).not.toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBeUndefined();
   });
 });
 
@@ -324,11 +335,14 @@ describe('git sync — reporting', () => {
   test('groups card-linked branches by git status and counts only those', async () => {
     await runCli(['git', 'sync', '-y']);
 
-    expect(output()).toContain('Branch analysis (2 card-linked branches)');
-    expect(output()).toContain('feature/one → card card-1');
-    expect(output()).toContain('feature/two → card card-2');
+    // On STDERR since #119: the analysis describes the local repo and prints
+    // while the command is still working, so leaving it on stdout would put
+    // prose in front of the envelope this command now writes there.
+    expect(noted()).toContain('Branch analysis (2 card-linked branches)');
+    expect(noted()).toContain('feature/one → card card-1');
+    expect(noted()).toContain('feature/two → card card-2');
     // The branch with no card reference is not counted or listed.
-    expect(output()).not.toContain('main → card');
+    expect(noted()).not.toContain('main → card');
   });
 
   test('one failed write UNWINDS the pass rather than reporting a partial count', async () => {
@@ -352,13 +366,34 @@ describe('git sync — reporting', () => {
       .toHaveLength(2);
   });
 
-  test('--json emits the raw mappings and the linked board, and writes nothing', async () => {
-    await runCli(['git', 'sync', '--json']);
+  test('--dry-run emits the raw mappings and the linked board, and writes nothing', async () => {
+    // The successor to `git sync --json`, which #119 deleted. That flag was an
+    // early return ABOVE the confirm and the write, so with JSON the default a
+    // mechanical rename would have made the plain `favro git sync` report and
+    // never sync. `--dry-run` already meant "report, write nothing", and unlike
+    // `--json` it takes the scope lock before promising anything (#155).
+    await runJson(['git', 'sync', '--dry-run']);
 
-    const printed = JSON.parse(logSpy.mock.calls.map((c) => String(c[0])).find((l) => l.trim().startsWith('{'))!);
+    const printed = parsed();
     expect(printed.linkedBoard).toBe('board-a');
     expect(printed.branches).toHaveLength(3);
+    expect(printed.wouldMove).toEqual([
+      { card: 'card-1', status: 'Done' },
+      { card: 'card-2', status: 'In Progress' },
+    ]);
     expect(MockCardsAPI.prototype.updateCard).not.toHaveBeenCalled();
+  });
+
+  test('the plain invocation SYNCS — the machine default is not a report', async () => {
+    // The regression #119's rename would have shipped: `git sync --json` used
+    // to return above the write, and `--json` was on its way to becoming the
+    // default. If this ever goes green with `updateCard` uncalled, the JSON arm
+    // has grown an early return again.
+    await runJson(['git', 'sync', '-y']);
+
+    expect(MockCardsAPI.prototype.updateCard).toHaveBeenCalledWith('card-1', { columnId: 'col-Done' });
+    // And stdout is the envelope alone — the branch analysis went to stderr.
+    expect(parsed()).toHaveLength(2);
   });
 
   test('says so, and asks nothing, when no branch carries a card reference', async () => {
@@ -432,7 +467,10 @@ describe('git todos — reporting', () => {
 
     await runCli(['git', 'todos', '--limit', '2']);
 
-    expect(output()).toContain('... and 3 more');
+    // The runner's wording now (`noteTruncation`), not a hand-rolled
+    // "... and 3 more": the listing became a `rows` result in #119, so the cut
+    // and the sentence about it are `capRows`'s, shared with every list read.
+    expect(output()).toContain('(truncated to 2 of 5 — raise --limit to see the rest)');
   });
 
   test('--limit also caps how many cards --create writes', async () => {
@@ -464,15 +502,28 @@ describe('git todos — reporting', () => {
     await runCli(['git', 'todos', '--create', '-y']);
 
     expect(errors()).toContain('No board specified');
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
-  test('--json emits the total and the capped items, and creates nothing', async () => {
-    await runCli(['git', 'todos', '--json', '--create']);
+  test('the listing arm IS the envelope — what --json used to hand-roll', async () => {
+    // `git todos --json` returned `{total, items}` from above the `--create`
+    // block, so `--json --create` printed the scan and created nothing. #119
+    // deleted the flag: without `--create` the listing is the answer and goes
+    // through `rows`/`truncated` like every other list read.
+    await runJson(['git', 'todos']);
 
-    const printed = JSON.parse(logSpy.mock.calls.map((c) => String(c[0])).find((l) => l.trim().startsWith('{'))!);
-    expect(printed).toEqual({ total: 1, items: [item] });
+    expect(parsed()).toEqual({ rows: [item] });
     expect(MockCardsAPI.prototype.createCard).not.toHaveBeenCalled();
+  });
+
+  test('--create WRITES on the machine default — the report arm no longer swallows it', async () => {
+    // The other half of the same regression: `--json --create` created nothing.
+    await runJson(['git', 'todos', '--create', '-y']);
+
+    expect(MockCardsAPI.prototype.createCard).toHaveBeenCalledTimes(1);
+    // The scan listing went to stderr, so stdout parses as the created cards.
+    expect(parsed()).toEqual([{ cardId: 'new-1' }]);
+    expect(noted()).toContain('L3 [TODO] fix me');
   });
 
   test('more than twenty TODOs REFUSES, and the refusal names --limit', async () => {
@@ -493,7 +544,7 @@ describe('git todos — reporting', () => {
     expect(MockCardsAPI.prototype.createCard).not.toHaveBeenCalled();
     expect(errors()).toContain('capped at 20');
     expect(errors()).toContain('--limit 20');
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   test('--limit 20 is the remedy the refusal names, and it works', async () => {

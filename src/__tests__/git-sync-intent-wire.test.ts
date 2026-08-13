@@ -300,6 +300,25 @@ const lock = (config: unknown) =>
 
 const run = (...argv: string[]) => buildProgram().parseAsync(['node', 'favro', ...argv]);
 
+/**
+ * The human path. `git sync` moved onto `run()` in #119, so its `✓ Updated N/N`
+ * line lives on the `human` formatter and JSON is what an unflagged run gets.
+ */
+const runHuman = (...argv: string[]) => run('--human', ...argv);
+
+/**
+ * `git sync` no longer THROWS on a refusal — `run()` sets `process.exitCode` and
+ * returns (ADR-0002). The unmigrated commands further down this file still exit
+ * hard, which is why `attempt` stays.
+ */
+const exitCodeAfter = async (...argv: string[]): Promise<number | undefined> => {
+  process.exitCode = undefined;
+  await run(...argv);
+  const code = process.exitCode;
+  process.exitCode = undefined;
+  return code;
+};
+
 const attempt = async (...argv: string[]): Promise<string | undefined> => {
   try {
     await run(...argv);
@@ -349,7 +368,7 @@ describe('git sync writes a column move that actually lands', () => {
       { branch: 'feature/b', cardId: B, status: 'open' },
     ]);
 
-    await run('git', 'sync', '--yes');
+    await runHuman('git', 'sync', '--yes');
 
     // THE MEASUREMENT. Not "the PUT answered 200" — the stand's own stored card,
     // which is what a following `GET /cards/{id}` returns and the only surface
@@ -384,9 +403,7 @@ describe('git sync writes a column move that actually lands', () => {
     const { cards } = await startServer({ cards: [card({ cardId: A })], deaf: new Set([A]) });
     branches([{ branch: 'feature/a', cardId: A, status: 'merged' }]);
 
-    const thrown = await attempt('git', 'sync', '--yes');
-
-    expect(thrown).toBe('process.exit(1)');
+    expect(await exitCodeAfter('git', 'sync', '--yes')).toBe(1);
     expect(cards.get(A)!.columnId).toBe(TODO);
     expect(said()).toContain('did not land there');
     expect(said()).not.toContain('✓ Updated');
@@ -405,9 +422,7 @@ describe('git sync writes a column move that actually lands', () => {
       { branch: 'feature/gone', cardId: cardId(99), status: 'merged' },
     ]);
 
-    const thrown = await attempt('git', 'sync', '--yes');
-
-    expect(thrown).toBe('process.exit(1)');
+    expect(await exitCodeAfter('git', 'sync', '--yes')).toBe(1);
     expect(writes(received)).toEqual([]);
     expect(said()).toContain('feature/gone');
     expect(said()).toContain('.favro.json');
@@ -443,9 +458,7 @@ describe('git sync writes a column move that actually lands', () => {
       { branch: 'feature/b', cardId: B, status: 'merged' },
     ]);
 
-    const thrown = await attempt('git', 'sync', '--yes');
-
-    expect(thrown).toBe('process.exit(1)');
+    expect(await exitCodeAfter('git', 'sync', '--yes')).toBe(1);
     expect(cards.get(A)!.columnId).toBe(TODO);
     expect(said()).toContain('Rolled back');
   });
@@ -459,9 +472,7 @@ describe('git sync refuses above the multi-write cap', () => {
     const { received, cards } = await startServer({ cards: many.map((id) => card({ cardId: id })) });
     branches(many.map((id, i) => ({ branch: `feature/${i}`, cardId: id, status: 'merged' })));
 
-    const thrown = await attempt('git', 'sync', '--yes');
-
-    expect(thrown).toBe('process.exit(1)');
+    expect(await exitCodeAfter('git', 'sync', '--yes')).toBe(1);
     expect(said()).toContain(`capped at ${MULTI_WRITE_CAP}`);
     expect(said()).toContain('not a page size');
     expect(writes(received)).toEqual([]);
@@ -504,9 +515,7 @@ describe('git sync takes the lock inside the intent', () => {
       { branch: 'feature/b', cardId: B, status: 'merged' },
     ]);
 
-    const thrown = await attempt('git', 'sync', '--yes');
-
-    expect(thrown).toBe('process.exit(1)');
+    expect(await exitCodeAfter('git', 'sync', '--yes')).toBe(1);
     expect(said()).toContain('Scope violation');
     expect(writes(received)).toEqual([]);
     expect(cards.get(A)!.columnId).toBe(TODO);
