@@ -82,8 +82,17 @@ interface StandOptions {
   row?: Record<string, unknown>;
   /** Drop a field's write on the floor, answering 200 with the untouched row. */
   ignore?: string;
-  /** Echo this instead of what was written to `name`. */
+  /** Echo this instead of what was written to `name` / `dueDate`. */
   nameEcho?: string;
+  dueDateEcho?: string;
+  /**
+   * Store a custom field's value under this key instead of `value` — what a
+   * `Members` / `Link` / `Number` field does, per the four payload keys
+   * `custom-fields-api.ts` builds. Unmeasured on the live wire, and that is the
+   * point: reading `value` alone would report such a write as one that did not
+   * take.
+   */
+  fieldEchoKey?: 'members' | 'link' | 'total';
 }
 
 async function startServer(options: StandOptions = {}): Promise<Stand> {
@@ -126,7 +135,7 @@ async function startServer(options: StandOptions = {}): Promise<Stand> {
         row.detailedDescription = canonicalise(String(put.detailedDescription));
       }
       if ('dueDate' in put && options.ignore !== 'dueDate') {
-        const value = put.dueDate;
+        const value = options.dueDateEcho ?? put.dueDate;
         // MEASURED: `""` is a silent no-op, `null` clears, a bare date normalises.
         if (value === null) delete row.dueDate;
         else if (value === '') void 0;
@@ -144,7 +153,7 @@ async function startServer(options: StandOptions = {}): Promise<Stand> {
           const stored = (row.customFields ?? []) as Array<Record<string, unknown>>;
           row.customFields = [
             ...stored.filter((f) => f.customFieldId !== entry.customFieldId),
-            { customFieldId: entry.customFieldId, value: entry.value },
+            { customFieldId: entry.customFieldId, [options.fieldEchoKey ?? 'value']: entry.value },
           ];
         }
       }
@@ -193,12 +202,29 @@ describe('setText — name is confirmed against the echo, description cannot be'
     expect(stand.row.name).toBe('probe card');
   });
 
-  it('a name write the wire echoes DIFFERENTLY throws, and logs nothing to undo', async () => {
-    const stand = await startServer({ nameEcho: 'something else' });
+  it('a name write the wire silently drops says nothing was written', async () => {
+    const stand = await startServer({ ignore: 'name' });
     const { tx, log } = txOn(stand);
 
     await expect(tx.setText(CARD, 'name', 'renamed')).rejects.toThrow(TransientError);
-    await expect(tx.setText(CARD, 'name', 'renamed')).rejects.toThrow(/answered 200 but did not take/);
+    await expect(tx.setText(CARD, 'name', 'renamed')).rejects.toThrow(/nothing was written/);
+    expect(log.depth).toBe(0);
+  });
+
+  it('a name write echoed as a THIRD value says so, instead of claiming nothing happened', async () => {
+    const stand = await startServer({ nameEcho: 'something else' });
+    const { tx, log } = txOn(stand);
+
+    // `setArchived` may say "nothing was written" on a mismatch because `archived`
+    // is two-valued. `name` is not: an echo that is neither what we sent nor what
+    // was there means something DID get written, and this throw leaves it unlogged.
+    //
+    // ONE call, and the stand is why: it stores the echo, so a second attempt finds
+    // the card already holding it and takes the other branch honestly.
+    const error = await tx.setText(CARD, 'name', 'renamed').catch((e: unknown) => e as Error);
+    expect(error).toBeInstanceOf(TransientError);
+    expect(error.message).toMatch(/THIRD value/);
+    expect(error.message).toMatch(/cannot unwind/);
     expect(log.depth).toBe(0);
   });
 
@@ -286,8 +312,26 @@ describe('setDueDate — three write shapes, and one that answers 200 and writes
     const { tx, log } = txOn(stand);
 
     await expect(tx.setDueDate(CARD, '2026-09-01')).rejects.toThrow(TransientError);
+    await expect(tx.setDueDate(CARD, '2026-09-01')).rejects.toThrow(/nothing was written/);
     expect(log.depth).toBe(0);
     expect(stand.row.dueDate).toBeUndefined();
+  });
+
+  it('a due-date echoed as a THIRD day says so, instead of claiming nothing happened', async () => {
+    const stand = await startServer({
+      row: { dueDate: '2026-01-01T00:00:00.000Z' },
+      dueDateEcho: '2026-12-25T00:00:00.000Z',
+    });
+    const { tx, log } = txOn(stand);
+
+    // Neither what we sent nor what was there — the unbounded-domain case
+    // `archived` cannot have, and the one where "nothing was written" is a guess.
+    // One call, for the reason the `name` arm above gives.
+    const error = await tx.setDueDate(CARD, '2026-09-01').catch((e: unknown) => e as Error);
+    expect(error).toBeInstanceOf(TransientError);
+    expect(error.message).toMatch(/THIRD value/);
+    expect(error.message).toMatch(/cannot unwind/);
+    expect(log.depth).toBe(0);
   });
 });
 
@@ -325,6 +369,44 @@ describe('setFieldValue — a 202 with a message is a failure, and axios calls i
     await expect(tx.setFieldValue(CARD, 'ZZZZZZZZZZZZZZZZZ', ['x'])).rejects.toThrow(
       /Custom field is not valid/,
     );
+  });
+
+  it('the 202 refusal lives at the seam, so a caller who never touches TxCards inherits it', async () => {
+    const stand = await startServer();
+    const api = new CardsAPI(stand.client);
+
+    // `UpdateCardRequest.customFields` is a door #109's `cards update --field` will
+    // come through. A guard only inside the primitive would leave that caller
+    // holding a `{message}` body typed as a Card, every field undefined.
+    await expect(
+      api.updateCard(CARD, { customFields: [{ customFieldId: FIELD, value: [] }] }),
+    ).rejects.toThrow(RefusalError);
+    await expect(
+      api.updateCard(CARD, { customFields: [{ customFieldId: FIELD, value: [] }] }),
+    ).rejects.toThrow(/Invalid status value/);
+  });
+
+  it('a value echoed under members instead of value is a write that TOOK, not one that vanished', async () => {
+    const stand = await startServer({ row: { customFields: [] }, fieldEchoKey: 'members' });
+    const { tx, log } = txOn(stand);
+
+    // THE ARM WITH TEETH for reading all four payload keys. `custom-fields-api.ts`
+    // builds `members` / `link` / `total` for four field types, none of them probed
+    // on this path. Reading `value` alone reports such a write as "did not take",
+    // throws, and leaves a real mutation off the compensation log — the exact sign
+    // flip of the silent-no-op class this facade exists to close.
+    await expect(tx.setFieldValue(CARD, FIELD, ['u-1'])).resolves.toBeDefined();
+    expect(log.depth).toBe(1);
+  });
+
+  it('a field already holding the value writes nothing and logs nothing', async () => {
+    const stand = await startServer();
+    const { tx, log } = txOn(stand);
+
+    await tx.setFieldValue(CARD, FIELD, [TODO_OPTION]);
+
+    expect(stand.writes()).toEqual([]);
+    expect(log.depth).toBe(0);
   });
 
   it('a field with no prior value orphans on the unwind, because a select has no measured clear', async () => {
