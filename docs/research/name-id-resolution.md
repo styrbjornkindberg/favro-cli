@@ -229,6 +229,12 @@ The tag, column and user loops are correct — they start at `page = 0` and incr
 before use: `src/lib/tags-api.ts:25,44`, `src/lib/columns-api.ts:26,45`,
 `src/lib/users-api.ts:31,50`.
 
+**Amendment (#123, 2026-08-13).** The bug is real and was fixed, so none of the five
+`file:line`s above resolves any more. #91 replaced all seven near-identical loops with the
+single `getAllPages` helper this section's last paragraph asks for, and #123 deleted
+`BoardsAPI.listCollections` outright as a duplicate of `CollectionsAPI`'s. The argument
+stands as the argument made at the time; only the citations are stale.
+
 Impact on the resolver: name→id built on `listBoards`/`listCollections` will report
 "no such board" for boards sitting in page 1 of a >100-board workspace. Fix the loops
 before building resolution on them — or better, extract **one** paging helper (there are

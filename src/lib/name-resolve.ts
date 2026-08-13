@@ -157,9 +157,10 @@ export async function resolveNameToId(options: ResolveOptions): Promise<string> 
  * It existed twice, byte-identically, and neither copy could import the other's
  * module: `boards-api` needs it for `listBoardsByCollection` and
  * `collections-api` already imports `boards-api` for `Board`, so putting the
- * survivor in either one is a cycle `madge --circular` fails on. Here it is a
- * cycle for nobody — `http-client` and `paginate` are not API classes, which is
- * the only import ADR-0003 barred from the resolver.
+ * survivor in either one is a cycle `madge --circular` fails on (`import type`
+ * does not help — madge counts it). Here it is a cycle for nobody. ADR-0003's
+ * cycle argument is about API classes importing each other, and `http-client`
+ * and `paginate` are not any: nothing they reach imports this module.
  *
  * It takes a `client` rather than the `fetch` callback the ADR's other callers
  * pass, because the listing is not the caller's to vary: both sites want exactly
