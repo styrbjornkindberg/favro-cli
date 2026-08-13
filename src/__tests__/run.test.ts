@@ -123,6 +123,56 @@ describe('the runner owns the output', () => {
     expect(JSON.parse(stdout()[0])).toEqual({ rows: [1, 2], truncated: true });
   });
 
+  it('carries `unreachable` into the envelope, and only when it is non-empty', async () => {
+    // The envelope's THIRD key (`read-shape.ts`), and the one `capRows` cannot
+    // produce: only a handler knows which per-item calls came back empty. #119
+    // added it because `cards list --filter unblocked` was the first list read
+    // with holes to migrate, and without this the runner would have dropped
+    // them — an agent reading `rows` alone cannot tell "we could not look" from
+    // "there was nothing there", which is rule 3.
+    const hole = [{ id: 'card-9', reason: '404 Not Found' }];
+    const { root, leaf } = program();
+    leaf.action(run(async () => ({ rows: [{ id: 'a' }], unreachable: hole })));
+
+    await parse(root, ['thing']);
+
+    expect(JSON.parse(stdout()[0])).toEqual({ rows: [{ id: 'a' }], unreachable: hole });
+  });
+
+  it('omits `unreachable` entirely when there are no holes — absent, not empty', async () => {
+    // The other polarity, and rule 3's actual requirement: an ABSENT marker is
+    // what makes an empty `rows` mean true-empty. `unreachable: []` would say
+    // the read was complete in a shape an agent has to test the length of.
+    const { root, leaf } = program();
+    leaf.action(run(async () => ({ rows: [{ id: 'a' }], unreachable: [] })));
+
+    await parse(root, ['thing']);
+
+    expect(JSON.parse(stdout()[0])).not.toHaveProperty('unreachable');
+  });
+
+  it('tells a --human reader about the holes too, off `unreachable` itself', async () => {
+    // A formatter is handed ROWS, so it can no more see a hole than it can see
+    // a cut — the runner says both, or human mode presents an incomplete read
+    // as a complete one.
+    const { root, leaf } = program();
+    leaf.action(
+      run(async () => ({
+        rows: [{ id: 'a' }],
+        unreachable: [{ id: 'card-9', reason: '404 Not Found' }],
+        human: () => 'the rows',
+      })),
+    );
+
+    await parse(root, ['thing', '--human']);
+
+    expect(stdout()).toEqual([
+      'the rows',
+      '(1 part(s) of this read could not be reached:)',
+      '  card-9 — 404 Not Found',
+    ]);
+  });
+
   it('indents the envelope under the root --pretty', async () => {
     const { root, leaf } = program();
     leaf.action(run(async () => ({ rows: [{ id: 'a' }] })));

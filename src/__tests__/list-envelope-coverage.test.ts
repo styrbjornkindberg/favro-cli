@@ -475,12 +475,16 @@ describe('the detector stays able to detect', () => {
     // would not go red — it would go quiet, which is worse. The fix when this
     // fails is to type the value, never to widen `isArrayish`.
     expect(stdoutJson.filter((s) => s.type === 'any').map((s) => s.where)).toEqual([]);
-    // ONE site, and 21 before #119. That floor read `> 20` because that many
-    // commands stringified to stdout themselves; the runner does it now, so the
-    // population collapsed to `cards export`, which writes a FORMAT and is in
-    // `OUT_OF_REMIT` above for that reason. Set to the measured value rather
-    // than deleted: the `any` assertion above is the arm that matters and it
-    // needs a non-empty population to mean anything.
+    // ONE site. The floor read `> 20` because that many commands stringified to
+    // stdout themselves; the runner does it now, so the population collapsed to
+    // `cards export`, which writes a FORMAT and is in `OUT_OF_REMIT` above for
+    // that reason. The exact figure this collector held before #119 was not
+    // re-measured — running the old detector needs the old tree — so it is not
+    // written down; a grep for the two call shapes over the same directories
+    // reports 37 then and 1 now, which is the shape of the drop rather than its
+    // ledger. Set to the measured value rather than deleted: the `any`
+    // assertion above is the arm that matters and it needs a non-empty
+    // population to mean anything.
     //
     // What the collapse costs, stated rather than hidden: this detector cannot
     // see `writeValue` in `run.ts`, whose value is a generic `T`, so the type of
