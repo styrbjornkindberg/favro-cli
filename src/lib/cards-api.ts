@@ -987,8 +987,10 @@ export class CardsAPI {
    * "commit", "move" (optional)`. So this was `widgets add` wearing the name
    * `cards move`, and it is why `WidgetsAPI.addWidgetToBoard` — the same endpoint
    * with `dragMode:'commit'` — is a separate method rather than a flag here.
-   * `docs/research/card-identifier-semantics.md:280-286` predicted this in prose
-   * before it was measured.
+   * `docs/research/card-identifier-semantics.md:280-286` had the missing field
+   * written down before it was measured — it names this method as sending
+   * `widgetCommonId` "without `dragMode`" — but drew a different hazard from it
+   * (an arbitrary source instance getting moved), not the fork.
    *
    * The board echo is MEASURED on this PUT's response by the same probe (and by
    * the live A/B on the #105 scratch board), so the write is read back and a
