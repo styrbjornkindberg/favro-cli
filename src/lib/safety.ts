@@ -37,11 +37,21 @@ export async function confirmAction(message: string, flags?: { yes?: boolean }):
  * A scope-lock refusal, thrown rather than printed.
  *
  * The lock is the real write guardrail (`--dry-run` is only a preview), so it has
- * to hold for every caller — the CLI, the shared dispatch table, the skill engine
- * and the MCP passthrough alike. A `process.exit` cannot: it turns one
- * guardrail into a CLI-only one and kills a skill run mid-transaction with the
- * compensation log unread. So the check throws, and the CLI is the only place
- * that turns the throw into an exit code.
+ * to hold for every caller, and a `git grep` names them rather than the guess
+ * this paragraph carried until #111: the shared dispatch table, through
+ * `assertScope`; the CLI's non-card write commands, through `checkScope`,
+ * `checkResolvedScope` and `checkCollectionScope`; and the skill engine, which
+ * reaches the lock only THROUGH the table and so has no call site of its own.
+ * The MCP servers have none either, and never did — both shell `favro …`, so
+ * they re-enter through the CLI and inherit whatever that path takes, which is
+ * why they are not a third population. `dispatch.ts`'s header holds the
+ * routed/unrouted partition with the per-guard counts, in ONE place so the two
+ * cannot drift apart.
+ *
+ * A `process.exit` cannot hold for those callers: it turns one guardrail into a
+ * CLI-only one and kills a skill run mid-transaction with the compensation log
+ * unread. So the check throws, and the CLI is the only place that turns the
+ * throw into an exit code.
  *
  * A `RefusalError` (#120), because a scope violation is the definition of a
  * deterministic decline: the lock is configuration, so the identical call

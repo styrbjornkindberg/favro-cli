@@ -1,9 +1,45 @@
 /**
  * The shared dispatch table (#51).
  *
- * The CLI commander actions and the skill engine call ONE table — structured
- * args-in / result-out — so they cannot drift apart on guardrails. Safety lives
- * in one place.
+ * The CLI's card-write actions and the skill engine call ONE table — structured
+ * args-in / result-out — so they cannot drift apart on guardrails.
+ *
+ * **WHAT ROUTES HERE, AND WHAT DOES NOT.** This module claimed its guardrails
+ * held "on every path — including the skill engine's and the MCP passthrough's"
+ * (at the `assertScope` call below) until #111, and a `git grep` falsifies that
+ * twice: 26 guard call sites live outside this table, and the MCP passthrough has
+ * no path into this table at all. What is measured on HEAD:
+ *
+ * - **Every write to the CARD ENTITY routes.** Seven methods issue one, and none
+ *   has a production caller outside `tx-cards.ts`: `CardsAPI`'s `createCard`,
+ *   `updateCard`, `deleteCard`, `moveCard`, `linkCard`, `unlinkCard`, plus
+ *   `WidgetsAPI.addWidgetToBoard`, which is the `PUT /cards/{id}` behind
+ *   `add-board-instance`. A `TxCards` is constructed in exactly one production
+ *   place — `dispatch()` below — and handed to nothing but an intent's own
+ *   `board()` and `run`, the first of which sees only its `ReadTx` face (#107).
+ *   So a card write that skipped the table would have nothing to write with.
+ *   There is no pending exception to name either: `favro execute` was the eighth
+ *   unrouted write path, and ADR-0004 (#96) had it DELETED rather than routed, so
+ *   #112 closed without work; #124 did the deleting at `0a963a6`.
+ * - **The callers are `cli.ts`, eight modules under `src/commands/`, and
+ *   `skill-engine.ts`.** Neither MCP server is one of them: both reach Favro by
+ *   shelling `favro …` (`mcp-server.ts`, `execFile`), so MCP re-enters through
+ *   the CLI path it names and inherits exactly what that path does — it has no
+ *   route of its own into this table to be guarded separately.
+ * - **Writes to a card's SUB-RESOURCES and to everything that is not a card do
+ *   NOT route here** — comments, tasks, tasklists, attachments, boards, columns,
+ *   members, collections. They take a guard at their own call sites, and the
+ *   census is 26 to this table's 1 (all counts `git grep`-able, production only,
+ *   `safety.ts` itself excluded): `checkScope` ×6, `checkResolvedScope` ×12 —
+ *   which is `checkScope` behind a thunk, so 18 reach the same `assertScope` —
+ *   `checkCollectionScope` ×5, which compares against local config and resolves
+ *   no board, so it is NOT the same function underneath, and `assertOrgScope` ×3.
+ *   Org-wide writes — tags, user groups, webhooks, `collections create` — land on
+ *   no board for a collection lock to resolve at all; the three irreversible ones
+ *   take `assertOrgScope`, four of the other six rest on `confirmAction` alone,
+ *   and `webhooks create` / `collections create` carry no prompt either — both
+ *   additive. `scope-lock-coverage.test.ts` holds that partition, and its debt
+ *   list is empty, so nothing is unguarded by oversight.
  *
  * The real guardrails are the **mandatory scope lock**, **boundedness** and
  * **resolver structured-refusal**. `--dry-run` is demoted from safety wall to
@@ -337,8 +373,10 @@ export async function dispatch<T = unknown>(
 
   const tx = new TxCards(new CardsAPI(ctx.client), log, ctx.client);
 
-  // The mandatory guardrail, inside the table, on every path — including the
-  // skill engine's and the MCP passthrough's.
+  // The mandatory guardrail. `assertScope` has exactly ONE production caller
+  // outside `safety.ts`, and this line is it — so every intent takes the
+  // identical check whether the CLI dispatched it or a skill step did. It is not
+  // every write PATH in the CLI, and the header says which ones it is not.
   const board = await intent.board(args as never, tx);
   const boards = typeof board === 'string' ? [board] : board ?? [];
   // A write that names no board is UNCHECKABLE, not exempt. The loop below
