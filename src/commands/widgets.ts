@@ -104,7 +104,8 @@ export function registerWidgetsCommands(program: Command): void {
           return (
             `Commit of card ${cardCommonId} to board ${board} was accepted (200) but is UNCONFIRMED: ` +
             `the response carried no widgetCommonId, so nothing here observed the card on that board.\n` +
-            `Whether this PUT echoes widgetCommonId is unmeasured, so an absent echo is not by itself a failure.\n` +
+            `A commit that lands does echo the board back (measured once, #161), but what this PUT answers ` +
+            `when it is REFUSED is unmeasured, so an absent echo is not by itself a failure.\n` +
             `Verify with: favro widgets list --card ${cardCommonId}`
           );
         },

@@ -369,14 +369,18 @@ export interface UpdateCardRequest {
    * **honoured** write: `status` is the silent no-op, and `updateCard`
    * translates it into this field rather than forwarding it.
    *
-   * Whether the PUT **response** echoes `columnId` back is **unmeasured**.
-   * `columnId` is measured on every GET row
-   * (`docs/research/tracker-contract-favro-carriers.md` §1.3), but a read-side
-   * row is not a write-side echo — the same distinction `dueDate` above records
-   * about its own write shape. Do not compare against the RESPONSE's `columnId`
-   * until a live probe says the echo is there. `TxCards.moveColumn` does confirm
-   * its write, and that is not this: it re-reads the card and compares the GET
-   * row, which is the measured surface (#101).
+   * The PUT **response** does echo `columnId` back: measured 2026-08-13 (#162),
+   * raw HTTP, on a column move that landed — the response's `columnId` and
+   * `widgetCommonId` both agreed with a follow-up GET.
+   *
+   * That changes nothing here, and deliberately. The echo was measured on a
+   * SUCCESS only; what this PUT answers with when the column move is refused is
+   * still unmeasured, and the refusal on this endpoint is a 2xx
+   * (`202 {"message":"Access denied"}`, the #162 defect), so an echo comparison
+   * would be asserting against a shape nothing has seen fail.
+   * `TxCards.moveColumn` still confirms by re-reading the card and comparing the
+   * GET row, which is the surface measured on every row (#101,
+   * `docs/research/tracker-contract-favro-carriers.md` §1.3).
    */
   columnId?: string;
   /**
@@ -1024,6 +1028,11 @@ export class CardsAPI {
     // for the 202 denial and is unknown for a mismatched echo; `TransientError`
     // would claim the next attempt may differ, which is false for the denial. An
     // unmarked throw is the fail-closed default the table already reads (#151).
+    //
+    // Spelled `!==`, and not `!(… === …)`: #82's ratchet reads `widgetCommonId
+    // ===` as a WIRE WRITE whose value must be `boardId`, and this line is a
+    // RESPONSE read. Tidying it to the positive form fails
+    // `board-resolution-wire.test.ts` on a claim that has nothing to do with it.
     if (raw.widgetCommonId !== boardId) {
       throw new Error(
         `Move of card ${cardId} to board ${boardId} was accepted (2xx) but the response does not put the ` +

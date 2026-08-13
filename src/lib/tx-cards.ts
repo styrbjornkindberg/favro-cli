@@ -685,11 +685,15 @@ export class TxCards implements ReadTx {
    * - `columnId` on a card's GET row is MEASURED
    *   (`docs/research/tracker-contract-favro-carriers.md` §1.3), so a comparison
    *   against it asserts only a shape the wire has been observed to carry.
-   * - `columnId` on a PUT **response** has never been probed. Comparing against
-   *   that echo — the way `setArchived` compares `archived`, which it may do
-   *   because #75 probed exactly that echo — would assert an unmeasured shape,
-   *   the step ADR-0003 refuses; and if the response omits the field, it would
-   *   throw on every `claim` and every `resolve`, two commands that work today.
+   * - `columnId` on a PUT **response** is measured on a SUCCESS and only there
+   *   (2026-08-13, #162: the response agreed with a follow-up GET). What the
+   *   response carries when the move is REFUSED is still unprobed, and on this
+   *   endpoint a refusal is a 2xx — `202 {"message":"Access denied"}`, #162's own
+   *   defect — so an echo comparison would be guarding against a failure shape
+   *   nothing has observed. That is the half `setArchived` has and this does not:
+   *   #75 probed `archived` on the write response, which is what lets it compare
+   *   one. Swapping the re-read for the echo here would also throw on every
+   *   `claim` and every `resolve` the day a response omits the field.
    *
    * The re-read also settles what an echo comparison could never be tested for:
    * a stand answering a PUT with a card row WE wrote verifies our own assumption

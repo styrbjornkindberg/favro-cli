@@ -764,12 +764,17 @@ describe('every command the docs teach is a command the binary answers to', () =
     // round itself moved the invocation counts a second time (685→696, 655→666).
     // Written down as the invocation-count pair drifting for the same reason
     // twice: the docs are edited by the ticket that writes these numbers.
+    //
+    // A THIRD time, and the same half-fix: #161 re-measured the pair for the
+    // header block (696/666 → 700/670) and left these two comments reading the
+    // old numbers, which is the drift above happening to the line that describes
+    // it. Both spellings are corrected together now.
     expect(DOC_FILES.length).toBeGreaterThan(30); // 41 today
     expect(SURFACE.size).toBeGreaterThan(140); // 148 today: 125 actions + groups
-    expect(INVOCATIONS.length).toBeGreaterThan(600); // 696 today
+    expect(INVOCATIONS.length).toBeGreaterThan(600); // 700 today
     // …and almost all of them met the real surface. See RESOLVED above: this is
     // the assertion a silently-matching-nothing walker cannot pass.
-    expect(RESOLVED).toBeGreaterThan(570); // 666 today; the rest are `<placeholder>` and bare `favro --help`
+    expect(RESOLVED).toBeGreaterThan(570); // 670 today; the rest are `<placeholder>` and bare `favro --help`
     expect(new Set(INVOCATIONS.map((i) => i.file)).size).toBeGreaterThan(22); // 29 today
     // …and the option tables were read at all. `readOptionTables` matching
     // nothing is the #156 bug restored, and it would restore it silently: the
