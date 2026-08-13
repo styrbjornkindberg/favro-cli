@@ -1,4 +1,5 @@
 import { CardsAPI, parseCardUrl } from '../lib/cards-api';
+import { CardResolutionError } from '../lib/card-reference';
 import FavroHttpClient from '../lib/http-client';
 
 describe('parseCardUrl', () => {
@@ -71,6 +72,32 @@ describe('CardsAPI.findCardByUrl', () => {
       'https://favro.com/organization/org123/board456?card=Squ-9999',
     );
     expect(card).toBeNull();
+  });
+
+  // The fork filter and the multi-board refusal are `pickOneInstance`'s since
+  // #123. These two are the arms on THIS caller keeping them: the collapse is a
+  // silent no-op if a fork starts resolving or two boards start picking one.
+  it('refuses a card that lives on two boards, listing both, never entities[0]', async () => {
+    mockClient.get.mockResolvedValue({
+      entities: [
+        { cardId: 'card-1', name: 'Twin', sequentialId: 8850, widgetCommonId: 'board-1' },
+        { cardId: 'card-2', name: 'Twin', sequentialId: 8850, widgetCommonId: 'board-2' },
+      ],
+    });
+
+    const attempt = api.findCardBySequentialId(8850);
+    await expect(attempt).rejects.toBeInstanceOf(CardResolutionError);
+    const error = (await attempt.catch((e: unknown) => e)) as CardResolutionError;
+    expect(error.candidates.map((c) => c.cardId).sort()).toEqual(['card-1', 'card-2']);
+    expect(error.disambiguateWith).toBe('--board <board>');
+    expect(error.message).toContain('board-2');
+  });
+
+  it('drops a fork — an entity with no widgetCommonId — and answers null', async () => {
+    mockClient.get.mockResolvedValue({
+      entities: [{ cardId: 'fork-1', name: 'Assigned', sequentialId: 8850 }],
+    });
+    expect(await api.findCardBySequentialId(8850)).toBeNull();
   });
 
   it('falls back to default description format on a 500', async () => {

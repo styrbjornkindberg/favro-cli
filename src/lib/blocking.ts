@@ -27,7 +27,7 @@
  */
 import FavroHttpClient from './http-client';
 import type { Card } from './cards-api';
-import type { CardInstance } from './card-reference';
+import CardReferenceResolver, { type CardInstance } from './card-reference';
 import { boundedSweep, Unreachable } from './read-shape';
 import { readTrackerMapping } from './tracker-config';
 import { blockersOf, blockedByThis } from './query-parser';
@@ -124,13 +124,15 @@ export async function judgeBlockers(
     if (isFinished(found, trackerBoard, doneColumn)) toSweep.push(id);
   }
 
+  const references = new CardReferenceResolver(client);
   const swept = await boundedSweep(toSweep, async (id) => {
+    // The resolver's own query, not a second copy of it — `unique: true` and the
+    // `?? []` live in one place now (#123). `resolve` is the wrong door: it picks
+    // ONE instance and refuses ambiguity, and every instance is evidence here.
+    //
     // No `archived` param: Favro's default INCLUDES archived cards, and an
     // archived blocker is exactly the one that must resolve free.
-    const res = await client.get<{ entities?: CardInstance[] }>('/cards', {
-      params: { cardCommonId: id, unique: true },
-    });
-    const entities = res.entities ?? [];
+    const entities = await references.query({ cardCommonId: id });
     if (entities.length === 0) {
       // A 200 carrying nothing is not evidence: a deleted blocker, a blocker
       // invisible to this key, and a `cardId` queried as a `cardCommonId` all

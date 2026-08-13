@@ -77,7 +77,7 @@ export function sequentialNumber(reference: string): number | undefined {
  * column and is unactionable by construction, so it never takes part in
  * resolution.
  */
-function boardInstances(entities: CardInstance[]): CardInstance[] {
+function boardInstances<T extends CardInstance>(entities: T[]): T[] {
   return entities.filter((e) => Boolean(e.widgetCommonId));
 }
 
@@ -111,6 +111,33 @@ function commonIdOf(instance: CardInstance, reference: string): string {
   );
 }
 
+/**
+ * Exactly one actionable instance, or a structured refusal. Genuine multi-board
+ * ambiguity is never resolved by taking `entities[0]`.
+ *
+ * A free function, not a method, because `CardsAPI.findCardBySequentialId` needs
+ * this decision without `query`: that read returns a whole normalized card so it
+ * asks for `descriptionFormat: markdown`, which the resolver's own query wants no
+ * part of. Its copy of these two rules is what #123 deleted.
+ */
+export function pickOneInstance<T extends CardInstance>(reference: string, entities: T[], flag: string): T {
+  const instances = boardInstances(entities);
+  if (instances.length === 1) return instances[0];
+  if (instances.length === 0) {
+    throw new CardResolutionError(
+      `Card "${reference}" is ${MISSING_WORDING}. A sequentialId label is capitalised (CLA-1804); otherwise run \`favro cards list --board <board>\` to see what is there.`,
+      reference,
+    );
+  }
+  const listed = instances.map((i) => `  ${describe(i)}`).join('\n');
+  throw new CardResolutionError(
+    `Card "${reference}" exists on ${instances.length} boards — pass ${flag} to say which:\n${listed}`,
+    reference,
+    instances,
+    flag,
+  );
+}
+
 export class CardReferenceResolver {
   constructor(private client: FavroHttpClient) {}
 
@@ -124,7 +151,7 @@ export class CardReferenceResolver {
     const ref = reference.trim();
     const sequential = sequentialNumber(ref);
     if (sequential !== undefined) {
-      return this.pickOne(
+      return pickOneInstance(
         ref,
         await this.query({ cardSequentialId: sequential, ...options }),
         '--board <board>',
@@ -176,7 +203,7 @@ export class CardReferenceResolver {
     ref: string,
     options?: { widgetCommonId?: string },
   ): Promise<CardInstance> {
-    return this.pickOne(ref, await this.query({ cardCommonId: ref, ...options }), '--board <board>');
+    return pickOneInstance(ref, await this.query({ cardCommonId: ref, ...options }), '--board <board>');
   }
 
   /**
@@ -204,33 +231,18 @@ export class CardReferenceResolver {
     return commonIdOf(await this.resolve(ref, options), ref);
   }
 
-  private async query(params: Record<string, unknown>): Promise<CardInstance[]> {
+  /**
+   * Every instance a `/cards` filter matches, forks included — the raw list
+   * `pickOneInstance` narrows. Public since #123 because `blocking.ts` issued
+   * this exact call itself and cannot go through `resolve`: a blocker's verdict
+   * is read off ALL its instances, so multi-board is the normal case there
+   * rather than an ambiguity to refuse.
+   */
+  async query(params: Record<string, unknown>): Promise<CardInstance[]> {
     const response = await this.client.get<{ entities?: CardInstance[] }>('/cards', {
       params: { unique: true, ...params },
     });
     return response.entities ?? [];
-  }
-
-  /**
-   * Exactly one actionable instance, or a structured refusal. Genuine
-   * multi-board ambiguity is never resolved by taking `entities[0]`.
-   */
-  private pickOne(reference: string, entities: CardInstance[], flag: string): CardInstance {
-    const instances = boardInstances(entities);
-    if (instances.length === 1) return instances[0];
-    if (instances.length === 0) {
-      throw new CardResolutionError(
-        `Card "${reference}" is ${MISSING_WORDING}. A sequentialId label is capitalised (CLA-1804); otherwise run \`favro cards list --board <board>\` to see what is there.`,
-        reference,
-      );
-    }
-    const listed = instances.map((i) => `  ${describe(i)}`).join('\n');
-    throw new CardResolutionError(
-      `Card "${reference}" exists on ${instances.length} boards — pass ${flag} to say which:\n${listed}`,
-      reference,
-      instances,
-      flag,
-    );
   }
 }
 

@@ -3,7 +3,11 @@ import { Getter, getAllPages } from './paginate';
 import BoardsAPI from './boards-api';
 import { Tag, cachedTags } from './tags-api';
 import ColumnDirectory, { ColumnResolutionError } from './column-directory';
-import CardReferenceResolver, { CardResolutionError, isSequentialReference } from './card-reference';
+import CardReferenceResolver, {
+  CardResolutionError,
+  isSequentialReference,
+  pickOneInstance,
+} from './card-reference';
 import { foldName } from './fold-name';
 import { invalidateCache } from './name-cache';
 import { isUserId } from './id-shapes';
@@ -1300,8 +1304,18 @@ export class CardsAPI {
   /**
    * Find a card by its numeric sequential ID — the trailing number in a card's
    * human-readable label (e.g. 8850 in "Squ-8850"). Searches org-wide and
-   * returns the first match, or null if none found.
+   * returns the one board instance, or null if none matched.
    * Pass `widgetCommonId` to scope the lookup to a single board.
+   *
+   * The fork filter and the multi-board refusal are `pickOneInstance`'s, not a
+   * second copy of them (#123). The read stays here rather than moving onto
+   * `CardReferenceResolver.query` because this one returns a whole normalized
+   * card, so it asks for `descriptionFormat: markdown`; the resolver's query
+   * wants ids and deliberately does not.
+   *
+   * A miss stays `null` rather than becoming `pickOneInstance`'s refusal:
+   * `findCardByUrl` is the only caller and `cards find` already turns null into
+   * its own message naming the URL.
    */
   async findCardBySequentialId(
     sequentialId: number,
@@ -1320,20 +1334,13 @@ export class CardsAPI {
       .get<PaginatedResponse<RawCard>>('/cards', { params });
 
     const entities = (response.entities ?? []).map(normalizeCard);
-    // A forked card — an assignment entity with no `widgetCommonId` — has no
-    // column and is unactionable, so it never takes part in resolution.
-    const instances = entities.filter((c) => Boolean(c.widgetCommonId));
-    if (instances.length === 0) return null;
-    if (instances.length > 1) {
-      const listed = instances.map((c) => `  ${c.cardId} (board ${c.boardId}, "${c.name}")`).join('\n');
-      throw new CardResolutionError(
-        `Card ${sequentialId} exists on ${instances.length} boards — pass --board <board> to say which:\n${listed}`,
-        String(sequentialId),
-        instances as never[],
-        '--board <board>',
-      );
+    let card: Card;
+    try {
+      card = pickOneInstance(String(sequentialId), entities, '--board <board>');
+    } catch (err) {
+      if (err instanceof CardResolutionError && err.candidates.length === 0) return null;
+      throw err;
     }
-    const [card] = instances;
     await this.hydrateNames([card]);
     return card;
   }
