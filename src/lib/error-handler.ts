@@ -137,9 +137,16 @@ export function rateLimitMessage(retrySeconds?: number): string {
 
 /**
  * Format a missing API key error.
+ *
+ * No `c.fail` glyph: this is the MESSAGE of the `RefusalError` `client-factory`
+ * throws, and every path that shows it adds its own heading — `logError` prints
+ * `✗ Error: …`, which made the human answer `✗ Error: ✗ API key not found`, and
+ * the JSON boundary puts the bare message in `{"error":{"message"}}`, where a
+ * terminal glyph in machine output is noise. The glyph belongs to whoever
+ * prints, not to the string (#110 review).
  */
 export function missingApiKeyError(): string {
-  return `${c.fail} API key not found. Run ${c.info("'favro auth login'")} first`;
+  return `API key not found. Run ${c.info("'favro auth login'")} first`;
 }
 
 /**

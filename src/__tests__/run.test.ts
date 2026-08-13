@@ -809,7 +809,7 @@ describe('--dry-run defers the credential refusal, it does not skip it', () => {
 
     expect(stdout()).toEqual([
       JSON.stringify({
-        error: { message: "✗ API key not found. Run 'favro auth login' first", retryable: false },
+        error: { message: "API key not found. Run 'favro auth login' first", retryable: false },
       }),
     ]);
     expect(process.exitCode).toBe(1);
@@ -833,7 +833,7 @@ describe('--dry-run defers the credential refusal, it does not skip it', () => {
 
     expect(stdout()).toEqual([
       JSON.stringify({
-        error: { message: "✗ API key not found. Run 'favro auth login' first", retryable: false },
+        error: { message: "API key not found. Run 'favro auth login' first", retryable: false },
       }),
     ]);
     expect(process.exitCode).toBe(1);
@@ -854,7 +854,7 @@ describe('--dry-run defers the credential refusal, it does not skip it', () => {
 
     expect(stdout()).toEqual([
       JSON.stringify({
-        error: { message: "✗ API key not found. Run 'favro auth login' first", retryable: false },
+        error: { message: "API key not found. Run 'favro auth login' first", retryable: false },
       }),
     ]);
     expect(process.exitCode).toBe(1);

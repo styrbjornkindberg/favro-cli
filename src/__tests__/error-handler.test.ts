@@ -142,6 +142,10 @@ describe('missingApiKeyError', () => {
     const msg = stripAnsi(missingApiKeyError());
     expect(msg).toContain('favro auth login');
     expect(msg.toLowerCase()).toContain('api key');
+    // No glyph of its own. `logError` prints the `✗ Error:` heading, so carrying
+    // one here made the human answer `✗ Error: ✗ API key not found` and put a
+    // terminal glyph inside the JSON envelope's `message` (#110 review).
+    expect(msg).not.toContain('✗');
   });
 });
 
