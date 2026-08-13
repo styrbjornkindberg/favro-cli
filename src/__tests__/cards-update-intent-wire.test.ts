@@ -674,6 +674,42 @@ describe('a part-way failure unwinds the fields already written (#108)', () => {
     expect(result.value).toEqual({ cardId: IN_CARD, wrote: ['name', 'status'] });
   });
 
+  it('a failure on ROW 2 unwinds row 1 — the multi-card unwind (#110)', async () => {
+    // The behaviour `cards update --from-csv` now headlines: "a failure on row 12
+    // unwinds rows 1-11 rather than leaving them standing". Every other arm in
+    // this describe dispatches ONE card, so all of them pass for an intent that
+    // compensates within an entry and abandons the entries before it — which is
+    // exactly what `BulkTransaction` did, and what #110 deleted it for. Review
+    // found this pinned nowhere: `cli-cards-batch.test.ts`'s deleted
+    // "atomically rolls back on failure" arm was the only one, and it did not
+    // move with the behaviour.
+    //
+    // Asserted on the PUT SEQUENCE, not on `outcome`. `rolled-back` is a string
+    // the code chooses; the third PUT is the compensating write actually going
+    // out, on a card the failing entry never touched.
+    const SECOND = '00000000000000000000cc04';
+    const { received, cards } = await startServer({
+      cards: [card({ cardId: IN_CARD }), card({ cardId: SECOND })],
+      failPut: (body) => body.name === 'BOOM',
+    });
+
+    const result = await dispatch(
+      'update',
+      { cards: [{ card: IN_CARD, name: 'WROTE-FIRST' }, { card: SECOND, name: 'BOOM' }] },
+      { client: injected!, config: (await readConfig()) ?? {} },
+    );
+
+    expect(result.outcome).toBe('rolled-back');
+    expect(puts(received).map((r) => r.body)).toEqual([
+      { name: 'WROTE-FIRST' },
+      { name: 'BOOM' },
+      { name: 'Original name' },
+    ]);
+    // The stand's own state, so "unwound" is not just the log's opinion.
+    expect(cards.get(IN_CARD)!.name).toBe('Original name');
+    expect(cards.get(SECOND)!.name).toBe('Original name');
+  });
+
   it('reports the failure through the CLI as a refusal, not as success', async () => {
     // ADR-0002: exit 1 and something a reader can act on. A `rolled-back` that
     // printed the success line would be the expensive direction.

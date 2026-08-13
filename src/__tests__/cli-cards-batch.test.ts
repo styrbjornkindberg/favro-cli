@@ -12,6 +12,14 @@
  * refusal, the part-way unwind — are pinned against a real socket in
  * `cards-update-intent-wire.test.ts`, where they are observable rather than
  * mocked. Asserting them again here would be a second, weaker copy.
+ *
+ * That claim was FALSE for the multi-row unwind when #110 first shipped: every
+ * unwind arm in that file dispatched a single card, so the row-12-unwinds-1-to-11
+ * behaviour this command headlines was pinned nowhere once the deleted
+ * `cli-cards-batch :: "atomically rolls back on failure and exits 1"` went with
+ * `BulkTransaction`. It is pinned there now, on the PUT sequence across two
+ * cards, and still not here — the socket is where a compensating write is
+ * observable.
  */
 import * as fsPromises from 'fs/promises';
 import { buildProgram } from '../cli';
