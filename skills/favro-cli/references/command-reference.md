@@ -210,7 +210,6 @@ Move a card to a different board.
 | Flag | Description |
 |------|-------------|
 | `--to-board <boardId>` | **Required.** Destination board |
-| `--position <pos>` | `top` or `bottom` |
 | `-y, --yes` | Skip confirmation |
 | `--force` | Bypass scope check |
 

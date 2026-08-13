@@ -181,10 +181,18 @@
  * or that no longer exists under that key in that number, fails the build. A
  * list nobody prunes turns into a permanent exemption that reads like debt.
  *
- * TODAY: 41 tracked docs, 696 documented invocations across 29 files, 666 of
- * them naming a real command, against 148 argv paths — plus 350 option-table
- * rows carrying 394 flags, 344 of the rows attributed to a named command. The
- * floors below are kept near those numbers on purpose — see the self-check test.
+ * TODAY: 41 tracked docs, 700 documented invocations across 29 files, 670 of
+ * them naming a real command, against 148 argv paths — plus 308 option-table
+ * rows, 302 of them attributed to a named command. The floors below are kept near
+ * those numbers on purpose — see the self-check test.
+ *
+ * Every number in that line was re-measured by instrumenting this module's own
+ * expressions on the tree that ships it (#161). The invocation pair read 696/666
+ * and the row pair 350/344 — the rows from before #119 deleted 39 `--json` rows,
+ * which the assertion comments 600 lines down recorded and this block did not.
+ * The flag COUNT that used to sit here (394) is gone rather than refreshed:
+ * nothing in this file counts flags, so it could not be re-measured, and a number
+ * no expression produces is the kind that goes stale unnoticed.
  *
  * This block read `38 / 680 / 28 / 650 / 391 / 438 / 385` until #110's review:
  * #110 corrected the two row counts at their own assertion, 580 lines down, and
@@ -784,8 +792,15 @@ describe('every command the docs teach is a command the binary answers to', () =
     // reference and `docs/commands.md`; nothing was moved or reworded, so the
     // whole drop is the deletion. Re-measured by instrumenting this expression
     // on the finished tree rather than estimated from the diff.
-    expect(DOC_ROWS_READ).toBeGreaterThan(310); // 311 today, over 5 files
-    expect(DOC_ROWS_SCOPED).toBeGreaterThan(304); // 305 today; the other 6 are `## Global Options`
+    //
+    // 311/305 until #161 deleted `cards move --position` — a flag that never
+    // worked, so its three option-table rows (one each in `API-REFERENCE.md`,
+    // `docs/commands.md` and the skill reference) documented a `400`. Three rows
+    // out of both counters, nothing moved or reworded. Re-measured on the
+    // finished tree by instrumenting these two expressions, not subtracted from
+    // the diff.
+    expect(DOC_ROWS_READ).toBeGreaterThan(307); // 308 today, over 5 files
+    expect(DOC_ROWS_SCOPED).toBeGreaterThan(301); // 302 today; the other 6 are `## Global Options`
     // …and the `\`-continued commands were joined rather than read one line at a
     // time. Zero here means every flag past the first line went unchecked again.
     expect(DOC_CONTINUED).toBeGreaterThan(45); // 58 joins today

@@ -446,7 +446,6 @@ bodies, whole. It has no `--limit` — the board is fetched to completion.
 | Flag | Description |
 |------|-------------|
 | `--to-board <boardId>` | Destination board |
-| `--position <pos>` | `top` or `bottom` |
 
 ---
 

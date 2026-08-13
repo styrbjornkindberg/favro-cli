@@ -744,11 +744,12 @@ favro cards unlink CARD-A CARD-B
 
 ### `cards move`
 
-Move a card to a different board, with optional position.
+Move a card to a different board. The card LEAVES the board it was on — use
+`widgets add` to put it on a second board instead.
 
 **Syntax:**
 ```
-favro cards move <cardId> --to-board <boardId> [--position top|bottom] [--json]
+favro cards move <cardId> --to-board <boardId>
 ```
 
 **Arguments:**
@@ -762,13 +763,11 @@ favro cards move <cardId> --to-board <boardId> [--position top|bottom] [--json]
 | Option | Required | Description |
 |---|---|---|
 | `--to-board <boardId>` | ✓ | Destination board ID |
-| `--position <pos>` | — | Position on board: `top` or `bottom` |
 
 **Examples:**
 ```bash
 favro cards move card-abc123 --to-board board-456
-favro cards move card-abc123 --to-board board-456 --position top
-favro cards move card-abc123 --to-board board-456 --position bottom --human
+favro cards move card-abc123 --to-board board-456 --human
 ```
 
 **Error cases:**
