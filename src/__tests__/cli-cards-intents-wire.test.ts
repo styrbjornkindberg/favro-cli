@@ -292,8 +292,8 @@ beforeEach(async () => {
   // Nothing designated unless a test asks for it, so no read reaches the
   // developer's real `docs/agents/issue-tracker.md`.
   process.env.FAVRO_TRACKER_DOC = path.join(tmpDir, 'no-tracker.md');
-  exitSpy = jest.spyOn(process, 'exit').mockImplementation(((code?: number) => {
-    throw new Error(`process.exit(${code})`);
+  exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {
+    throw new Error('process.exit must not be called under run()');
   }) as any);
   logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
   errSpy = jest.spyOn(console, 'error').mockImplementation(() => {});

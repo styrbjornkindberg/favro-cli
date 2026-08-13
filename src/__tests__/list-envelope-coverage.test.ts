@@ -393,11 +393,38 @@ function returnsArrayishItem(body: ts.Node): boolean {
       // `{ item: rows }` reads its initializer; the `{ item }` shorthand reads
       // the name, which is the value in that spelling.
       const value = ts.isPropertyAssignment(p) ? p.initializer : p.name;
-      if (isArrayish(checker.getTypeAtLocation(value))) smuggled = true;
+      const type = checker.getTypeAtLocation(value);
+      const sf = value.getSourceFile();
+      smuggledItems.push({
+        where: `${path.relative(REPO_ROOT, sf.fileName).split(path.sep).join('/')}:${
+          sf.getLineAndCharacterOfPosition(value.getStart()).line + 1
+        }`,
+        type: checker.typeToString(type),
+      });
+      if (isArrayish(type)) smuggled = true;
     }
   });
   return smuggled;
 }
+
+/**
+ * The TYPE of every `item:` a `run()` handler returns — this detector's input on
+ * the single-value arm, exactly as `stdoutJson` below is on the bare arm.
+ *
+ * `isArrayish(any)` is `false`, so an `any`-typed `item:` is a bare array this
+ * file cannot see, and it would go QUIET rather than red. Proven by mutation
+ * after #119: `boards-list.ts`'s `rows: boards` changed to `item: boards as any`
+ * left all six assertions green, while `item: boards` without the cast reddened
+ * `no command puts a bare array on stdout` — so the hole is precisely the cast.
+ *
+ * It needed closing then and not before because #119 moved the WHOLE output
+ * population onto this path: the runner writes for every migrated command, so
+ * `stdoutJson`'s own `any` guard, which covers the direct
+ * `console.log(JSON.stringify(…))` sites, now sees one command out of ~125.
+ *
+ * The fix when this fails is to type the value, never to widen `isArrayish`.
+ */
+const smuggledItems: Array<{ where: string; type: string }> = [];
 
 interface ActionInfo {
   key: string;
@@ -475,24 +502,45 @@ describe('the detector stays able to detect', () => {
     // would not go red — it would go quiet, which is worse. The fix when this
     // fails is to type the value, never to widen `isArrayish`.
     expect(stdoutJson.filter((s) => s.type === 'any').map((s) => s.where)).toEqual([]);
-    // ONE site. The floor read `> 20` because that many commands stringified to
-    // stdout themselves; the runner does it now, so the population collapsed to
-    // `cards export`, which writes a FORMAT and is in `OUT_OF_REMIT` above for
-    // that reason. The exact figure this collector held before #119 was not
-    // re-measured — running the old detector needs the old tree — so it is not
-    // written down; a grep for the two call shapes over the same directories
-    // reports 37 then and 1 now, which is the shape of the drop rather than its
-    // ledger. Set to the measured value rather than deleted: the `any`
-    // assertion above is the arm that matters and it needs a non-empty
-    // population to mean anything.
+    // NOT a floor — a liveness check on the bare-path collector, and it earns
+    // one line only because it is now worth so little. It read `> 20` while that
+    // many commands stringified to stdout themselves; the runner does it now, so
+    // the population is `cards export` alone, which writes a FORMAT and is in
+    // `OUT_OF_REMIT` above for that reason. At one site it can fail only if that
+    // command stops stringifying an array, which `no entry in either list is
+    // stale` already pins independently. The exact figure this collector held
+    // before #119 was not re-measured — running the old detector needs the old
+    // tree — so it is not written down; a grep for the two call shapes over the
+    // same directories reports 37 then and 1 now, which is the shape of the drop
+    // rather than its ledger.
     //
     // What the collapse costs, stated rather than hidden: this detector cannot
-    // see `writeValue` in `run.ts`, whose value is a generic `T`, so the type of
-    // what a migrated command emits is no longer checkable from here. The
-    // `enveloped` half above still reaches those commands — `returnsRows` reads
-    // the `rows:` property off a `run()` handler's return — and `run.test.ts`
-    // is what pins the writer itself.
+    // see `writeValue` in `run.ts`, whose value is a generic `T`, so the BYTES a
+    // migrated command emits are not checkable from here. What replaces the
+    // weight the old floor carried is the arm below — #119 moved the whole
+    // output population onto the `item:` path, so that is where an `any` now
+    // hides a bare array — plus `returnsRows` on the `enveloped` half and
+    // `run.test.ts` on the writer itself.
     expect(stdoutJson.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('reads a resolved type for every `item:` a run() handler returns', () => {
+    // The single-value arm's half of the same guarantee, and the one that
+    // matters after #119. `isArrayish(any)` is `false`, so
+    // `return { item: rows as any }` puts a bare array on stdout through
+    // `writeValue` and `returnsArrayishItem` cannot see it. Proven: that exact
+    // mutation on `boards-list.ts` left all six assertions in this file green,
+    // while the same line WITHOUT the cast reddened `no command puts a bare
+    // array on stdout`. The fix when this fails is to type the value.
+    expect(smuggledItems.filter((s) => s.type === 'any').map((s) => s.where)).toEqual([]);
+    // …and the collector reached the handlers at all. EXACT-FIT, measured with
+    // this expression: 99 `item:` returns across `src/cli.ts` and
+    // `src/commands/`. A floor 79 below that would notice `returnsArrayishItem`
+    // walking nothing and nothing else — not it walking only `cli.ts`, which is
+    // the collapse that actually happens when a matcher stops recognising the
+    // `run(handler)` shape. It moves with ordinary work, like the doc-row and
+    // catch-clause floors, and re-measuring it is the point rather than the cost.
+    expect(smuggledItems.length).toBeGreaterThanOrEqual(99);
   });
 });
 

@@ -655,7 +655,7 @@ favro cards get card-abc123 --include board,collection,custom-fields,links,comme
 
 **Error cases:**
 - Card not found → `Card '<id>' not found.`
-- Invalid include → `Error: Invalid include value(s): <value>. Valid: board,collection,...`
+- Invalid include → `Invalid include value(s): <value>. Valid: board,collection,...`
 
 ---
 
@@ -679,7 +679,7 @@ favro cards link <cardId> <toCardId> --type <type> [--human]
 
 | Option | Required | Description |
 |---|---|---|
-| `--type <type>` | ✓ | Link type: `depends-on`, `blocks`, `related`, `duplicates` |
+| `--type <type>` | ✓ | Link type: `depends-on` or `blocks` |
 
 **Link types:**
 
@@ -687,10 +687,15 @@ favro cards link <cardId> <toCardId> --type <type> [--human]
 |---|---|
 | `depends-on` | Source card depends on (is blocked by) target card |
 | `blocks` | Source card blocks (is a prerequisite for) target card |
-| `related` | Cards are related without a blocking relationship |
-| `duplicates` | Source card is a duplicate of target card |
 
-**Circular dependency detection:** For `depends-on` links, the CLI performs a BFS graph traversal to detect and prevent circular dependencies before creating the link.
+`related` and `duplicates` are NOT accepted — Favro has no API representation for
+either, so they were being silently discarded. The vocabulary is closed and an
+unpublished label is refused; see `lib/dependency-direction.ts`.
+
+**Reverse edges are refused, not overwritten.** There is at most one edge per card
+pair, so a pair already holding the reverse edge is declined and named — reversing
+is `cards unlink` then `cards link`. An edge already present is reported, not
+rewritten, so retrying after a failure is safe.
 
 **Output:**
 ```
@@ -701,12 +706,11 @@ favro cards link <cardId> <toCardId> --type <type> [--human]
 ```bash
 favro cards link CARD-A CARD-B --type depends-on
 favro cards link CARD-A CARD-B --type blocks
-favro cards link CARD-A CARD-B --type related --human
+favro cards link CARD-A CARD-B --type blocks --human
 ```
 
 **Error cases:**
 - Self-link → `Cannot link a card to itself.`
-- Circular dependency → `Error: Linking would create a circular dependency. Aborting.`
 - Invalid type → `Invalid link type '<type>'. Valid: depends-on, blocks`
 - Card not found → `Card '<id>' or target '<id>' not found.`
 
@@ -933,8 +937,8 @@ favro cards export abc123 --filter "assignee:alice" --filter "tag:bug" --format 
 
 **Error cases:**
 - Board not found → Suggests closest match by name
-- Invalid format → `Error: Invalid format "<format>". Use --format json or --format csv`
-- Absolute output path → `Error: Output path must be within current directory`
+- Invalid format → `Invalid format "<format>". Use --format json or --format csv`
+- Absolute output path → `Output path must be within current directory: <path>`
 - No cards after filter → `⚠ No cards to export (0 results after filtering).` (exits 0)
 
 ---
@@ -1803,17 +1807,24 @@ favro cards export abc123 --format csv --out /tmp/cards.csv
 
 ---
 
-### Circular Dependency Errors
+### Reverse-edge refusals
 
-**`Error: Linking would create a circular dependency. Aborting.`**
+**`… already holds the REVERSE edge …`**
 
-You attempted to add a `depends-on` link that would create a cycle. Review your dependency graph:
+There is at most one edge per card pair, so linking a pair that already holds the
+edge the other way round is refused rather than overwritten. Reversing it is
+`cards unlink` then `cards link`. Inspect the pair first:
 
 ```bash
 favro cards dependencies CARD-A
 favro cards blocking CARD-A
 favro cards blocked-by CARD-A
 ```
+
+There is no cycle detection: the unbounded BFS that once ran here followed
+`depends-on` only and swallowed every read failure, and the one real case it
+caught — a pair linked both ways round — is what the bounded pre-read above
+settles for both directions in one call.
 
 ---
 

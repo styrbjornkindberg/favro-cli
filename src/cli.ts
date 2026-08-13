@@ -467,6 +467,24 @@ cards
               Created: card.createdAt ? card.createdAt.slice(0, 10) : '—',
             })));
           }
+          // What the runner's generic hole notice cannot say. It reports that N
+          // parts of the read could not be REACHED and lists them, which is true
+          // and not the load-bearing half here: an unreadable blocker makes its
+          // card stay in the list, so the filter failed CLOSED and the rows above
+          // are a superset rather than an answer. `cli.ts` said exactly that
+          // until #119 routed this read through the runner and the wording went
+          // generic with it (#119 review).
+          //
+          // Printed here rather than reworded in `run.ts`: the runner cannot know
+          // why a hole matters, and a per-command header field on `RowsResult`
+          // would be an abstraction with one caller. `emit` runs this formatter
+          // FIRST and its own notice after, so this sentence lands above
+          // the list of holes it explains — complementing it, not replacing it.
+          if (unreachable.length > 0) {
+            console.log(
+              `Blockers that could not be checked stayed BLOCKED, so their cards are still listed:`,
+            );
+          }
         },
       };
   }));

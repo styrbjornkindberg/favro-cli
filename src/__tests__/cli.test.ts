@@ -289,6 +289,46 @@ describe('cli.ts — CLA-1785 critic fixes: limit cap and null guard', () => {
     }
   });
 
+  /**
+   * The fail-closed half of the hole notice (#119 review).
+   *
+   * `cards list --filter unblocked` judges each blocker; one it cannot read
+   * leaves its card in the list, so the rows are a SUPERSET rather than an
+   * answer. `cli.ts` said that in its own wording until #119 routed this read
+   * through the runner, whose notice is generic — "a part of this read could not
+   * be reached" — and true of every list read. Both lines print; this arm is the
+   * one that says what the hole MEANT, and it is what the migration dropped.
+   */
+  test('an unreadable blocker says the cards stayed BLOCKED, not just that a read failed', async () => {
+    (CardsAPI as jest.MockedClass<typeof CardsAPI>).mockImplementation(() => ({
+      listCards: jest.fn().mockResolvedValue([{ cardId: 'c1', name: 'Card' }]),
+    } as any));
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const queryValues = require('../lib/query-values') as typeof import('../lib/query-values');
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const parser = require('../lib/query-parser') as typeof import('../lib/query-parser');
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const blocking = require('../lib/blocking') as typeof import('../lib/blocking');
+    jest.spyOn(queryValues, 'resolveCardFilter').mockResolvedValue({} as never);
+    jest.spyOn(parser, 'queryNames').mockReturnValue(true);
+    jest.spyOn(parser, 'filterCards').mockImplementation((_q, cards) => cards as never);
+    jest.spyOn(blocking, 'judgeBlockers').mockResolvedValue({
+      done: new Set<string>(),
+      unreachable: [{ id: 'card-9', reason: '404 Not Found' }],
+    } as never);
+
+    await buildProgram().parseAsync([
+      'node', 'cli', '--human', 'cards', 'list', 'board-123', '--filter', 'unblocked',
+    ]);
+
+    const printed = consoleSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(printed).toContain('Blockers that could not be checked stayed BLOCKED');
+    // Beside the runner's generic notice, not instead of it: that one lists the
+    // holes, this one says what leaving them in the list did.
+    expect(printed).toContain('(1 part(s) of this read could not be reached:)');
+    expect(printed).toContain('card-9 — 404 Not Found');
+  });
+
   test('--archived rides the wire, and a bad value is refused', async () => {
     const mockListCards = jest.fn().mockResolvedValue([]);
     (CardsAPI as jest.MockedClass<typeof CardsAPI>).mockImplementation(() => ({

@@ -207,10 +207,17 @@ describe('the topic is reachable the way its consumers reach it', () => {
     // opting out, and a FAILURE is an envelope on stdout too. The second is what
     // a live smoke run measured missing — a refusal that exited 1 having written
     // nothing an agent could parse — and the topic is where an agent is told it
-    // can now parse one. The WIRE NOTES block reflows at ~84 columns and its
-    // three facts do not fit in the two lines they replaced; reclaiming a line
-    // from the `unreachable` paragraph next to it needs 230 characters in 168,
-    // so there was no honest eviction available.
+    // can now parse one. There was no honest eviction available, measured off
+    // `TOPIC_LINES` — this test's own extraction — rather than off the file:
+    // the topic's widest content line is 82 columns, and the `unreachable`
+    // paragraph beside the edit holds 220 characters of content, which two
+    // lines at that width cannot take (2 × 80 = 160). Its three facts do not
+    // fit in the two lines they replaced either.
+    //
+    // Those figures read "~84 columns" and "230 characters in 168" when first
+    // written, in a comment whose whole function is to be the measurement. The
+    // 84 was `awk length` counting BYTES — the block's em-dashes are three
+    // apiece — and 230 was the paragraph measured with its indent included.
     //
     // 89 is the true floor with zero slack, which is what makes it a ratchet.
     const content = TOPIC_LINES.filter((l) => l.trim() !== '');
