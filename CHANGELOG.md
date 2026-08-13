@@ -107,6 +107,25 @@ old parser's own comment said "stored but not directly mapped". A CSV naming a c
 field reported success having written none of it. Refusing is the fail-closed half of
 the same fact.
 
+#### `BoardsAPI`'s duplicate collections surface is removed (#123)
+
+Library consumers, and one CLI path covered under `### Changed` below. No command
+called any of these methods directly; the single reachable use was
+`cards get --include collection`, which went through `BoardsAPI.getCollection` and now
+goes through `CollectionsAPI`'s. `BoardsAPI` declared a second
+`Collection` interface and a second copy of `resolveCollectionId`, `listCollections`,
+`getCollection`, `createCollection`, `updateCollection` and `deleteCollection`, all of
+which live on `CollectionsAPI`. They are gone from `BoardsAPI`; import `Collection` from
+`lib/collections-api` and call `CollectionsAPI` for the rest. `addBoardToCollection` and
+`removeBoardFromCollection` were not duplicated and MOVED to `CollectionsAPI` — both
+endpoints are `/collections/…`. `listBoardsByCollection` stays on `BoardsAPI`; it resolves its
+collection through the one surviving implementation, a free function in
+`lib/name-resolve.ts`, and its behaviour is unchanged.
+
+The re-exports Part A left behind are gone too: `isTagId` is no longer exported from
+`lib/tags-api` and `isUserId` no longer from `lib/users-api`. Both come from
+`lib/id-shapes`, which is where the measurement that earns each shape lives.
+
 #### Four writes that used to go through now refuse (#109)
 
 All four break invocations that worked in 3.0.0, so they are here and not under
@@ -148,6 +167,31 @@ dependency edges all used to write, and each refuses as a whole now.
   the ones already gone.
 
 ### Changed
+
+- **`favro tracker init --board "<name>"` refuses in the shared wording (#123).** It
+  matched `--board` with its own filter — the fourth copy in the tree of "id, or exact
+  folded name" — and refused with `"<name>" matches 0 boards in collection <id>`. It
+  calls `resolveNameToId` now, so an unknown name answers `No board named "<name>" — it
+  is missing or not visible to your key.` followed by the collection's boards, and an id
+  match wins over a name match instead of counting as a second candidate. The refusal is
+  a `NameResolutionError` rather than a `TrackerConfigError`; both extend `RefusalError`,
+  so the runner renders them identically and `retryable` is `false` either way. The board
+  list it matches against is still the COLLECTION's, not the org's — `tracker init` will
+  not adopt a board from somewhere else, and the shared board cache is deliberately not
+  consulted here for that reason. Pinned in `tracker-init-wire.test.ts`.
+
+- **`favro cards get <card> --include collection` escalates an unreadable collection
+  (#123).** The facet called `BoardsAPI.getCollection`, an id-only read; it calls
+  `CollectionsAPI.getCollection` now, the twin that retries a classified not-found as a
+  name lookup — the same escalation the `board` facet has always had. The card is still
+  returned with the facet ABSENT and an `unreachable` marker naming it; only the marker's
+  `reason` changes, from `Favro said "Access denied" — the resource is missing or not
+  visible to your key.` to `No collection named "<id>" — it is missing or not visible to
+  your key.`, and the failing read costs a `/collections` listing when the name cache is
+cold. Both the
+  old and the new wording misattribute the cause the same way the board facet's does, and
+  `cards-get-include-unreachable-wire.test.ts` pins it so a fix to the escalation comes
+  back here.
 
 - **`cards update` writes `dueDate` (#110).** The field was measured in #106 —
   `null` clears, an ISO timestamp is honoured and echoed verbatim, `""` is a silent
