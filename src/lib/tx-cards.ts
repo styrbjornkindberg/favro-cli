@@ -390,20 +390,6 @@ export interface ReadTx {
 export type TextField = 'name' | 'description';
 
 /**
- * What the PUT echoed for one text field, in the space `getCard` reads it back in.
- *
- * `CardsAPI.updateCard` returns the PUT body **raw** — it does not run
- * `normalizeCard`, the way `getCard` and `moveCard` do — so a description arrives
- * under the wire's own `detailedDescription` and never under the read-side
- * `description` alias. Both spellings are read here rather than betting on which
- * layer normalises, so this cannot go silently blind either way that changes.
- */
-function echoText(card: Card, field: TextField): string {
-  if (field === 'name') return card.name ?? '';
-  return ((card.detailedDescription ?? card.description) as string | undefined) ?? '';
-}
-
-/**
  * The day part of a due date — the one space the WRITE shape and the READ shape
  * share. `PUT {dueDate: "2026-09-01"}` stores and echoes
  * `"2026-09-01T00:00:00.000Z"`, so string equality against the argument would call
@@ -954,12 +940,23 @@ export class TxCards implements ReadTx {
    * Replace one of a card's scalar text fields — its `name` or its
    * `description`.
    *
+   * **THE TWO FIELDS DO NOT CARRY THE SAME GUARANTEE, and that is the first thing
+   * to know about this method.** `setText(card, 'name', …)` throws when the write
+   * did not take. `setText(card, 'description', …)` cannot, and never will on this
+   * wire — see the read-back section below. A caller that treats a returned card as
+   * proof the body changed is wrong in a way the `name` path is not.
+   *
    * ONE method for the two of them rather than a `setName` / `setDescription`
-   * pair: the capture, the write and the compensation entry are the same three
-   * statements in both cases, and the only thing that differs is which key moves.
-   * #106 named the pair and then measured both fields (below); the measurement
-   * did not split them, so the pair stayed fused rather than becoming two
-   * one-line wrappers over this.
+   * pair, and #106 measured them apart rather than together, so this is a choice
+   * and not an equivalence. Three things now differ by field: which key the payload
+   * spells, which key the echo is read from, and the read-back guard, which fires
+   * for `name` only. Everything else — the capture, the empty-write short-circuit,
+   * the compensation entry, the inverse — is one body. Splitting would move the one
+   * `if` into a private shared body and hang two public names off it; the divergence
+   * would still be there, one level down, and the union that keeps a caller off
+   * `status` / `tags` / `assignees` (below) would have to be re-argued at two call
+   * sites instead of one. The fusion is worth exactly one comparison, and this
+   * paragraph is where it is paid for.
    *
    * **The field is a CLOSED union, and that is the guard.** A general
    * `setScalar(cardRef, field, value)` would also accept `status`, `tags` and
@@ -989,6 +986,20 @@ export class TxCards implements ReadTx {
    *   dropped, and a zero-width space is injected after every `[`. A strict
    *   read-back would throw on every markdown write that in fact landed, so there
    *   is none. The write is confirmed only by the caller reporting what came back.
+   *
+   * **A weaker description detector exists and is DECLINED, on a live false
+   * positive rather than on the impossibility above.** The short-circuit means the
+   * value always differs from what the card held, so `stored === was` at the throw
+   * site would mean the PUT moved nothing at all — the `PUT {description}` silent
+   * no-op that only `mapDescription` currently prevents. It is a real detector for
+   * a real regression. It is not installed because Favro's canonicalisation makes
+   * it fire on landed writes too: a caller writing `- one` at a card already
+   * holding `* one` sends a value that differs from the stored one, gets a write
+   * that lands, and reads back `stored === was`. Throwing there would break exactly
+   * the markdown a `-`-bullet author writes. The regression it would catch is
+   * covered where it belongs, by `mapDescription`'s own tests; a guard that refuses
+   * correct writes to catch a defect one layer down is not a trade this facade
+   * makes.
    *
    * **The compensation record holds what the wire STORED, not what we asked for.**
    * That distinction is invisible for `name` (they are the same string) and
@@ -1028,20 +1039,36 @@ export class TxCards implements ReadTx {
     const payload = (v: string) => (field === 'name' ? { name: v } : { description: v });
 
     const after = await this.api.updateCard(cardId, payload(value));
-    const stored = echoText(after, field);
-    // Checked BEFORE the log push, for `setArchived`'s reason: a mismatch means the
-    // PUT wrote nothing, so there is nothing to compensate and an entry would only
-    // orphan on wreckage that does not exist. `TransientError` for the same reason
-    // too — the call is not what is wrong, so the next attempt may behave
-    // differently, and an unmarked in-process `Error` would report
-    // `retryable: false`.
+    // What the PUT echoed, in the space `getCard` reads it back in.
+    // `CardsAPI.updateCard` returns the PUT body RAW — it does not run
+    // `normalizeCard`, the way `getCard` and `moveCard` do — so a description
+    // arrives under the wire's own `detailedDescription` and never under the
+    // read-side `description` alias. Both spellings are read rather than betting on
+    // which layer normalises, so this cannot go silently blind either way it moves.
+    const stored =
+      (field === 'name'
+        ? after.name
+        : ((after.detailedDescription ?? after.description) as string | undefined)) ?? '';
+    // Checked BEFORE the log push, for `setArchived`'s reason: nothing here needs
+    // compensating that we could compensate. `TransientError` for its reason too —
+    // the call is not what is wrong, so the next attempt may behave differently, and
+    // an unmarked in-process `Error` would report `retryable: false`.
     if (field === 'name' && stored !== value) {
+      // `setArchived` can say "nothing was written" outright because `archived` is
+      // two-valued: an echo that is not what we sent can only be what was there.
+      // `name` has an unbounded domain, so a third value means something DID get
+      // written and this throw is leaving it unlogged. Rare, and not worth guessing
+      // about in the message.
       throw new TransientError(
         `Name write on card ${cardId} answered 200 but did not take: sent ${JSON.stringify(value)}, ` +
           `the response reads name=${JSON.stringify(stored)}.\n` +
-          `Nothing was written, so nothing needs undoing. The echo is probed byte-exact for this ` +
-          `field (#106) — no trimming and no markdown parsing — so a mismatch is a real difference ` +
-          `and not a normalisation.`,
+          (stored === (was ?? '')
+            ? `The card still reads what it read before, so nothing was written and nothing needs undoing.`
+            : `The card reads a THIRD value — neither what we sent nor what it held ` +
+              `(${JSON.stringify(was ?? '')}). Something was written, and nothing was logged for it, so ` +
+              `this transaction cannot unwind that change. Read the card before retrying.`) +
+          `\nThe echo is probed byte-exact for this field (#106) — no trimming and no markdown ` +
+          `parsing — so a mismatch is a real difference and not a normalisation.`,
       );
     }
     this.log.push({
@@ -1109,13 +1136,21 @@ export class TxCards implements ReadTx {
     const after = await this.api.updateCard(cardId, { dueDate });
     const stored = (after.dueDate as string | undefined) ?? null;
     if (dueDay(stored) !== dueDay(dueDate)) {
+      // Same reasoning as `setText`'s guard: a date has an unbounded domain, so an
+      // echo that is neither what we sent nor what was there means something WAS
+      // written and this throw is leaving it unlogged. Only the equal case can
+      // honestly claim nothing happened.
       throw new TransientError(
         `Due-date write on card ${cardId} answered 200 but did not take: sent ` +
           `{dueDate: ${JSON.stringify(dueDate)}}, the response reads ` +
           `dueDate=${JSON.stringify(stored)}.\n` +
-          `Nothing was written, so nothing needs undoing. The comparison is on the DAY, because a ` +
-          `date-only write is measured to come back as a full ISO timestamp (#106); a mismatch here ` +
-          `is a different day, not that normalisation.`,
+          (stored === was
+            ? `The card still reads the date it read before, so nothing was written and nothing needs undoing.`
+            : `The card reads a THIRD value — neither what we sent nor what it held ` +
+              `(${JSON.stringify(was)}). Something was written, and nothing was logged for it, so this ` +
+              `transaction cannot unwind that change. Read the card before retrying.`) +
+          `\nThe comparison is on the DAY, because a date-only write is measured to come back as a ` +
+          `full ISO timestamp (#106); a mismatch here is a different day, not that normalisation.`,
       );
     }
     this.log.push({
