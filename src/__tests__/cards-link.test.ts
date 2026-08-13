@@ -158,12 +158,16 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
     expect(optNames).not.toContain('--from');
   });
 
-  test('move command has --to-board and --position options', () => {
+  test('move command has --to-board, and --position is gone (#161)', () => {
     const cardsCmd = buildCards();
     const moveCmd = cardsCmd.commands.find(c => c.name() === 'move')!;
     const optNames = moveCmd.options.map(o => o.long);
     expect(optNames).toContain('--to-board');
-    expect(optNames).toContain('--position');
+    // `--position` never worked: `MoveCardRequest.position` was typed
+    // `'top' | 'bottom'` and the wire wants a number, so `--position top`
+    // answered `400 Unexpected value of position` and took the whole move with
+    // it. Deleted in 4.0.0 rather than repaired.
+    expect(optNames).not.toContain('--position');
   });
 
   test('show command has --relationships, and --json left the leaf', () => {
@@ -295,28 +299,32 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
     const cardsCmd = buildCards();
     await cardsCmd.parseAsync(['node', 'cards', '--human', 'move', 'card-src', '--to-board', 'board-2']);
 
-    expect(mockMoveCard).toHaveBeenCalledWith('card-src', { toBoardId: 'board-2', position: undefined });
+    expect(mockMoveCard).toHaveBeenCalledWith('card-src', { toBoardId: 'board-2' });
     expect(consoleSpy).toHaveBeenCalledWith(
       expect.stringContaining('✓ Card card-src moved to board (board-2)'),
     );
   });
 
   /**
-   * No echo, no ✓, and exit 1 — a hole forbids a clean exit code (#148), and
-   * `favro cards move … && next-step` reads the code, not the prose.
+   * The UNCONFIRMED arm is gone, one layer down rather than dropped (#161).
+   * `CardsAPI.moveCard` compares the echoed board against the one it sent and
+   * throws, so "the response named no board" never reaches this command as an
+   * `ok` outcome — it arrives as a failure, with the failure's own exit code.
+   * `write-echo-wire.test.ts` holds that against a real server; here the API is a
+   * mock, so an arm feeding it `boardId: undefined` would only pin a state the
+   * real API cannot produce.
    */
-  test('an unobserved board prints UNCONFIRMED and exits 1', async () => {
+  test('a failed move reports the failure, and spends no ✓', async () => {
     buildMockApi({
-      moveCard: jest.fn().mockResolvedValue({ ...sampleCard, boardId: undefined }),
+      moveCard: jest.fn().mockRejectedValue(
+        new Error('Move of card card-src to board board-2 was accepted (2xx) but the response does not put the card on that board'),
+      ),
     });
     const cardsCmd = buildCards();
 
     await cardsCmd.parseAsync(['node', 'cards', '--human', 'move', 'card-src', '--to-board', 'board-2']);
 
-    const printed = consoleSpy.mock.calls.map((c) => String(c[0])).join('\n');
-    expect(printed).not.toMatch(/✓/);
-    expect(printed).toContain('UNCONFIRMED');
-    expect(printed).toContain('carried no widgetCommonId');
+    expect(consoleSpy.mock.calls.map((c) => String(c[0])).join('\n')).not.toMatch(/✓/);
     expect(process.exitCode).toBe(1);
   });
 
@@ -369,7 +377,7 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
     expect(requested).toContain(`/widgets/${HUB_ID}`);
     expect(requested.filter((u) => u.includes(HUB_NAME))).toEqual([]);
     expect(process.exitCode).toBeUndefined();
-    expect(mockMoveCard).toHaveBeenCalledWith('card-src', { toBoardId: HUB_NAME, position: undefined });
+    expect(mockMoveCard).toHaveBeenCalledWith('card-src', { toBoardId: HUB_NAME });
     // TWO settlings of the same name — the intent's `board()` and `moveCard`'s
     // own `boardIdOf` — cost ONE board list, measured here rather than asserted:
     // `resolveNameToId` reads a memoised, disk-backed cache (`name-cache.ts`, 15
@@ -378,32 +386,13 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
     expect(requested.filter((u) => u === '/widgets')).toHaveLength(1);
   });
 
-  test('moves card to target board with position top', async () => {
-    const { mockMoveCard } = buildMockApi();
-    const cardsCmd = buildCards();
-    await cardsCmd.parseAsync(['node', 'cards', '--human', 'move', 'card-src', '--to-board', 'board-2', '--position', 'top']);
-
-    expect(mockMoveCard).toHaveBeenCalledWith('card-src', { toBoardId: 'board-2', position: 'top' });
-  });
-
-  test('moves card to target board with position bottom', async () => {
-    const { mockMoveCard } = buildMockApi();
-    const cardsCmd = buildCards();
-    await cardsCmd.parseAsync(['node', 'cards', '--human', 'move', 'card-src', '--to-board', 'board-2', '--position', 'bottom']);
-
-    expect(mockMoveCard).toHaveBeenCalledWith('card-src', { toBoardId: 'board-2', position: 'bottom' });
-  });
-
-  test('exits with error on invalid position', async () => {
-    buildMockApi();
-    const cardsCmd = buildCards();
-
-    await cardsCmd.parseAsync(['node', 'cards', '--human', 'move', 'card-src', '--to-board', 'board-2', '--position', 'middle']);
-
-    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining("Invalid position"));
-    expect(process.exitCode).toBe(1);
-  });
-
+  /**
+   * The three arms that drove `--position top` / `bottom` / `middle` are gone
+   * with the flag (#161). They asserted the value reached `moveCard`, which is
+   * exactly what made them worthless: the value reached the wire too, and the
+   * wire answered `400 Unexpected value of position`. Commander refuses an
+   * unknown option on its own, so the "invalid value" refusal has no work left.
+   */
   test('the machine default outputs the moved card, and NOTHING ahead of it', async () => {
     // A live smoke run measured the pre-#119 shape putting `✓ Card … moved` on
     // stdout in FRONT of the JSON, so the documented default did not parse. The

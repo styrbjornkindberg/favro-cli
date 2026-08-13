@@ -12,28 +12,32 @@
  *   3. `cards-link.ts` — `✓ Card … moved to board ${options.toBoard}`, a pure
  *      argument echo, while the same PUT's echo went unread because `moveCard`
  *      returned its body raw and `Card.boardId` is `normalizeCard`'s derivation
- *      from `widgetCommonId`.
+ *      from `widgetCommonId`. This one is now a THROW — see below.
  *
- * None of the three grew a THROW, and deliberately. A throw against a write
- * RESPONSE is only legitimate against a **measured write-response echo**. The one
- * this repo has is `archived`, from #75's live probe (recorded on
- * `UpdateCardRequest.archive`), and it is what earns `TxCards.setArchived` its
- * throw. `widgetCommonId`, `columnId` and `customFields` are measured on **GET
- * rows** (`docs/research/tracker-contract-favro-carriers.md` §1.3/§3) — a
- * read-side row is not a write-side echo, and inferring one from the other is the
- * step ADR-0003 refuses.
+ * A throw against a write RESPONSE is only legitimate against a **measured
+ * write-response echo**, and the repo now has two. `archived`, from #75's live
+ * probe (recorded on `UpdateCardRequest.archive`), earns `TxCards.setArchived`
+ * its throw. `widgetCommonId` on the MOVE PUT, from #161's live probe (recorded
+ * on `CardsAPI.moveCard`), earns site 3 its throw — measured in the same run that
+ * found the missing `dragMode`, so the arms below assert a throw where they used
+ * to assert an unconfirmed report. `columnId` and `customFields` are still
+ * measured on **GET rows** only
+ * (`docs/research/tracker-contract-favro-carriers.md` §1.3/§3) — a read-side row
+ * is not a write-side echo, and inferring one from the other is the step ADR-0003
+ * refuses. Site 1's PUT carries `dragMode:'commit'`, a different write: its echo
+ * has now been seen once on a success (`widgets-api.ts`), but what it answers on
+ * a REFUSED commit has not, so it still reports rather than throws.
  *
  * That is a rule about the echo, not a ban on confirming a write. #101 closed by
  * READING THE CARD BACK: `TxCards.moveColumn` throws on a mismatch, and the value
  * it compares comes from a fresh `GET /cards/{cardId}` — the measured surface —
- * never from the PUT. The three sites here could each buy a throw the same way,
- * at one extra GET; none does, because reporting the hole is enough for them and
- * an unread echo is not a hazard the way an unverified column move was.
+ * never from the PUT. Site 1 could buy a throw the same way, at one extra GET; it
+ * does not, because reporting the hole is enough for it.
  *
- * What all three DO is report the echo when it is there and report a hole when it
- * is not. Sites 1 and 3 are the same call on the same field, so they read the
- * same echo; nothing about that requires a new measurement, only that an absent
- * echo never becomes a ✓ and never exits 0.
+ * What site 1 DOES is report the echo when it is there and report a hole when it
+ * is not — an absent echo never becomes a ✓ and never exits 0. Site 3 is the same
+ * call on the same field with a different `dragMode`, and it is the one whose
+ * echo has been probed, so it refuses instead of reporting.
  *
  * ── Why a real server, and why the OMIT arm is the only one that matters ──
  *
@@ -348,17 +352,17 @@ describe('custom-fields set has no un-instrumented write left to fail open with'
 
 // ── Site 3: cards move ──────────────────────────────────────────────────────
 
-describe('moveCard reports the board it OBSERVED', () => {
+describe('moveCard REFUSES any board but the one it asked for (#161)', () => {
   /**
    * Same endpoint and same field as Site 1 — `PUT /cards/:cardId
-   * {widgetCommonId}` — so the same echo is available, and the two commands must
-   * not disagree about whether it counts as an observation.
+   * {widgetCommonId}` — but a different `dragMode`, and this one's echo has been
+   * probed live: a landed move answers with the destination board. So where site
+   * 1 reports a hole, this compares and throws.
    *
    * `boardId` is the field a `Card` consumer reads, and it only carries the echo
-   * because the PUT body now goes through `normalizeCard`. Returned raw, as it
-   * was, `boardId` was `undefined` on the arm where the server DID echo the
-   * board: an echo and a silence were indistinguishable, and the command had
-   * nothing to spend a ✓ on.
+   * because the PUT body goes through `normalizeCard`. Returned raw, as it was,
+   * `boardId` was `undefined` even on the arm where the server DID echo the
+   * board.
    */
   it('an echoed board reaches boardId, not just widgetCommonId', async () => {
     const { client } = await startServer('full');
@@ -367,32 +371,32 @@ describe('moveCard reports the board it OBSERVED', () => {
     expect(moved.boardId).toBe(BOARD_ID);
   });
 
-  /** THE arm with teeth: nothing echoed, nothing claimed, argument nowhere. */
-  it('omitted → boardId is absent, never backfilled from the argument', async () => {
+  /**
+   * THE arm with teeth, and it is the DENIAL arm: `202 {"message":"Access
+   * denied"}` for a board this key cannot write to is card-shaped, 2xx, and
+   * carries no board — indistinguishable from a 200 by status, message or
+   * envelope. `omit` is that response's shape, and the comparison is the only
+   * thing that sees it.
+   */
+  it('omitted → throws, because a silent board is what a denial looks like', async () => {
     const { client } = await startServer('omit');
-    const moved = await new CardsAPI(client).moveCard(CARD_ID, { toBoardId: BOARD_ID });
-    expect(moved.widgetCommonId).toBeUndefined();
-    expect(moved.boardId).toBeUndefined();
+    await expect(new CardsAPI(client).moveCard(CARD_ID, { toBoardId: BOARD_ID })).rejects.toThrow(
+      'the response does not put the card on that board',
+    );
   });
 
-  it('a different board echoed → the SERVER wins, not the request', async () => {
+  it('a different board echoed → throws rather than reporting someone else’s board', async () => {
     const { client } = await startServer('different');
-    const moved = await new CardsAPI(client).moveCard(CARD_ID, { toBoardId: BOARD_ID });
-    expect(moved.boardId).toBe(OTHER_BOARD_ID);
+    const attempt = new CardsAPI(client).moveCard(CARD_ID, { toBoardId: BOARD_ID });
+    await expect(attempt).rejects.toThrow(OTHER_BOARD_ID);
+    // The board ASKED for is named too, so the message says which is which.
+    await expect(attempt).rejects.toThrow(BOARD_ID);
   });
 
-  it('a blank echo is falsy, so the caller cannot spend a ✓ on it', async () => {
+  it('a blank echo is not an observation either', async () => {
     const { client } = await startServer('blank');
-    const moved = await new CardsAPI(client).moveCard(CARD_ID, { toBoardId: BOARD_ID });
-    expect(moved.boardId).toBeFalsy();
-    expect(moved.boardId).not.toBe(BOARD_ID);
-  });
-
-  /** The write still goes out correctly — the honesty fix changed no request. */
-  it('sends the RESOLVED board on the wire', async () => {
-    const { client, received } = await startServer('omit');
-    await new CardsAPI(client).moveCard(CARD_ID, { toBoardId: BOARD_ID });
-    const put = received.find((r) => r.method === 'PUT');
-    expect(JSON.parse(put?.body ?? '{}')).toMatchObject({ widgetCommonId: BOARD_ID });
+    await expect(new CardsAPI(client).moveCard(CARD_ID, { toBoardId: BOARD_ID })).rejects.toThrow(
+      'the response does not put the card on that board',
+    );
   });
 });

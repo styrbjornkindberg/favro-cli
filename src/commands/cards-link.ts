@@ -18,7 +18,6 @@ import { Ctx, run } from '../lib/run';
 // 'related' and 'duplicates' are gone — Favro has no API representation for them,
 // so they were being silently discarded. See lib/dependency-direction.ts.
 export const VALID_LINK_TYPES = [...LINK_TYPES];
-const VALID_POSITIONS = ['top', 'bottom'];
 
 /**
  * The 404 rewording each of these seven actions carried inside its own
@@ -182,13 +181,9 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
     .description(
       'Move a card to a different board.\n\n' +
       'Examples:\n' +
-      '  favro cards move <card> --to-board <board>\n' +
-      '  favro cards move <card> --to-board <board> --position top\n' +
-      '  favro cards move <card> --to-board <board> --position bottom\n\n' +
-      `Valid positions: ${VALID_POSITIONS.join(', ')}`
+      '  favro cards move <card> --to-board <board>'
     )
     .requiredOption('--to-board <board>', 'Destination board, by name or boardId')
-    .option('--position <pos>', `Position on board: ${VALID_POSITIONS.join('|')}`)
     .option('--dry-run', 'Preview the move. Takes the scope lock on both boards first')
     .option('-y, --yes', 'Skip confirmation prompt')
     .option('--force', 'Bypass scope check')
@@ -196,14 +191,8 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
     .action(run(async (
       ctx: Ctx,
       cardId: string,
-      options: { toBoard: string; position?: string; dryRun?: boolean; yes?: boolean; force?: boolean },
+      options: { toBoard: string; dryRun?: boolean; yes?: boolean; force?: boolean },
     ) => {
-      if (options.position && !VALID_POSITIONS.includes(options.position.toLowerCase())) {
-        throw new RefusalError(
-          `Invalid position '${options.position}'. Valid: ${VALID_POSITIONS.join(', ')}`,
-        );
-      }
-
       if (
         !options.dryRun &&
         !(await confirmAction(`Move card ${cardId} to board ${options.toBoard}?`, { yes: options.yes }))
@@ -227,44 +216,27 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
       // `TxCards.moveToBoard`.
       const result = await dispatch<Card>(
         'move-board',
-        {
-          card: cardId,
-          toBoard: options.toBoard,
-          position: options.position?.toLowerCase() as 'top' | 'bottom' | undefined,
-        },
+        { card: cardId, toBoard: options.toBoard },
         { client: ctx.client, config: ctx.config, force: options.force, dryRun: options.dryRun },
       ).catch(rewrite404(`Card '${cardId}' or board '${options.toBoard}' not found.`));
 
       return {
         dispatch: result,
-        // Unconfirmed is a HOLE, and a hole forbids a clean exit code (#148, and
-        // `diff.ts` gates exit 1 on `holes.length`): `favro cards move … &&
-        // next-step` must not proceed on a board nothing observed.
+        // The ✓ is spent only on an OBSERVED board, and it can be spent
+        // unconditionally now: `CardsAPI.moveCard` compares the echoed board
+        // against the one it sent and THROWS on a mismatch (#161), so an `ok`
+        // outcome here has already been read back. It used to print `✓ Card …
+        // moved to board ${options.toBoard}` — the argument echoed as an outcome —
+        // and then, after #82, a second branch reporting the write UNCONFIRMED
+        // when the echo was absent. That branch is unreachable past the throw, and
+        // an unconfirmed-move hole is no longer a state this command can be in, so
+        // its `exitCode: 1` went with it.
         //
-        // DECLARED rather than called. Under `run()` a hard exit is banned, and
-        // the mechanical migration — a bare `return { dispatch: result }` — hands
-        // this back exit 0 and loses the finding silently, with no type error to
-        // catch it. `undefined` leaves `reportDispatch`'s own answer standing,
-        // which is what a dry run and a failed write both need.
-        exitCode:
-          result.outcome === 'ok' && result.value !== undefined && !result.value.boardId
-            ? 1
-            : undefined,
-        human: (card: Card) =>
-          // The ✓ is spent only on an OBSERVED board. The old line — `✓ Card …
-          // moved to board ${options.toBoard}` — echoed the argument as an
-          // outcome: it printed the board the user typed, so it read identically
-          // whether the move landed or Favro 200'd and wrote nothing.
-          //
-          // `card.boardId` is the echoed `widgetCommonId` (see
-          // `CardsAPI.moveCard`) — the same field `widgets add` spends its ✓ on,
-          // because it is the same PUT.
-          card.boardId
-            ? `✓ Card ${cardId} moved to board (${card.boardId})`
-            : `Move of card ${cardId} to board ${options.toBoard} was accepted (200) but is UNCONFIRMED: ` +
-              `the response carried no widgetCommonId, so nothing here observed the card's board.\n` +
-              `Whether this PUT echoes widgetCommonId is unmeasured, so an absent echo is not by itself a failure.\n` +
-              `Verify with: favro cards get ${cardId}`,
+        // `card.boardId` is the echoed `widgetCommonId` — the same field `widgets
+        // add` spends its ✓ on, because it is the same PUT with a different
+        // `dragMode`. That command keeps its unconfirmed branch — nothing here
+        // changed what its write reports.
+        human: (card: Card) => `✓ Card ${cardId} moved to board (${card.boardId})`,
       };
     }));
 

@@ -1448,7 +1448,6 @@ export interface MoveBoardArgs {
   card: string;
   /** The destination board, by NAME or `widgetCommonId`. Settled in `board()`. */
   toBoard: string;
-  position?: 'top' | 'bottom';
 }
 
 /**
@@ -1480,7 +1479,7 @@ registerIntent<MoveBoardArgs, Card>({
   summary: 'Move a card to a different board — irreversible, with no compensating write',
   terminal: true,
   preview: (a) => [
-    `move card ${a.card} to board ${a.toBoard}${a.position ? ` (${a.position})` : ''}`,
+    `move card ${a.card} to board ${a.toBoard}`,
     `  it LEAVES the board it is on: this is a move, not a second instance — 'widgets add' is that`,
     `  IRREVERSIBLE here — the column it held on the old board is not captured, so no later failure can put it back`,
   ],
@@ -1490,7 +1489,7 @@ registerIntent<MoveBoardArgs, Card>({
   ],
   // Last statement, deliberately: `moveToBoard` logs nothing, so `log.depth` is
   // unchanged and a RefusalError raised after it would be rethrown as pre-write.
-  run: (a, tx) => tx.moveToBoard(a.card, a.toBoard, a.position),
+  run: (a, tx) => tx.moveToBoard(a.card, a.toBoard),
 });
 
 export interface AddBoardInstanceArgs {

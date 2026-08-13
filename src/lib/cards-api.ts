@@ -481,7 +481,6 @@ export interface LinkCardRequest {
 
 export interface MoveCardRequest {
   toBoardId: string;
-  position?: 'top' | 'bottom';
 }
 
 /** `--archived`: which side of the archive line to read. */
@@ -973,14 +972,33 @@ export class CardsAPI {
   }
 
   /**
-   * Move a card to a different board.
+   * Move a card to a different board — `PUT /cards/:cardId {widgetCommonId,
+   * dragMode:'move'}`.
    *
-   * Callers must not report the REQUESTED board as the reached one — but they do
-   * have an observation to report instead. This is `PUT /cards/:cardId
-   * {widgetCommonId}`, the same call and the same field as
-   * `WidgetsAPI.addWidgetToBoard`, so whatever that endpoint echoes is available
-   * here too: present → report it, absent → report the write unconfirmed. The
-   * two commands must not disagree about whether the same echo is observable.
+   * **`dragMode` is what makes this a move.** MEASURED 2026-08-13 (#161), raw
+   * HTTP against the live API: this PUT defaults `dragMode` to `commit`, and
+   * `commit` ADDS a board instance rather than moving one. A bare
+   * `PUT {widgetCommonId}` answered 200 and left the card on TWO boards — the
+   * source instance untouched, a second instance of the same `cardCommonId`
+   * minted on the destination with its own `cardId`, which is why the response
+   * came back naming an id nobody asked about. `dragMode:'move'` answers 200 with
+   * the REQUESTED `cardId` and one instance. Favro's own validator names the
+   * enum when probed with a bogus value: `dragMode is expected as one of
+   * "commit", "move" (optional)`. So this was `widgets add` wearing the name
+   * `cards move`, and it is why `WidgetsAPI.addWidgetToBoard` — the same endpoint
+   * with `dragMode:'commit'` — is a separate method rather than a flag here.
+   * `docs/research/card-identifier-semantics.md:280-286` predicted this in prose
+   * before it was measured.
+   *
+   * The board echo is MEASURED on this PUT's response by the same probe (and by
+   * the live A/B on the #105 scratch board), so the write is read back and a
+   * mismatch throws. Compared on the BOARD and never on the card: a move onto a
+   * board that already holds an instance of this card merges, and answers with
+   * the surviving instance's `cardId`, so `raw.cardId` legitimately differs from
+   * the id we addressed. The same comparison is the catch for the denial shape
+   * this endpoint answers with — a board id outside the key's reach answers
+   * `202 {"message":"Access denied"}`, a 2xx that axios hands back as success and
+   * whose body carries no board at all.
    *
    * The response goes through `normalizeCard` like `getCard` does — and unlike
    * `updateCard`, which returns its PUT body raw, so a caller reading a card back
@@ -991,23 +1009,29 @@ export class CardsAPI {
    * whatever the server sent, so a caller reading it could not tell an echo from
    * a silence, and `cards move --json` was the one card-returning path that
    * emitted `widgetCommonId` and never `boardId`.
-   *
-   * What is still **unmeasured** is whether Favro echoes `widgetCommonId` on
-   * this PUT at all — it is measured on every GET row
-   * (`docs/research/tracker-contract-favro-carriers.md` §1.3), and a read-side
-   * row is not a write-side echo, the same gap `UpdateCardRequest.columnId`
-   * records for itself. So an absent echo is reported
-   * unconfirmed and is never thrown on: throwing on an unmeasured echo would
-   * take out every move to defend a hazard with no observed instance.
    */
   async moveCard(cardRef: string, req: MoveCardRequest): Promise<Card> {
     const boardId = await this.boardIdOf(req.toBoardId);
     const cardId = await this.references.toCardId(cardRef);
-    // Favro uses PUT /cards/:cardId with widgetCommonId to move cards
     const raw = await this.client.put<RawCard>(`/cards/${cardId}`, {
       widgetCommonId: boardId,
-      position: req.position,
+      dragMode: 'move',
     });
+    // A bare `Error`: neither marker's claim is measured for both branches this
+    // catches. `RefusalError` would claim the write landed nowhere, which holds
+    // for the 202 denial and is unknown for a mismatched echo; `TransientError`
+    // would claim the next attempt may differ, which is false for the denial. An
+    // unmarked throw is the fail-closed default the table already reads (#151).
+    if (raw.widgetCommonId !== boardId) {
+      throw new Error(
+        `Move of card ${cardId} to board ${boardId} was accepted (2xx) but the response does not put the ` +
+          `card on that board: it reads ${JSON.stringify(raw.widgetCommonId)}.\n` +
+          `A move that lands echoes the destination board back (measured #161). Favro answers ` +
+          `202 {"message":"Access denied"} — a success status to every HTTP client — for a board this key ` +
+          `cannot write to, and that body carries no board at all, so this is the only place it is visible.\n` +
+          `Verify with: favro cards get ${cardId}`,
+      );
+    }
     return normalizeCard(raw);
   }
 

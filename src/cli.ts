@@ -309,7 +309,7 @@ const cards = program.command('cards').description(
   '  favro cards list <board> --filter "customField:value"\n' +
   '  favro cards link <card> --to <targetId> --type depends\n' +
   '  favro cards unlink <card> --from <linkedCardId>\n' +
-  '  favro cards move <card> --to-board <board> --position top\n' +
+  '  favro cards move <card> --to-board <board>\n' +
   '  favro cards create "My card" --board <board>\n' +
   '  favro cards export <board> --format csv --out cards.csv'
 );

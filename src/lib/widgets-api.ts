@@ -23,10 +23,17 @@ export interface Widget {
  * (`docs/research/tracker-contract-favro-carriers.md` §1.3, full key set), and
  * documented (not probed) on a `GET /widgets` row
  * (`docs/research/name-id-resolution.md:82`, quoting Favro's "Get all widgets"
- * response fields). Whether the **commit PUT's response** echoes it back is
- * **unmeasured** either way, and a read-side row is not a write-side echo — the
- * distinction `UpdateCardRequest.columnId` records for itself (#101), and the
- * step ADR-0003 refuses.
+ * response fields). The **commit PUT's response** carries it too: measured
+ * 2026-08-14 (#161) on the #105 scratch board, one `widgets add` against a live
+ * board, whose printed `widgetCommonId` is this echo and nothing else — the field
+ * below has no fallback.
+ *
+ * ONE observation of a success, which is why the field stays optional and the
+ * caller still reports UNCONFIRMED on a silence rather than throwing: `moveCard`
+ * earned its throw from a probe that measured the failure shapes too
+ * (`202 {"message":"Access denied"}`, no board on the body), and nothing here has
+ * measured what THIS write answers when it is refused. Inferring that from the
+ * sibling arm is the step ADR-0003 refuses.
  *
  * So the field is absent when the response did not carry it, and the caller
  * reports the write UNCONFIRMED rather than substituting the board it asked

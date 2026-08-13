@@ -85,7 +85,16 @@ function startServer(): Promise<{ client: FavroHttpClient; received: Received[] 
         };
       } else if (url.startsWith('/api/v1/cards/')) {
         // A single-card read or a PUT: echo a card that carries both keyspaces.
-        payload = { cardId: CARD_ID, cardCommonId: CARD_COMMON_ID, name: 'A card', widgetCommonId: HUB_ID };
+        // A PUT echoes the board it was SENT, the way the live API does on a
+        // landed move (#161) — a fixed board here would make `moveCard`'s own
+        // read-back throw on every row that resolves to some other board.
+        const sent = (JSON.parse(body || '{}') as { widgetCommonId?: string }).widgetCommonId;
+        payload = {
+          cardId: CARD_ID,
+          cardCommonId: CARD_COMMON_ID,
+          name: 'A card',
+          widgetCommonId: sent ?? HUB_ID,
+        };
       } else if (url.startsWith('/api/v1/cards')) {
         payload = req.method === 'POST'
           ? { cardId: CARD_ID, cardCommonId: CARD_COMMON_ID, name: 'A card', widgetCommonId: HUB_ID }

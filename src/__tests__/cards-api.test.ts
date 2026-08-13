@@ -317,25 +317,25 @@ describe('Cards API', () => {
 
   // --- moveCard ---
 
-  test('moveCard calls put on /cards/:id', async () => {
-    const card = { cardId: 'card-1', name: 'Task', createdAt: '2026-01-01', boardId: 'board-2' };
+  test('moveCard calls put on /cards/:id with dragMode move', async () => {
+    const card = { cardId: 'card-1', name: 'Task', createdAt: '2026-01-01', widgetCommonId: 'board-2' };
     mockClient.put.mockResolvedValue(card);
-    const result = await api.moveCard('card-1', { toBoardId: 'board-2', position: 'top' });
+    const result = await api.moveCard('card-1', { toBoardId: 'board-2' });
     expect(result.boardId).toBe('board-2');
+    // `dragMode` is the whole fix (#161): without it Favro defaults to `commit`
+    // and the card gains a board instead of changing board. The wire arms in
+    // `cards-move-wire.test.ts` pin it against a stand that acts on the field.
     expect(mockClient.put).toHaveBeenCalledWith('/cards/card-1', {
       widgetCommonId: 'board-2',
-      position: 'top',
+      dragMode: 'move',
     });
   });
 
-  test('moveCard without position sends undefined position', async () => {
-    const card = { cardId: 'card-1', name: 'Task', createdAt: '2026-01-01' };
-    mockClient.put.mockResolvedValue(card);
-    await api.moveCard('card-1', { toBoardId: 'board-2' });
-    expect(mockClient.put).toHaveBeenCalledWith('/cards/card-1', {
-      widgetCommonId: 'board-2',
-      position: undefined,
-    });
+  test('moveCard throws when the response does not put the card on the board asked for', async () => {
+    mockClient.put.mockResolvedValue({ cardId: 'card-1', name: 'Task', createdAt: '2026-01-01' });
+    await expect(api.moveCard('card-1', { toBoardId: 'board-2' })).rejects.toThrow(
+      'was accepted (2xx) but the response does not put the card on that board',
+    );
   });
 
   test('moveCard propagates errors', async () => {

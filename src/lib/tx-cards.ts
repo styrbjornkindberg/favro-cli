@@ -1372,7 +1372,7 @@ export class TxCards implements ReadTx {
    *    observed. So an inverse would restore the board and guess at the column,
    *    while `rolled-back` claims the world is back where it was. There is no
    *    fourth outcome to tell that truth with, so the composition is refused
-   *    instead. `position` compounds it: not captured, not readable back.
+   *    instead.
    *
    * Nothing here is a claim that a move cannot be undone by hand — `favro cards
    * move` the other way is right there. It is a claim that this facade cannot
@@ -1383,13 +1383,14 @@ export class TxCards implements ReadTx {
    * LAST thing an intent's `run` does (a `RefusalError` after it would be misread
    * as pre-write, since `log.depth` is unchanged), and the intent is `terminal`.
    *
-   * The echo is UNMEASURED — whether this PUT answers with `widgetCommonId` has
-   * never been probed (`CardsAPI.moveCard`) — so this does not read the write back
-   * and never throws on a silent echo. The caller reports the board it observed,
-   * or reports the write unconfirmed.
+   * The echo is MEASURED (#161): a landed move answers with the destination
+   * board, so `moveCard` reads its own write back and throws on a mismatch. This
+   * adds no read of its own and logs nothing either way — a throw from there is
+   * either a denial that wrote nothing or a write whose landing is unknown, and
+   * neither has an inverse this facade could run.
    */
-  async moveToBoard(cardRef: string, toBoard: string, position?: 'top' | 'bottom'): Promise<Card> {
-    return this.api.moveCard(cardRef, { toBoardId: toBoard, position });
+  async moveToBoard(cardRef: string, toBoard: string): Promise<Card> {
+    return this.api.moveCard(cardRef, { toBoardId: toBoard });
   }
 
   /**
