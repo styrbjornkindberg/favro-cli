@@ -1192,11 +1192,13 @@ export class CardsAPI {
     // unwind a move. On the `status` path the read above already happened, so
     // this costs nothing; an explicit `columnId` pays one GET.
     //
-    // Conditioned on `boardId`, not on `payload.widgetCommonId`: the two say the
-    // same thing by the time we get here (the line above writes the payload key
-    // from this local, and only from it), and keeping the card's board in the
-    // same local means there is still exactly ONE name for a settled board id in
-    // this method — which is what the #82 ratchet reads. Resolution is not needed
+    // Conditioned on `boardId` — the SETTLED board — rather than on
+    // `payload.widgetCommonId`, which is still whatever the caller spread in when
+    // it did not resolve. `boardIdOf('')` is `undefined`, so an empty spelling
+    // takes this branch and is replaced by the card's real board instead of
+    // riding out as a board Favro cannot resolve a column against. Keeping that
+    // board in the same local leaves exactly ONE name for a settled board id in
+    // this method, which is what the #82 ratchet reads. Resolution is not needed
     // on this value: it is an id off the card's own GET row, never a board name.
     if (payload.columnId !== undefined && !boardId) {
       boardId = (await currentCard()).boardId;
