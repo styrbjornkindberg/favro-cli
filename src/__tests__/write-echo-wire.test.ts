@@ -321,8 +321,14 @@ describe('addWidgetToBoard reports the board it OBSERVED (#82)', () => {
  * routes through the dispatch table now, so the write is
  * `TxCards.setFieldValue`, which does something strictly stronger than reporting
  * an unconfirmed echo: it matches the echo on `customFieldId` and THROWS when it
- * does not carry what it sent. Those arms live in
- * `tx-cards-field-writes-wire.test.ts`, on the same kind of socket.
+ * does not carry what it sent.
+ *
+ * FIVE of the six had equivalents in `tx-cards-field-writes-wire.test.ts` and
+ * moved there. The SIXTH — a foreign field in the echo — did not, and saying it
+ * did was false: every stand in that file seeded ONE custom field, so `find(byId)`
+ * and `[0]` were indistinguishable in all of them. Mutating `cardFieldValue`'s
+ * filter to `entries[0]` left the whole suite green. It is written fresh there
+ * now, on a two-field row, and the mutation fails on it.
  *
  * What is left here is the ratchet. An un-instrumented write left reachable is
  * one the next command takes without touching the table — the seam's premise,

@@ -399,6 +399,44 @@ describe('setFieldValue — a 202 with a message is a failure, and axios calls i
     expect(log.depth).toBe(1);
   });
 
+  /**
+   * WRITTEN FRESH for #109, not moved. `write-echo-wire.test.ts` carried an arm
+   * of this shape against `CustomFieldsAPI.putCardCustomField`, which had a
+   * `customFieldId` filter of its own; that method is deleted, and the five other
+   * arms beside it did have equivalents here. This one did not, and the gap was
+   * real: every other stand in this file seeds ONE custom field, so `find(byId)`
+   * and `[0]` are indistinguishable in all of them. Mutating
+   * `cardFieldValue`'s filter to `entries[0]` left the whole suite green.
+   *
+   * A real `customFields` array carries every field on the card, so "the response
+   * contained a value" and "the response contained OUR field's value" are
+   * different claims. `OTHER` is seeded FIRST and the stand appends the written
+   * entry, so it stays `entries[0]` across the write — which is what makes the
+   * mutation fail here rather than pass by luck of ordering.
+   */
+  it('a foreign field in the echo is never read as ours', async () => {
+    const stand = await startServer({
+      row: {
+        customFields: [
+          { customFieldId: 'OTHER', value: ['x'] },
+          { customFieldId: FIELD, value: [TODO_OPTION] },
+        ],
+      },
+    });
+    const { tx, log } = txOn(stand);
+
+    // Reading `[0]` here confirms our write off the foreign field's value, sees a
+    // mismatch, and throws a `TransientError` for a write that in fact landed.
+    await expect(tx.setFieldValue(CARD, FIELD, [DOING_OPTION])).resolves.toBeDefined();
+    expect(log.depth).toBe(1);
+
+    // And the RECORD is ours too: the unwind restores our field and leaves the
+    // foreign one exactly where it was.
+    expect(await log.unwind()).toEqual({ outcome: 'rolled-back', orphans: [] });
+    expect(stand.row.customFields).toContainEqual({ customFieldId: 'OTHER', value: ['x'] });
+    expect(stand.row.customFields).toContainEqual({ customFieldId: FIELD, value: [TODO_OPTION] });
+  });
+
   it('a field already holding the value writes nothing and logs nothing', async () => {
     const stand = await startServer();
     const { tx, log } = txOn(stand);
