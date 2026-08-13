@@ -639,20 +639,20 @@ const syncBranches = (cardId: string) => () => {
 const UNMIGRATED: Unmigrated[] = [
   {
     label: 'dependencies delete',
-    outside: { argv: ['dependencies', 'delete', 'card-1', 'card-2', '--dry-run'], preview: 'card-1 -> card-2' },
-    inside: { argv: ['dependencies', 'delete', 'card-inside', 'card-2', '--dry-run'], preview: 'card-inside -> card-2' },
+    outside: { argv: ['dependencies', 'delete', 'card-1', 'card-2', '--dry-run'], preview: 'remove the edge where card-2 blocks card-1' },
+    inside: { argv: ['dependencies', 'delete', 'card-inside', 'card-2', '--dry-run'], preview: 'remove the edge where card-2 blocks card-inside' },
     real: ['dependencies', 'delete', 'card-1', 'card-2', '--yes'],
   },
   {
     label: 'dependencies delete-all',
-    outside: { argv: ['dependencies', 'delete-all', 'card-1', '--dry-run'], preview: 'Would remove all dependencies from card "card-1"' },
-    inside: { argv: ['dependencies', 'delete-all', 'card-inside', '--dry-run'], preview: 'Would remove all dependencies from card "card-inside"' },
+    outside: { argv: ['dependencies', 'delete-all', 'card-1', '--dry-run'], preview: 'remove every blocking edge on card-1' },
+    inside: { argv: ['dependencies', 'delete-all', 'card-inside', '--dry-run'], preview: 'remove every blocking edge on card-inside' },
     real: ['dependencies', 'delete-all', 'card-1', '--yes'],
   },
   {
     label: 'custom-fields set',
-    outside: { argv: ['custom-fields', 'set', 'card-1', 'field-1', 'v', '--dry-run'], preview: '[dry-run] Would set custom field field-1 on card-1 to "v"' },
-    inside: { argv: ['custom-fields', 'set', 'card-inside', 'field-1', 'v', '--dry-run'], preview: '[dry-run] Would set custom field field-1 on card-inside to "v"' },
+    outside: { argv: ['custom-fields', 'set', 'card-1', 'field-1', 'v', '--dry-run'], preview: '[dry-run] update card card-1' },
+    inside: { argv: ['custom-fields', 'set', 'card-inside', 'field-1', 'v', '--dry-run'], preview: '[dry-run] update card card-inside' },
     real: ['custom-fields', 'set', 'card-1', 'field-1', 'v', '--yes'],
   },
   {
@@ -994,8 +994,18 @@ describe('no guarded write previews ahead of its own scope guard (#155)', () => 
     expect(gaps).toEqual([]);
     // The denominators, so a scan that silently stopped reading files fails here
     // rather than passing vacuously with an empty gap list.
-    expect(guarded).toBeGreaterThanOrEqual(38);
-    expect(withPreview).toBeGreaterThanOrEqual(33);
+    //
+    // 38 until #109, which routed eight of these commands through the dispatch
+    // table — `dependencies` add/delete/delete-all, `custom-fields set`,
+    // `widgets add`, `cards move` and two of `git`'s. Their guard is now the
+    // table's `assertScope`, taken inside the intent and structurally before the
+    // `dryRun` return, so the ordering this scan checks cannot be got wrong for
+    // them at all. They leave the denominator because the TEXT this scanner reads
+    // — a `checkScope(` call in the command file — is gone, not because a check
+    // is. The scan's job is unchanged for the thirty commands that still guard
+    // inline.
+    expect(guarded).toBeGreaterThanOrEqual(30);
+    expect(withPreview).toBeGreaterThanOrEqual(25);
   });
 
   it('reports a gap when the preview is moved back above the guard', () => {

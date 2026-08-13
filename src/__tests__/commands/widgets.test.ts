@@ -66,6 +66,10 @@ beforeEach(() => {
   (config.resolveApiKey as jest.Mock).mockResolvedValue('test-token');
   (config.readConfig as jest.Mock).mockResolvedValue({ scopeCollectionId: 'coll-1' });
   (safety.checkScope as jest.Mock).mockResolvedValue(undefined);
+  // `widgets add` is routed through the `add-board-instance` intent (#109), so
+  // the lock it takes is the table's `assertScope`. Reset per arm because
+  // `clearAllMocks` clears calls, not implementations.
+  (safety.assertScope as jest.Mock).mockResolvedValue(undefined);
   (safety.confirmAction as jest.Mock).mockResolvedValue(true);
   // `checkResolvedScope` IS the behaviour under test here — auto-mocked it
   // resolves nothing and every assertion below would pass against a stub.
@@ -131,7 +135,7 @@ describe('widgets add', () => {
   test('checks the target board, then adds the card, and reports the new widget', async () => {
     await runCli(['widgets', 'add', 'board-b', 'ccid-1', '-y']);
 
-    expect(safety.checkScope).toHaveBeenCalledWith('board-b', expect.anything(), { scopeCollectionId: 'coll-1' }, undefined);
+    expect(safety.assertScope).toHaveBeenCalledWith('board-b', expect.anything(), { scopeCollectionId: 'coll-1' }, undefined);
     expect(MockWidgets.prototype.addWidgetToBoard).toHaveBeenCalledWith('board-b', 'ccid-1', undefined);
     expect(output()).toContain('✓ Widget added to board (w-3)');
   });
@@ -199,7 +203,7 @@ describe('widgets add', () => {
   });
 
   test('a board outside the lock adds nothing', async () => {
-    (safety.checkScope as jest.Mock).mockRejectedValue(new Error('Scope violation: board-b'));
+    (safety.assertScope as jest.Mock).mockRejectedValue(new Error('Scope violation: board-b'));
 
     await runCli(['widgets', 'add', 'board-b', 'ccid-1', '-y']);
 
@@ -213,27 +217,35 @@ describe('widgets add', () => {
 
     // The lock GETs `/widgets/<id>`; handed the name it 404s and reports
     // "Board Backlog - Web Hub not found" — #82's complaint at a new seam.
-    expect(safety.checkScope).toHaveBeenCalledWith(BOARD_ID, expect.anything(), expect.anything(), undefined);
+    expect(safety.assertScope).toHaveBeenCalledWith(BOARD_ID, expect.anything(), expect.anything(), undefined);
     expect(MockWidgets.prototype.addWidgetToBoard).toHaveBeenCalledWith(BOARD_NAME, 'ccid-1', undefined);
   });
 
-  test('no lock configured means the board is never resolved for the lock', async () => {
+  test('the board settles before the lock whether or not one is configured', async () => {
+    // It used to be gated: `checkResolvedScope` skipped the resolve when nothing
+    // was locked, so an unlocked user paid no GET for it. The settling moved
+    // INSIDE the intent with #109 (`board()` runs ahead of `assertScope`), which
+    // makes the #82 spelling structural rather than a property of one call site —
+    // and costs an unlocked write one resolve it did not make before. Recorded
+    // rather than hidden: it is the same price #108 accepted when `cards update`
+    // started reading its card inside the table.
     (config.readConfig as jest.Mock).mockResolvedValue({});
 
     await runCli(['widgets', 'add', BOARD_NAME, 'ccid-1', '-y']);
 
-    expect(safety.checkScope).not.toHaveBeenCalled();
-    expect(MockBoards.prototype.resolveBoardId).not.toHaveBeenCalled();
+    expect(MockBoards.prototype.resolveBoardId).toHaveBeenCalledWith(BOARD_NAME);
+    expect(MockWidgets.prototype.addWidgetToBoard).toHaveBeenCalledWith(BOARD_NAME, 'ccid-1', undefined);
   });
 
   test('the lock runs before the preview, so --dry-run is not a way around it', async () => {
+    // Structural now: the table takes the lock before it returns a preview, so
+    // this ordering cannot be got wrong at this call site at all.
     await runCli(['widgets', 'add', 'board-b', 'ccid-1', '--dry-run']);
 
     expect(MockWidgets.prototype.addWidgetToBoard).not.toHaveBeenCalled();
-    const check = (safety.checkScope as jest.Mock).mock.invocationCallOrder[0];
-    const preview = (safety.dryRunLog as jest.Mock).mock.invocationCallOrder[0];
-    expect(check).toBeLessThan(preview);
-    expect(exitSpy).toHaveBeenCalledWith(0);
+    expect(safety.assertScope).toHaveBeenCalledWith('board-b', expect.anything(), expect.anything(), undefined);
+    expect(output()).toContain('[dry-run] add card ccid-1 to board board-b');
+    expect(output()).toContain('IRREVERSIBLE');
   });
 
   test('--dry-run does not ask — previewing is not writing', async () => {
@@ -254,7 +266,7 @@ describe('widgets add', () => {
   test('--force reaches the lock', async () => {
     await runCli(['widgets', 'add', 'board-b', 'ccid-1', '-y', '--force']);
 
-    expect(safety.checkScope).toHaveBeenCalledWith('board-b', expect.anything(), expect.anything(), true);
+    expect(safety.assertScope).toHaveBeenCalledWith('board-b', expect.anything(), expect.anything(), true);
   });
 
   test('--json emits the created widget', async () => {

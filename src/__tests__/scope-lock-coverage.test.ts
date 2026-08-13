@@ -541,7 +541,15 @@ describe('the org-level guard covers every irreversible org-level write', () => 
     // And the DELETE resolver itself resolves: most deleting commands in this
     // CLI are board-level and collection-locked, so a `DELETES` set that only
     // held the three org ones would mean the closure walk had collapsed.
-    expect(actions.filter((a) => a.deletes).length).toBeGreaterThan(10);
+    //
+    // 10 until #109, and it moved for a reason this file already models. Routing
+    // `dependencies delete` and `dependencies delete-all` through the dispatch
+    // table put their `client.delete` behind `intent.run`, which lives in a Map
+    // the table looks up at runtime — a static call-closure walk cannot follow
+    // that, by construction, and the same is already true of every other routed
+    // write. Those two commands are now ROUTED rather than DELETES, so the floor
+    // is 8, not because the resolver got weaker.
+    expect(actions.filter((a) => a.deletes).length).toBeGreaterThan(8);
   });
 
   it('every org-level DELETE takes the org guard', () => {

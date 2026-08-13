@@ -19,16 +19,29 @@ jest.mock('../../lib/custom-fields-api');
 import CustomFieldsAPI from '../../lib/custom-fields-api';
 const MockCustomFieldsAPI = CustomFieldsAPI as jest.MockedClass<typeof CustomFieldsAPI>;
 
+// `custom-fields set` is routed through the `update` intent (#109), so the write
+// leaves through `TxCards` → `CardsAPI.updateCard`, and the field VALUE is
+// resolved separately by `CustomFieldsAPI.fieldWrite` — a read. The stand below
+// answers both, and echoes the customFields it was sent so `setFieldValue`'s
+// read-back sees the write land.
+const mockUpdateCard = jest.fn(async (cardId: string, data: any) => ({
+  cardId,
+  customFields: data.customFields ?? [],
+}));
 jest.mock('../../lib/cards-api', () => {
   return {
     __esModule: true,
     default: jest.fn().mockImplementation(() => ({
-      getCard: jest.fn().mockResolvedValue({ boardId: 'board-1' })
+      getCard: jest.fn().mockResolvedValue({ cardId: 'card-1', boardId: 'board-1', customFields: [] }),
+      updateCard: mockUpdateCard,
     }))
   };
 });
 
 jest.mock('../../lib/safety', () => ({
+  // `assertScope` is the check the dispatch table takes; `checkScope` is what the
+  // unrouted commands in this file still take. Both are stubbed.
+  assertScope: jest.fn().mockResolvedValue(undefined),
   checkScope: jest.fn().mockResolvedValue(true),
   confirmAction: jest.fn().mockResolvedValue(true)
 }));
@@ -75,6 +88,13 @@ async function runCli(args: string[]): Promise<void> {
 beforeEach(() => {
   jest.clearAllMocks();
   (config.resolveApiKey as jest.Mock).mockResolvedValue('test-token');
+  // The resolution half of a custom-field write, split out of `setFieldValue`
+  // for #109 so the transactional facade can do it on the read side. A text
+  // field spells its value under `value`.
+  MockCustomFieldsAPI.prototype.fieldWrite = jest.fn(async (_fieldId: string, value: string) => ({
+    key: 'value' as const,
+    value,
+  }));
 });
 
 // =============================================================================
@@ -217,32 +237,45 @@ describe('favro custom-fields set', () => {
     consoleErrorSpy.mockRestore();
   });
 
-  it('sets a field value and shows confirmation', async () => {
-    MockCustomFieldsAPI.prototype.setFieldValue = jest.fn().mockResolvedValue(SAMPLE_FIELD_VALUE);
+  it('resolves the value against the field, then writes it through the card PUT', async () => {
     await runCli(['custom-fields', 'set', 'card-1', 'field-1', 'Some text']);
-    expect(MockCustomFieldsAPI.prototype.setFieldValue).toHaveBeenCalledWith('card-1', 'field-1', 'Some text');
+
+    expect(MockCustomFieldsAPI.prototype.fieldWrite).toHaveBeenCalledWith('field-1', 'Some text');
+    expect(mockUpdateCard).toHaveBeenCalledWith('card-1', {
+      customFields: [{ customFieldId: 'field-1', value: 'Some text' }],
+    });
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('✓ Custom field updated'));
   });
 
-  /**
-   * `confirmed: false` means the PUT was accepted and NOTHING observed the stored
-   * value. The old code degraded `displayValue` to the caller's argument, so this
-   * case printed `✓ Custom field updated successfully. Value: Some text` — the
-   * value we sent, presented as the value Favro holds.
-   *
-   * No ✓, and no `Value:` line at all: the only value available here is the one
-   * we sent, and printing it under that label is the fabrication.
-   *
-   * And exit 1, because the exit code is the half of the report a script reads:
-   * `UNCONFIRMED` on stdout next to exit 0 tells the human and the machine
-   * opposite things, and `set … && next-step` believes the machine.
-   */
-  it('an unconfirmed write prints no ✓, no Value line, and exits 1', async () => {
-    MockCustomFieldsAPI.prototype.setFieldValue = jest.fn().mockResolvedValue({
-      fieldId: 'field-1',
-      value: null,
-      confirmed: false,
+  it('sends the value under the key the FIELD TYPE spells, not always `value`', async () => {
+    // `custom-fields-api.ts` builds four different payload keys per type, and
+    // routing must not quietly fold `Members` / `Link` / `Number` onto `value` —
+    // three shapes nobody has probed on this path (#106).
+    MockCustomFieldsAPI.prototype.fieldWrite = jest.fn(async (_fieldId: string, value: string) => ({
+      key: 'members' as const,
+      value: [value],
+    }));
+
+    await runCli(['custom-fields', 'set', 'card-1', 'field-9', 'user-9']);
+
+    expect(mockUpdateCard).toHaveBeenCalledWith('card-1', {
+      customFields: [{ customFieldId: 'field-9', members: ['user-9'] }],
     });
+  });
+
+  /**
+   * There is no "accepted (200) but UNCONFIRMED" arm any more, and that is the
+   * point of routing this command.
+   *
+   * It used to PUT and then report whatever came back: an echo carrying no value
+   * for the field printed `UNCONFIRMED` at exit 1, and the write's fate was left
+   * to the reader. `TxCards.setFieldValue` matches the echo on `customFieldId`
+   * and THROWS when it does not carry what it sent, so the unobserved case is a
+   * failure the table reports — with the retry advice attached — rather than a
+   * success-shaped notice.
+   */
+  it('an echo that does not carry the value is a FAILURE, not a notice, and exits 1', async () => {
+    mockUpdateCard.mockResolvedValueOnce({ cardId: 'card-1', customFields: [] } as never);
     const mockExit = jest.spyOn(process, 'exit').mockImplementation(() => {
       throw new Error('process.exit called');
     });
@@ -253,50 +286,32 @@ describe('favro custom-fields set', () => {
 
     const printed = consoleSpy.mock.calls.map((c) => String(c[0])).join('\n');
     expect(printed).not.toContain('✓');
-    expect(printed).toContain('UNCONFIRMED');
-    expect(printed).toContain('Sent:  Some text');
-    expect(printed).not.toMatch(/Value:/);
+    const errored = consoleErrorSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(errored).toContain('✗ update failed');
     expect(mockExit).toHaveBeenCalledWith(1);
     mockExit.mockRestore();
   });
 
-  /**
-   * `--json` gets the same exit code as the human path — the format must not
-   * change what the command CLAIMS. `confirmed:false` is in the payload, and the
-   * non-zero code is the machine-readable half of the same statement.
-   */
-  it('an unconfirmed write with --json still exits 1, payload intact', async () => {
-    MockCustomFieldsAPI.prototype.setFieldValue = jest.fn().mockResolvedValue({
-      fieldId: 'field-1',
-      value: null,
-      confirmed: false,
-    });
-    const mockExit = jest.spyOn(process, 'exit').mockImplementation(() => {
-      throw new Error('process.exit called');
-    });
-
-    await expect(
-      runCli(['custom-fields', 'set', 'card-1', 'field-1', 'Some text', '--json']),
-    ).rejects.toThrow('process.exit called');
+  it('--json prints the intent result', async () => {
+    await runCli(['custom-fields', 'set', 'card-1', 'field-1', 'text', '--json']);
 
     const printed = consoleSpy.mock.calls.map((c) => String(c[0])).join('\n');
-    expect(JSON.parse(printed)).toMatchObject({ confirmed: false, value: null });
-    expect(mockExit).toHaveBeenCalledWith(1);
-    mockExit.mockRestore();
+    expect(JSON.parse(printed)).toMatchObject({ cardId: 'card-1', wrote: ['customField:field-1'] });
   });
 
-  it('sets a field value as JSON with --json flag', async () => {
-    MockCustomFieldsAPI.prototype.setFieldValue = jest.fn().mockResolvedValue(SAMPLE_FIELD_VALUE);
-    await runCli(['custom-fields', 'set', 'card-1', 'field-1', 'text', '--json']);
-    expect(consoleSpy).toHaveBeenCalledWith(
-      expect.stringContaining('"fieldId"')
-    );
+  it('--dry-run with no lock previews the intent and writes nothing', async () => {
+    // Free: no credential, no request. The preview is the intent's own, so it
+    // cannot word the write differently from the run that makes it.
+    await runCli(['custom-fields', 'set', 'card-1', 'field-1', 'text', '--dry-run']);
+
+    expect(mockUpdateCard).not.toHaveBeenCalled();
+    const printed = consoleSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(printed).toContain('[dry-run] update card card-1');
+    expect(printed).toContain('custom field field-1: "text"');
   });
 
-  it('exits with error when set fails', async () => {
-    MockCustomFieldsAPI.prototype.setFieldValue = jest.fn().mockRejectedValue(
-      new Error('Invalid value')
-    );
+  it('exits with error when the value cannot be resolved for the field', async () => {
+    MockCustomFieldsAPI.prototype.fieldWrite = jest.fn().mockRejectedValue(new Error('Invalid value'));
     const mockExit = jest.spyOn(process, 'exit').mockImplementation(() => {
       throw new Error('process.exit called');
     });

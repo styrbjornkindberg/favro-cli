@@ -63,6 +63,10 @@ beforeEach(() => {
   (config.readConfig as jest.Mock).mockResolvedValue({ scopeCollectionId: 'col-1' });
   passThroughScopeResolution(safety, config, MockCardsAPI);
   (safety.checkScope as jest.Mock).mockResolvedValue(undefined);
+  // `clearAllMocks` clears CALLS, not implementations, so an arm that makes the
+  // lock reject would leak into every arm after it. The routed writes take
+  // `assertScope` rather than `checkScope`, so it needs the same reset (#109).
+  (safety.assertScope as jest.Mock).mockResolvedValue(undefined);
   (safety.confirmAction as jest.Mock).mockResolvedValue(true);
 
   (gitIntegration.isGitRepo as jest.Mock).mockReturnValue(true);
@@ -87,19 +91,39 @@ afterEach(() => { jest.restoreAllMocks(); });
 // ---------------------------------------------------------------------------
 
 describe('favro git branch <card> — scope lock', () => {
+  // Routed through the `update` intent (#109), so the lock is the table's own
+  // `assertScope` and the write is `moveColumn`'s `PUT {columnId}` — Favro's
+  // status IS the column. The stand has to MOVE the card, because `moveColumn`
+  // re-reads it and throws when it did not land there.
+  let column: string | undefined;
+  beforeEach(() => {
+    column = undefined;
+    MockCardsAPI.prototype.getCard = jest.fn().mockImplementation(async () => ({
+      cardId: 'card-1', name: 'Thing', boardId: 'board-a', columnId: column,
+    }));
+    MockCardsAPI.prototype.resolveColumnId = jest.fn(async (name: string) => `col-${name}`);
+    MockCardsAPI.prototype.updateCard = jest.fn().mockImplementation(async (id: string, data: any) => {
+      if (data.columnId !== undefined) column = data.columnId;
+      return { cardId: id, ...data };
+    });
+  });
+
   it('checks the card\'s board before moving the card', async () => {
     await runGit(['git', 'branch', 'card-1', '--yes']);
 
-    expect(safety.checkScope).toHaveBeenCalledWith('board-a', expect.anything(), expect.anything(), undefined);
-    expect(MockCardsAPI.prototype.updateCard).toHaveBeenCalledWith('card-1', { status: 'In Progress' });
+    expect(safety.assertScope).toHaveBeenCalledWith('board-a', expect.anything(), expect.anything(), undefined);
+    expect(MockCardsAPI.prototype.updateCard).toHaveBeenCalledWith('card-1', { columnId: 'col-In Progress' });
 
-    const lastCheck = Math.max(...(safety.checkScope as jest.Mock).mock.invocationCallOrder);
+    const lastCheck = Math.max(...(safety.assertScope as jest.Mock).mock.invocationCallOrder);
     const firstWrite = Math.min(...(MockCardsAPI.prototype.updateCard as jest.Mock).mock.invocationCallOrder);
     expect(lastCheck).toBeLessThan(firstWrite);
   });
 
-  it('writes nothing when the board is out of scope', async () => {
-    (safety.checkScope as jest.Mock).mockRejectedValue(new Error('out of scope'));
+  it('writes nothing — and creates no branch — when the board is out of scope', async () => {
+    // The branch must not exist either. The lock is inside the intent now, so the
+    // ordering is bought by dispatching the SAME intent with `dryRun` before the
+    // confirm: it takes the lock and returns without writing.
+    (safety.assertScope as jest.Mock).mockRejectedValue(new Error('out of scope'));
 
     await runGit(['git', 'branch', 'card-1', '--yes']);
 
@@ -107,19 +131,39 @@ describe('favro git branch <card> — scope lock', () => {
     expect(gitIntegration.createBranch).not.toHaveBeenCalled();
   });
 
-  it('forwards --force to checkScope', async () => {
+  it('forwards --force to the lock', async () => {
     await runGit(['git', 'branch', 'card-1', '--yes', '--force']);
 
-    expect(safety.checkScope).toHaveBeenCalledWith('board-a', expect.anything(), expect.anything(), true);
+    expect(safety.assertScope).toHaveBeenCalledWith('board-a', expect.anything(), expect.anything(), true);
   });
 
-  it('a card that cannot be read still reaches the check as an empty board', async () => {
+  it('a card that cannot be read refuses before the branch exists', async () => {
+    // It used to resolve `''` and hand that to `checkScope`, which refuses an
+    // unresolvable board. The intent makes the read itself, so the refusal is now
+    // the wire's own error — still before the branch, still nothing written, and
+    // it names the real problem instead of "this write names no board".
     MockCardsAPI.prototype.getCard = jest.fn().mockRejectedValue(new Error('404 Not Found'));
 
     await expect(runGit(['git', 'branch', 'card-1', '--yes'])).resolves.toBeUndefined();
 
-    expect(safety.checkScope).toHaveBeenCalledWith('', expect.anything(), expect.anything(), undefined);
     expect(MockCardsAPI.prototype.updateCard).not.toHaveBeenCalled();
+    expect(gitIntegration.createBranch).not.toHaveBeenCalled();
+  });
+
+  it('with NO lock configured it makes no pre-flight dispatch', async () => {
+    // The pre-flight dispatch is gated on a configured lock, like every sibling
+    // hoist in `git.ts`: with nothing locked there is no verdict to produce, so
+    // the extra card read it costs is not charged. The WRITE still dispatches, so
+    // the table still reaches `assertScope` — which returns immediately when
+    // nothing is locked — and that one call is the difference this pins: two
+    // under a lock, one without.
+    (config.readConfig as jest.Mock).mockResolvedValue({});
+
+    await runGit(['git', 'branch', 'card-1', '--yes']);
+
+    expect((safety.assertScope as jest.Mock).mock.calls).toHaveLength(1);
+    expect(gitIntegration.createBranch).toHaveBeenCalled();
+    expect(MockCardsAPI.prototype.updateCard).toHaveBeenCalledWith('card-1', { columnId: 'col-In Progress' });
   });
 });
 

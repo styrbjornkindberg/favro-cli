@@ -187,13 +187,23 @@ describe('the topic is reachable the way its consumers reach it', () => {
     expect(guard).toBeLessThan(intents);
   });
 
-  it('is a model, not a field reference — roughly 60 to 80 lines of content', () => {
+  it('is a model, not a field reference — roughly 60 to 88 lines of content', () => {
+    // 80 until #109, and the raise is recorded rather than quietly taken. The
+    // cap exists so the topic stays a MODEL, and the arithmetic it enforces is
+    // "every added row evicts padding". #109 added three intents to the table —
+    // `clear-blocking-edges`, `move-board`, `add-board-instance` — and a row per
+    // intent is not padding, it is the table. The eviction pass ran first: the
+    // INTENTS block lost four lines of restatement (`delete`'s
+    // cannot-be-a-skill-step sentence moved into the block's own header, where
+    // it now covers all three irreversible intents instead of one) and WIRE
+    // NOTES lost a short wrap. What is left is contract, so the cap moved by
+    // exactly what three rows cost.
     const content = TOPIC_LINES.filter((l) => l.trim() !== '');
     expect(content.length).toBeGreaterThanOrEqual(60);
-    expect(content.length).toBeLessThanOrEqual(80);
+    expect(content.length).toBeLessThanOrEqual(88);
   });
 
-  it('keeps the contract facts the 80-line cap makes tempting to cut', () => {
+  it('keeps the contract facts the line cap makes tempting to cut', () => {
     // The cap is real arithmetic, so every added row evicts something — and what
     // gets evicted must be padding, never contract. These four were cut once to
     // make room for the `archive` row (#75) and are pinned so the next row has to
@@ -232,7 +242,11 @@ describe('every name in the topic is a live name', () => {
   it('the INTENTS prose counts the intents the table actually has', () => {
     // The block opens "Seven, one call each". That word is the only place the
     // count is stated, so it is the only place it can go stale.
-    const words = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
+    const words = [
+      'zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten',
+      'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen',
+      'nineteen', 'twenty',
+    ];
     expect(section('INTENTS').join(' ').toLowerCase()).toContain(words[intentNames().length]);
   });
 

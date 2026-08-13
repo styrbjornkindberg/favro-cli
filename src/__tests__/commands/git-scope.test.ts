@@ -44,6 +44,10 @@ beforeEach(() => {
   (config.resolveApiKey as jest.Mock).mockResolvedValue('test-token');
   (config.readConfig as jest.Mock).mockResolvedValue({ scopeCollectionId: 'coll-1' });
   (safety.checkScope as jest.Mock).mockResolvedValue(undefined);
+  // `clearAllMocks` clears CALLS, not implementations, so an arm that makes the
+  // lock reject would leak into every arm after it. The routed writes take
+  // `assertScope` rather than `checkScope`, so it needs the same reset (#109).
+  (safety.assertScope as jest.Mock).mockResolvedValue(undefined);
   (safety.confirmAction as jest.Mock).mockResolvedValue(true);
   // `git todos --board` takes a NAME or an id (#82), so the board settles before
   // the lock sees it. `checkResolvedScope` IS that seam — auto-mocked it resolves
@@ -61,33 +65,50 @@ beforeEach(() => {
 afterEach(() => { jest.restoreAllMocks(); });
 
 describe('favro git sync — scope lock', () => {
+  // `git sync` is routed through the `update` intent (#109), so the lock it takes
+  // is the table's own `assertScope` and the write it makes is `moveColumn`'s
+  // `PUT {columnId}` — Favro's status IS the column, and the intent translates
+  // rather than forwarding `{status}`. The stand below has to move the card for
+  // real, because `moveColumn` RE-READS the card and throws when it did not land
+  // there; a stand that answered a static column would fail every arm here.
+  const columnOf: Record<string, string | undefined> = {};
+  const boardOf: Record<string, string> = { 'card-1': 'board-a', 'card-2': 'board-b' };
+
   beforeEach(() => {
+    for (const key of Object.keys(columnOf)) delete columnOf[key];
     (gitIntegration.analyzeBranches as jest.Mock).mockReturnValue([
       { branch: 'feature/one', cardId: 'card-1', status: 'merged' },
       { branch: 'feature/two', cardId: 'card-2', status: 'open' },
     ]);
-    MockCardsAPI.prototype.getCard = jest.fn().mockImplementation(async (id: string) =>
-      id === 'card-1' ? { cardId: 'card-1', boardId: 'board-a' } : { cardId: 'card-2', boardId: 'board-b' }
-    );
-    MockCardsAPI.prototype.updateCard = jest.fn().mockResolvedValue({});
+    MockCardsAPI.prototype.getCard = jest.fn().mockImplementation(async (id: string) => ({
+      cardId: id,
+      boardId: boardOf[id] ?? 'board-a',
+      columnId: columnOf[id],
+    }));
+    MockCardsAPI.prototype.resolveColumnId = jest.fn(async (name: string) => `col-${name}`);
+    MockCardsAPI.prototype.updateCard = jest.fn().mockImplementation(async (id: string, data: any) => {
+      if (data.columnId !== undefined) columnOf[id] = data.columnId;
+      return { cardId: id, ...data };
+    });
   });
 
   it('checks scope for every target board before updating cards', async () => {
     await runCli(['git', 'sync', '--yes']);
 
-    expect(safety.checkScope).toHaveBeenCalledWith('board-a', expect.anything(), expect.anything(), undefined);
-    expect(safety.checkScope).toHaveBeenCalledWith('board-b', expect.anything(), expect.anything(), undefined);
-    expect(MockCardsAPI.prototype.updateCard).toHaveBeenCalledWith('card-1', { status: 'Done' });
-    expect(MockCardsAPI.prototype.updateCard).toHaveBeenCalledWith('card-2', { status: 'In Progress' });
+    expect(safety.assertScope).toHaveBeenCalledWith('board-a', expect.anything(), expect.anything(), undefined);
+    expect(safety.assertScope).toHaveBeenCalledWith('board-b', expect.anything(), expect.anything(), undefined);
+    // The wire shape is a COLUMN write, not `{status}`.
+    expect(MockCardsAPI.prototype.updateCard).toHaveBeenCalledWith('card-1', { columnId: 'col-Done' });
+    expect(MockCardsAPI.prototype.updateCard).toHaveBeenCalledWith('card-2', { columnId: 'col-In Progress' });
 
     // Every scope check must precede every write — a straddling batch refuses whole.
-    const lastCheck = Math.max(...(safety.checkScope as jest.Mock).mock.invocationCallOrder);
+    const lastCheck = Math.max(...(safety.assertScope as jest.Mock).mock.invocationCallOrder);
     const firstWrite = Math.min(...(MockCardsAPI.prototype.updateCard as jest.Mock).mock.invocationCallOrder);
     expect(lastCheck).toBeLessThan(firstWrite);
   });
 
   it('writes nothing when any target is out of scope', async () => {
-    (safety.checkScope as jest.Mock).mockImplementation(async (boardId: string) => {
+    (safety.assertScope as jest.Mock).mockImplementation(async (boardId: string) => {
       if (boardId === 'board-b') throw new Error('out of scope');
     });
 
@@ -96,45 +117,37 @@ describe('favro git sync — scope lock', () => {
     expect(MockCardsAPI.prototype.updateCard).not.toHaveBeenCalled();
   });
 
-  it('forwards --force to checkScope', async () => {
+  it('forwards --force to the lock', async () => {
     await runCli(['git', 'sync', '--yes', '--force']);
 
-    expect(safety.checkScope).toHaveBeenCalledWith('board-a', expect.anything(), expect.anything(), true);
+    expect(safety.assertScope).toHaveBeenCalledWith('board-a', expect.anything(), expect.anything(), true);
   });
 
   it('dry-run checks scope for every target board, and still writes nothing', async () => {
     // It used to check NOTHING on this path — the guard sat below the `--dry-run`
     // return, so a repo whose branches point outside the lock planned the whole
-    // sweep at exit 0 while the real run refused (#155). The title of this test
-    // asserted that as correct. Both boards are checked before the preview now;
-    // the "writes nothing" half is unchanged and still the point of `--dry-run`.
+    // sweep at exit 0 while the real run refused (#155). Both boards are checked
+    // before the preview now, and since #109 that ordering is structural: the
+    // table takes the lock before it returns a preview.
     await runCli(['git', 'sync', '--dry-run']);
 
-    expect(safety.checkScope).toHaveBeenCalledWith('board-a', expect.anything(), expect.anything(), undefined);
-    expect(safety.checkScope).toHaveBeenCalledWith('board-b', expect.anything(), expect.anything(), undefined);
+    expect(safety.assertScope).toHaveBeenCalledWith('board-a', expect.anything(), expect.anything(), undefined);
+    expect(safety.assertScope).toHaveBeenCalledWith('board-b', expect.anything(), expect.anything(), undefined);
     expect(MockCardsAPI.prototype.updateCard).not.toHaveBeenCalled();
   });
 
   it('a sync with nothing to move resolves nothing, even under a lock', async () => {
-    // The second conjunct of the hoisted guard's condition (#155): a lock alone
-    // is not enough, there has to be something to check. Every mapping here is
-    // `current`, so `targets` is empty.
-    //
-    // This arm does NOT kill the deletion of `targets.length > 0` on its own,
-    // measured: with the conjunct gone the loops still iterate empty sets, so
-    // nothing here is called either way and the whole suite stayed green. What
-    // the deletion changes is that the CLIENT gets constructed — a credential
-    // demanded for a sync with nothing to sync — and the arm that fails on it is
-    // `git sync with nothing to move needs no credential` in
-    // `dry-run-scope-order-wire.test.ts`, where the credential is absent for
-    // real. Kept as the cheap statement of intent next to the code it describes.
+    // The second conjunct of the dry-run gate: a lock alone is not enough, there
+    // has to be something to move. Every mapping here is `current`, so the
+    // enumerated list is empty and no dispatch happens at all — which also keeps
+    // the empty list away from `boundEntries`' empty-list refusal.
     (gitIntegration.analyzeBranches as jest.Mock).mockReturnValue([
       { branch: 'feature/one', cardId: 'card-1', status: 'current' },
     ]);
 
     await runCli(['git', 'sync', '--dry-run']);
 
-    expect(safety.checkScope).not.toHaveBeenCalled();
+    expect(safety.assertScope).not.toHaveBeenCalled();
     expect(MockCardsAPI.prototype.getCard).not.toHaveBeenCalled();
     expect(MockCardsAPI.prototype.updateCard).not.toHaveBeenCalled();
   });
@@ -147,53 +160,72 @@ describe('favro git sync — scope lock', () => {
 
     await runCli(['git', 'sync', '--dry-run']);
 
-    expect(safety.checkScope).not.toHaveBeenCalled();
+    expect(safety.assertScope).not.toHaveBeenCalled();
     expect(MockCardsAPI.prototype.getCard).not.toHaveBeenCalled();
     expect(MockCardsAPI.prototype.updateCard).not.toHaveBeenCalled();
   });
 
-  it('does not abort the whole sync when one target card cannot be read', async () => {
-    // A stale branch mapping pointing at a deleted card. The batch must still
-    // run — the old behaviour printed "✗ Could not update card X" for the bad
-    // one and synced the rest.
+  it('a target card that cannot be read aborts the WHOLE sync, and writes nothing', async () => {
+    // BEHAVIOUR CHANGE, #109, and the direction is deliberate. This used to
+    // report "✗ Could not update card card-1" and sync the rest — a partial write
+    // reported as a success count. The pass is one transaction now: the intent
+    // resolves every entry's board before anything is written, so a card that
+    // cannot be read takes the batch down with it and nothing is written at all.
     //
-    // A LOCK IS CONFIGURED here (the outer `beforeEach`), and since #155 that is
-    // the only way this path is reachable at all: the resolve loop is gated on
-    // the lock, so with nothing locked no card is read and there is no failure to
-    // survive. `card-1` resolves to `''` and reaches the check fail-closed; the
-    // check itself is a stub here, so what this arm pins is that the LOOP carries
-    // on, not what the real refusal would do with `''`.
+    // Under a configured lock the old code aborted here too, just later and for a
+    // different reason: it handed `''` to `checkScope`, which refuses an
+    // unresolvable board rather than exempting it. What changes is the UNLOCKED
+    // case, which used to half-sync.
     MockCardsAPI.prototype.getCard = jest.fn().mockImplementation(async (id: string) => {
       if (id === 'card-1') throw new Error('404 Not Found');
-      return { cardId: 'card-2', boardId: 'board-b' };
+      return { cardId: 'card-2', boardId: 'board-b', columnId: columnOf['card-2'] };
     });
 
     await runCli(['git', 'sync', '--yes']);
 
-    expect(safety.checkScope).toHaveBeenCalledWith('', expect.anything(), expect.anything(), undefined);
-    expect(MockCardsAPI.prototype.updateCard).toHaveBeenCalledWith('card-2', { status: 'In Progress' });
-    expect(process.exit).not.toHaveBeenCalledWith(1);
+    expect(MockCardsAPI.prototype.updateCard).not.toHaveBeenCalled();
   });
 
-  it('resolves each card once and checks each DISTINCT board once', async () => {
+  it('two branches on one card are ONE write, and one board is ONE check', async () => {
     (gitIntegration.analyzeBranches as jest.Mock).mockReturnValue([
       { branch: 'feature/one', cardId: 'card-1', status: 'merged' },
       { branch: 'feature/one-again', cardId: 'card-1', status: 'merged' },
       { branch: 'feature/two', cardId: 'card-2', status: 'open' },
     ]);
-    MockCardsAPI.prototype.getCard = jest.fn().mockImplementation(async (id: string) => ({
-      cardId: id,
-      boardId: 'board-a',
-    }));
+    boardOf['card-2'] = 'board-a';
 
     await runCli(['git', 'sync', '--yes']);
 
-    // Two branches, one card → one GET. Two cards, one board → one check.
-    expect((MockCardsAPI.prototype.getCard as jest.Mock).mock.calls.map((c) => c[0])).toEqual([
+    // The duplicate branch is collapsed before the batch is built, so it neither
+    // writes twice nor spends two of the twenty the cap allows.
+    expect((MockCardsAPI.prototype.updateCard as jest.Mock).mock.calls.map((c) => c[0])).toEqual([
       'card-1',
       'card-2',
     ]);
-    expect((safety.checkScope as jest.Mock).mock.calls.map((c) => c[0])).toEqual(['board-a']);
+    // Two cards, one board → the table de-duplicates the boards it checks.
+    expect((safety.assertScope as jest.Mock).mock.calls.map((c) => c[0])).toEqual(['board-a']);
+    boardOf['card-2'] = 'board-b';
+  });
+
+  it('refuses over the multi-write cap, naming it, and writes nothing', async () => {
+    // Twenty-one card-linked branches. The cap lives in the intent, so it refuses
+    // the batch WHOLE rather than moving the first twenty — and `boundEntries`
+    // runs before the intent's first request, so the refusal costs nothing.
+    const many = Array.from({ length: 21 }, (_, i) => ({
+      branch: `feature/${i}`,
+      cardId: `card-${i}`,
+      status: 'merged',
+    }));
+    (gitIntegration.analyzeBranches as jest.Mock).mockReturnValue(many);
+
+    await runCli(['git', 'sync', '--yes']);
+
+    expect(MockCardsAPI.prototype.getCard).not.toHaveBeenCalled();
+    expect(MockCardsAPI.prototype.updateCard).not.toHaveBeenCalled();
+    const said = (console.error as unknown as jest.Mock).mock.calls.map((c) => String(c[0])).join('\n');
+    expect(said).toMatch(/capped at 20/);
+    expect(said).toMatch(/not a page size/);
+    expect(process.exit).toHaveBeenCalledWith(1);
   });
 });
 

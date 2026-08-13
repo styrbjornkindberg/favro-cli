@@ -54,7 +54,20 @@ function buildMockApi(overrides: Partial<{
     unlinkCard: mockUnlinkCard,
     moveCard: mockMoveCard,
   } as any));
-  (FavroHttpClient as jest.MockedClass<typeof FavroHttpClient>).mockImplementation(() => ({} as any));
+  // `cards move` is routed through the `move-board` intent (#109), whose
+  // `board()` SETTLES the destination before the lock sees it — so the client has
+  // to answer the board list even in the arms that configure no lock. `{}` was
+  // enough while the settling was gated behind `checkResolvedScope`; it is not
+  // now, and the difference is the point: the #82 spelling is structural rather
+  // than a property of one call site.
+  (FavroHttpClient as jest.MockedClass<typeof FavroHttpClient>).mockImplementation(() => ({
+    organizationId: 'org-1',
+    get: jest.fn(async (url: string) =>
+      url === '/widgets'
+        ? { entities: [{ widgetCommonId: 'board-2', name: 'Board Two', collectionIds: ['coll-1'] }] }
+        : { name: 'Board Two', collectionIds: ['coll-1'] },
+    ),
+  } as any));
   return { mockLinkCard, mockUnlinkCard, mockMoveCard, mockGetCard, mockGetCardLinks };
 }
 
@@ -402,9 +415,12 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
     expect(jsonCall).toBeDefined();
   });
 
-  test('handles 404 on move gracefully', async () => {
-    const err = Object.assign(new Error('Not Found'), { response: { status: 404 } });
-    buildMockApi({ moveCard: jest.fn().mockRejectedValue(err) });
+  test('a destination board that does not resolve refuses BEFORE the move', async () => {
+    // It used to reach `moveCard`, take a 404 off the wire and print "Card
+    // 'bad-card' or board 'bad-board' not found" — one message for two different
+    // problems. The intent settles the destination in `board()`, so an
+    // unresolvable board now refuses by name, before anything is written.
+    const { mockMoveCard } = buildMockApi();
     const cardsCmd = new Command('cards');
     registerCardsLinkCommands(cardsCmd);
 
@@ -412,7 +428,22 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
       cardsCmd.parseAsync(['node', 'cards', 'move', 'bad-card', '--to-board', 'bad-board'])
     ).rejects.toThrow('process.exit');
 
-    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining("not found"));
+    expect(mockMoveCard).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('No board named "bad-board"'));
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  test('a 404 on the move itself is reported by the table, and exits 1', async () => {
+    const err = Object.assign(new Error('Not Found'), { response: { status: 404 } });
+    buildMockApi({ moveCard: jest.fn().mockRejectedValue(err) });
+    const cardsCmd = new Command('cards');
+    registerCardsLinkCommands(cardsCmd);
+
+    await expect(
+      cardsCmd.parseAsync(['node', 'cards', 'move', 'bad-card', '--to-board', 'board-2'])
+    ).rejects.toThrow('process.exit');
+
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('✗ move-board failed'));
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 

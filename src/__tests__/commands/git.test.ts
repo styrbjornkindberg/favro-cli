@@ -119,9 +119,20 @@ describe('git link', () => {
 });
 
 describe('git branch', () => {
+  // The move is routed through the `update` intent (#109): the wire shape is
+  // `PUT {columnId}`, because Favro's status IS the column, and `moveColumn`
+  // re-reads the card afterwards — so the stand has to move it for real.
+  let column: string | undefined;
   beforeEach(() => {
-    MockCardsAPI.prototype.getCard = jest.fn().mockResolvedValue({ cardId: 'card-1', name: 'Fix login', boardId: 'board-a' });
-    MockCardsAPI.prototype.updateCard = jest.fn().mockResolvedValue({});
+    column = undefined;
+    MockCardsAPI.prototype.getCard = jest.fn().mockImplementation(async () => ({
+      cardId: 'card-1', name: 'Fix login', boardId: 'board-a', columnId: column,
+    }));
+    MockCardsAPI.prototype.resolveColumnId = jest.fn(async (name: string) => `col-${name}`);
+    MockCardsAPI.prototype.updateCard = jest.fn().mockImplementation(async (id: string, data: any) => {
+      if (data.columnId !== undefined) column = data.columnId;
+      return { cardId: id, ...data };
+    });
     (gitIntegration.generateBranchName as jest.Mock).mockReturnValue('feature/card-1-fix-login');
     (gitIntegration.createBranch as jest.Mock).mockReturnValue(undefined);
   });
@@ -133,7 +144,7 @@ describe('git branch', () => {
     expect(gitIntegration.writeProjectConfig).toHaveBeenCalledWith(
       expect.objectContaining({ branches: { 'feature/card-1-fix-login': 'card-1' } }),
     );
-    expect(MockCardsAPI.prototype.updateCard).toHaveBeenCalledWith('card-1', { status: 'In Progress' });
+    expect(MockCardsAPI.prototype.updateCard).toHaveBeenCalledWith('card-1', { columnId: 'col-In Progress' });
     expect(output()).toContain('✓ Created and checked out: feature/card-1-fix-login');
   });
 
@@ -142,7 +153,7 @@ describe('git branch', () => {
 
     expect(gitIntegration.createBranch).toHaveBeenCalled();
     expect(MockCardsAPI.prototype.updateCard).not.toHaveBeenCalled();
-    expect(safety.checkScope).not.toHaveBeenCalled();
+    expect(safety.assertScope).not.toHaveBeenCalled();
   });
 
   test('declining the confirm creates no branch and moves no card', async () => {
@@ -156,9 +167,17 @@ describe('git branch', () => {
   });
 
   test('the scope check runs before the branch exists, not after', async () => {
+    // The check is the TABLE's now, reached by dispatching the same `update`
+    // intent with `dryRun` ahead of the confirm — so this pins the ordering the
+    // hand-rolled `checkScope` used to buy, against the guard that now governs
+    // the write. A LOCK has to be configured for it to be reachable at all: the
+    // pre-flight is gated on one, because with nothing locked it would be a read
+    // billed for a verdict nobody can produce.
+    (config.readConfig as jest.Mock).mockResolvedValue({ scopeCollectionId: 'coll-1' });
+
     await runCli(['git', 'branch', 'card-1', '-y']);
 
-    const check = (safety.checkScope as jest.Mock).mock.invocationCallOrder[0];
+    const check = (safety.assertScope as jest.Mock).mock.invocationCallOrder[0];
     const branch = (gitIntegration.createBranch as jest.Mock).mock.invocationCallOrder[0];
     expect(check).toBeLessThan(branch);
   });
@@ -282,14 +301,24 @@ describe('git commit', () => {
 });
 
 describe('git sync — reporting', () => {
+  // Routed through the `update` intent, so the write is `PUT {columnId}` and
+  // `moveColumn` re-reads the card: the stand has to move it for real.
+  const column: Record<string, string | undefined> = {};
   beforeEach(() => {
+    for (const key of Object.keys(column)) delete column[key];
     (gitIntegration.analyzeBranches as jest.Mock).mockReturnValue([
       { branch: 'feature/one', cardId: 'card-1', status: 'merged' },
       { branch: 'feature/two', cardId: 'card-2', status: 'open' },
       { branch: 'main', cardId: undefined, status: 'current' },
     ]);
-    MockCardsAPI.prototype.getCard = jest.fn().mockResolvedValue({ cardId: 'card-1', boardId: 'board-a' });
-    MockCardsAPI.prototype.updateCard = jest.fn().mockResolvedValue({});
+    MockCardsAPI.prototype.getCard = jest.fn().mockImplementation(async (id: string) => ({
+      cardId: id, boardId: 'board-a', columnId: column[id],
+    }));
+    MockCardsAPI.prototype.resolveColumnId = jest.fn(async (name: string) => `col-${name}`);
+    MockCardsAPI.prototype.updateCard = jest.fn().mockImplementation(async (id: string, data: any) => {
+      if (data.columnId !== undefined) column[id] = data.columnId;
+      return { cardId: id, ...data };
+    });
   });
 
   test('groups card-linked branches by git status and counts only those', async () => {
@@ -302,16 +331,25 @@ describe('git sync — reporting', () => {
     expect(output()).not.toContain('main → card');
   });
 
-  test('reports the partial count when one write fails rather than claiming success', async () => {
-    MockCardsAPI.prototype.updateCard = jest.fn().mockImplementation(async (id: string) => {
+  test('one failed write UNWINDS the pass rather than reporting a partial count', async () => {
+    // It used to print "✗ Could not update card card-2" and "✓ Updated 1/2
+    // cards." — a half-applied sweep reported as a success count, with no record
+    // of what the successful half did. The pass is ONE transaction since #109:
+    // the card that did move is moved back, LIFO, and the run says `rolled-back`.
+    MockCardsAPI.prototype.updateCard = jest.fn().mockImplementation(async (id: string, data: any) => {
       if (id === 'card-2') throw new Error('409');
-      return {};
+      if (data.columnId !== undefined) column[id] = data.columnId;
+      return { cardId: id, ...data };
     });
 
     await runCli(['git', 'sync', '-y']);
 
-    expect(errors()).toContain('✗ Could not update card card-2');
-    expect(output()).toContain('✓ Updated 1/2 cards.');
+    expect(errors()).toContain('✗ update failed');
+    expect(errors()).toContain('Rolled back — nothing was left behind');
+    expect(output()).not.toContain('✓ Updated');
+    // card-1 moved, then moved back to the column it held.
+    expect((MockCardsAPI.prototype.updateCard as jest.Mock).mock.calls.filter((c) => c[0] === 'card-1'))
+      .toHaveLength(2);
   });
 
   test('--json emits the raw mappings and the linked board, and writes nothing', async () => {
@@ -437,18 +475,25 @@ describe('git todos — reporting', () => {
     expect(MockCardsAPI.prototype.createCard).not.toHaveBeenCalled();
   });
 
-  test('a failed create is reported per item and the rest still run', async () => {
+  test('a failed create UNWINDS the batch rather than creating the rest', async () => {
+    // It used to print "✗ Failed to create card for src/a.ts:3" and "✓ Created
+    // 1/2 cards.", leaving whatever did get created behind. The scan is an
+    // ENUMERATED list, so #109 dispatches it as one `create` transaction: the
+    // cards already made are deleted, LIFO, and the run says `rolled-back`.
     const two = [item, { ...item, line: 9 }];
     (todoScanner.scanTodos as jest.Mock).mockReturnValue(two);
     (todoScanner.groupByFile as jest.Mock).mockReturnValue([{ file: 'src/a.ts', items: two }]);
     MockCardsAPI.prototype.createCard = jest
       .fn()
-      .mockRejectedValueOnce(new Error('500'))
-      .mockResolvedValueOnce({ cardId: 'new-2' });
+      .mockResolvedValueOnce({ cardId: 'new-1' })
+      .mockRejectedValueOnce(new Error('500'));
+    MockCardsAPI.prototype.deleteCard = jest.fn().mockResolvedValue(undefined);
 
     await runCli(['git', 'todos', '--create', '-y']);
 
-    expect(errors()).toContain('✗ Failed to create card for src/a.ts:3');
-    expect(output()).toContain('✓ Created 1/2 cards.');
+    expect(errors()).toContain('✗ create failed');
+    expect(errors()).toContain('Rolled back — nothing was left behind');
+    expect(MockCardsAPI.prototype.deleteCard).toHaveBeenCalledWith('new-1');
+    expect(output()).not.toContain('✓ Created');
   });
 });
