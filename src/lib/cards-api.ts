@@ -425,7 +425,11 @@ export interface UpdateCardRequest {
    *
    * All three failures answer **202, which axios reads as success**, with a body
    * carrying `message` and **no card row at all**. So the observable signal is the
-   * missing row, not the status.
+   * missing row, not the status — and `updateCard` refuses on it below, at the
+   * seam, so a caller reaching this door does not have to know that. That is the
+   * whole reason the check is not left in `TxCards.setFieldValue`: this field is
+   * the one new way to send a custom-field write, and #109's `cards update` will
+   * come through here too.
    */
   customFields?: CustomFieldWrite[];
 }
@@ -436,14 +440,20 @@ export interface UpdateCardRequest {
  * edge (§4.2 of the research note), so a reader that takes `[0]` may confirm this
  * write with another field's value.
  *
- * The value keys are open because `custom-fields-api.ts` builds four different
- * ones per type (`value`, `members`, `link`, `total`). Only `value` on a
- * `Single select` has been measured on this path.
+ * A CLOSED shape, listing the four payload keys `custom-fields-api.ts` builds per
+ * field type. Only `value` on a `Single select` has been measured on this path;
+ * the other three are declared so a caller can spell what that module already
+ * spells, not because this path has probed them. An open index signature was the
+ * first spelling and was wrong for `UpdateCardRequest`'s own reason — it reopens
+ * arbitrary keys on the type whose job is to keep a caller off the shapes Favro
+ * answers 200 to and ignores.
  */
 export interface CustomFieldWrite {
   customFieldId: string;
   value?: unknown;
-  [key: string]: unknown;
+  members?: string[];
+  link?: { url: string };
+  total?: number;
 }
 
 export interface GetCardOptions {
@@ -971,8 +981,11 @@ export class CardsAPI {
    * here too: present → report it, absent → report the write unconfirmed. The
    * two commands must not disagree about whether the same echo is observable.
    *
-   * The response goes through `normalizeCard` like `getCard`/`updateCard`, which
-   * is what puts the echo in `Card.boardId` — `normalizeCard` derives `boardId`
+   * The response goes through `normalizeCard` like `getCard` does — and unlike
+   * `updateCard`, which returns its PUT body raw, so a caller reading a card back
+   * off THAT gets no `description`, `assignees`, `boardId` or `tagIds`
+   * (`TxCards`'s text read-back reads both key spellings for exactly that reason).
+   * Normalising here is what puts the echo in `Card.boardId` — `normalizeCard` derives `boardId`
    * from `widgetCommonId`. Returning the PUT body raw made `boardId` `undefined`
    * whatever the server sent, so a caller reading it could not tell an echo from
    * a silence, and `cards move --json` was the one card-returning path that
@@ -1205,7 +1218,32 @@ export class CardsAPI {
       Object.assign(payload, delta);
     }
     // Favro uses PUT for card updates, not PATCH
-    return this.client.put<Card>(`/cards/${cardId}`, payload, MARKDOWN_BODY);
+    const updated = await this.client.put<Card>(`/cards/${cardId}`, payload, MARKDOWN_BODY);
+
+    // A `customFields` write Favro rejects answers **202 with `{message}` and no
+    // card row** (#106 §4.3), and 202 is a SUCCESS to axios — so without this the
+    // denial is handed back typed as a `Card` on which every field is `undefined`,
+    // and a caller reporting `card.name` prints nothing for a write that never
+    // happened. Refused at the seam rather than in `TxCards.setFieldValue`, because
+    // `UpdateCardRequest.customFields` is a door every future caller comes through
+    // (#109's `cards update --field` included) and a guard per call site is the
+    // pattern this facade exists to stop.
+    //
+    // Scoped to `customFields`, deliberately. Other write shapes have 202 families
+    // of their own — `parentCardId` answers `202 Access denied` — and widening the
+    // refusal to every response without a `cardId` would assert a shape nobody has
+    // probed on those paths, on the endpoint every command writes through.
+    if (data.customFields !== undefined && (updated as { cardId?: string }).cardId === undefined) {
+      const said = (updated as { message?: unknown }).message;
+      throw new RefusalError(
+        `Custom field write on card ${cardId} was rejected: Favro answered ` +
+          `${typeof said === 'string' ? `"${said}"` : 'no message'} and sent no card row.\n` +
+          `Nothing was written. Measured causes (#106): an unknown customFieldId, a value in the ` +
+          `wrong shape for the field's type, or an empty array on a select — which is how "clear it" ` +
+          `is spelled everywhere else and is not a clear here.`,
+      );
+    }
+    return updated;
   }
 
   /**
