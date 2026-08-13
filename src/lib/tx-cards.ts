@@ -425,14 +425,23 @@ const dueDay = (value: string | null | undefined): string =>
  * `Card.customFields` is DECLARED as `CustomField[]` (`{fieldId, name, value,
  * type}`) and the wire sends `{customFieldId, value}` — `normalizeCard` passes the
  * raw array through under that name without mapping it. Both id spellings are read
- * rather than trusting the declared one. Only `value` is read: `members`, `link`
- * and `total` are the other three payload keys `custom-fields-api.ts` builds, and
- * none of them was measured on this path.
+ * rather than trusting the declared one.
+ *
+ * **All four value keys are read, not just `value`** — the same
+ * `value ?? members ?? link ?? total` fallback `CustomFieldsAPI.putCardCustomField`
+ * already uses, reused rather than re-derived. Only `value` on a `Single select`
+ * is measured; the other three are what `custom-fields-api.ts` builds for
+ * `Members`, `Link` and `Number` fields. Reading `value` alone was worse than
+ * unmeasured, it was BLIND in one direction: a write to one of those types that
+ * Favro honoured and echoed under its own key would read back `undefined`, and the
+ * caller would be told the write did not take — a real mutation reported as no
+ * mutation, and left off the compensation log. Reading a key is not asserting a
+ * shape; refusing to read it is asserting its absence.
  */
 function cardFieldValue(card: Card, fieldId: string): unknown {
   const entries = (card.customFields ?? []) as unknown as Array<Record<string, unknown>>;
   const found = entries.find((f) => (f.customFieldId ?? f.fieldId) === fieldId);
-  return found?.value;
+  return found?.value ?? found?.members ?? found?.link ?? found?.total;
 }
 
 /**
@@ -1143,13 +1152,24 @@ export class TxCards implements ReadTx {
    *   `customFieldId`, a bare string where the select wants an array — each answer
    *   **`202` with a `message` and NO card row**, and nothing is written. `202` is
    *   a success to axios, so the status cannot be the signal; the missing row is.
-   *   Favro having sent a message makes it deterministic, hence a `RefusalError`
-   *   rather than the `TransientError` an unexplained silence gets.
+   *   That family is refused one layer down, by `CardsAPI.updateCard`, because
+   *   `UpdateCardRequest.customFields` is a door other callers will come through
+   *   too — so it never reaches the compare below.
    * - **A select has no measured spelling for "clear"** — `value: []` is one of the
    *   three 202s. So a write to a field that had NO prior value has no inverse, and
    *   the entry's `applyInverse` says that out loud instead of sending a write
    *   measured to do nothing. The unwind then reports a `compensation-failed`
    *   orphan, which is the honest answer: something was left behind.
+   *
+   * **What the remaining throw can and cannot claim.** Past the seam refusal, a
+   * mismatch means the response WAS a card row and the field still does not read
+   * what we sent. Nine of the ten field types are unmeasured here, so the honest
+   * report is that what the wire did is **unobserved** — not that nothing was
+   * written. Nothing is logged either way, and the message says so, because a
+   * compensation entry built on an unread value would send an inverse nobody can
+   * predict. The likeliest cause is a type whose stored shape is not the one we
+   * sent; `cardFieldValue` already reads all four payload keys so that a `Members`,
+   * `Link` or `Number` echo is not mistaken for silence.
    *
    * Scalar shape, compared as JSON. The stored value is an ARRAY for a select, and
    * the facade's scalar compare is `live === record.wrote` — two structurally equal
@@ -1162,29 +1182,39 @@ export class TxCards implements ReadTx {
     const before = await this.api.getCard(cardRef);
     const cardId = before.cardId;
     const was = cardFieldValue(before, fieldId);
+    // Already holding it → nothing written and nothing logged, exactly as every
+    // sibling op treats an empty delta. Compared as JSON for the reason the record
+    // is: the stored value is an array for a select. This also catches `value`
+    // arriving as `undefined` on a field that has none — which would otherwise log
+    // an entry whose `applyInverse` is guaranteed to throw.
+    if (JSON.stringify(was) === JSON.stringify(value)) return before;
 
     const after = await this.api.updateCard(cardId, {
       customFields: [{ customFieldId: fieldId, value }],
     });
     const stored = cardFieldValue(after, fieldId);
-    // Checked BEFORE the log push: on every measured failure Favro wrote nothing,
-    // so an entry here would send an inverse that changes nothing and then orphan
-    // on the compare.
+    // Checked BEFORE the log push: an entry built on a value we could not read
+    // would send an inverse nobody can predict.
+    //
+    // The measured failure family — 202, a message, no card row — never reaches
+    // here; `CardsAPI.updateCard` refuses it at the seam. So this arm is the
+    // UNMEASURED one, and it must not borrow the other's certainty: the response
+    // was a card row, the field does not read what we sent, and nine of the ten
+    // field types are unprobed on this path. `TransientError`, because a
+    // deterministic rejection is what the seam already caught, and what is left has
+    // no observation behind calling it permanent.
     if (JSON.stringify(stored) !== JSON.stringify(value)) {
-      const said = (after as { message?: unknown }).message;
-      const detail =
-        typeof said === 'string'
-          ? `Favro answered "${said}" and sent no card row — a deterministic rejection: the field id, ` +
-            `the value shape, or the value itself. Note that a select cannot be cleared with an empty ` +
-            `array; that is one of the three measured 202s.`
-          : `The response carried no matching \`customFields\` entry and no message, so what the wire ` +
-            `did is unobserved.`;
-      const message =
-        `Custom field write on card ${cardId} did not take: sent ` +
-        `{customFieldId: ${fieldId}, value: ${JSON.stringify(value)}}, the response reads ` +
-        `${JSON.stringify(stored)}.\n${detail}\n` +
-        `Nothing was written, so nothing needs undoing.`;
-      throw typeof said === 'string' ? new RefusalError(message) : new TransientError(message);
+      throw new TransientError(
+        `Custom field write on card ${cardId} answered with a card row that does not carry what we ` +
+          `sent: {customFieldId: ${fieldId}, value: ${JSON.stringify(value)}}, and the field reads ` +
+          `${JSON.stringify(stored)}.\n` +
+          `**Whether anything was written is UNOBSERVED** — this is not the measured ` +
+          `202-and-nothing-happened case, which is refused before it gets here. Nothing was logged ` +
+          `for compensation, so if the write did land this transaction cannot unwind it: read the ` +
+          `card before retrying.\n` +
+          `Only \`Single select\` is measured on this path (#106). The likeliest cause is a field ` +
+          `type that stores a shape other than the one it was sent.`,
+      );
     }
     this.log.push({
       card: cardId,
