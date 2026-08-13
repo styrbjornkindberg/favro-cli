@@ -371,6 +371,12 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
     expect(requested.filter((u) => u.includes(HUB_NAME))).toEqual([]);
     expect(exitSpy).not.toHaveBeenCalled();
     expect(mockMoveCard).toHaveBeenCalledWith('card-src', { toBoardId: HUB_NAME, position: undefined });
+    // TWO settlings of the same name — the intent's `board()` and `moveCard`'s
+    // own `boardIdOf` — cost ONE board list, measured here rather than asserted:
+    // `resolveNameToId` reads a memoised, disk-backed cache (`name-cache.ts`, 15
+    // minute TTL), so the second is a hit. Routing the settling into the table did
+    // not add a request; an earlier comment in `widgets.test.ts` claimed it did.
+    expect(requested.filter((u) => u === '/widgets')).toHaveLength(1);
   });
 
   test('moves card to target board with position top', async () => {

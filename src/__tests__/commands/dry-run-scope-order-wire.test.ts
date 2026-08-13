@@ -1004,8 +1004,12 @@ describe('no guarded write previews ahead of its own scope guard (#155)', () => 
     // — a `checkScope(` call in the command file — is gone, not because a check
     // is. The scan's job is unchanged for the thirty commands that still guard
     // inline.
+    // Both are EXACT-FIT, measured, not rounded down: 30 and 27 are what the
+    // scanner reports today. Slack here is the whole failure this arm exists to
+    // stop — at 25, two commands could lose their preview or their guard with the
+    // ratchet still green.
     expect(guarded).toBeGreaterThanOrEqual(30);
-    expect(withPreview).toBeGreaterThanOrEqual(25);
+    expect(withPreview).toBeGreaterThanOrEqual(27);
   });
 
   it('reports a gap when the preview is moved back above the guard', () => {

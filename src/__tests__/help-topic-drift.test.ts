@@ -189,15 +189,17 @@ describe('the topic is reachable the way its consumers reach it', () => {
 
   it('is a model, not a field reference — roughly 60 to 88 lines of content', () => {
     // 80 until #109, and the raise is recorded rather than quietly taken. The
-    // cap exists so the topic stays a MODEL, and the arithmetic it enforces is
-    // "every added row evicts padding". #109 added three intents to the table —
-    // `clear-blocking-edges`, `move-board`, `add-board-instance` — and a row per
-    // intent is not padding, it is the table. The eviction pass ran first: the
-    // INTENTS block lost four lines of restatement (`delete`'s
-    // cannot-be-a-skill-step sentence moved into the block's own header, where
-    // it now covers all three irreversible intents instead of one) and WIRE
-    // NOTES lost a short wrap. What is left is contract, so the cap moved by
-    // exactly what three rows cost.
+    // cap exists so the topic stays a MODEL, and a row per intent is not
+    // padding, it is the table: #109 added three — `clear-blocking-edges` (2
+    // lines), `move-board` (3), `add-board-instance` (3).
+    //
+    // The cap moved by exactly what three rows cost — 8 lines, measured with
+    // this test's own expression. Nothing was evicted to pay for them: the
+    // reshuffling inside the INTENTS block nets to zero (`delete`'s row lost two
+    // lines to the block header, which gained one, and `update`'s row gained
+    // one) and the WIRE NOTES reflow removed five lines and added five. Both
+    // were once claimed here as savings; a grep falsifies that, so it is gone.
+    // 88 is the true floor with zero slack, which is what makes it a ratchet.
     const content = TOPIC_LINES.filter((l) => l.trim() !== '');
     expect(content.length).toBeGreaterThanOrEqual(60);
     expect(content.length).toBeLessThanOrEqual(88);

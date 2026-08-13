@@ -223,12 +223,16 @@ describe('widgets add', () => {
 
   test('the board settles before the lock whether or not one is configured', async () => {
     // It used to be gated: `checkResolvedScope` skipped the resolve when nothing
-    // was locked, so an unlocked user paid no GET for it. The settling moved
-    // INSIDE the intent with #109 (`board()` runs ahead of `assertScope`), which
-    // makes the #82 spelling structural rather than a property of one call site —
-    // and costs an unlocked write one resolve it did not make before. Recorded
-    // rather than hidden: it is the same price #108 accepted when `cards update`
-    // started reading its card inside the table.
+    // was locked. The settling moved INSIDE the intent with #109 (`board()` runs
+    // ahead of `assertScope`), which makes the #82 spelling structural rather than
+    // a property of one call site.
+    //
+    // It costs NO extra request, which is the opposite of what this comment first
+    // claimed. `addWidgetToBoard` settles the same value again through
+    // `boardIdOf`, and `resolveNameToId` reads a memoised disk cache
+    // (`name-cache.ts`), so the second settling is a hit — measured on a real
+    // socket in `cards-link.test.ts`'s #82 arm, which counts one `/widgets` list
+    // across both.
     (config.readConfig as jest.Mock).mockResolvedValue({});
 
     await runCli(['widgets', 'add', BOARD_NAME, 'ccid-1', '-y']);
