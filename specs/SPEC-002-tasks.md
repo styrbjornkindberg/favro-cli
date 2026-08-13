@@ -166,6 +166,10 @@
 - **Validation:** Integration test
 
 #### T012: Implement Batch Operations
+> **Done, then undone by #110 (4.0.0).** All three spellings below shipped and are
+> now refusal stubs; `favro cards update --from-csv <file>` is the one bulk write,
+> enumerated by the caller and capped at 20 rows. The criteria are left as written
+> because this is the record of what was asked for, not of what the CLI has.
 - **Description:** favro batch update/move/assign commands
 - **Acceptance Criteria:**
   - `favro batch update --from-csv cards.csv`

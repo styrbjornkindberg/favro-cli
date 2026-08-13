@@ -817,8 +817,11 @@ card-002,Done,bob@example.com
 
 **Error: `'favro batch-smart' was removed in 4.0`**
 ```
-Removed in 4.0. Decide the operations yourself, then 'favro cards update --from-csv'.
+✗ Error: 'favro batch-smart' was removed in 4.0.
+Decide the operations yourself, then 'favro cards update --from-csv'.
 ```
+That is `--human`. The default is the same message inside `{"error":{"message",
+"retryable":false}}` on stdout, so a script reading stdout gets the pointer too.
 **Fix:** the plain-English goal parser is gone, along with `batch update`,
 `batch move` and `batch assign`. All four derived their write set from a board
 read, so what they wrote to appeared neither in the invocation nor in any record.

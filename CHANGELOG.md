@@ -15,7 +15,7 @@ whole write-seam collapse as one `3.0.0`, but `3.0.0` was dated in this file and
 `v3.0.0` on 2026-08-12, before any of the removals below existed — so they cannot go
 there. A major after a released major is `4.0.0`. Two entries already under this heading
 were breaking and mis-filed under a minor (`git sync` and `git todos --create` gaining a
-cap that refuses); they are now under the right heading without being moved.
+cap that refuses); they are now under `### Breaking`.
 
 ### Breaking
 
@@ -26,9 +26,14 @@ calls one gets a next move instead of `unknown command`:
 
 ```
 $ favro batch update --from-csv cards.csv
-'favro batch update' was removed in 4.0.
-Use 'favro cards update --from-csv <file>' — same CSV, one transaction, capped at 20 rows.
+{"error":{"message":"'favro batch update' was removed in 4.0.\nUse 'favro cards update --from-csv <file>' — same CSV, one transaction, capped at 20 rows.","retryable":false}}
 ```
+
+That is **stdout**, at exit 1 — the JSON default (ADR-0002), so an agent reading stdout
+gets a parseable next move rather than `(no output)`. `--human` prints the same two lines
+on stderr behind `✗ Error:` instead. All six spellings below answer identically; verified
+against the built CLI with `FAVRO_CONFIG_DIR` pointed at an empty directory, so none of
+them needs a credential either.
 
 | Removed | What to run |
 |---|---|
@@ -41,6 +46,11 @@ Use 'favro cards update --from-csv <file>' — same CSV, one transaction, capped
 The stubs accept the old flags (`allowUnknownOption`), because the real invocation
 carries them and `error: unknown option '--from-csv'` is the same dead end one token to
 the right. They are kept for one major.
+
+**`favro batch` on its own no longer prints help** — it refuses like its subcommands, and
+so does any unrecognised subcommand under it (`favro batch nonsense`), which used to be
+`error: unknown command 'nonsense'`. A caller who half-remembered the spelling is the one
+most in need of the pointer.
 
 **Why no deprecation cycle.** A warning that still performed the write would keep alive
 exactly what the removal is for: five spellings that DERIVED their write set from a
@@ -74,8 +84,10 @@ The same routing changes four more things about this command:
   typo on row 12 lands rows 1-11 and then unwinds them. The cap bounds that at 19 writes
   and one unwind that reports what it left behind if it could not finish. `bulk.ts`'s own
   note said the pre-pass existed because the lazy path cost 399 writes and a partial
-  rollback on a 500-row file — which the cap now makes unreachable. It is a regression in
-  wire cost on a bad row, not in what the caller is left holding.
+  rollback on a 500-row file — which the cap now makes unreachable. **When the unwind
+  completes** it is a regression in wire cost on a bad row and nothing else; when it does
+  not, it is also a regression in what the caller is left holding, and the result says
+  which rows those are.
 - **`--json` now prints the `DispatchResult`** (`{intent, outcome, retryable, value}`),
   not `{total, success, failure, skipped, rolledBack, errors, operations}`. Success and
   failure print the same shape; they used to print two.
@@ -94,25 +106,11 @@ old parser's own comment said "stored but not directly mapped". A CSV naming a c
 field reported success having written none of it. Refusing is the fail-closed half of
 the same fact.
 
-### Changed
+#### `git sync` and `git todos --create` refuse above twenty (#109)
 
-- **`cards update` writes `dueDate` (#110).** The field was measured in #106 —
-  `null` clears, an ISO timestamp is honoured and echoed verbatim, `""` is a silent
-  no-op and is refused rather than forwarded — and then held out of the `update`
-  intent until a command passed one, because an arg nothing passes is a surface with
-  no caller to keep it honest. The CSV's `due_date` column is that caller. It carries
-  a real compensating write, like every other field on the intent.
-
-- **The `--from-csv` reader moved from `lib/bulk.ts` to `lib/csv.ts` (#110)**, next to
-  the CSV writer `cards export` already used. It is the only half of `bulk.ts` that
-  survived the collapse onto the dispatch table.
-
-- **Seven more write paths go through the one dispatch table (#109).** `git branch`'s
-  auto-move, `git sync`, `git todos --create`, `custom-fields set`, `widgets add`,
-  `cards move` and all three `dependencies` subcommands reached the wire directly, each
-  dropping a different guarantee. They now take the mandatory scope lock **inside** the
-  intent, so the CLI, `skill run` and MCP cannot disagree about it, and they inherit the
-  boardless-write refusal, the 20-write cap and a compensation log.
+Both break invocations that worked in 3.0.0, so they are here and not under
+`### Changed`, where they sat until #110's review: a repo with 21 mapped branches
+or 21 TODOs used to write, and now refuses as a whole.
 
 - **`git sync` is now ONE transaction, not a loop with a success counter.** A failure on
   card 4 of 6 moves cards 1–3 back and reports `rolled-back`, where it used to print
@@ -135,6 +133,26 @@ the same fact.
   `status` into a `columnId` before anything reached the wire.
   `git-sync-intent-wire.test.ts` asserts the bytes are `{columnId}` and that the card
   MOVED, read back off the stand's own store.
+
+### Changed
+
+- **`cards update` writes `dueDate` (#110).** The field was measured in #106 —
+  `null` clears, an ISO timestamp is honoured and echoed verbatim, `""` is a silent
+  no-op and is refused rather than forwarded — and then held out of the `update`
+  intent until a command passed one, because an arg nothing passes is a surface with
+  no caller to keep it honest. The CSV's `due_date` column is that caller. It carries
+  a real compensating write, like every other field on the intent.
+
+- **The `--from-csv` reader moved from `lib/bulk.ts` to `lib/csv.ts` (#110)**, next to
+  the CSV writer `cards export` already used. It is the only half of `bulk.ts` that
+  survived the collapse onto the dispatch table.
+
+- **Seven more write paths go through the one dispatch table (#109).** `git branch`'s
+  auto-move, `git sync`, `git todos --create`, `custom-fields set`, `widgets add`,
+  `cards move` and all three `dependencies` subcommands reached the wire directly, each
+  dropping a different guarantee. They now take the mandatory scope lock **inside** the
+  intent, so the CLI, `skill run` and MCP cannot disagree about it, and they inherit the
+  boardless-write refusal, the 20-write cap and a compensation log.
 
 - **A card that cannot be read now aborts the whole `git sync`.** A stale branch mapping
   onto a deleted card used to sync the rest and report a partial count; a batch is one
@@ -261,6 +279,13 @@ the same fact.
   The trim was added with a broader justification than it deserved — every downstream
   resolver already trims, so a spaced-but-nonempty ` bug ` always resolved correctly — and
   a mutation run found the real case the trim covers, which is now the case pinned.
+
+- **The missing-credential refusal no longer doubles its glyph.** `favro cards update
+  card-1 --name x` with no key answered `✗ Error: ✗ API key not found. Run 'favro auth
+  login' first`: `missingApiKeyError()` carried a `✗` of its own and `logError` adds the
+  `✗ Error:` heading. The glyph belongs to whoever prints, so it was taken off the string
+  — which also takes it out of `{"error":{"message"}}` under the JSON default, where a
+  terminal glyph in a machine field was never right.
 
 ## 3.0.0 — 2026-08-12
 

@@ -1,7 +1,9 @@
 # Handoff
 
-State as of main after #117. **152 suites / 2857 tests**,
-typecheck clean, no cycles.
+State as of main after #117. The prose below is that snapshot; the counts are not.
+**174 suites / 3563 tests**, typecheck clean, no cycles — re-measured on main at
+#110's review round, where the header still read `152 suites / 2857 tests`. Re-run
+`npm test` before quoting these; nothing keeps them honest but the next reader.
 
 ## 0. START HERE — #118 is next, and nothing is left mid-flight
 

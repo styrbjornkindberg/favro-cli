@@ -108,16 +108,17 @@ favro cards list board:X --filter "owner:@me OR owner:@unassigned"
 
 ## Bulk Operations
 
+> **Superseded by #110 (4.0.0).** This section specified three commands — `batch
+> update`, `batch move` and `batch assign` — and all three shipped and were then
+> removed: the last two DERIVED their write set from a board read, so what they
+> wrote to was in neither the invocation nor any record. The `custom_field_x` CSV
+> column named below was accepted and never sent. What survives is the shape
+> below: one enumerated CSV, one transaction, capped at 20 rows.
+
 ```
-favro batch update --from-csv cards.csv
-# CSV: card_id, status, owner, due_date, custom_field_x
-# Returns: summary of updated cards, failures, warnings
-
-favro batch move --board source-id --to-board target-id --filter "status:Completed"
-# Moves all matching cards to target board
-
-favro batch assign --board board-id --filter "status:Backlog" --to @me
-# Assign all matching cards to current user
+favro cards update --from-csv cards.csv
+# CSV: card_id, status, owner, due_date — any other column refuses
+# Returns: the DispatchResult {intent, outcome, retryable, value}
 ```
 
 ---

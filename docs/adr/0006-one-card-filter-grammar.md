@@ -49,6 +49,10 @@ that now refuses used to answer *correctly* — each was swept into a title sear
 is unreleased (`package.json`), and the ticket records `npm view @square-moon/favro-cli`
 answering 404, so the change costs nothing today and stops being free the day this ships.
 
+> **It shipped.** `3.0.0` was tagged 2026-08-12 carrying this break, and `package.json` reads
+> `4.0.0` now (#110). The paragraph above is left as the argument that was made at the time,
+> not as a claim about today — its "unreleased" and its 404 are both false now.
+
 **2. The filter runs over RAW cards, not the `ContextCard` snapshot.** The grammar evaluates a
 card by Favro's own field names — `name`, `dueDate`, `customFields` as the array the wire sends.
 `ContextCard` renames three of those and flattens the fourth, so running the grammar over
