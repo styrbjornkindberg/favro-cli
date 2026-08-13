@@ -608,8 +608,9 @@ describe('cards create --board <name> under a lock (#82, closed in #109)', () =>
   it('settling twice costs ONE board list — `createCard` shares the cache', async () => {
     // THE MEASUREMENT behind "no extra request on the real create": `board()`
     // settles the name, then `createCard`'s own `boardIdOf` settles it again, and
-    // `resolveNameToId` reads a memoised disk cache between them. The cache file
-    // is deleted before every arm, so this counts a COLD start.
+    // `resolveNameToId` reads a memoised disk cache between them. Each stand gets a
+    // fresh `organizationId`, so this counts a COLD start — see the note on `orgSeq`.
+    // Deleting the cache file would NOT work: the memo outlives it.
     const { received } = await startServer({ cards: [] });
     await lock(LOCK);
 

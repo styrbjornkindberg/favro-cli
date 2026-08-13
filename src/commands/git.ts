@@ -436,7 +436,11 @@ export function registerGitCommands(program: Command): void {
           // its TYPE to head the line `Scope violation:`, and the cap's refusal is
           // about the batch's size, so listing twenty-one branch mappings under it
           // buries the one sentence that matters.
-          if (error instanceof ScopeError || /capped at/.test(String(error?.message))) throw error;
+          if (
+            error instanceof ScopeError ||
+            (error instanceof RefusalError && /capped at/.test(error.message))
+          )
+            throw error;
           const mapping = cards
             .map((c) => `${branchOf.get(c.card) ?? '(no branch)'} → ${c.card}`)
             .join('\n    ');
