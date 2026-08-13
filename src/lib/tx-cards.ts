@@ -87,7 +87,11 @@ export interface Orphan {
   cause: 'compensation-failed' | 'compensation-skipped';
   /** The `cardId` the write landed on. */
   card: string;
-  /** The field as a caller names it: `columnId`, `tags`, `assignees`, `dependencies`, `card`. */
+  /**
+   * The field as a caller names it: `columnId`, `tags`, `assignees`,
+   * `dependencies`, `card`, `archived`, `name`, `description`, `dueDate`, or
+   * `customField:<customFieldId>`.
+   */
   field: string;
   /** What we wrote — the scalar, the delta element, the edge, or the created card. */
   wrote: unknown;
@@ -315,7 +319,7 @@ export class CompensationLog {
   }
 }
 
-// ─── the eight reversible ops, plus one that is not ──────────────────────────
+// ─── the ten reversible ops, plus one that is not ────────────────────────────
 
 /** What `removeBlockingEdge` observed. `removed: false` means nothing was written. */
 export interface EdgeRemoval {
@@ -386,8 +390,54 @@ export interface ReadTx {
 export type TextField = 'name' | 'description';
 
 /**
+ * What the PUT echoed for one text field, in the space `getCard` reads it back in.
+ *
+ * `CardsAPI.updateCard` returns the PUT body **raw** — it does not run
+ * `normalizeCard`, the way `getCard` and `moveCard` do — so a description arrives
+ * under the wire's own `detailedDescription` and never under the read-side
+ * `description` alias. Both spellings are read here rather than betting on which
+ * layer normalises, so this cannot go silently blind either way that changes.
+ */
+function echoText(card: Card, field: TextField): string {
+  if (field === 'name') return card.name ?? '';
+  return ((card.detailedDescription ?? card.description) as string | undefined) ?? '';
+}
+
+/**
+ * The day part of a due date — the one space the WRITE shape and the READ shape
+ * share. `PUT {dueDate: "2026-09-01"}` stores and echoes
+ * `"2026-09-01T00:00:00.000Z"`, so string equality against the argument would call
+ * a write that landed a write that did not (#106, §3.1 of the research note).
+ * Absent and `null` both fold to `''`, which is what makes one comparison cover
+ * setting and clearing alike.
+ */
+const dueDay = (value: string | null | undefined): string =>
+  typeof value === 'string' ? value.slice(0, 10) : '';
+
+/**
+ * One custom field's stored value on a card, in the wire's own shape.
+ *
+ * Matched on `customFieldId` and never by position: whether the PUT echo carries
+ * the card's WHOLE field set or only the entries the write touched is an open edge
+ * (§4.2 of the research note), so a reader taking `[0]` could confirm this write
+ * with a different field's value.
+ *
+ * `Card.customFields` is DECLARED as `CustomField[]` (`{fieldId, name, value,
+ * type}`) and the wire sends `{customFieldId, value}` — `normalizeCard` passes the
+ * raw array through under that name without mapping it. Both id spellings are read
+ * rather than trusting the declared one. Only `value` is read: `members`, `link`
+ * and `total` are the other three payload keys `custom-fields-api.ts` builds, and
+ * none of them was measured on this path.
+ */
+function cardFieldValue(card: Card, fieldId: string): unknown {
+  const entries = (card.customFields ?? []) as unknown as Array<Record<string, unknown>>;
+  const found = entries.find((f) => (f.customFieldId ?? f.fieldId) === fieldId);
+  return found?.value;
+}
+
+/**
  * The only card surface an intent gets: every read, and only instrumented
- * writes. Eight reversible ops, each declared once, capture + mutate + push fused
+ * writes. Ten reversible ops, each declared once, capture + mutate + push fused
  * — plus `deleteCard`, the one write with no inverse, which logs nothing and
  * says why.
  *
@@ -898,7 +948,9 @@ export class TxCards implements ReadTx {
    * ONE method for the two of them rather than a `setName` / `setDescription`
    * pair: the capture, the write and the compensation entry are the same three
    * statements in both cases, and the only thing that differs is which key moves.
-   * #106 names the pair; when it lands, each is a one-line wrapper over this.
+   * #106 named the pair and then measured both fields (below); the measurement
+   * did not split them, so the pair stayed fused rather than becoming two
+   * one-line wrappers over this.
    *
    * **The field is a CLOSED union, and that is the guard.** A general
    * `setScalar(cardRef, field, value)` would also accept `status`, `tags` and
@@ -915,16 +967,34 @@ export class TxCards implements ReadTx {
    * `detailedDescription` by `normaliseCard`, so the capture and the inverse both
    * spell it the read-side way and the API layer owns the asymmetry exactly once.
    *
-   * **The write is deliberately NOT read back**, unlike `moveColumn` and
-   * `setArchived`. Each of those compares against a shape a live probe has
-   * measured — `columnId` on a card's GET row (#101), `archived` on the PUT echo
-   * (#75). Neither of these two fields has one: whether a PUT echoes `name` is
-   * unmeasured, and whether a description survives the round trip byte-for-byte is
-   * unmeasured too, since nothing has observed whether Favro canonicalises the
-   * markdown it stores. A strict-equality read-back would therefore assert an
-   * unmeasured shape (ADR-0003) and would throw on writes that in fact landed. What
-   * this DOES buy is the undo handle, which is what a transaction needs; detecting
-   * a silent no-op on these two waits for the probe that can measure it (#106).
+   * **`name` IS read back; `description` cannot be.** Both were probed live in
+   * #106 (`docs/research/card-write-field-semantics.md` §1–§2), and the two
+   * answers came out different:
+   *
+   * - `name` — the PUT echo carries it **byte-for-byte**. Padding survives,
+   *   markdown syntax is stored literally, nothing is trimmed. So strict equality
+   *   against the echo asserts a measured shape, and this throws on a 200 that did
+   *   not take, exactly as `setArchived` does on `archived`.
+   * - `description` — the round trip is **lossy**. `-` list markers come back as
+   *   `*`, a blank line appears between list items, a fence's info string is
+   *   dropped, and a zero-width space is injected after every `[`. A strict
+   *   read-back would throw on every markdown write that in fact landed, so there
+   *   is none. The write is confirmed only by the caller reporting what came back.
+   *
+   * **The compensation record holds what the wire STORED, not what we asked for.**
+   * That distinction is invisible for `name` (they are the same string) and
+   * load-bearing for `description`: `compareBeforeRestore` tests `live ===
+   * record.wrote`, so recording the argument would compare our markdown against
+   * Favro's canonicalised copy, decline the restore, and report a
+   * `compensation-skipped` orphan on a card nobody else had touched — turning a
+   * correct `rolled-back` into `rollback-incomplete`. The echo is measured to equal
+   * what a following GET returns, so recording it makes the compare hold.
+   *
+   * **What the inverse cannot promise.** Writing a captured description back
+   * produces a THIRD string (the ZWSP-bearing brackets pick up backslash escapes),
+   * converging only on the pass after that. Favro has no write that restores a
+   * description byte-exactly. The undo puts the body back semantically and this is
+   * as close as the wire allows — recorded rather than papered over.
    *
    * Already holding the requested value → nothing written and nothing logged,
    * exactly as `setTags` / `setAssignees` / `setArchived` treat an empty delta.
@@ -934,8 +1004,9 @@ export class TxCards implements ReadTx {
    * payload entirely, so an entry claiming to clear a description would quietly do
    * nothing and then orphan on the compare. `name` is always present on a card, so
    * only `description` reaches that arm — where empty IS the honest restore of "no
-   * description". `readLive` normalises the same way, so the detecting read and the
-   * captured value are compared in one space.
+   * description". Measured: Favro stores `''` as `"\n"`, and since the record holds
+   * the echo rather than the argument, that normalisation is inside the compare
+   * rather than a permanent mismatch against it.
    */
   async setText(cardRef: string, field: TextField, value: string): Promise<Card> {
     const before = await this.api.getCard(cardRef);
@@ -948,13 +1019,189 @@ export class TxCards implements ReadTx {
     const payload = (v: string) => (field === 'name' ? { name: v } : { description: v });
 
     const after = await this.api.updateCard(cardId, payload(value));
+    const stored = echoText(after, field);
+    // Checked BEFORE the log push, for `setArchived`'s reason: a mismatch means the
+    // PUT wrote nothing, so there is nothing to compensate and an entry would only
+    // orphan on wreckage that does not exist. `TransientError` for the same reason
+    // too — the call is not what is wrong, so the next attempt may behave
+    // differently, and an unmarked in-process `Error` would report
+    // `retryable: false`.
+    if (field === 'name' && stored !== value) {
+      throw new TransientError(
+        `Name write on card ${cardId} answered 200 but did not take: sent ${JSON.stringify(value)}, ` +
+          `the response reads name=${JSON.stringify(stored)}.\n` +
+          `Nothing was written, so nothing needs undoing. The echo is probed byte-exact for this ` +
+          `field (#106) — no trimming and no markdown parsing — so a mismatch is a real difference ` +
+          `and not a normalisation.`,
+      );
+    }
     this.log.push({
       card: cardId,
       field,
-      record: { shape: 'scalar', wrote: value, before: was ?? '' },
+      record: { shape: 'scalar', wrote: stored, before: was ?? '' },
       label: `restore ${field} on card ${cardId}`,
       readLive: async () => (await this.api.getCard(cardId))[field] ?? '',
       applyInverse: async () => { await this.api.updateCard(cardId, payload(was ?? '')); },
+    });
+    return after;
+  }
+
+  // ── 9. setDueDate ─────────────────────────────────────────────────────────
+
+  /**
+   * Set the card's due date, or clear it with `null`.
+   *
+   * Probed live in #106 (`docs/research/card-write-field-semantics.md` §3); the
+   * measurements this method is built on, and what each one buys:
+   *
+   * - **`""` is a silent no-op** — 200, and the card keeps the date it had. It is
+   *   the natural spelling for "clear this" out of a CSV cell or an empty flag, so
+   *   it is REFUSED here rather than forwarded, the way `setAssignees` refuses a
+   *   name. A refusal, not a throw after the fact: nothing has been written yet and
+   *   the call is what needs repairing.
+   * - **`null` clears**, and the echo then carries no `dueDate` key at all. That is
+   *   the only measured clear, which is why the parameter is `string | null` rather
+   *   than `string | undefined` — `undefined` would drop out of the JSON payload
+   *   and write nothing.
+   * - **a date-only write is NORMALISED on the way in**: `"2026-09-01"` stores and
+   *   echoes `"2026-09-01T00:00:00.000Z"`. So the read-back compares on the DAY.
+   *   Strict equality against the argument would report every date-only write as a
+   *   write that did not take.
+   * - **a full ISO timestamp is honoured too, and echoed verbatim.** That is what
+   *   makes the inverse sound: the captured pre-state is an ISO string, and an ISO
+   *   string is a legal write. Before this measurement the field was left out of
+   *   the `update` intent for exactly that reason (see the seam note in
+   *   `dispatch.ts`) — an undo handle that may not undo.
+   *
+   * Scalar shape, and the record holds the STORED value rather than the argument,
+   * for `setText`'s reason: the compare is `live === record.wrote`, and after a
+   * date-only write those two are only the same string if the normalisation is
+   * recorded.
+   *
+   * The no-write short-circuit is strict equality and deliberately NOT the day
+   * compare. Two instants on the same day are a real difference, and skipping that
+   * write would be a silent no-op of our own — the class this facade exists to
+   * close. Re-writing a value the card already holds costs one idempotent PUT.
+   */
+  async setDueDate(cardRef: string, dueDate: string | null): Promise<Card> {
+    if (dueDate === '') {
+      throw new RefusalError(
+        `setDueDate takes a date or null, and got an empty string. \`PUT {dueDate: ""}\` is a ` +
+          `measured silent no-op — 200, and the card keeps the date it had (#106) — so forwarding ` +
+          `it would report a clear that never happened.\n` +
+          `Pass null to clear the date, or "YYYY-MM-DD" / a full ISO timestamp to set one.`,
+      );
+    }
+    const before = await this.api.getCard(cardRef);
+    const cardId = before.cardId;
+    const was = (before.dueDate as string | undefined) ?? null;
+    if (was === dueDate) return before;
+
+    const after = await this.api.updateCard(cardId, { dueDate });
+    const stored = (after.dueDate as string | undefined) ?? null;
+    if (dueDay(stored) !== dueDay(dueDate)) {
+      throw new TransientError(
+        `Due-date write on card ${cardId} answered 200 but did not take: sent ` +
+          `{dueDate: ${JSON.stringify(dueDate)}}, the response reads ` +
+          `dueDate=${JSON.stringify(stored)}.\n` +
+          `Nothing was written, so nothing needs undoing. The comparison is on the DAY, because a ` +
+          `date-only write is measured to come back as a full ISO timestamp (#106); a mismatch here ` +
+          `is a different day, not that normalisation.`,
+      );
+    }
+    this.log.push({
+      card: cardId,
+      field: 'dueDate',
+      record: { shape: 'scalar', wrote: stored, before: was },
+      label: `restore the due date on card ${cardId} (${was ?? 'none'})`,
+      readLive: async () => ((await this.api.getCard(cardId)).dueDate as string | undefined) ?? null,
+      applyInverse: async () => { await this.api.updateCard(cardId, { dueDate: was }); },
+    });
+    return after;
+  }
+
+  // ── 10. setFieldValue ─────────────────────────────────────────────────────
+
+  /**
+   * Set one custom field's value on a card.
+   *
+   * **Measured on ONE field type — `Single select` — and nothing here generalises
+   * to the others** (#106, `docs/research/card-write-field-semantics.md` §4). The
+   * #105 scratch board carries exactly one enabled custom field and Favro exposes
+   * no verb to create another, so `Text`, `Number`, `Date`, `Members`, `Link`,
+   * `Checkbox`, `Multiple select`, `Tags` and `Timeline` are unprobed on this path.
+   * `value` is `unknown` rather than `string` because of that: the wire shape is
+   * per type (`custom-fields-api.ts` builds four different payload keys), and
+   * narrowing it here would be asserting the three shapes nobody measured.
+   *
+   * What was measured:
+   *
+   * - `{customFieldId, value: [optionId]}` is **honoured**, and the PUT echo
+   *   carries the stored value back under the same `customFieldId`. So this throws
+   *   on a 200 that did not take.
+   * - Three ways to get it wrong — an empty array on a select, an unknown
+   *   `customFieldId`, a bare string where the select wants an array — each answer
+   *   **`202` with a `message` and NO card row**, and nothing is written. `202` is
+   *   a success to axios, so the status cannot be the signal; the missing row is.
+   *   Favro having sent a message makes it deterministic, hence a `RefusalError`
+   *   rather than the `TransientError` an unexplained silence gets.
+   * - **A select has no measured spelling for "clear"** — `value: []` is one of the
+   *   three 202s. So a write to a field that had NO prior value has no inverse, and
+   *   the entry's `applyInverse` says that out loud instead of sending a write
+   *   measured to do nothing. The unwind then reports a `compensation-failed`
+   *   orphan, which is the honest answer: something was left behind.
+   *
+   * Scalar shape, compared as JSON. The stored value is an ARRAY for a select, and
+   * the facade's scalar compare is `live === record.wrote` — two structurally equal
+   * arrays are never `===`, so an un-serialised record would decline every restore
+   * and orphan every rollback. Serialising is the one-line fix that keeps the
+   * compare rule itself untouched; `applyInverse` closes over the real prior value,
+   * so nothing is restored from the serialisation.
+   */
+  async setFieldValue(cardRef: string, fieldId: string, value: unknown): Promise<Card> {
+    const before = await this.api.getCard(cardRef);
+    const cardId = before.cardId;
+    const was = cardFieldValue(before, fieldId);
+
+    const after = await this.api.updateCard(cardId, {
+      customFields: [{ customFieldId: fieldId, value }],
+    });
+    const stored = cardFieldValue(after, fieldId);
+    // Checked BEFORE the log push: on every measured failure Favro wrote nothing,
+    // so an entry here would send an inverse that changes nothing and then orphan
+    // on the compare.
+    if (JSON.stringify(stored) !== JSON.stringify(value)) {
+      const said = (after as { message?: unknown }).message;
+      const detail =
+        typeof said === 'string'
+          ? `Favro answered "${said}" and sent no card row — a deterministic rejection: the field id, ` +
+            `the value shape, or the value itself. Note that a select cannot be cleared with an empty ` +
+            `array; that is one of the three measured 202s.`
+          : `The response carried no matching \`customFields\` entry and no message, so what the wire ` +
+            `did is unobserved.`;
+      const message =
+        `Custom field write on card ${cardId} did not take: sent ` +
+        `{customFieldId: ${fieldId}, value: ${JSON.stringify(value)}}, the response reads ` +
+        `${JSON.stringify(stored)}.\n${detail}\n` +
+        `Nothing was written, so nothing needs undoing.`;
+      throw typeof said === 'string' ? new RefusalError(message) : new TransientError(message);
+    }
+    this.log.push({
+      card: cardId,
+      field: `customField:${fieldId}`,
+      record: { shape: 'scalar', wrote: JSON.stringify(stored), before: JSON.stringify(was) },
+      label: `restore custom field ${fieldId} on card ${cardId} (${JSON.stringify(was) ?? 'unset'})`,
+      readLive: async () => JSON.stringify(cardFieldValue(await this.api.getCard(cardId), fieldId)),
+      applyInverse: async () => {
+        if (was === undefined) {
+          throw new Error(
+            `custom field ${fieldId} on card ${cardId} had no value before this write, and Favro has ` +
+              `no measured way to clear one — \`value: []\` answers 202 "Invalid status value" and ` +
+              `writes nothing (#106). The value we set is still there.`,
+          );
+        }
+        await this.api.updateCard(cardId, { customFields: [{ customFieldId: fieldId, value: was }] });
+      },
     });
     return after;
   }

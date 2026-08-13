@@ -266,7 +266,31 @@ export interface CreateCardRequest {
 }
 
 export interface UpdateCardRequest {
+  /**
+   * Replaces the card's title. Honoured, and the PUT **response echoes it
+   * byte-for-byte** — probed live (#106,
+   * `docs/research/card-write-field-semantics.md` §1): leading and trailing
+   * whitespace survive and markdown syntax is stored literally, so nothing is
+   * canonicalised on the way in. That echo is what earns `TxCards.setText` a
+   * strict-equality read-back on this field and only this field.
+   */
   name?: string;
+  /**
+   * Replaces the card's body. `mapDescription` rewrites the key to
+   * `detailedDescription` on the way out, because `PUT {description}` is a
+   * measured silent no-op (#15/#16/#17).
+   *
+   * **The round trip is LOSSY, and a read-back is therefore impossible** — probed
+   * live (#106, `docs/research/card-write-field-semantics.md` §2). Plain text
+   * survives byte-for-byte; markdown does not. `-` list markers come back as `*`,
+   * a blank line is inserted between list items, a fence's info string is
+   * dropped, and a **zero-width space (U+200B) is injected after every `[`** —
+   * with `descriptionFormat` correctly on the query string, so that placement is
+   * not a defence against the injection, only against the worse body-placement
+   * damage `MARKDOWN_BODY` records. Writing the returned value straight back
+   * mutates it AGAIN (the brackets pick up backslash escapes) and only then
+   * converges. `{description: ''}` clears the body but stores `"\n"`.
+   */
   description?: string;
   /**
    * Column name or `columnId` — on a write, `status` IS a column move. Favro has
@@ -309,15 +333,30 @@ export interface UpdateCardRequest {
   /** Tag **ids** to remove. Same reason as `addTagIds`. */
   removeTagIds?: string[];
   /**
-   * Due date in YYYY-MM-DD format. Supported by Favro API updateCard endpoint.
+   * The card's due date, or `null` to clear it. Probed live (#106,
+   * `docs/research/card-write-field-semantics.md` §3):
    *
-   * That is the WRITE shape and it is not what a card reads back: `dueDate`
-   * returns as a full ISO timestamp encoding a local day boundary
-   * (`2023-07-27T07:00:00.000Z`), measured across 853 dated cards with zero
-   * date-only (#132, `duedate-wire-shape.test.ts`). Do not infer one from the
-   * other — whether the write side also accepts an ISO timestamp is unmeasured.
+   * - `"YYYY-MM-DD"` → **honoured, and NORMALISED on the way in.** The echo and a
+   *   following GET both read `"YYYY-MM-DDT00:00:00.000Z"`. The day is preserved;
+   *   no timezone shift was observed. So the write took, and strict equality
+   *   against the argument would still say it did not — compare on the DAY.
+   * - a full ISO timestamp → **honoured, and echoed verbatim.** This closes the
+   *   open edge this comment used to record: the read shape IS a legal write
+   *   shape, which is what makes a captured pre-state restorable.
+   * - `null` → **honoured, clears the date.** The echo carries no `dueDate` key at
+   *   all, and neither does the following GET. The only measured clear.
+   * - `""` → **200 and a silent no-op.** The echo carries the value that was
+   *   already there. Same family as `status`, `assignees`, whole-array `tags` and
+   *   `archived`; and it is the natural spelling for "clear this" from a CSV cell
+   *   or an empty flag, which is what makes it dangerous. `TxCards.setDueDate`
+   *   refuses it rather than forwarding it.
+   *
+   * A card READS the field back as a full ISO timestamp encoding a local day
+   * boundary (`2023-07-27T07:00:00.000Z`), measured across 853 dated cards with
+   * zero date-only (#132, `duedate-wire-shape.test.ts`) — consistent with the
+   * above, since those are UI-written values.
    */
-  dueDate?: string;
+  dueDate?: string | null;
   /** Target board ID when moving a card between boards. Supported by Favro API updateCard endpoint. */
   boardId?: string;
   /**
@@ -366,6 +405,45 @@ export interface UpdateCardRequest {
    * `listCards({ archived })` — both are read-side only (#14).
    */
   archive?: boolean;
+  /**
+   * Custom field values, in Favro's own wire shape. There is no sub-resource
+   * endpoint — the full card PUT is the only path, which is why
+   * `CustomFieldsAPI.putCardCustomField` sends the same thing.
+   *
+   * Probed live (#106, `docs/research/card-write-field-semantics.md` §4) on **one
+   * field type, `Single select`**, and nothing here generalises to the types that
+   * were not measured — the scratch board carries no other, and Favro exposes no
+   * verb to create one.
+   *
+   * - `{customFieldId, value: [optionId]}` → **honoured**, and the echo carries
+   *   the stored value back under the same `customFieldId`.
+   * - `value: []` on a select → `202 {"message":"Invalid status value"}`, nothing
+   *   written. **A select has no measured spelling for "clear".**
+   * - an unknown `customFieldId` → `202 {"message":"Custom field is not valid"}`.
+   * - a bare string where the select wants `[optionId]` → `202
+   *   {"message":"Match failed"}`.
+   *
+   * All three failures answer **202, which axios reads as success**, with a body
+   * carrying `message` and **no card row at all**. So the observable signal is the
+   * missing row, not the status.
+   */
+  customFields?: CustomFieldWrite[];
+}
+
+/**
+ * One entry of a `customFields` write. `customFieldId` is required — the echo has
+ * to be matched on it, and the whole-array-vs-touched-entries question is an open
+ * edge (§4.2 of the research note), so a reader that takes `[0]` may confirm this
+ * write with another field's value.
+ *
+ * The value keys are open because `custom-fields-api.ts` builds four different
+ * ones per type (`value`, `members`, `link`, `total`). Only `value` on a
+ * `Single select` has been measured on this path.
+ */
+export interface CustomFieldWrite {
+  customFieldId: string;
+  value?: unknown;
+  [key: string]: unknown;
 }
 
 export interface GetCardOptions {
