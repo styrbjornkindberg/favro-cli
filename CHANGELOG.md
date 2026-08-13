@@ -166,6 +166,16 @@ dependency edges all used to write, and each refuses as a whole now.
   through a write that captured its direction first — so a failure part-way through re-adds
   the ones already gone.
 
+#### `cards move` no longer takes a position flag (#161)
+
+The flag advertised `top` or `bottom`, and the wire wants a NUMBER: `--position top`
+answered `400 Unexpected value of position` and took the whole move down with it. It has
+never worked in any released version, and the three documents that taught it were
+teaching a `400`. Removed rather than repaired — placing a card at a board's top or
+bottom is not something anything else here does, and a major is where a flag that never
+worked comes out. `cards move <card> --to-board <board>` is unchanged; a script passing
+the flag now gets commander's `error: unknown option` instead of a `400`.
+
 #### `--json` is gone from every remaining command (#119)
 
 3.0.0 removed it from the commands migrated by then; #119 finishes the job. Every
@@ -201,12 +211,16 @@ enough to build a real client. Every migrated command's refusal is now
 `{"error":{"message","retryable"}}` on stdout under the default, `✗ …` on stderr under
 `--human`.
 
-#### Two commands answer a non-zero code as a FINDING, not a failure (#119)
+#### `widgets add` answers a non-zero code as a FINDING, not a failure (#119)
 
-`cards move` and `widgets add` exit 1 when the write is accepted (200) but the response
-carries no `widgetCommonId` — nothing observed the card on that board, and exit 0 is a
-positive claim. Unchanged behaviour, recorded because migrating them naively would have
-made both exit 0 and lost the finding silently.
+It exits 1 when the write is accepted (200) but the response carries no
+`widgetCommonId` — nothing observed the card on that board, and exit 0 is a positive
+claim. Unchanged behaviour, recorded because migrating it naively would have made it
+exit 0 and lost the finding silently.
+
+`cards move` was the second command in this pair until #161, below: it now REFUSES a
+response that does not name the destination board, so an unobserved board reaches the
+caller as a failure rather than as a finding, and the exit code is the failure's own.
 
 ### Changed
 
@@ -392,6 +406,25 @@ made both exit 0 and lost the finding silently.
   through `src/commands` are redundant rather than wrong"*.
 
 ### Fixed
+
+- **`cards move --to-board` never moved anything — it FORKED the card onto a second
+  board (#161).** `PUT /cards/{cardId}` defaults `dragMode` to `commit`, and `commit`
+  adds a board instance instead of moving one. The command sent no `dragMode`, so every
+  move left the card on the board it was moving off and minted a second instance of the
+  same `cardCommonId` on the destination, with its own `cardId` — which is why the write
+  answered naming an id nobody had asked about. It was `widgets add` under another name,
+  at a genuine `200`: no status, message or envelope check could tell the two apart, only
+  the request body. Favro's validator names the enum when probed with a bogus value:
+  `dragMode is expected as one of "commit", "move" (optional)`. Measured on the scratch
+  board with two equivalent cards and the same command, one binary each: before, one card
+  became two instances (source untouched, `cardId` `ea1bd733…` → `86bc9043…`); after, the
+  card is on one board — the destination — under the `cardId` that was asked for. The
+  move now also READS ITS WRITE BACK, comparing the board Favro echoes against the board
+  it sent and throwing on a mismatch. That is what catches this endpoint's denial shape:
+  a board id the key cannot write to answers `202 {"message":"Access denied"}` — a
+  success to every HTTP client — with no board on the body at all. `widgets add` already
+  sent `dragMode:'commit'` and is unaffected; it is now the only way to put a card on a
+  second board.
 
 - **Every column move was refused by the live API, and so was the rollback of one
   (#162).** Favro resolves `columnId` against `widgetCommonId`, so a `PUT` naming a
