@@ -81,8 +81,17 @@ and streams are real and no request reached a live org.
 - **`cards create --board "<name>"` no longer 404s under a scope lock.** The board argument
   reached `assertScope` unresolved, and the lock GETs `/widgets/<id>` — handed a name it
   404s into "Board … not found", a refusal naming the wrong problem (#82). It settles inside
-  the intent now. It costs no extra request: the create resolves the same value through the
-  same 15-minute name cache, measured as one board list across both settlings.
+  the intent now.
+
+  On a real create it costs nothing: `createCard` settles the same value through the same
+  15-minute name cache, and the two settlings are one board list even from cold — measured
+  on a socket in `git-sync-intent-wire.test.ts`, on a fresh cache partition per arm.
+  **A `--dry-run` with no scope lock does pay one request where it previously made none**,
+  because the settling happens before the preview returns. That is an exception to the
+  "no extra requests when nothing is locked" rule, and it is taken rather than gated on a
+  name/id shape test: `looksLikeName` is weak by design — a one-word board name is
+  shape-identical to an id — so gating on it would reopen #82 for the names most likely to
+  be typed.
 
 - **`cards move` checks BOTH boards, and gains `--dry-run`.** The origin and the settled
   destination are checked before anything is written, so a move out of the locked collection
@@ -138,7 +147,7 @@ and streams are real and no request reached a live org.
   outside the transactional facade is *unconstructible*, not merely unused — one left
   reachable is one the next command takes without touching the table. The payload
   resolution `setFieldValue` did survives as `CustomFieldsAPI.fieldWrite`, which makes no
-  request of its own.
+  WRITE of its own — it still reads the field definition, from cache where it can.
 
 ### Fixed
 
