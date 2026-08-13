@@ -6,12 +6,6 @@ import { MISSING_WORDING } from './favro-error';
 import { RefusalError } from './refusal';
 import { isUserId } from './id-shapes';
 
-/**
- * Re-exported from the shape table (#122). `isUserId` and its measured shape
- * live in `id-shapes.ts` now; this keeps every existing import working.
- */
-export { isUserId };
-
 export interface User {
   userId: string;
   name: string;

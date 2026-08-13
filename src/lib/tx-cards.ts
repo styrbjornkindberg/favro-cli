@@ -57,7 +57,7 @@ import CustomFieldsAPI from './custom-fields-api';
 import WidgetsAPI, { CommittedWidget } from './widgets-api';
 import FavroHttpClient from './http-client';
 import { classifyThrownError } from './favro-error';
-import { isUserId } from './users-api';
+import { isUserId } from './id-shapes';
 import { resolveAssignee } from './assignee';
 import { requireTrackerMapping, verifyTrackerMapping, VerifiedTracker } from './tracker-config';
 // Every guard below that DECLINES to write throws this rather than a bare

@@ -20,8 +20,9 @@
 import * as http from 'http';
 import { AddressInfo } from 'net';
 import FavroHttpClient from '../lib/http-client';
-import TagsAPI, { TagLookupError, isTagId } from '../lib/tags-api';
-import UsersAPI, { UserLookupError, detectUserKey, isUserId } from '../lib/users-api';
+import TagsAPI, { TagLookupError } from '../lib/tags-api';
+import UsersAPI, { UserLookupError, detectUserKey } from '../lib/users-api';
+import { isTagId, isUserId } from '../lib/id-shapes';
 import { resolveAssignee, resolveAssignees, AssigneeError } from '../lib/assignee';
 
 interface Received {

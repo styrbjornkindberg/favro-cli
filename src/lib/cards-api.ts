@@ -6,7 +6,7 @@ import ColumnDirectory, { ColumnResolutionError } from './column-directory';
 import CardReferenceResolver, { CardResolutionError, isSequentialReference } from './card-reference';
 import { foldName } from './fold-name';
 import { invalidateCache } from './name-cache';
-import { isUserId } from './users-api';
+import { isUserId } from './id-shapes';
 import { resolveAssignee } from './assignee';
 import { RefusalError } from './refusal';
 import { holeCollector, Unreachable } from './read-shape';

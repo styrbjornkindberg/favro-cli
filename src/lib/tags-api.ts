@@ -6,12 +6,6 @@ import { MISSING_WORDING } from './favro-error';
 import { RefusalError } from './refusal';
 import { isTagId } from './id-shapes';
 
-/**
- * Re-exported from the shape table (#122). `isTagId` and its two measured
- * shapes live in `id-shapes.ts` now; this keeps every existing import working.
- */
-export { isTagId };
-
 export interface Tag {
   tagId: string;
   name: string;
