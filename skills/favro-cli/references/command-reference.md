@@ -147,21 +147,39 @@ Also supports bulk CSV import:
 | `--csv <file>` | Create cards from a CSV file — at most 20, as ONE transaction |
 
 ### `cards update <cardId>` ⚠️ WRITE
-Update an existing card.
+Update one card, or up to twenty from a CSV file.
 
 | Flag | Description |
 |------|-------------|
-| `--board <boardId>` | Board context |
 | `--name <name>` | New title |
-| `--status <status>` | New status |
-| `--assignees <users>` | New assignees |
-| `--tags <tags>` | New tags |
+| `--status <status>` | New status (column name or columnId, on the card's own board) |
+| `--column <column>` | A second spelling of `--status` |
+| `--assignees <users>` | New assignees — the whole set; drop one to unassign |
+| `--tags <tags>` | New tags — the whole set |
 | `--description <text>` | New description (literal `\n` converted to newlines) |
 | `--comment <text>` | Add a comment to the card (non-destructive, literal `\n` → newlines) |
+| `--from-csv <file>` | Update up to 20 cards from a CSV, in one transaction |
 | `--json` | Output raw JSON |
 | `--dry-run` | Preview only |
 | `-y, --yes` | Skip confirmation |
 | `--force` | Bypass scope check |
+| `--board <board>` | Removed in 3.0 as a batch selector; ignored on a single card |
+| `--label <label>` | Removed in 3.0 — see `--from-csv` |
+| `--assignee <user>` | Removed in 3.0 — see `--from-csv` |
+
+Every field goes out through its own primitive with its own compensating write,
+so a failure on the third field unwinds the first two and reports `rolled-back`.
+
+**`--from-csv`** columns: `card_id` (required), `status`, `owner`, `due_date`;
+`cardId`, `assignee` and `dueDate` are aliases. **Any other column refuses** —
+including `custom_field_*`, which 2.x accepted and then never sent. The file is
+one transaction, capped at 20 rows: over the cap it refuses rather than writing
+the first twenty, every distinct board is checked against the scope lock before
+the first write, and a row naming nothing but `card_id` refuses rather than being
+skipped.
+
+**`--board <board>` with no card id** was the predicate batch and is a refusal in
+3.0. Enumerate with `cards list --filter …`, then hand the list to `--from-csv`.
 
 ### `cards export <board>` 📖 READ
 Export all cards from a board.
@@ -737,56 +755,24 @@ Delete a user group.
 
 ## Batch Operations
 
-### `batch update` ⚠️ WRITE — HIGH BLAST RADIUS
-Update cards from a CSV file.
+`batch update`, `batch move`, `batch assign` and `batch-smart` were **removed in
+3.0**. Each is still registered, exits 1, and names its replacement, so a script
+calling one gets a next move rather than `unknown command`. Kept for one major.
 
-| Flag | Description |
-|------|-------------|
-| `--from-csv <file>` | **Required.** CSV file |
-| `--dry-run` | Preview only |
-| `--json` | Output raw JSON |
-| `--verbose` | Per-card progress |
-| `-y, --yes` | Skip confirmation |
-| `--force` | Bypass scope check |
+All four DERIVED their write set from a board read — a filter, a label or a
+plain-English goal chose the cards — so what was written appeared neither in the
+invocation nor in any record. `cards update --board <board>` with no card id
+refuses for the same reason.
 
-CSV format: `card_id,status,owner,due_date,custom_field_x`
+The one bulk write is [`cards update --from-csv`](#cards-update-cardid), and it
+takes an enumerated list.
 
-### `batch move` ⚠️ WRITE — HIGH BLAST RADIUS
-Move matching cards between boards/statuses.
-
-| Flag | Description |
-|------|-------------|
-| `--board <id>` | **Required.** Source board |
-| `--to-board <id>` | Target board |
-| `--status <value>` | Target status |
-| `--filter <expr>` | Filter expression (repeatable, AND logic) |
-| `--dry-run` | Preview only |
-| `--json` | Output raw JSON |
-| `--verbose` | Per-card progress |
-| `-y, --yes` | Skip confirmation |
-| `--force` | Bypass scope check |
-
-`--status` must name a column on the **destination** board (`--to-board` when
-given, else `--board`). It is settled before anything is read or written, like
-`status:` in `--filter`: a value naming no column refuses and lists that board's
-columns, under `--dry-run` and `--yes` alike, rather than previewing a plan that
-fails card by card at the wire.
-
-### `batch assign` ⚠️ WRITE — HIGH BLAST RADIUS
-Assign matching cards to a user.
-
-| Flag | Description |
-|------|-------------|
-| `--board <id>` | **Required.** Board ID |
-| `--to <user>` | **Required.** User to assign (`@me` for yourself) |
-| `--filter <expr>` | Filter expression (repeatable) |
-| `--dry-run` | Preview only |
-| `--json` | Output raw JSON |
-| `--verbose` | Per-card progress |
-| `-y, --yes` | Skip confirmation |
-| `--force` | Bypass scope check |
-
-Filter syntax: `status:<value>`, `assignee:<user>`, `tag:<tag>`
+| Removed | What to run |
+|---|---|
+| `batch update` | `favro cards update --from-csv <file>` |
+| `batch move` | `favro cards list --filter …`, then `--from-csv` |
+| `batch assign` | `favro cards list --filter …`, then `--from-csv` |
+| `batch-smart` | Decide the operations yourself, then `--from-csv` |
 
 ---
 
@@ -826,31 +812,6 @@ Sprint planning — suggests backlog cards sorted by priority×effort.
 |------|-------------|
 | `--board <board>` | Board to plan from |
 | `--budget <n>` | Max effort budget |
-
-### `batch-smart <board>` ⚠️ WRITE — HIGH BLAST RADIUS
-Natural language batch operations.
-
-| Flag | Description |
-|------|-------------|
-| `--goal <goal>` | **Required.** Plain English goal |
-| `--dry-run` | Preview only |
-| `--yes` | Skip confirmation |
-| `--force` | Bypass scope check |
-| `--json` | Output raw JSON |
-
-`<board>` is a board id or an exact board name.
-
-Supported goal patterns:
-- `move all <filter> cards to <status>`
-- `assign all <filter> cards [with no owner] to <user>`
-- `close all <filter> cards`
-- `unassign all <filter> cards`
-
-Filter words: `overdue`, `blocked`, `unassigned`, `assigned`, `all` — or a COLUMN
-name on that board. A word that is neither refuses, naming the word and listing
-the board's columns, and writes nothing; it never selects zero cards silently.
-The refusal fires under `--dry-run` and `--yes` alike. A goal that resolves and
-matches nothing is different: it reports zero and exits 0.
 
 ### `risks <board>` 📖 READ
 Board risk analysis — surfaces overdue, blocked, unassigned, and incomplete cards.

@@ -39,8 +39,7 @@ import { registerBoardsUpdateCommand } from './commands/boards-update';
 import { registerBoardsDeleteCommand } from './commands/boards-delete';
 import { registerReleaseCheckCommand } from './commands/release-check';
 import { registerRisksCommand } from './commands/risks';
-import { registerBatchSmartCommand } from './commands/batch-smart';
-import { registerBatchCommand } from './commands/batch';
+import { registerRemovedCommands } from './commands/removed';
 import { registerCollectionsListCommand } from './commands/collections-list';
 import { registerCollectionsGetCommand } from './commands/collections-get';
 import { registerCollectionsCreateCommand } from './commands/collections-create';
@@ -171,8 +170,7 @@ registerReleaseCheckCommand(program);
 
 // ─── risks command ───────────────────────────────────────────────────────────────
 registerRisksCommand(program);
-registerBatchSmartCommand(program);
-registerBatchCommand(program);
+registerRemovedCommands(program);
 
 // ─── collections parent ──────────────────────────────────────────────────────
 const collectionsCmd = program.command('collections').description('Collection operations');
@@ -627,7 +625,7 @@ cards
 cards
   .command('update [card]')
   .description(
-    'Update a card (single) or batch-update/move/assign cards.\n\n' +
+    'Update one card, or an enumerated batch of at most 20 from a CSV file.\n\n' +
     'Single card update:\n' +
     '  favro cards update <card> --status "Done"\n' +
     '  favro cards update <card> --name "New title" --status "In Progress"\n' +
@@ -639,12 +637,15 @@ cards
     '  third field unwinds the first two. The scope lock runs BEFORE the --dry-run\n' +
     '  preview, so a preview is never a way around it.\n\n' +
     'Batch update from CSV:\n' +
-    '  favro cards update --from-csv bulk.csv --board Q2-Dev\n' +
-    '  favro cards update --from-csv bulk.csv --board Q2-Dev --dry-run\n\n' +
-    '  CSV columns: cardId, status, assignee, dueDate (all optional except cardId)\n\n' +
-    'Batch move/assign with filter:\n' +
-    '  favro cards update --board Q2-Dev --label urgent --status done\n' +
-    '  favro cards update --board Q2-Dev --assignee alice\n\n' +
+    '  favro cards update --from-csv bulk.csv\n' +
+    '  favro cards update --from-csv bulk.csv --dry-run\n\n' +
+    '  CSV columns: card_id (required), status, owner, due_date. cardId, assignee\n' +
+    '  and dueDate are accepted as aliases; any OTHER column refuses, because the\n' +
+    '  parser this replaced accepted custom_field_* and silently wrote none of it.\n' +
+    '  The whole file is ONE transaction, capped at 20 rows: a failure on row 12\n' +
+    '  unwinds rows 1-11 rather than leaving them standing.\n\n' +
+    'Removed in 3.0 — the predicate batch (`--board` with no card):\n' +
+    '  Enumerate first with `favro cards list --filter …`, then --from-csv.\n\n' +
     'Tip: Use `favro cards list --json` to find card IDs.'
   )
   .option('--name <name>', 'New card name (single card update)')
@@ -652,17 +653,19 @@ cards
   .option('--comment <text>', 'Add a comment to the card (non-destructive)')
   .option('--status <status>', 'Move the card to this column (name or columnId)')
   .option('--assignees <list>', 'Assignees, comma-separated — the whole set; drop one to unassign')
-  .option('--assignee <user>', 'Assignee for batch assign (use with --board)')
+  // Still declared so the removed predicate batch reaches a refusal that names
+  // its replacement, rather than commander's "unknown option".
+  .option('--assignee <user>', 'Removed in 3.0 — see --from-csv')
   .option('--tags <list>', 'Tags (comma-separated, single card update)')
   .option('--column <column>', 'Move card to this column by name — a second spelling of --status')
-  .option('--label <label>', 'Label/tag filter for batch operations (use with --board)')
-  .option('--board <board>', 'Board by name or boardId — required for batch operations, optional for single')
-  .option('--from-csv <file>', 'CSV file with card updates (columns: cardId, status, assignee, dueDate)')
-  .option('--dry-run', 'Preview changes without writing — with --from-csv this still reads each row\'s card, because the scope lock runs before the preview, by design, so a preview cannot be a way around it')
+  .option('--label <label>', 'Removed in 3.0 — see --from-csv')
+  .option('--board <board>', 'Removed in 3.0 as a batch selector; ignored on a single card update')
+  .option('--from-csv <file>', 'CSV file with card updates (columns: card_id, status, owner, due_date)')
+  .option('--dry-run', 'Preview changes without writing — with --from-csv under a scope lock this still reads each row\'s card, because the lock runs before the preview, by design, so a preview cannot be a way around it')
   .option('-y, --yes', 'Skip confirmation prompt')
   .option('--force', 'Bypass scope check')
   .option('--json', 'Output as JSON')
-  .option('--verbose', 'Show per-card progress')
+  .option('--verbose', 'Show stack traces on failure')
   .action(async (cardId: string | undefined, options) => {
     // Resolve client once — shared across all 3 update code paths
     let client: import('./lib/http-client').default;
@@ -678,16 +681,10 @@ cards
           process.exit(0);
         }
       }
-      
+
       try {
         const fs = await import('fs/promises');
-        const {
-          parseCSVContent,
-          csvRowToBulkOperation,
-          BulkTransaction,
-          formatBulkPreview,
-          formatBulkSummary,
-        } = await import('./lib/bulk');
+        const { parseCSVContent } = await import('./lib/csv');
 
         let content: string;
         try {
@@ -698,23 +695,7 @@ cards
           return;
         }
 
-        // Map CSV columns: cardId → card_id, assignee → owner, dueDate → due_date
-        // (our bulk CSV format uses snake_case; accept camelCase too)
-        const normalised = content
-          .split('\n')
-          .map((line, i) => {
-            if (i === 0) {
-              // Normalise header row
-              return line
-                .replace(/\bcardId\b/gi, 'card_id')
-                .replace(/\bassignee\b/gi, 'owner')
-                .replace(/\bdueDate\b/gi, 'due_date');
-            }
-            return line;
-          })
-          .join('\n');
-
-        const { rows, errors: parseErrors } = parseCSVContent(normalised);
+        const { rows, errors: parseErrors } = parseCSVContent(content);
 
         if (parseErrors.length > 0) {
           console.error('✗ CSV validation errors:');
@@ -731,106 +712,60 @@ cards
           return;
         }
 
-        const api = new CardsAPI(client);
+        // One `update` invocation over the whole file, which is what #110 bought
+        // by deleting `BulkTransaction`. The rows are an ENUMERATED batch, so the
+        // intent owns everything this branch used to hand-roll: the scope lock on
+        // every distinct board before the first write, the whole-batch refusal
+        // when one row straddles it, the 20-row cap, and — the part the old
+        // transaction could not do — a compensating write per FIELD, so a failure
+        // on row 12 unwinds rows 1-11 and reports `rolled-back` instead of
+        // best-effort PUTting the old values back.
+        //
+        // A row naming nothing but `card_id` now REFUSES rather than being a
+        // silent no-op success: see `updateEntries` for why a skipped entry
+        // inside a batch is the wrong answer.
+        const cards = rows.map((row) => ({
+          card: row.card_id,
+          ...(row.status ? { status: row.status } : {}),
+          // Whole-array semantics, unchanged: the `owner` cell is the assignee
+          // list the card ends with. A display name is settled to a `userId`
+          // inside the intent.
+          ...(row.owner ? { assignees: [row.owner] } : {}),
+          // Only a NON-EMPTY cell: `setDueDate` refuses `""` because
+          // `PUT {dueDate: ""}` is a measured silent no-op (#106), so an empty
+          // column has to mean "leave it alone" rather than "clear it".
+          ...(row.due_date ? { dueDate: row.due_date } : {}),
+        }));
 
-        // Build operations; fetch previousState for atomic rollback.
-        // The same GET also answers "which board does this row write to?" — the
-        // scope lock needs that, and paying for a second round of GETs to learn
-        // it would double the wire cost of every batch.
-        // The write path fetches every row anyway, for the rollback snapshot. The
-        // PREVIEW fetches only to learn the board — so with nothing locked there
-        // is no board to check and no reason to ask. #102/#104 make that a
-        // criterion ("no extra requests on that path"); #103's price is paid by
-        // locked previews, which are the ones that can be wrong.
         const { readConfig: readScopeConfig } = await import('./lib/config');
-        const scopeConfig = await readScopeConfig();
-        const scopeLocked = !!scopeConfig?.scopeCollectionId;
+        const scopeConfig = (await readScopeConfig()) ?? {};
 
-        const ops = [];
-        const targetBoards = new Set<string>();
-        for (const row of rows) {
-          let previousState: Record<string, unknown> | undefined;
-          let card: Card | undefined;
-          if (options.dryRun && !scopeLocked) {
-            ops.push(csvRowToBulkOperation(row, previousState as any));
-            continue;
-          }
-          try {
-            card = await api.getCard(row.card_id);
-            if (!options.dryRun) {
-              previousState = {
-                name: card.name,
-                status: card.status,
-                assignees: card.assignees,
-                tags: card.tags,
-                dueDate: card.dueDate,
-                boardId: card.boardId,
-              };
-            }
-          } catch (error: any) {
-            if (!options.dryRun) previousState = {};
-            // Say WHICH row could not be read and why. The scope refusal below
-            // can only report "no board"; without this the actual cause — a
-            // typo'd id, a deleted card, an auth blip — never reaches the user.
-            console.error(
-              `✗ Could not read card ${row.card_id}: ${error?.message ?? String(error)}`
-            );
-          }
-          // A row whose card could not be fetched has an unknown board, and an
-          // unknown board is not the same as an allowed one. Feeding the empty
-          // string to the shared check keeps this fail-closed: the check
-          // refuses it rather than this branch silently dropping the row from
-          // the lock and writing anyway.
-          targetBoards.add(card?.boardId ?? '');
-          ops.push(csvRowToBulkOperation(row, previousState as any));
-        }
-
-        // Take the lock on every distinct board the batch touches, before the
-        // transaction exists — and before the preview prints. A CSV is free to
-        // straddle boards, and a batch that straddles the lock has to refuse as
-        // a whole: checking board-by-board mid-execution would leave the rows
-        // before the violation already written and the compensation log doing
-        // work the lock should have prevented. No-op when no lock is configured.
-        const { checkScope } = await import('./lib/safety');
-        for (const boardId of targetBoards) {
-          await checkScope(boardId, client, scopeConfig, options.force);
-        }
-
-        if (options.dryRun) {
-          // The lock runs BEFORE this preview, same as `dispatch.ts` and
-          // `cards create --dry-run` (#103). A preview is not a way around the
-          // lock, and a preview that says "would update CLA-999" for a card the
-          // real run refuses is misinformation — telling you what the write
-          // will do is the preview's whole job. Cost: one GET per row on a path
-          // that used to make none, which is what an opted-into preview buys.
-          if (!options.json) {
-            const preview = formatBulkPreview(ops, `Dry-run preview — ${rows.length} update(s)`);
-            console.log(preview);
-            console.log(`ℹ  Dry-run mode. No changes were made.`);
-            console.log(`   Run without --dry-run to apply these changes.`);
-          } else {
-            const tx = new BulkTransaction(api);
-            tx.addAll(ops);
-            console.log(tx.formatDryRunJSON());
-          }
+        // With nothing locked there is no lock to take and no board to resolve,
+        // so the preview is rendered from the intent's own pure `preview()` and
+        // costs zero requests — the #102/#104 price for an unlocked path, and
+        // what this branch already had. Under a lock it dispatches instead, so
+        // the table takes the lock BEFORE it previews (#103/#155).
+        if (options.dryRun && !scopeConfig.scopeCollectionId) {
+          const { previewOnly } = await import('./lib/report-dispatch');
+          previewOnly('update', { cards }, scopeConfig);
           return;
         }
 
-        const tx = new BulkTransaction(api);
-        tx.addAll(ops);
-
-        if (!options.json) {
-          console.log(`⚙  Applying ${ops.length} update(s)...`);
+        const result = await dispatch<UpdateResult[]>(
+          'update',
+          { cards },
+          { client, config: scopeConfig, force: options.force, dryRun: options.dryRun },
+        );
+        if (reportDispatch(result, options.json)) process.exit(1);
+        if (result.outcome === 'ok' && result.value !== undefined) {
+          console.log(`✓ ${result.value.length} card(s) updated`);
+          for (const one of result.value) console.log(`  ${one.cardId} (${one.wrote.join(', ')})`);
+          // The whole `DispatchResult`, not the bare `value` array: `reportDispatch`
+          // prints exactly this on the failure side under `--json`, so the two
+          // sides of the branch answer in one shape — and an array on stdout is
+          // what `read-shape.ts` rule 1 forbids.
+          if (options.json) console.log(JSON.stringify(result));
         }
-        const result = await tx.execute({ verbose: options.verbose });
-
-        if (options.json) {
-          console.log(JSON.stringify(result, null, 2));
-        } else {
-          console.log(formatBulkSummary(result));
-        }
-
-        if (result.failure > 0) process.exit(1);
       } catch (error) {
         logError(error, program.opts().verbose);
         process.exit(1);
@@ -839,152 +774,23 @@ cards
     // (end of fromCsv path)
     }
 
-    // ── Batch move/assign with board filter ───────────────────────────────────
+    // ── Removed in 3.0: the --board predicate batch ───────────────────────────
+    // A DERIVED write set — "every card on this board matching this label" — is
+    // the shape #92 retired along with `batch move` and `batch assign`. The
+    // command read the board, decided the set itself, and wrote to whatever came
+    // back, so what it wrote to was never in the invocation and never in any
+    // record. `--from-csv` is the same job with the set enumerated by the caller.
+    //
+    // Registered rather than removed: an agent that hits "unknown option" has
+    // nothing to recover with, and this one is a FLAG COMBINATION, so commander
+    // could not have refused it by name at all.
     if (options.board && !cardId) {
-      if (!options.dryRun) {
-        const { confirmAction } = await import('./lib/safety');
-        if (!(await confirmAction(`Apply batch updates to cards on board ${options.board}?`, { yes: options.yes }))) {
-          console.log('Aborted.');
-          process.exit(0);
-        }
-      }
-      
-      try {
-        const { checkResolvedScope } = await import('./lib/safety');
-        // `--board` is a name or a boardId, but the lock GETs `/widgets/<id>` —
-        // handed a name it 404s into "Board … not found", a refusal naming the
-        // wrong problem (#82). The thunk keeps an unlocked user off the network.
-        await checkResolvedScope(client, () => new BoardsAPI(client!).resolveBoardId(options.board), options.force);
-
-        const {
-          BulkTransaction,
-          formatBulkPreview,
-          formatBulkSummary,
-        } = await import('./lib/bulk');
-
-        const api = new CardsAPI(client!);
-
-        let allCards: Card[];
-        try {
-          allCards = await api.listCards(options.board);
-        } catch (err: any) {
-          if (err?.response?.status === 404) {
-            console.error(`✗ Board not found: "${options.board}"`);
-          } else {
-            logError(err, false);
-          }
-          process.exit(1);
-          return;
-        }
-
-        // Build filter expressions from options.
-        // --label filters which cards to operate on (by tag).
-        // --status and --assignee are TARGET values to SET (not filter conditions).
-        // The same settle every read runs (#138). This used to go through
-        // `buildFilterFn`, which substring-matched: in an org holding both `bug`
-        // and `debug`, `--label bug` WROTE to the `debug` cards too, and a
-        // mistyped label wrote to nothing while reporting success.
-        //
-        // `--label` becomes an AST NODE, never `tag:${label}` spliced into a
-        // filter string. A Favro tag may hold a space or a colon, and
-        // `tag:needs review` is a parse error rather than that tag; `--label
-        // "bug OR tag:secret"` is worse — it becomes grammar and WIDENS the
-        // write set. `resolveCardFilter` is the call `cards list --tag` already
-        // makes, for exactly this reason (#84).
-        let matchingCards = allCards;
-        if (options.label) {
-          const { resolveCardFilter } = await import('./lib/query-values');
-          const { filterCards } = await import('./lib/query-parser');
-          const query = await resolveCardFilter(
-            { tag: options.label },
-            { client: client!, boardId: await new BoardsAPI(client!).resolveBoardId(options.board) },
-          );
-          if (query) matchingCards = filterCards(query, allCards);
-        }
-
-        if (matchingCards.length === 0) {
-          if (!options.json) {
-            console.log(`\n⚠  No cards match the filter(s).`);
-            console.log(`   Board has ${allCards.length} total card(s).`);
-          } else {
-            console.log(JSON.stringify({ total: 0, success: 0, failure: 0, skipped: 0, errors: [] }));
-          }
-          return;
-        }
-
-        // Determine operation type
-        const isAssignOnly = options.assignee && !options.status && !options.label;
-        let ops;
-
-        if (isAssignOnly) {
-          // Batch assign: add assignee to matching cards. `card.assignees` are
-          // userIds and updateCard diffs against them, so the flag value has to
-          // be a userId too — a bare name would unassign everyone else.
-          const { resolveAssignee } = await import('./lib/assignee');
-          const assignee = await resolveAssignee(client!, options.assignee);
-          const toAssign = matchingCards.filter(
-            (card) => !(card.assignees ?? []).includes(assignee)
-          );
-          if (toAssign.length === 0) {
-            console.log(`\n⚠  All matching cards already assigned to "${assignee}".`);
-            return;
-          }
-          ops = toAssign.map((card) => ({
-            type: 'assign' as const,
-            cardId: card.cardId,
-            cardName: card.name,
-            changes: { assignees: [...(card.assignees ?? []), assignee] },
-            previousState: { assignees: card.assignees ?? [] },
-            status: 'pending' as const,
-          }));
-        } else {
-          // Batch status update / move
-          ops = matchingCards.map((card) => {
-            const changes: Record<string, unknown> = {};
-            if (options.status) changes.status = options.status;
-            return {
-              type: 'update' as const,
-              cardId: card.cardId,
-              cardName: card.name,
-              changes,
-              previousState: { status: card.status, assignees: card.assignees, boardId: card.boardId },
-              status: 'pending' as const,
-            };
-          });
-        }
-
-        if (options.dryRun) {
-          const title = `Dry-run preview — update ${ops.length} card(s)`;
-          if (!options.json) {
-            console.log(formatBulkPreview(ops, title));
-            console.log(`ℹ  Dry-run mode. No changes were made.`);
-          } else {
-            const tx = new BulkTransaction(api);
-            tx.addAll(ops);
-            console.log(tx.formatDryRunJSON());
-          }
-          return;
-        }
-
-        const tx = new BulkTransaction(api);
-        tx.addAll(ops);
-
-        if (!options.json) {
-          console.log(`⚙  Updating ${ops.length} card(s)...`);
-        }
-        const result = await tx.execute({ verbose: options.verbose });
-
-        if (options.json) {
-          console.log(JSON.stringify(result, null, 2));
-        } else {
-          console.log(formatBulkSummary(result));
-        }
-
-        if (result.failure > 0) process.exit(1);
-      } catch (error) {
-        logError(error, program.opts().verbose);
-        process.exit(1);
-      }
+      console.error(
+        `✗ 'favro cards update --board <board>' (predicate batch) was removed in 3.0.\n` +
+          `  Enumerate first with 'favro cards list --filter …', then ` +
+          `'favro cards update --from-csv <file>'.`,
+      );
+      process.exit(1);
       return;
     }
 

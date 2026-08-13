@@ -570,15 +570,18 @@ favro cards export board-001 --filter "status:Done" --format json
 favro cards export board-001 --format json | jq '.[] | select(.status == "Done")'
 ```
 
-### Use Batch Commands Over Shell Loops
+### Use One CSV Over a Shell Loop
 
-A single `batch` command is far more efficient than looping `cards update`:
+One `cards update --from-csv` beats a loop of single updates, and it is one
+transaction — a failure part-way unwinds instead of leaving half the set changed:
 
 ```bash
-# Fast: one batch call
-favro batch assign --board board-001 --filter "status:Backlog" --to alice
+# Fast: one call, one transaction, up to 20 rows
+favro cards list --board board-001 --filter "status:Backlog" \
+  | jq -r '["card_id,owner"] + [.rows[].cardId + ",alice"] | .[]' > assign.csv
+favro cards update --from-csv assign.csv --yes
 
-# Slow: N individual API calls
+# Slow: N individual API calls, and no way back from a failure at card 7
 favro cards list --board board-001 --status Backlog --json \
   | jq -r '.[].cardId' \
   | while read id; do favro cards update "$id" --assignees alice; done
@@ -599,8 +602,7 @@ favro activity card-abc123 --limit 50              # cap the entries returned
 Preview before applying — it's free and prevents mistakes:
 
 ```bash
-favro batch update --from-csv updates.csv --dry-run
-favro batch-smart board-001 --goal "close all Done cards" --dry-run
+favro cards update --from-csv updates.csv --dry-run
 ```
 
 ### Request Only the Includes You Need
@@ -626,15 +628,19 @@ favro cards list --board $SPRINT_BOARD
 
 ### Split Large CSV Batches
 
-Keep batch CSV files under ~500 rows to avoid long-running operations:
+Twenty rows is the cap per file, and over it the whole file refuses rather than
+writing the first twenty:
 
 ```bash
-split -l 500 big-updates.csv batch-part-
+split -l 20 big-updates.csv batch-part-
 for f in batch-part-*; do
   echo "Processing $f..."
-  favro batch update --from-csv "$f" --verbose
+  favro cards update --from-csv "$f" --yes
 done
 ```
+
+Each chunk is its own transaction: a failure in chunk 3 unwinds chunk 3 and
+leaves chunks 1 and 2 written.
 
 ---
 
@@ -653,15 +659,14 @@ favro context sprint-42 > board-snapshot.json
 # 2. Query for "In Progress" code review cards
 favro query sprint-42 "status:\"In Progress\" AND tag:code-review"
 
-# 3. Preview assigning the unassigned code reviews to alice
-favro batch assign --board sprint-42 \
-  --filter "status:In Progress" --filter "tag:code-review" \
-  --to alice --dry-run
+# 3. Enumerate the set — the write is over THIS list, not over a predicate
+favro cards list --board sprint-42 \
+  --filter "status:\"In Progress\" AND tag:code-review" \
+  | jq -r '["card_id,owner"] + [.rows[].cardId + ",alice"] | .[]' > review.csv
 
-# 4. Apply once the preview reads right
-favro batch assign --board sprint-42 \
-  --filter "status:In Progress" --filter "tag:code-review" \
-  --to alice
+# 4. Preview, then apply once it reads right
+favro cards update --from-csv review.csv --dry-run
+favro cards update --from-csv review.csv --yes
 ```
 
 ### Workflow: Sprint Planning & Prioritization
@@ -677,7 +682,7 @@ cat sprint-plan.json | jq '.suggestions[] | {title, priority_score, cumulative}'
 
 # 3. Turn the suggestions into a CSV and preview the status change
 jq -r '"card_id,status", (.suggestions[] | "\(.id),Approved")' sprint-plan.json > approve.csv
-favro batch update --from-csv approve.csv --dry-run
+favro cards update --from-csv approve.csv --dry-run
 
 # 4. Standup: see what's in progress vs what's due soon
 favro standup --board sprint-42
@@ -702,8 +707,10 @@ echo "Renovate kitchen,Garden fence repair,Paint basement" | \
 # 3. Semantic search: find overdue tasks
 favro query $board_id "due_date<today"
 
-# 4. Batch close done items
-favro batch-smart $board_id --goal "close all Done cards"
+# 4. Batch close done items — enumerate, then write the list
+favro cards list --board $board_id --filter "status:Done" \
+  | jq -r '["card_id,status"] + [.rows[].cardId + ",Closed"] | .[]' > close.csv
+favro cards update --from-csv close.csv --yes
 
 # 5. Standup: summary of what's blocked, due soon, in progress
 favro standup --board $board_id
@@ -724,16 +731,14 @@ favro context $debt_board > debt-snapshot.json
 # 3. Query for high-priority backlog items
 favro query $debt_board "customField:Priority=high AND status:Backlog"
 
-# 4. Preview assigning that debt to the platform owner (drop --dry-run to apply)
-favro batch assign --board $debt_board \
-  --filter "status:Backlog" --filter "tag:tech-debt" \
-  --to platform-team --dry-run
+# 4. Assign that debt to the platform owner (drop --dry-run to apply)
+favro cards list --board $debt_board \
+  --filter "status:Backlog AND tag:tech-debt" \
+  | jq -r '["card_id,owner"] + [.rows[].cardId + ",platform-team"] | .[]' > debt.csv
+favro cards update --from-csv debt.csv --dry-run
 
 # 5. Standup on tech debt progress
 favro standup --board $debt_board
-
-# 6. Archive resolved items
-favro batch-smart $debt_board --goal "close all Done cards"
 ```
 
 ---
@@ -798,41 +803,34 @@ favro query <board-id> "title~\"partial card name\""
 **Error: `CSV format invalid`**
 ```
 Error: CSV file missing required column 'card_id'
-Required columns: card_id, (optional) status, assignees, tags
+Required column: card_id. Optional: status, owner, due_date.
 ```
-**Fix:** Check your CSV header row. Example:
+**Fix:** Check your CSV header row. Any column outside that set refuses too —
+including `custom_field_*`, which 2.x accepted and never sent. Example:
 ```csv
-card_id,status,assignees
+card_id,status,owner
 card-001,In Progress,alice@example.com
 card-002,Done,bob@example.com
 ```
 
 ---
 
-**Error: `Goal parsing failed`**
+**Error: `'favro batch-smart' was removed in 3.0`**
 ```
-Cannot parse goal: "add urgent tag to all backlog cards"
-
-Supported patterns:
-  move all <filter> cards to <status>
-  assign all <filter> cards [with no owner] to <user>
-  close all <filter> cards
-  unassign all <filter> cards
-
-Filter keywords: overdue, blocked, unassigned, assigned, or a COLUMN name on
-that board (e.g. "Backlog", "In Progress"). Anything else refuses, naming the
-word and listing the board's columns.
+Removed in 3.0. Decide the operations yourself, then 'favro cards update --from-csv'.
 ```
-**Fix:** Use a supported goal pattern:
+**Fix:** the plain-English goal parser is gone, along with `batch update`,
+`batch move` and `batch assign`. All four derived their write set from a board
+read, so what they wrote to appeared neither in the invocation nor in any record.
+Enumerate the set, read it, then write the list:
 ```bash
-# ✓ Correct
-favro batch-smart board-id --goal "move all overdue cards to Review"
-favro batch-smart board-id --goal "assign all Backlog cards with no owner to alice"
-favro batch-smart board-id --goal "close all Done cards"
-
-# ✗ Unsupported
-favro batch-smart board-id --goal "add urgent tag to backlog"  # tags not supported yet
+favro cards list --board board-id --filter "status:Backlog" \
+  | jq -r '["card_id,status"] + [.rows[].cardId + ",Review"] | .[]' > move.csv
+favro cards update --from-csv move.csv --dry-run
+favro cards update --from-csv move.csv --yes
 ```
+Each removed spelling exits 1 with the pointer above rather than
+`unknown command`, and they are kept for one major.
 
 ---
 
@@ -846,8 +844,8 @@ Retry 1/3... Retry 2/3... OK
 **Fix (automatic):** The CLI retries automatically with exponential backoff (max 30s).
 **Fix (manual):** Reduce concurrency in batch operations:
 ```bash
-# Use sequential mode (slower, but less likely to rate-limit)
-favro batch update --from-csv updates.csv  # default concurrency=1
+# Writes are sequential by design — split the file to spread them out
+favro cards update --from-csv updates.csv --yes
 ```
 
 ---
@@ -887,10 +885,10 @@ favro cards list <board-id> --limit 50    # a real cap — on what is PRINTED
 ```
 **Fix:**
 ```bash
-# Split large batches
-split -l 250 big-batch.csv batch-part-
+# Split large batches — 20 rows is the per-file cap
+split -l 20 big-batch.csv batch-part-
 for f in batch-part-*; do
-  favro batch update --from-csv "$f"
+  favro cards update --from-csv "$f" --yes
 done
 ```
 

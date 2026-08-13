@@ -548,24 +548,33 @@ bodies, whole. It has no `--limit` — the board is fetched to completion.
 
 ## Batch Operations
 
-### `batch update --from-csv <file>` ⚠️ HIGH BLAST RADIUS
+`batch update`, `batch move`, `batch assign` and `batch-smart` were **removed in
+3.0**. All four still exist as commands and all four exit 1 naming their
+replacement, so a script that calls one gets a next move rather than
+`unknown command`.
 
-CSV format: `card_id,status,owner,due_date`
+There is one bulk write now:
 
-### `batch move --board <id> --filter <expr>` ⚠️ HIGH BLAST RADIUS
+### `cards update --from-csv <file>` ⚠️ HIGH BLAST RADIUS
 
-### `batch assign --board <id> --to <user> --filter <expr>` ⚠️ HIGH BLAST RADIUS
+CSV columns: `card_id` (required), `status`, `owner`, `due_date`. `cardId`,
+`assignee` and `dueDate` are accepted aliases. **Any other column refuses** —
+including `custom_field_*`, which the old parser accepted and then never sent.
 
-All batch commands support: `--dry-run`, `--yes`, `--force`, `--json`, `--verbose`
+Supports `--dry-run`, `--yes`, `--force`, `--json`.
 
-Filter syntax: the same grammar as `cards list --filter` — `status:<value>`,
-`assignee:<user>`, `tag:<tag>`, combined with `AND`/`OR`/parentheses. An unknown
-field, tag, assignee or status **refuses**, naming the token and listing the
-valid candidates; it never silently selects zero cards. An **empty** `--filter`
-(an unset shell variable) refuses too, rather than selecting every card on the
-board. The refusal fires under
-`--dry-run` and ahead of `--yes`, so no bulk write proceeds on a filter that did
-not fully resolve (#138).
+The whole file is **one transaction**, capped at **20 rows**: over the cap it
+refuses rather than writing the first twenty, and a failure on row 12 unwinds
+rows 1–11 through each field's own compensating write. Every distinct board the
+file touches is checked against the scope lock before the first write, and a file
+straddling the lock refuses as a whole.
+
+**What is gone, and why.** The three removed spellings derived their write set
+from a board read: `--filter`, `--label` or a plain-English `--goal` decided
+which cards to write to, so what was written was in neither the invocation nor
+any record. `cards update --board <board>` with no card id — the same predicate
+shape on this command — refuses for the same reason. Enumerate the set first
+(`favro cards list --filter …`), then hand it over as a CSV.
 
 ---
 

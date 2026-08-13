@@ -1194,6 +1194,13 @@ export interface UpdateArgs {
    * not needed yet. A second field on the same card is a second `update`.
    */
   customField?: { field: string; value: string };
+  /**
+   * `YYYY-MM-DD` or a full ISO timestamp; `null` clears it. `""` is REFUSED by
+   * `TxCards.setDueDate` — a measured silent no-op (#106) — rather than
+   * forwarded, so an empty CSV cell has to be dropped by its caller, not passed
+   * through as "clear this".
+   */
+  dueDate?: string | null;
 }
 
 /** The multi form: an ENUMERATED list, never a derived one — as `create`'s is. */
@@ -1215,6 +1222,7 @@ function fieldsOf(a: UpdateArgs): string[] {
   return [
     ...(a.name !== undefined ? ['name'] : []),
     ...(a.description !== undefined ? ['description'] : []),
+    ...(a.dueDate !== undefined ? ['dueDate'] : []),
     ...(oneOrMany(a.tags)?.length ? ['tags'] : []),
     ...(oneOrMany(a.assignees)?.length ? ['assignees'] : []),
     ...(a.customField ? [`customField:${a.customField.field}`] : []),
@@ -1276,7 +1284,7 @@ function updateEntries(a: UpdateArgs | MultiUpdateArgs): readonly UpdateArgs[] {
  * to raise — and raising last means the field writes before it are already logged
  * and get unwound, rather than a failed move stranding them un-recorded.
  *
- * **THE SEAM: custom fields are here as of #109; `dueDate` still is not.** `name`
+ * **THE SEAM: custom fields arrived with #109, `dueDate` with #110.** `name`
  * and `description` route through `TxCards.setText`, which is #106's two methods
  * fused into one because the measurement did not split them (see its own note).
  *
@@ -1293,10 +1301,11 @@ function updateEntries(a: UpdateArgs | MultiUpdateArgs): readonly UpdateArgs[] {
  * an ISO string was unmeasured — so a captured pre-state could not be shown to be
  * restorable. **#106 measured it and the answer is yes**: an ISO timestamp is
  * honoured and echoed verbatim, `null` clears, `""` is a silent no-op, and
- * `TxCards.setDueDate` carries a real compensation entry. It stays absent from
- * these args for a different reason now — no command #109 routes writes one, and
- * an arg nothing passes is a surface with no caller to keep it honest. It arrives
- * with the command that needs it.
+ * `TxCards.setDueDate` carries a real compensation entry. It was then held back
+ * from these args until a command passed one, because an arg nothing passes is a
+ * surface with no caller to keep it honest. #110 is that command: `cards update
+ * --from-csv` has a `due_date` column, and routing the CSV onto this intent is
+ * what retires `BulkTransaction`.
  */
 registerIntent<UpdateArgs | MultiUpdateArgs, UpdateResult | UpdateResult[]>({
   name: 'update',
@@ -1306,6 +1315,9 @@ registerIntent<UpdateArgs | MultiUpdateArgs, UpdateResult | UpdateResult[]>({
       `update card ${c.card}`,
       ...(c.name !== undefined ? [`  name: "${c.name}"`] : []),
       ...(c.description !== undefined ? [`  description: ${c.description.length} characters`] : []),
+      ...(c.dueDate !== undefined
+        ? [`  dueDate: ${c.dueDate === null ? '(cleared)' : c.dueDate}`]
+        : []),
       ...(oneOrMany(c.tags)?.length ? [`  tags: ${oneOrMany(c.tags)!.join(', ')}`] : []),
       ...(oneOrMany(c.assignees)?.length ? [`  assignees: ${oneOrMany(c.assignees)!.join(', ')}`] : []),
       ...(c.customField ? [`  custom field ${c.customField.field}: "${c.customField.value}"`] : []),
@@ -1339,6 +1351,10 @@ registerIntent<UpdateArgs | MultiUpdateArgs, UpdateResult | UpdateResult[]>({
       if (entry.description !== undefined) {
         await tx.setText(cardId, 'description', entry.description);
         wrote.push('description');
+      }
+      if (entry.dueDate !== undefined) {
+        await tx.setDueDate(cardId, entry.dueDate);
+        wrote.push('dueDate');
       }
       const tags = oneOrMany(entry.tags);
       if (tags?.length) {

@@ -1,10 +1,13 @@
 /**
- * Unit tests — scope lock on the three sibling writes (issue #104)
+ * Unit tests — scope lock on the sibling writes (issue #104)
  *
  * Each of these is the unlocked twin of a command locked in 32e6b93:
- *   `batch update --from-csv`  twin of `cards update --from-csv` (#79)
  *   `git branch <card>`        twin of `git sync` (#78)
  *   `git commit --comment`     twin of `git sync` (#78)
+ *
+ * `batch update --from-csv` was the third, and it is gone: #110 deleted the
+ * command. Its twin `cards update --from-csv` survives and keeps the arms, now
+ * against the intent's own `assertScope`, in `cli-cards-csv-scope.test.ts`.
  *
  * Same contract as the siblings: every DISTINCT board resolved and checked
  * before the FIRST write, nothing written when any one target refuses, `--force`
@@ -13,11 +16,9 @@
  */
 import { Command } from 'commander';
 import { registerGitCommands } from '../../commands/git';
-import { registerBatchUpdateCommand } from '../../commands/batch';
 import * as config from '../../lib/config';
 import * as safety from '../../lib/safety';
 import * as gitIntegration from '../../lib/git-integration';
-import * as fsPromises from 'fs/promises';
 import CardsAPI from '../../lib/cards-api';
 import { passThroughScopeResolution } from '../../test-support/scope-passthrough';
 import { CommentsApiClient } from '../../api/comments';
@@ -29,11 +30,9 @@ jest.mock('../../lib/cards-api');
 jest.mock('../../lib/git-integration');
 jest.mock('../../lib/todo-scanner');
 jest.mock('../../api/comments');
-jest.mock('fs/promises');
 
 const MockCardsAPI = CardsAPI as jest.MockedClass<typeof CardsAPI>;
 const MockComments = CommentsApiClient as jest.MockedClass<typeof CommentsApiClient>;
-const mockReadFile = fsPromises.readFile as jest.MockedFunction<typeof fsPromises.readFile>;
 
 async function runGit(args: string[]): Promise<void> {
   const program = new Command();
@@ -41,14 +40,6 @@ async function runGit(args: string[]): Promise<void> {
   registerGitCommands(program);
   program.exitOverride();
   await program.parseAsync(['node', 'favro', ...args]);
-}
-
-async function runBatch(args: string[]): Promise<void> {
-  const program = new Command();
-  program.exitOverride();
-  const batch = program.command('batch');
-  registerBatchUpdateCommand(batch);
-  await program.parseAsync(['node', 'favro', 'batch', ...args]);
 }
 
 beforeEach(() => {
@@ -212,130 +203,5 @@ describe('favro git commit --comment — scope lock', () => {
 
     expect(safety.checkScope).not.toHaveBeenCalled();
     expect(MockComments.prototype.addComment).not.toHaveBeenCalled();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// batch update --from-csv
-// ---------------------------------------------------------------------------
-
-describe('favro batch update --from-csv — scope lock', () => {
-  beforeEach(() => {
-    MockCardsAPI.prototype.getCard = jest.fn().mockImplementation(async (id: string) => ({
-      cardId: id,
-      name: id,
-      boardId: id === 'card-2' ? 'board-b' : 'board-a',
-    }));
-  });
-
-  it('checks every distinct board before the first write', async () => {
-    mockReadFile.mockResolvedValue('card_id,status\ncard-1,Done\ncard-2,In Progress' as any);
-
-    await runBatch(['update', '--from-csv', 'cards.csv', '--yes']);
-
-    expect(safety.checkScope).toHaveBeenCalledWith('board-a', expect.anything(), expect.anything(), undefined);
-    expect(safety.checkScope).toHaveBeenCalledWith('board-b', expect.anything(), expect.anything(), undefined);
-    expect(MockCardsAPI.prototype.updateCard).toHaveBeenCalledTimes(2);
-
-    const lastCheck = Math.max(...(safety.checkScope as jest.Mock).mock.invocationCallOrder);
-    const firstWrite = Math.min(...(MockCardsAPI.prototype.updateCard as jest.Mock).mock.invocationCallOrder);
-    expect(lastCheck).toBeLessThan(firstWrite);
-  });
-
-  it('writes nothing when any one row is out of scope', async () => {
-    mockReadFile.mockResolvedValue('card_id,status\ncard-1,Done\ncard-2,In Progress' as any);
-    (safety.checkScope as jest.Mock).mockImplementation(async (boardId: string) => {
-      if (boardId === 'board-b') throw new Error('out of scope');
-    });
-
-    await runBatch(['update', '--from-csv', 'cards.csv', '--yes']);
-
-    expect(MockCardsAPI.prototype.updateCard).not.toHaveBeenCalled();
-  });
-
-  it('forwards --force to checkScope', async () => {
-    mockReadFile.mockResolvedValue('card_id,status\ncard-1,Done' as any);
-
-    await runBatch(['update', '--from-csv', 'cards.csv', '--yes', '--force']);
-
-    expect(safety.checkScope).toHaveBeenCalledWith('board-a', expect.anything(), expect.anything(), true);
-  });
-
-  it('a row whose card cannot be read still reaches the check as an empty board', async () => {
-    mockReadFile.mockResolvedValue('card_id,status\ncard-1,Done' as any);
-    MockCardsAPI.prototype.getCard = jest.fn().mockRejectedValue(new Error('404 Not Found'));
-
-    await expect(runBatch(['update', '--from-csv', 'cards.csv', '--yes'])).resolves.toBeUndefined();
-
-    expect(safety.checkScope).toHaveBeenCalledWith('', expect.anything(), expect.anything(), undefined);
-  });
-
-  it('two rows on the same board produce ONE check', async () => {
-    mockReadFile.mockResolvedValue('card_id,status\ncard-1,Done\ncard-3,Done' as any);
-
-    await runBatch(['update', '--from-csv', 'cards.csv', '--yes']);
-
-    expect((safety.checkScope as jest.Mock).mock.calls.map((c) => c[0])).toEqual(['board-a']);
-  });
-
-  it('two rows on different boards produce two checks, both before the first write', async () => {
-    mockReadFile.mockResolvedValue('card_id,status\ncard-1,Done\ncard-2,Done' as any);
-
-    await runBatch(['update', '--from-csv', 'cards.csv', '--yes']);
-
-    expect((safety.checkScope as jest.Mock).mock.calls.map((c) => c[0])).toEqual(['board-a', 'board-b']);
-    const lastCheck = Math.max(...(safety.checkScope as jest.Mock).mock.invocationCallOrder);
-    const firstWrite = Math.min(...(MockCardsAPI.prototype.updateCard as jest.Mock).mock.invocationCallOrder);
-    expect(lastCheck).toBeLessThan(firstWrite);
-  });
-
-  /**
-   * The same rule #103 settled for `cards update --from-csv`, applied to its
-   * twin. Fixing only the ticketed half would have rebuilt the very shape these
-   * three issues exist to close: one command in a pair checks, its sibling does
-   * not, and a reader who checks either concludes the group is covered. The two
-   * `batch` subcommands below this one already checked ahead of their previews,
-   * so the file disagreed with itself as well.
-   */
-  describe('--dry-run takes the same lock, before the preview', () => {
-    it('checks every distinct board before printing the preview', async () => {
-      mockReadFile.mockResolvedValue('card_id,status\ncard-1,Done\ncard-2,Done' as any);
-
-      await runBatch(['update', '--from-csv', 'cards.csv', '--dry-run']);
-
-      expect((safety.checkScope as jest.Mock).mock.calls.map((c) => c[0])).toEqual(['board-a', 'board-b']);
-      const lastCheck = Math.max(...(safety.checkScope as jest.Mock).mock.invocationCallOrder);
-      const firstPrint = Math.min(...(console.log as jest.Mock).mock.invocationCallOrder);
-      expect(lastCheck).toBeLessThan(firstPrint);
-    });
-
-    it('an out-of-scope row refuses in dry-run, with no preview and no writes', async () => {
-      mockReadFile.mockResolvedValue('card_id,status\ncard-1,Done\ncard-2,Done' as any);
-      (safety.checkScope as jest.Mock).mockImplementation(async (boardId: string) => {
-        if (boardId === 'board-b') throw new Error('out of scope');
-      });
-
-      await runBatch(['update', '--from-csv', 'cards.csv', '--dry-run']);
-
-      expect(MockCardsAPI.prototype.updateCard).not.toHaveBeenCalled();
-      expect(console.log).not.toHaveBeenCalled();
-    });
-
-    it('forwards --force on the dry-run path too', async () => {
-      mockReadFile.mockResolvedValue('card_id,status\ncard-1,Done' as any);
-
-      await runBatch(['update', '--from-csv', 'cards.csv', '--dry-run', '--force']);
-
-      expect(safety.checkScope).toHaveBeenCalledWith('board-a', expect.anything(), expect.anything(), true);
-    });
-
-    it('an unreadable row reaches the check as an empty board rather than vanishing', async () => {
-      mockReadFile.mockResolvedValue('card_id,status\ncard-1,Done' as any);
-      MockCardsAPI.prototype.getCard = jest.fn().mockRejectedValue(new Error('404 Not Found'));
-
-      await runBatch(['update', '--from-csv', 'cards.csv', '--dry-run']);
-
-      expect(safety.checkScope).toHaveBeenCalledWith('', expect.anything(), expect.anything(), undefined);
-    });
   });
 });

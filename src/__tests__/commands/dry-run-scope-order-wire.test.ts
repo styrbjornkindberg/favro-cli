@@ -1002,14 +1002,21 @@ describe('no guarded write previews ahead of its own scope guard (#155)', () => 
     // `dryRun` return, so the ordering this scan checks cannot be got wrong for
     // them at all. They leave the denominator because the TEXT this scanner reads
     // — a `checkScope(` call in the command file — is gone, not because a check
-    // is. The scan's job is unchanged for the thirty commands that still guard
-    // inline.
-    // Both are EXACT-FIT, measured, not rounded down: 30 and 27 are what the
-    // scanner reports today. Slack here is the whole failure this arm exists to
-    // stop — at 25, two commands could lose their preview or their guard with the
-    // ratchet still green.
-    expect(guarded).toBeGreaterThanOrEqual(30);
-    expect(withPreview).toBeGreaterThanOrEqual(27);
+    // is. The scan's job is unchanged for the commands that still guard inline.
+    //
+    // 30/27 until #110, which DELETED `commands/batch.ts` and
+    // `commands/batch-smart.ts`. Four blocks go with them, each guarded and each
+    // previewing: `batch update`, `batch move`, `batch assign` and `batch-smart`.
+    // (The `batch` GROUP registration was a fifth block and never counted — it
+    // guards nothing.) The stubs that replace them add four more `.command(`
+    // lines and no guards, so they are skipped exactly as the group was.
+    //
+    // Both are EXACT-FIT, measured by running this scanner, not rounded down: 26
+    // and 23 are what it reports today. Slack here is the whole failure this arm
+    // exists to stop — at 21, two commands could lose their preview or their
+    // guard with the ratchet still green.
+    expect(guarded).toBeGreaterThanOrEqual(26);
+    expect(withPreview).toBeGreaterThanOrEqual(23);
   });
 
   it('reports a gap when the preview is moved back above the guard', () => {

@@ -32,12 +32,13 @@
  *     ratchet over the real surface is what stops the third.
  *   - THE LIVE COMMAND drives `buildProgram()`, because the two arms above call
  *     library functions and neither reaches the command a user types.
- *   - LIVE PARITY (#138) drives all THREE commands that take `--filter` and
- *     compares the printed refusals to each other. Two of them are WRITE
- *     commands — `batch move` and `batch assign` — which carried a third
- *     grammar of their own until #138 deleted it. Same words, same exit code,
- *     and no write attempted; three commands refusing three ways is the next
- *     version of this bug, and only a comparison catches that.
+ *   - LIVE PARITY (#138) drives every command that takes `--filter` and compares
+ *     the printed refusals to each other. Two of them used to be WRITE
+ *     commands — `batch move` and `batch assign` — which carried a third grammar
+ *     of their own until #138 deleted it; #110 then deleted the commands, so the
+ *     live set is `cards list` and `cards export`. Same words, same exit code;
+ *     two commands refusing two ways is the next version of this bug, and only a
+ *     comparison catches that.
  *   - EXACT MEMBERSHIP reads the source again, for anyone deciding tag or
  *     assignee membership by substring — the flag-shaped spelling of the same
  *     bug (#84).
@@ -186,8 +187,8 @@ describe('cards list and cards export refuse the same filter identically', () =>
     // AND binds tighter than OR, so a bare `join(' AND ')` turns these two
     // flags into `tag:bug OR (tag:backend AND status:"To Do")` — which matches
     // `c1` as well, a strictly WIDER set than was asked for. On `cards export`
-    // that was extra rows in a file; since #138 `batch move`/`batch assign`
-    // reach this same call, and would have WRITTEN to them.
+    // that was extra rows in a file; between #138 and #110 `batch move`/`batch
+    // assign` reached this same call, and would have WRITTEN to them.
     const rows = await applyFilters(CARDS, ['tag:bug OR tag:backend', 'status:"To Do"'], {
       client: makeClient(),
       boardId: BOARD,
@@ -441,16 +442,20 @@ describe('the live favro query refuses a filter in the same words cards export d
  * reporting success having done nothing, with a typo indistinguishable from an
  * empty result.
  *
- * Arm three drives one live command. This arm drives all THREE that take
- * `--filter`, through `buildProgram()`, and asserts the refusals are byte-for-
- * byte the same text at the same exit code. "Three commands refusing three
- * ways" is the next version of this bug, and only a comparison catches it —
- * each command's own test would happily pin its own wording.
+ * **Both commands were deleted by #110, and with them the last `--filter` on a
+ * WRITE.** So this arm no longer compares a write against a read, and the sibling
+ * assertion that a refusal attempts no write went with them — there is nothing
+ * left that could write. What it still does is the part that generalises: drive
+ * EVERY live `--filter` surface through `buildProgram()` and assert the refusals
+ * are byte-for-byte the same text at the same exit code. That is `cards list` and
+ * `cards export` here, plus `favro query` in the arm below, which is separate
+ * because it is migrated to the runner and answers on a different STREAM.
  *
- * Write commands get `--yes`: the confirmation prompt must not be what stands
- * between a user and an unresolvable filter, or `-y` in a script re-opens it.
+ * "Two commands refusing two ways" is the next version of this bug, and only a
+ * comparison catches it — each command's own test would happily pin its own
+ * wording.
  */
-describe('cards export, batch move and batch assign refuse identically', () => {
+describe('every live --filter command refuses identically', () => {
   const listCards = jest.fn(async () => CARDS);
   const updateCard = jest.fn(async () => CARDS[0]);
   let outDir: string;
@@ -491,8 +496,7 @@ describe('cards export, batch move and batch assign refuse identically', () => {
 
   const COMMANDS: Array<[label: string, argv: (filter: string) => string[]]> = [
     ['cards export', (f) => ['cards', 'export', BOARD, '--filter', f, '--out', 'unused.json']],
-    ['batch move', (f) => ['batch', 'move', '--board', BOARD, '--status', 'Doing', '--filter', f, '--yes']],
-    ['batch assign', (f) => ['batch', 'assign', '--board', BOARD, '--to', 'alice', '--filter', f, '--yes']],
+    ['cards list', (f) => ['cards', 'list', '--board', BOARD, '--filter', f]],
   ];
 
   test.each(BAD_INPUTS)('%s reads the same on every command', async (_label, filter, unresolvable) => {
@@ -511,8 +515,11 @@ describe('cards export, batch move and batch assign refuse identically', () => {
     expect(seen.map((s) => s.printed)).toEqual(seen.map(() => seen[0].printed));
   });
 
-  test('no write is attempted on a refusal, on either write command', async () => {
-    for (const [, argv] of COMMANDS.slice(1)) await refusal(argv('tag:typoo'));
+  test('a refusal never pages the board, and never writes', async () => {
+    // The write half is now vacuous by construction — #110 deleted the two
+    // `--filter` write commands — and it is kept as the polarity that would
+    // notice a `--filter` write coming back without the settle in front of it.
+    for (const [, argv] of COMMANDS) await refusal(argv('tag:typoo'));
     expect(updateCard).not.toHaveBeenCalled();
     // …and the board is never even paged: a refusal needs no card data.
     expect(listCards).not.toHaveBeenCalled();
@@ -587,12 +594,13 @@ const SUBSTRING_DEBT: Record<string, string> = {
   // there exactly as it always did here. Its `foldName(tag).includes(typed)`
   // died with the matcher — the last surface deciding tag membership by
   // substring.
-  // `commands/batch.ts` was here until #138. `parseFilterExpression` is deleted,
-  // not repaired: `batch move` and `batch assign` run `applyFilters`, and the
+  // `commands/batch.ts` was here until #138. `parseFilterExpression` was
+  // deleted, not repaired — `batch move` and `batch assign` were moved onto
+  // `applyFilters` — and #110 then deleted the whole file. The
   // `cards update --board --label` path in `cli.ts` that shared its
-  // `buildFilterFn` runs `resolveCardFilter` — an AST node, so a tag holding a
-  // space or a colon stays a value instead of becoming grammar.
-  // That closed the worse half too — in an org holding both `bug` and `debug`,
+  // `buildFilterFn` went with it: that spelling is a refusal now, pointing at
+  // `--from-csv`, so the CLI holds no derived write set at all. It had closed
+  // the worse half first — in an org holding both `bug` and `debug`,
   // `cards update --board <b> --label bug` used to WRITE to the `debug` cards.
 };
 

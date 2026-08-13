@@ -731,22 +731,33 @@ describe('every command the docs teach is a command the binary answers to', () =
     // evidence (ADR-0003). `681`/`651` and not `680`/`650`: the #158 ADR amendment
     // on this same branch wrote `favro init` in an inline code span, which is one
     // more documented invocation, and one that resolves.
-    expect(DOC_FILES.length).toBeGreaterThan(30); // 38 today
+    // Every "today" below was re-measured by running this scanner on the #110
+    // branch. Five of them had drifted from the numbers written here (38→41,
+    // 681→685, 651→655, 28→29, 55→58) without any floor going red, which is what
+    // a floor with slack buys and costs.
+    expect(DOC_FILES.length).toBeGreaterThan(30); // 41 today
     expect(SURFACE.size).toBeGreaterThan(140); // 148 today: 125 actions + groups
-    expect(INVOCATIONS.length).toBeGreaterThan(600); // 681 today
+    expect(INVOCATIONS.length).toBeGreaterThan(600); // 685 today
     // …and almost all of them met the real surface. See RESOLVED above: this is
     // the assertion a silently-matching-nothing walker cannot pass.
-    expect(RESOLVED).toBeGreaterThan(570); // 651 today; the rest are `<placeholder>` and bare `favro --help`
-    expect(new Set(INVOCATIONS.map((i) => i.file)).size).toBeGreaterThan(22); // 28 today
+    expect(RESOLVED).toBeGreaterThan(570); // 655 today; the rest are `<placeholder>` and bare `favro --help`
+    expect(new Set(INVOCATIONS.map((i) => i.file)).size).toBeGreaterThan(22); // 29 today
     // …and the option tables were read at all. `readOptionTables` matching
     // nothing is the #156 bug restored, and it would restore it silently: the
     // arms above never touched a table row, so every one of them stays green.
     // The frozen counters, not the live ones — see DOC_ROWS_READ.
-    expect(DOC_ROWS_READ).toBeGreaterThan(370); // 391 today, over 5 files
-    expect(DOC_ROWS_SCOPED).toBeGreaterThan(370); // 385 today; the other 6 are `## Global Options`
+    //
+    // 370/370 against 391/385 until #110 deleted the option tables for `batch
+    // update`, `batch move`, `batch assign` and `batch-smart` — 41 rows, 391→350
+    // and 385→344. The replacement floors are EXACT-FIT rather than re-slackened:
+    // the counters exist to notice `readOptionTables` going blind, and a floor
+    // sitting 21 below the live count cannot notice a whole file's tables
+    // vanishing.
+    expect(DOC_ROWS_READ).toBeGreaterThan(349); // 350 today, over 5 files
+    expect(DOC_ROWS_SCOPED).toBeGreaterThan(343); // 344 today; the other 6 are `## Global Options`
     // …and the `\`-continued commands were joined rather than read one line at a
     // time. Zero here means every flag past the first line went unchecked again.
-    expect(DOC_CONTINUED).toBeGreaterThan(45); // 55 joins across 22 commands today
+    expect(DOC_CONTINUED).toBeGreaterThan(45); // 58 joins today
   });
 
   it('every doc closes the fences it opens', () => {

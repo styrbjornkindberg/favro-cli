@@ -59,10 +59,8 @@ Comprehensive reference for all SPEC-002 endpoints in `favro-cli`.
 - [Attachments](#attachments)
 - [Users & Groups](#users--groups)
 - [Batch Operations](#batch-operations)
-  - [batch update](#batch-update)
-  - [batch move](#batch-move)
-  - [batch assign](#batch-assign)
-  - [batch-smart](#batch-smart)
+  - [cards update --from-csv](#cards-update---from-csv)
+  - [The removed spellings](#the-removed-spellings)
 - [Troubleshooting Guide](#troubleshooting-guide)
 - [Performance Tips](#performance-tips)
 - [Common Workflows](#common-workflows)
@@ -90,7 +88,7 @@ SPEC-002 extends the base CLI with nine endpoint categories:
 | **Dependencies** | list, add | Native API blockers & relates-to |
 | **Attachments** | upload | Add files to cards/comments |
 | **Users & Groups**| list | Manage identity outside of boards |
-| **Batch Operations** | update, move, assign, smart-batch | Bulk card mutations with rollback support |
+| **Batch Operations** | `cards update --from-csv` | Up to 20 enumerated card updates, one transaction |
 
 ---
 
@@ -1615,87 +1613,20 @@ Directly uses Favro's native Dependency API for strict blockers instead of gener
 
 ## Batch Operations
 
-Favro CLI supports **two complementary approaches** for batch operations, each optimized for different use cases:
+`batch update`, `batch move`, `batch assign` and `batch-smart` were **removed in
+3.0**. Each is still a registered command, exits 1, and names its replacement, so
+a script calling one gets a next move rather than `unknown command`. They are
+kept for one major.
 
-### Command Variants — Which to Use?
+There is one bulk write, and it takes an **enumerated** list:
 
-#### 1. Top-Level `favro batch` Commands (Recommended for Complex Operations)
+### `cards update --from-csv`
 
-**Best for:**
-- Bulk updates from CSV files with precise field mapping
-- Complex filtering and multi-board workflows
-- Scripting and automation (stable command surface)
-- Operations involving 10+ cards
-
-**Commands:**
-- `favro batch update --from-csv <file>` — Update from structured data
-- `favro batch move --board <id> --filter <expr> [--to-board|--status]` — Bulk move/status
-- `favro batch assign --board <id> --filter <expr> --to <user>` — Bulk assign
-
-**Advantages:**
-- Explicit CSV format with predictable error messages
-- Comprehensive filter syntax (status, assignee, tag)
-- Atomic rollback on partial failure
-- `--dry-run` shows exact changes before applying
-
-**Example:**
-```bash
-# Update 50 cards from a CSV with precise field mappings
-favro batch update --from-csv cards.csv --dry-run
-favro batch update --from-csv cards.csv
-```
-
----
-
-#### 2. `favro cards update` Command (Recommended for Quick/Simple Updates)
-
-**Best for:**
-- Single-card updates (name, status, assignee changes)
-- Simple same-status changes on a single board
-- Interactive workflows (confirmation prompt)
-- One-off updates or testing
-
-**Command:**
-- `favro cards update <cardId> --status <status> --assignees <list>` — Update single card
-
-**Advantages:**
-- Fast for single-card operations
-- Familiar `cards` command namespace
-- Built-in confirmation prompt (can skip with `--yes`)
-- Works well in interactive terminals
-
-**Example:**
-```bash
-# Quickly update one card
-favro cards update card-001 --status Done --assignees alice
-```
-
----
-
-#### Summary Table
-
-| Scenario | Recommended | Why |
-|---|---|---|
-| Update 5+ cards from CSV | `favro batch update` | Structured data, predictable |
-| Move 10+ cards between boards | `favro batch move` | Efficient filtering, rollback |
-| Assign 20+ cards to same user | `favro batch assign` | Filter + assign, atomic |
-| Complex AI-driven bulk ops | `favro batch-smart` | Plain-English goals |
-| Update one specific card | `favro cards update` | Quick, interactive |
-| Quick status change on one card | `favro cards update` | Familiar interface |
-
----
-
-### All Batch Commands
-
-All batch commands support `--dry-run` to preview changes, and `--json` for machine-readable output.
-
-### `batch update`
-
-Update multiple cards at once from a CSV file. Supports atomic rollback on failure.
+Update up to twenty cards from a CSV file, in one transaction.
 
 **Syntax:**
 ```
-favro batch update --from-csv <file> [--dry-run] [--json] [--verbose]
+favro cards update --from-csv <file> [--dry-run] [--yes] [--force] [--json]
 ```
 
 **Options:**
@@ -1704,239 +1635,65 @@ favro batch update --from-csv <file> [--dry-run] [--json] [--verbose]
 |---|---|---|
 | `--from-csv <file>` | ✓ | CSV file path |
 | `--dry-run` | — | Preview changes without applying |
-| `--json` | — | Output result as JSON |
-| `--verbose` | — | Show per-card progress |
+| `--yes` | — | Skip the confirmation prompt |
+| `--force` | — | Bypass the scope check |
+| `--json` | — | Output the dispatch result as JSON |
 
 **CSV format:**
 
 ```csv
-card_id,status,owner,due_date,custom_field_x
-card-001,Done,alice,2026-04-01,high
-card-002,In Progress,,2026-04-15,
+card_id,status,owner,due_date
+card-001,Done,alice,2026-04-01
+card-002,In Progress,,2026-04-15
 ```
 
-Required column: `card_id`. All other columns are optional.
+Required column: `card_id`. Optional: `status`, `owner`, `due_date` — with
+`cardId`, `assignee` and `dueDate` accepted as aliases. **Every other column
+refuses**, naming itself and listing the columns that exist. That includes
+`custom_field_*`, which the 2.x parser accepted, stored, and never sent: a run
+naming a custom field reported success having written none of it.
 
-**Rollback:** If any operation fails, all completed operations in the batch are automatically rolled back to their previous state.
+An empty cell means "leave this field alone". A row naming nothing but `card_id`
+refuses rather than being skipped — inside a batch, skipping it would report
+success for a card that was never written.
 
-**Output:**
-```
-⚙  Applying 3 update(s)...
-✓ 3 operations succeeded (0 failed)
-```
+**Bounded:** over twenty rows the whole file refuses, naming the cap. Writing the
+first twenty and dropping the rest would report success for rows nobody touched.
 
-**Dry-run output:**
-```
-Dry-run preview — 3 update(s):
-  • [card-001] Fix login bug
-    status: Todo → Done
-  • [card-002] Add dark mode
-    owner: (none) → alice
+**Scope lock:** every distinct board the file touches is checked before the first
+write, and a file straddling the lock refuses as a whole. The check runs ahead of
+`--dry-run`, so a preview is never a way around it.
 
-ℹ  Dry-run mode. No changes were made.
-```
+**Rollback:** the file is one transaction over one compensation log. A failure on
+row 12 unwinds rows 1–11 field by field and reports `rolled-back`. Where the
+2.x `BulkTransaction` re-PUT the whole previous state best-effort and printed
+`ROLLBACK FAILED` to stderr, an incomplete unwind is now reported in the result,
+with what it left behind.
 
-**Examples:**
+**Example:**
 ```bash
-favro batch update --from-csv updates.csv --dry-run
-favro batch update --from-csv updates.csv
-favro batch update --from-csv updates.csv --json
-favro batch update --from-csv updates.csv --verbose
+favro cards update --from-csv cards.csv --dry-run
+favro cards update --from-csv cards.csv --yes
 ```
-
-**Error cases:**
-- CSV file not found → `✗ Cannot read CSV file "<file>": <error>`
-- CSV validation errors → Lists row/field errors and exits
-- Empty CSV → `✗ CSV file has no valid data rows`
 
 ---
 
-### `batch move`
+### The removed spellings
 
-Move matching cards from a board to a new board or status.
-
-**Syntax:**
-```
-favro batch move --board <id> [--to-board <id>] [--status <value>]
-                 [--filter <expr>] [--dry-run] [--json] [--verbose]
-```
-
-**Options:**
-
-| Option | Required | Description |
-|---|---|---|
-| `--board <id>` | ✓ | Source board ID |
-| `--to-board <id>` | — | Destination board ID |
-| `--status <value>` | — | Target status to set |
-| `--filter <expression>` | — | Filter expression (repeatable, AND logic) |
-| `--dry-run` | — | Preview without applying |
-| `--json` | — | Output result as JSON |
-| `--verbose` | — | Show per-card progress |
-
-**Notes:** At least one of `--to-board` or `--status` must be specified.
-
-`--status` names a **column on the destination board** — `--to-board` when one is
-given, otherwise `--board` — and is settled against that board's real columns
-before anything is read or written, exactly like `status:` in `--filter`. A value
-that names no column refuses, listing that board's columns, under `--dry-run` and
-`--yes` alike; it does not preview a plan it cannot apply.
-
-**Filter syntax:**
-
-| Expression | Matches |
+| Removed | What to run |
 |---|---|
-| `status:<value>` | Cards with this exact status |
-| `assignee:<user>` | Cards where user is in assignees list |
-| `tag:<tag>` | Cards with this tag |
+| `favro batch update` | `favro cards update --from-csv <file>` |
+| `favro batch move` | `favro cards list --filter …`, then `--from-csv` |
+| `favro batch assign` | `favro cards list --filter …`, then `--from-csv` |
+| `favro batch-smart` | Decide the operations yourself, then `--from-csv` |
+| `favro cards update --board <board>` (no card id) | `favro cards list --filter …`, then `--from-csv` |
 
-**Examples:**
-```bash
-favro batch move --board board-001 --to-board board-002 --filter "status:Completed"
-favro batch move --board board-001 --status Done --filter "tag:sprint-42" --dry-run
-favro batch move --board board-001 --to-board archive-board --status Archived
-```
+All five DERIVED their write set from a board read — a filter, a label or a
+plain-English goal chose the cards — so what was written appeared neither in the
+invocation nor in any record afterwards. There is no deprecation cycle: a warning
+that still performed the write would keep alive exactly the behaviour the removal
+is for.
 
-**Error cases:**
-- No `--to-board` or `--status` → `✗ Specify --to-board and/or --status to set the target state`
-- Board not found → `✗ Board not found: "<id>"`
-- `--status` naming no column on the destination board → refuses, listing that board's columns, exit 1
-- No matching cards → Shows count and exits 0
-
----
-
-### `batch assign`
-
-Assign matching cards to a user. Automatically skips cards already assigned to that user.
-
-**Syntax:**
-```
-favro batch assign --board <id> --to <user> [--filter <expr>] [--dry-run] [--json] [--verbose]
-```
-
-**Options:**
-
-| Option | Required | Description |
-|---|---|---|
-| `--board <id>` | ✓ | Board ID |
-| `--to <user>` | ✓ | User to assign to (use `@me` for yourself) |
-| `--filter <expression>` | — | Filter expression (repeatable, AND logic) |
-| `--dry-run` | — | Preview without applying |
-| `--json` | — | Output result as JSON |
-| `--verbose` | — | Show per-card progress |
-
-**`@me` handling:** `@me` is resolved at runtime. In production it maps to the current user. Cards already assigned to the target user are automatically skipped.
-
-**Examples:**
-```bash
-favro batch assign --board board-001 --filter "status:Backlog" --to alice
-favro batch assign --board board-001 --filter "status:Backlog" --to @me --dry-run
-favro batch assign --board board-001 --to bob
-```
-
----
-
-### `batch-smart`
-
-Apply complex bulk updates using plain-English goals. The CLI parses the goal, selects matching cards, and executes atomically.
-
-**Syntax:**
-```
-favro batch-smart <board> --goal "<goal>" [--dry-run] [--yes] [--json]
-```
-
-**Arguments:**
-
-| Argument | Required | Description |
-|---|---|---|
-| `<board>` | ✓ | Board ID **or** exact board name |
-
-**Options:**
-
-| Option | Required | Description |
-|---|---|---|
-| `--goal <goal>` | ✓ | Plain-English goal string |
-| `--dry-run` | — | Preview without applying |
-| `--yes` | — | Skip confirmation prompt |
-| `--force` | — | Bypass the scope check |
-| `--json` | — | Output result as JSON |
-
-**Supported goal patterns:**
-
-| Pattern | Example |
-|---|---|
-| `move all <filter> cards to <status>` | `"move all overdue cards to Review"` |
-| `assign all <filter> cards [with no owner] to <user>` | `"assign all Backlog cards with no owner to alice"` |
-| `close all <filter> cards` | `"close all Done cards"` |
-| `unassign all <filter> cards` | `"unassign all blocked cards"` |
-
-**Filter keywords:**
-
-| Keyword | Matches |
-|---|---|
-| `overdue` | Cards where `dueDate` is in the past |
-| `blocked` | Cards with `blocked` in tags or status |
-| `unassigned` | Cards with no assignees |
-| `assigned` | Cards with at least one assignee |
-| `<column-name>` | Cards in that column, by name, case-insensitive |
-| `all` | All cards |
-
-Filters can be combined: `"overdue and unassigned"`, `"Backlog and blocked"`.
-
-**A word that is neither a keyword nor a column refuses.** The column names in a
-goal — filter words and the `move` target alike — are settled against the board's
-real columns before anything is read or written, by the same resolution
-`cards list --filter "status:…"` uses. So `--goal "move all frobnicated cards to
-Done"` names the word and lists the board's columns, and exits 1; it does not
-report "no cards matched", which is what it did before #150. The refusal fires
-under `--dry-run` and under `--yes` too: nothing reaches the wire.
-
-A goal that resolves but genuinely matches nothing is the other outcome and stays
-one — `"move all overdue cards to Done"` on a board with no overdue cards prints
-"No cards match the goal" and exits 0.
-
-The column's **own** spelling is what a `move` writes and what every preview
-line shows: `--goal "move all cards to qa"` on a board whose column is `QA` says
-`→ status: QA`. `close` settles the same way, so a board with no column named
-`Done` refuses instead of promising the write and failing card by card.
-
-**Atomic execution:** Operations run sequentially. If any operation fails, all previously completed operations are rolled back. The confirmation prompt is shown unless `--yes` is passed.
-
-**Output:**
-```
-🎯 Goal: Move overdue cards to "Review"
-
-📋 Preview (3 cards affected):
-
-  • [card-001] Fix authentication service
-    → status: Review
-  • [card-002] Update API documentation
-    → status: Review
-
-Apply 3 change(s)? (y/n) y
-
-⚙  Applying 3 changes...
-
-✅ Batch update complete!
-   ✓ Success: 3
-   ⏭  Skipped (already in target state): 1
-   ✗ Failed: 0
-```
-
-**Examples:**
-```bash
-favro batch-smart board-001 --goal "move all overdue cards to Review"
-favro batch-smart board-001 --goal "assign all Backlog cards with no owner to alice"
-favro batch-smart board-001 --goal "close all Done cards" --dry-run
-favro batch-smart board-001 --goal "unassign all blocked cards" --yes --json
-```
-
-**Error cases:**
-- Unparseable goal → Error with supported patterns and examples
-- Board not found → `✗ Board not found: "<board>"` with hint to run `favro boards list`
-- No matching cards → Shows message with total card count and exits 0
-- Operation failure → Full rollback; exits 1 with error details
-
----
 
 ## Troubleshooting Guide
 
@@ -1983,7 +1740,7 @@ Favro enforces rate limits on the API. When hit:
 - Narrow the *scope*, not the output: `--board`, `--collection`, `--since`/`--until`.
   `--limit` will not help — it caps what is **printed** and every fetch runs to
   completion regardless
-- Use `favro batch` commands instead of individual API calls in loops
+- Use `favro cards update --from-csv` instead of a shell loop of single updates
 - Avoid running multiple CLI instances in parallel against the same organization
 
 ---
@@ -2130,11 +1887,11 @@ favro cards list --board board-001
 favro cards list --board board-001 --limit 500
 ```
 
-**Batch operations over loops:** A single `favro batch` command is far more efficient than a shell loop calling individual `cards update`:
+**Batch operations over loops:** One `favro cards update --from-csv` is far more efficient than a shell loop calling `cards update` per card — and it is one transaction, so a failure part-way unwinds instead of leaving half the set changed:
 
 ```bash
-# Fast: one batch call
-favro batch assign --board board-001 --filter "status:Backlog" --to alice
+# Fast: one call, one transaction, up to 20 rows
+favro cards update --from-csv reassign.csv --yes
 
 # Slow: N individual calls
 favro cards list --board board-001 --status Backlog --json \
@@ -2158,24 +1915,25 @@ favro boards get board-001 --include custom-fields,cards,members,stats,velocity
 
 1. **Always dry-run first:**
    ```bash
-   favro batch update --from-csv updates.csv --dry-run
-   favro batch-smart board-001 --goal "close all Done cards" --dry-run
+   favro cards update --from-csv updates.csv --dry-run
    ```
 
-2. **Use `--verbose` to track progress on large batches:**
+2. **CSV batch size:** twenty rows is the cap, and over it the whole file refuses
+   rather than writing the first twenty. Split larger sets:
    ```bash
-   favro batch update --from-csv big-update.csv --verbose
+   split -l 20 all-updates.csv batch-
+   for f in batch-*; do favro cards update --from-csv "$f" --yes; done
    ```
+   Each chunk is its own transaction: a failure in chunk 3 unwinds chunk 3 and
+   leaves chunks 1 and 2 written.
 
-3. **CSV batch size:** Keep CSV files under 1,000 rows per batch. For larger datasets, split into multiple files:
-   ```bash
-   split -l 500 all-updates.csv batch-
-   for f in batch-*; do favro batch update --from-csv "$f"; done
-   ```
+3. **Rollback is automatic within a file:** a failure part-way unwinds the rows
+   already written, field by field, and reports `rolled-back`. If the unwind
+   itself fails the result says so and lists what was left behind — do not retry
+   that one blind.
 
-4. **Rollback is automatic:** If a batch fails mid-way, all completed operations are rolled back. You don't need to manually undo changes.
-
-5. **`batch-smart` for ad-hoc operations:** Use `batch-smart` for one-off bulk changes described in plain English. Use `batch update`/`batch move`/`batch assign` for repeatable scripted workflows.
+4. **Decide the set yourself.** There is no predicate batch: enumerate with
+   `favro cards list --filter …`, check the list, then write it.
 
 ---
 
@@ -2204,9 +1962,10 @@ BOARD_ID=$(favro boards list | jq -r '.rows[] | select(.name == "Sprint 43") | .
 favro cards create --csv sprint-43-planning.csv --board $BOARD_ID --dry-run
 favro cards create --csv sprint-43-planning.csv --board $BOARD_ID
 
-# 3. Assign cards to team
-favro batch assign --board $BOARD_ID --filter "status:Todo" --to alice
-favro batch assign --board $BOARD_ID --filter "tag:backend" --to bob
+# 3. Assign cards to team — enumerate, then write the enumerated list
+favro cards list --board $BOARD_ID --filter "status:Todo" \
+  | jq -r '["card_id,owner"] + [.rows[].cardId + ",alice"] | .[]' > assign.csv
+favro cards update --from-csv assign.csv --yes
 
 # 4. Verify setup — per-column card counts, the ones Favro actually measures
 favro columns list $BOARD_ID
@@ -2240,14 +1999,15 @@ is card-scoped. For per-card history, pass a cardId: `favro activity <card> --si
 Move all remaining "In Progress" cards to "Review" at end of sprint:
 
 ```bash
-# Preview first
-favro batch-smart board-001 --goal "move all in progress cards to Review" --dry-run
+# 1. Enumerate the set, and read it before writing to it
+favro cards list --board board-001 --filter "status:\"In Progress\"" \
+  | jq -r '["card_id,status"] + [.rows[].cardId + ",Review"] | .[]' > closeout.csv
 
-# Apply with confirmation
-favro batch-smart board-001 --goal "move all in progress cards to Review"
+# 2. Preview
+favro cards update --from-csv closeout.csv --dry-run
 
-# Close all done cards
-favro batch-smart board-001 --goal "close all Done cards" --yes
+# 3. Apply
+favro cards update --from-csv closeout.csv --yes
 ```
 
 ---
@@ -2443,12 +2203,13 @@ DEBUG=favro:* favro context <board-id> 2>&1 | grep -E "^favro|ms$"
 
 **Debug:**
 ```bash
-favro batch update --from-csv big.csv --verbose
+favro --verbose cards update --from-csv big.csv --dry-run
 ```
 
 **Solutions:**
-- Split CSV into chunks (< 250 rows)
-- Use `concurrency=1` (default) to reduce rate limit risk
+- Split the CSV into chunks; twenty rows is the hard cap per file
+- Writes are sequential by design — a parallel batch would make "which fields are
+  written now" a race with the compensation log
 - Run at off-peak times
 
 ---
@@ -2475,10 +2236,10 @@ echo $FAVRO_API_KEY | wc -c  # Should be 32+ chars
 
 **Solutions:**
 ```bash
-# Process in smaller chunks
-split -l 100 large.csv batch-
+# Process in smaller chunks — 20 rows is the per-file cap
+split -l 20 large.csv batch-
 for f in batch-*; do
-  favro batch update --from-csv "$f"
+  favro cards update --from-csv "$f" --yes
 done
 ```
 

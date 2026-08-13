@@ -1,11 +1,17 @@
 /**
  * Unit tests — Profiler, CustomFieldCache and ConcurrencyController
- * (src/lib/profiling.ts, live via bulk.ts and custom-fields-api.ts).
+ * (src/lib/profiling.ts).
  *
  * Migrated from the retired vitest `tests/` tree (#71). The BulkTransaction
  * benchmarks that lived alongside these did not come across: they spent ~3s
  * asserting a 30s and a 5-minute ceiling against a mock, so no plausible
  * regression could make them red.
+ *
+ * `bulk.ts` was `Profiler`'s and `ConcurrencyController`'s only production
+ * caller, and #110 deleted it. `CustomFieldCache` is still live via
+ * `custom-fields-api.ts`; the other two are now exercised only from here.
+ * Deleting them is a published-export decision rather than this ticket's, and is
+ * filed as such.
  */
 
 import {

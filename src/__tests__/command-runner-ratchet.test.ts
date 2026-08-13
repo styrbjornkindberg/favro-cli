@@ -86,8 +86,9 @@ const RUNNER_FREE: readonly string[] = ['src/commands/issue-tracker-help.ts'];
 const ALLOWLIST: readonly string[] = [
   'src/cli.ts',
   'src/commands/attachments.ts',
-  'src/commands/batch-smart.ts',
-  'src/commands/batch.ts',
+  // `batch-smart.ts` and `batch.ts` were here until #110 DELETED them. They were
+  // struck off by deletion rather than by migration, which is the other way a
+  // line leaves this list.
   'src/commands/cards-archive.ts',
   'src/commands/cards-delete.ts',
   'src/commands/cards-link.ts',
