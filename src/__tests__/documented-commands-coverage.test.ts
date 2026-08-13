@@ -181,10 +181,16 @@
  * or that no longer exists under that key in that number, fails the build. A
  * list nobody prunes turns into a permanent exemption that reads like debt.
  *
- * TODAY: 38 tracked docs, 680 documented invocations across 28 files, 650 of
- * them naming a real command, against 148 argv paths — plus 391 option-table
- * rows carrying 438 flags, 385 of the rows attributed to a named command. The
+ * TODAY: 41 tracked docs, 696 documented invocations across 29 files, 666 of
+ * them naming a real command, against 148 argv paths — plus 350 option-table
+ * rows carrying 394 flags, 344 of the rows attributed to a named command. The
  * floors below are kept near those numbers on purpose — see the self-check test.
+ *
+ * This block read `38 / 680 / 28 / 650 / 391 / 438 / 385` until #110's review:
+ * #110 corrected the two row counts at their own assertion, 580 lines down, and
+ * left the identical pair here — which is how a "TODAY" turns into a date stamp
+ * nobody re-reads. Every number above was re-measured by instrumenting this
+ * module's own expressions, not carried forward.
  */
 import { execSync } from 'child_process';
 import * as fs from 'fs';
@@ -743,16 +749,19 @@ describe('every command the docs teach is a command the binary answers to', () =
     // evidence (ADR-0003). `681`/`651` and not `680`/`650`: the #158 ADR amendment
     // on this same branch wrote `favro init` in an inline code span, which is one
     // more documented invocation, and one that resolves.
-    // Every "today" below was re-measured by running this scanner on the #110
-    // branch. Five of them had drifted from the numbers written here (38→41,
-    // 681→685, 651→655, 28→29, 55→58) without any floor going red, which is what
-    // a floor with slack buys and costs.
+    // Every "today" below was re-measured by instrumenting these same
+    // expressions, twice: once when #110 landed (38→41, 681→685, 651→655, 28→29,
+    // 55→58, none of which turned a floor red — what slack buys and costs) and
+    // again in its review, after the CHANGELOG and specs edits of the review
+    // round itself moved the invocation counts a second time (685→696, 655→666).
+    // Written down as the invocation-count pair drifting for the same reason
+    // twice: the docs are edited by the ticket that writes these numbers.
     expect(DOC_FILES.length).toBeGreaterThan(30); // 41 today
     expect(SURFACE.size).toBeGreaterThan(140); // 148 today: 125 actions + groups
-    expect(INVOCATIONS.length).toBeGreaterThan(600); // 685 today
+    expect(INVOCATIONS.length).toBeGreaterThan(600); // 696 today
     // …and almost all of them met the real surface. See RESOLVED above: this is
     // the assertion a silently-matching-nothing walker cannot pass.
-    expect(RESOLVED).toBeGreaterThan(570); // 655 today; the rest are `<placeholder>` and bare `favro --help`
+    expect(RESOLVED).toBeGreaterThan(570); // 666 today; the rest are `<placeholder>` and bare `favro --help`
     expect(new Set(INVOCATIONS.map((i) => i.file)).size).toBeGreaterThan(22); // 29 today
     // …and the option tables were read at all. `readOptionTables` matching
     // nothing is the #156 bug restored, and it would restore it silently: the

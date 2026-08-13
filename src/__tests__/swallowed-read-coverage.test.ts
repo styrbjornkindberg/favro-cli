@@ -618,12 +618,18 @@ describe('no read answers a failure with emptiness, outside the two lists', () =
     // swallowing or not, so it goes red if `isPromise` or the walk collapses.
     expect(handlerSites).toBeGreaterThanOrEqual(12);
     expect(sourceFiles.length).toBeGreaterThan(100);
-    // Seed two's floor. Measured at 155 clauses under this commit; a collapse of
-    // the walk or of `ts.isCatchClause` would report zero swallows and pass.
-    // It said 160 for the length of #153 — the figure the header was corrected
-    // FROM, left behind here by the same change that corrected every other
-    // instance. Re-measured in review: 156, four of which were `getCardById`'s;
-    // 155 since `isBranchMerged`'s clause was deleted rather than relabelled.
+    // Seed two's floor. A collapse of the walk or of `ts.isCatchClause` would
+    // report zero swallows and pass. Measured 135 clauses under this commit, by
+    // instrumenting this expression; it was 155 at #109, and the three figures
+    // this comment carried before (160, 156, 155) were each true when written
+    // and none was re-measured when #110 deleted files out from under them.
+    // Most of the drop is those deletions — grepping `catch (` on the files
+    // themselves: 7 in `commands/batch.ts`, 5 in `commands/batch-smart.ts`, 3 in
+    // `lib/bulk.ts`, and 3 that left `cli.ts` with the batch branches (11 → 8).
+    // That is 18 of the 20; the last two are not accounted for here, and grep is
+    // not the scan's own walk, so read this as the shape of the drop rather than
+    // its ledger. The floor stays at 120 — 15 under the live count, still enough
+    // to catch a collapse.
     expect(catchClauses).toBeGreaterThanOrEqual(120);
   });
 

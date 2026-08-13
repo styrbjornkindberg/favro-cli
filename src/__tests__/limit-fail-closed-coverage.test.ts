@@ -620,7 +620,11 @@ describe('every --limit goes through parseLimit', () => {
     // — an empty offender list is indistinguishable from an empty scan. Three
     // independent floors: the files, a converted-value count, and the specific
     // files #142/#143 changed.
-    // 127 production files at the time of writing.
+    // 125 production files and 34 conversions, re-measured by instrumenting
+    // these two expressions. It said 127 until #110 deleted `commands/batch.ts`,
+    // `commands/batch-smart.ts` and `lib/bulk.ts` and added `commands/removed.ts`
+    // — net −2. The floor never moved, so nothing went red and the number went
+    // stale silently.
     expect(productionFiles.length).toBeGreaterThan(110);
     expect(conversionsSeen).toBeGreaterThan(20);
     const names = productionFiles.map((sf) =>
