@@ -6,11 +6,10 @@
  * favro widgets add <board> <card>
  */
 import { Command } from 'commander';
-import WidgetsAPI from '../lib/widgets-api';
-import { createFavroClient } from '../lib/client-factory';
-import { logError } from '../lib/error-handler';
+import { Widget } from '../lib/widgets-api';
 import { confirmAction } from '../lib/safety';
-import { capRows, noteTruncation, writeEnvelope } from '../lib/read-shape';
+import { dispatch } from '../lib/dispatch';
+import { Ctx, run } from '../lib/run';
 
 export function registerWidgetsCommands(program: Command): void {
   const widgetsCommand = program.command('widgets').description('Manage card widget instances directly');
@@ -20,106 +19,95 @@ export function registerWidgetsCommands(program: Command): void {
     .description('List all board widgets/instances of a specific card')
     .requiredOption('--card <card>', 'The central cardCommonId to trace')
     .option('--limit <n>', 'Cap how many rows are printed; sets "truncated"')
-    .option('--json', 'Output as JSON')
-    .action(async (options) => {
-      const verbose = widgetsCommand.opts()?.verbose ?? false;
-      try {
-        const client = await createFavroClient();
-        const api = new WidgetsAPI(client);
-        const widgets = await api.listWidgetsForCard(options.card);
-        // The fetch already ran to completion; `--limit` cuts the PRINT (#99).
-        const envelope = capRows(widgets, options.limit);
-
-        if (options.json) {
-          writeEnvelope(envelope, Boolean(program.opts()?.pretty));
-        } else {
-          console.log(`Found ${envelope.rows.length} widget(s) for card ${options.card}:`);
-          const rows = envelope.rows.map(w => ({
-            BoardID: w.boardId || (w.collectionIds ? w.collectionIds.join(',') : '—'),
-            WidgetID: w.widgetCommonId,
-            Type: w.type,
-            Name: w.name,
-          }));
-          console.table(rows);
-          noteTruncation(envelope, widgets.length);
-        }
-      } catch (error: any) {
-        logError(error, verbose);
-        process.exit(1);
-      }
-    });
+    .action(run(async (ctx: Ctx, options: { card: string; limit?: string }) => ({
+      // The fetch runs to completion; `--limit` cuts the PRINT (#99). `capRows`
+      // and the truncation note are the runner's now, so both modes read one
+      // envelope and cannot disagree.
+      rows: await ctx.api.widgets.listWidgetsForCard(options.card),
+      limit: options.limit,
+      human: (widgets: Widget[]) => {
+        console.log(`Found ${widgets.length} widget(s) for card ${options.card}:`);
+        console.table(widgets.map((w) => ({
+          BoardID: w.boardId || (w.collectionIds ? w.collectionIds.join(',') : '—'),
+          WidgetID: w.widgetCommonId,
+          Type: w.type,
+          Name: w.name,
+        })));
+      },
+    })));
 
   widgetsCommand
     .command('add <board> <card>')
     .description('Add an existing card to a new board, by board name or boardId (creates a new linked widget)')
     .option('--column <columnId>', 'Specific column ID to place the widget in')
-    .option('--json', 'Output as JSON')
     .option('--dry-run', 'Preview without making API calls')
     .option('-y, --yes', 'Skip confirmation prompt')
     .option('--force', 'Bypass bounds checking')
-    .action(async (board: string, cardCommonId: string, options) => {
-      const verbose = widgetsCommand.opts()?.verbose ?? false;
-      try {
-        const client = await createFavroClient();
-        const { readConfig } = await import('../lib/config');
-        const { dispatch } = await import('../lib/dispatch');
-        const { reportDispatch } = await import('../lib/report-dispatch');
+    .action(run(async (
+      ctx: Ctx,
+      board: string,
+      cardCommonId: string,
+      options: { column?: string; dryRun?: boolean; yes?: boolean; force?: boolean },
+    ) => {
+      if (
+        !options.dryRun &&
+        !(await confirmAction(`Add card ${cardCommonId} to board ${board}?`, { yes: options.yes }))
+      ) {
+        return { item: { added: false, aborted: true, card: cardCommonId }, human: () => 'Aborted.' };
+      }
 
-        if (
-          !options.dryRun &&
-          !(await confirmAction(`Add card ${cardCommonId} to board ${board}?`, { yes: options.yes }))
-        ) {
-          process.exit(0);
-        }
+      // Through the ONE dispatch table, as the `add-board-instance` intent
+      // (#109). This is the write that MANUFACTURES a card's board instance —
+      // the thing whose absence makes a card boardless, which is the shape
+      // `dispatch` refuses every other write to. Outside the table it was a
+      // write creating the case the table exists to refuse; inside it, it is
+      // the one write allowed to.
+      //
+      // The lock is inside the intent now, over the board the intent itself
+      // settles: it checks a `widgetCommonId`, so a NAME has to resolve first
+      // or `GET /widgets/Backlog - Web Hub` 404s into "Board … not found", a
+      // refusal naming the wrong problem (#82). And it runs before the `dryRun`
+      // return, so the preview can no longer promise a commit the real run
+      // refuses.
+      const result = await dispatch<{ widgetCommonId?: string }>(
+        'add-board-instance',
+        { board, card: cardCommonId, column: options.column },
+        { client: ctx.client, config: ctx.config, force: options.force, dryRun: options.dryRun },
+      );
 
-        // Through the ONE dispatch table, as the `add-board-instance` intent
-        // (#109). This is the write that MANUFACTURES a card's board instance —
-        // the thing whose absence makes a card boardless, which is the shape
-        // `dispatch` refuses every other write to. Outside the table it was a
-        // write creating the case the table exists to refuse; inside it, it is
-        // the one write allowed to.
+      return {
+        dispatch: result,
+        // An unconfirmed write is a HOLE, and a hole forbids a clean exit code —
+        // exit 0 is a positive claim (#148; `diff.ts` gates exit 1 on
+        // `holes.length`). Without this, the human line says UNCONFIRMED and the
+        // exit code says confirmed, and `favro widgets add … && next-step`
+        // believes the exit code. Non-zero here reports a FINDING, not a failure:
+        // the write result is still on stdout, machine mode included (#117).
         //
-        // The lock is inside the intent now, over the board the intent itself
-        // settles: it checks a `widgetCommonId`, so a NAME has to resolve first
-        // or `GET /widgets/Backlog - Web Hub` 404s into "Board … not found", a
-        // refusal naming the wrong problem (#82). And it runs before the `dryRun`
-        // return, so the preview can no longer promise a commit the real run
-        // refuses.
-        const result = await dispatch<{ widgetCommonId?: string }>(
-          'add-board-instance',
-          { board, card: cardCommonId, column: options.column },
-          { client, config: (await readConfig()) ?? {}, force: options.force, dryRun: options.dryRun },
-        );
-        if (reportDispatch(result, options.json)) process.exit(1);
-        if (result.outcome !== 'ok' || result.value === undefined) return;
-        const widget = result.value;
-
-        if (options.json) {
-          console.log(JSON.stringify(widget, null, 2));
-        } else if (widget.widgetCommonId) {
+        // Declared on the result rather than called, because under `run()` a
+        // hard exit is banned and a bare `return { dispatch }` would hand this
+        // back exit 0 — the silent regression #119 was most at risk of.
+        // `undefined` leaves the runner's own answer (`reportDispatch`) standing,
+        // which is what a dry run and a failed write both need.
+        exitCode:
+          result.outcome === 'ok' && result.value !== undefined && !result.value.widgetCommonId
+            ? 1
+            : undefined,
+        human: (widget: { widgetCommonId?: string }) => {
           // The ✓ is spent only on an OBSERVED board id. It used to print
           // unconditionally off `updated.widgetCommonId ?? boardId`, so it read
           // identically whether the commit landed or Favro 200'd and wrote
           // nothing — #82's original bug, re-opened by the fallback.
-          console.log(`✓ Widget added to board (${widget.widgetCommonId})`);
-        } else {
-          console.log(
+          if (widget.widgetCommonId) {
+            return `✓ Widget added to board (${widget.widgetCommonId})`;
+          }
+          return (
             `Commit of card ${cardCommonId} to board ${board} was accepted (200) but is UNCONFIRMED: ` +
             `the response carried no widgetCommonId, so nothing here observed the card on that board.\n` +
             `Whether this PUT echoes widgetCommonId is unmeasured, so an absent echo is not by itself a failure.\n` +
             `Verify with: favro widgets list --card ${cardCommonId}`
           );
-        }
-        // An unconfirmed write is a HOLE, and a hole forbids a clean exit code —
-        // exit 0 is a positive claim (#148; `diff.ts` gates exit 1 on
-        // `holes.length`). Without this, the human line says UNCONFIRMED and the
-        // exit code says confirmed, and `favro widgets add … && next-step`
-        // believes the exit code. Non-zero here reports a finding, not a failure:
-        // the write result is still on stdout, `--json` included (#117).
-        if (!widget.widgetCommonId) process.exit(1);
-      } catch (error: any) {
-        logError(error, verbose);
-        process.exit(1);
-      }
-    });
+        },
+      };
+    }));
 }

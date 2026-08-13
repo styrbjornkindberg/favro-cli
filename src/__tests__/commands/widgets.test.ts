@@ -30,25 +30,29 @@ const MockBoards = BoardsAPI as jest.MockedClass<typeof BoardsAPI>;
 const BOARD_NAME = 'Backlog - Web Hub';
 const BOARD_ID = 'board-b';
 
-class ExitCalled extends Error {
-  constructor(readonly code: number) {
-    super(`process.exit(${code})`);
-  }
-}
-
 let logSpy: jest.SpyInstance;
 let errorSpy: jest.SpyInstance;
 let tableSpy: jest.SpyInstance;
-let exitSpy: jest.SpyInstance;
 
+/**
+ * The human path. `--human` is explicit since #119 moved this file onto
+ * `run()`: JSON is the default, so a bare run hands every arm an envelope.
+ */
 async function runCli(args: string[]): Promise<void> {
+  await drive(['--human', ...args]);
+}
+
+/** The machine path — the DEFAULT for a real invocation (ADR-0002). */
+async function runJson(args: string[]): Promise<void> {
+  await drive(args);
+}
+
+async function drive(args: string[]): Promise<void> {
   const program = new Command();
-  program.option('--verbose', 'Show stack traces');
+  program.option('--human').option('--pretty').option('--verbose', 'Show stack traces');
   registerWidgetsCommands(program);
   program.exitOverride();
-  await program.parseAsync(['node', 'favro', ...args]).catch((e) => {
-    if (!(e instanceof ExitCalled)) throw e;
-  });
+  await program.parseAsync(['node', 'favro', ...args]);
 }
 
 const output = () => logSpy.mock.calls.map((c) => String(c[0])).join('\n');
@@ -59,8 +63,9 @@ beforeEach(() => {
   logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
   errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
   tableSpy = jest.spyOn(console, 'table').mockImplementation(() => {});
-  exitSpy = jest.spyOn(process, 'exit').mockImplementation(((code?: number) => {
-    throw new ExitCalled(code ?? 0);
+  process.exitCode = undefined;
+  jest.spyOn(process, 'exit').mockImplementation((() => {
+    throw new Error('process.exit must not be called under run()');
   }) as never);
 
   (config.resolveApiKey as jest.Mock).mockResolvedValue('test-token');
@@ -104,8 +109,10 @@ describe('widgets list', () => {
     ]);
   });
 
-  test('--json emits the widgets untouched and skips the table', async () => {
-    await runCli(['widgets', 'list', '--card', 'ccid-1', '--json']);
+  test('the machine DEFAULT emits the widgets untouched and skips the table', async () => {
+    // `--json` left the leaf with #119's migration: JSON is the default and
+    // `--human` is the way out (ADR-0002).
+    await runJson(['widgets', 'list', '--card', 'ccid-1']);
 
     expect(tableSpy).not.toHaveBeenCalled();
     // An envelope, not a bare array — the shape every list read emits (#99).
@@ -118,7 +125,7 @@ describe('widgets list', () => {
     await runCli(['widgets', 'list', '--card', 'ccid-1']);
 
     expect(output()).toContain('Found 0 widget(s)');
-    expect(exitSpy).not.toHaveBeenCalled();
+    expect(process.exitCode).toBeUndefined();
   });
 
   test('a failed read exits 1', async () => {
@@ -127,7 +134,7 @@ describe('widgets list', () => {
     await runCli(['widgets', 'list', '--card', 'ghost']);
 
     expect(errors()).toContain('404 card not found');
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 });
 
@@ -162,7 +169,7 @@ describe('widgets add', () => {
     // distinguishable from a failure (#117). Throwing on an unmeasured echo
     // would be the regression #101's triage declined; a non-zero code next to a
     // printed report is not.
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   /**
@@ -176,16 +183,16 @@ describe('widgets add', () => {
 
     expect(output()).not.toContain('✓');
     expect(output()).toContain('UNCONFIRMED');
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
-  test('--json is unaffected — it prints the observed shape, holes included', async () => {
+  test('the machine default is unaffected — it prints the observed shape, holes included', async () => {
     MockWidgets.prototype.addWidgetToBoard = jest.fn().mockResolvedValue({
       widgetCommonId: undefined,
       cardId: 'card-1',
     });
 
-    await runCli(['widgets', 'add', 'board-b', 'ccid-1', '-y', '--json']);
+    await runJson(['widgets', 'add', 'board-b', 'ccid-1', '-y']);
 
     // Parsed, not substring-matched: `not.toContain('board-b')` passes just as
     // happily against no output at all.
@@ -193,7 +200,7 @@ describe('widgets add', () => {
     expect(payload).toMatchObject({ cardId: 'card-1' });
     expect(payload.widgetCommonId).toBeUndefined();
     // The format does not change what the command claims.
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   test('--column places the new instance in a named column', async () => {
@@ -209,7 +216,7 @@ describe('widgets add', () => {
 
     expect(MockWidgets.prototype.addWidgetToBoard).not.toHaveBeenCalled();
     expect(errors()).toContain('Scope violation');
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   test('a board NAME settles to an id before the lock sees it (#82)', async () => {
@@ -264,7 +271,7 @@ describe('widgets add', () => {
     await runCli(['widgets', 'add', 'board-b', 'ccid-1']);
 
     expect(MockWidgets.prototype.addWidgetToBoard).not.toHaveBeenCalled();
-    expect(exitSpy).toHaveBeenCalledWith(0);
+    expect(process.exitCode).toBeUndefined();
   });
 
   test('--force reaches the lock', async () => {
@@ -273,9 +280,14 @@ describe('widgets add', () => {
     expect(safety.assertScope).toHaveBeenCalledWith('board-b', expect.anything(), expect.anything(), true);
   });
 
-  test('--json emits the created widget', async () => {
-    await runCli(['widgets', 'add', 'board-b', 'ccid-1', '-y', '--json']);
+  test('the machine default emits the created widget, and NOTHING ahead of it', async () => {
+    // The second live-smoke finding: the card-write family put its `✓ …` line on
+    // stdout in front of the JSON, so the documented default did not parse. The
+    // ✓ is on the `human` formatter now, which the runner calls only under
+    // `--human`.
+    await runJson(['widgets', 'add', 'board-b', 'ccid-1', '-y']);
 
     expect(JSON.parse(output())).toEqual({ widgetCommonId: 'w-3' });
+    expect(output()).not.toContain('✓');
   });
 });

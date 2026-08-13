@@ -154,7 +154,8 @@ const READS: ListRead[] = [
     },
     register: (program) => registerCardsLinkCommands(program.command('cards')),
     argv: ['cards', 'blocked-by', 'card-1'],
-    json: ['--json'],
+    // `--json` left the leaf with #119's migration; JSON is the default.
+    json: [],
   },
 ];
 

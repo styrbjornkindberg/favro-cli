@@ -256,6 +256,23 @@ async function useTracker(): Promise<TrackerMapping> {
 /** The command as a user reaches it, with `process.exit` turned into a throw. */
 const run = (...argv: string[]) => buildProgram().parseAsync(['node', 'favro', 'cards', ...argv]);
 
+/**
+ * The human path. #119 moved `cards link`/`unlink`/`move` onto `run()`, so the
+ * `✓ …` lines live on their `human` formatters and JSON is what an unflagged
+ * invocation gets (ADR-0002).
+ */
+const runHuman = (...argv: string[]) =>
+  buildProgram().parseAsync(['node', 'favro', '--human', 'cards', ...argv]);
+
+/** `run()` sets `process.exitCode` and returns; it never rejects. */
+const exitCodeAfter = async (...argv: string[]): Promise<number | undefined> => {
+  process.exitCode = undefined;
+  await run(...argv);
+  const code = process.exitCode;
+  process.exitCode = undefined;
+  return code;
+};
+
 const said = () => [...logSpy.mock.calls, ...errSpy.mock.calls].flat().join('\n');
 const writes = (received: Received[]) => received.filter((r) => r.method !== 'GET');
 // Reads matter too: the pre-read's BOUNDEDNESS is the contract that replaced the
@@ -330,7 +347,7 @@ describe('`cards link` writes the edge through the intent, not beside it', () =>
     // does not say which direction is actually stored.
     const stand = await startServer({ edges: [{ near: CARD, far: FAR, isBefore: false }] });
 
-    await expect(run('link', CARD, FAR, '--type', 'depends-on', '-y')).rejects.toThrow('process.exit(1)');
+    expect(await exitCodeAfter('link', CARD, FAR, '--type', 'depends-on', '-y')).toBe(1);
 
     expect(writes(stand.received)).toEqual([]);
     expect(stand.edges).toEqual([{ near: CARD, far: FAR, isBefore: false }]);
@@ -341,11 +358,11 @@ describe('`cards link` writes the edge through the intent, not beside it', () =>
   it('an edge already there is reported, not rewritten', async () => {
     const stand = await startServer({ edges: [{ near: CARD, far: FAR, isBefore: true }] });
 
-    await run('link', CARD, FAR, '--type', 'depends-on', '-y');
+    await runHuman('link', CARD, FAR, '--type', 'depends-on', '-y');
 
     expect(writes(stand.received)).toEqual([]);
     expect(said()).toContain('Already linked');
-    expect(exitSpy).not.toHaveBeenCalled();
+    expect(process.exitCode).toBeUndefined();
   });
 
   it('the pre-read is ONE bounded GET on ONE card — it does not walk the graph', async () => {
@@ -373,21 +390,26 @@ describe('`cards link` writes the edge through the intent, not beside it', () =>
   it('reports the created edge with ✓ Linked, in the refs the caller typed', async () => {
     const stand = await startServer();
 
-    await run('link', CARD, FAR, '--type', 'depends-on', '-y');
+    await runHuman('link', CARD, FAR, '--type', 'depends-on', '-y');
 
     expect(said()).toContain(`✓ Linked card ${CARD} → ${FAR}`);
     expect(stand.edges).toHaveLength(1);
   });
 
-  it('--json prints {created, card, blockedBy} — our contract, not Favro\'s link object', async () => {
-    // BREAKING vs the pre-#63 shape, deliberately: `--json` used to print
+  it('the machine default prints {created, card, blockedBy} — our contract, not Favro\'s link object', async () => {
+    // BREAKING vs the pre-#63 shape, deliberately: the machine output used to be
     // whatever `api.linkCard` handed back, which put the wire's own entity into
-    // our output contract. It is now the intent's answer.
+    // our output contract. It is now the intent's answer. The leaf `--json`
+    // itself left with #119 — JSON is the default and `--human` is the way out.
     await startServer();
 
-    await run('link', CARD, FAR, '--type', 'depends-on', '-y', '--json');
+    await run('link', CARD, FAR, '--type', 'depends-on', '-y');
 
     expect(JSON.parse(jsonSaid())).toEqual({ created: true, card: CARD, blockedBy: FAR });
+    // And NOTHING ahead of it: a live smoke run measured the pre-#119 shape
+    // putting `✓ Linked …` on stdout in front of the JSON, so the documented
+    // default did not parse.
+    expect(said()).not.toContain('✓');
   });
 
   it('a card that does not exist is refused by the pre-read, before any write', async () => {
@@ -398,7 +420,7 @@ describe('`cards link` writes the edge through the intent, not beside it', () =>
     // Pinning the behaviour that is now correct: nothing is sent, exit is 1.
     const stand = await startServer({ cards: [card({ cardId: FAR })] });
 
-    await expect(run('link', CARD, FAR, '--type', 'depends-on', '-y')).rejects.toThrow('process.exit(1)');
+    expect(await exitCodeAfter('link', CARD, FAR, '--type', 'depends-on', '-y')).toBe(1);
 
     expect(writes(stand.received)).toEqual([]);
     expect(stand.edges).toEqual([]);
@@ -420,19 +442,19 @@ describe('`cards unlink` goes through remove-blocking-edge', () => {
   it('removes whichever way round the edge points', async () => {
     const stand = await startServer({ edges: [{ near: FAR, far: CARD, isBefore: false }] });
 
-    await run('unlink', CARD, FAR, '-y');
+    await runHuman('unlink', CARD, FAR, '-y');
 
     expect(writes(stand.received).map((r) => r.method)).toEqual(['DELETE']);
     expect(stand.edges).toEqual([]);
     expect(said()).toContain(`✓ Unlinked card ${CARD} from ${FAR}`);
   });
 
-  it('--json prints {removed, isBefore}', async () => {
-    // Same deliberate break as `link --json`: the intent's answer, not the raw
+  it('the machine default prints {removed, isBefore}', async () => {
+    // Same deliberate break as `link`'s: the intent's answer, not the raw
     // wire response the direct `api` path used to echo.
     await startServer({ edges: [{ near: FAR, far: CARD, isBefore: false }] });
 
-    await run('unlink', CARD, FAR, '-y', '--json');
+    await run('unlink', CARD, FAR, '-y');
 
     expect(JSON.parse(jsonSaid())).toEqual(expect.objectContaining({ removed: true }));
   });
@@ -442,11 +464,11 @@ describe('`cards unlink` goes through remove-blocking-edge', () => {
     // "Card or link not found" — indistinguishable from a bad card id.
     const stand = await startServer();
 
-    await run('unlink', CARD, FAR, '-y');
+    await runHuman('unlink', CARD, FAR, '-y');
 
     expect(writes(stand.received)).toEqual([]);
     expect(said()).toContain('No edge between');
-    expect(exitSpy).not.toHaveBeenCalled();
+    expect(process.exitCode).toBeUndefined();
   });
 });
 

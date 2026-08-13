@@ -776,8 +776,14 @@ describe('every command the docs teach is a command the binary answers to', () =
     // the counters exist to notice `readOptionTables` going blind, and a floor
     // sitting 21 below the live count cannot notice a whole file's tables
     // vanishing.
-    expect(DOC_ROWS_READ).toBeGreaterThan(349); // 350 today, over 5 files
-    expect(DOC_ROWS_SCOPED).toBeGreaterThan(343); // 344 today; the other 6 are `## Global Options`
+    //
+    // 350/344 until #119 deleted the `--json` row from every migrated command's
+    // option tables — the flag stops existing when JSON becomes the DEFAULT and
+    // `--human` is the way out (ADR-0002), so the rows documented a flag the
+    // binary would refuse. Nothing was moved or reworded; the count is the
+    // deletion, re-measured with this expression at each step of the migration.
+    expect(DOC_ROWS_READ).toBeGreaterThan(342); // 343 today, over 5 files
+    expect(DOC_ROWS_SCOPED).toBeGreaterThan(336); // 337 today; the other 6 are `## Global Options`
     // …and the `\`-continued commands were joined rather than read one line at a
     // time. Zero here means every flag past the first line went unchecked again.
     expect(DOC_CONTINUED).toBeGreaterThan(45); // 58 joins today

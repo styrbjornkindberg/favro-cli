@@ -91,7 +91,6 @@ const ALLOWLIST: readonly string[] = [
   // line leaves this list.
   'src/commands/cards-archive.ts',
   'src/commands/cards-delete.ts',
-  'src/commands/cards-link.ts',
   'src/commands/cards-tracker.ts',
   'src/commands/columns.ts',
   'src/commands/custom-fields.ts',
@@ -101,7 +100,6 @@ const ALLOWLIST: readonly string[] = [
   'src/commands/tasklists.ts',
   'src/commands/tasks.ts',
   'src/commands/users.ts',
-  'src/commands/widgets.ts',
 ];
 
 // ─── the scan ────────────────────────────────────────────────────────────────

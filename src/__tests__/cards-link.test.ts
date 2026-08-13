@@ -29,6 +29,21 @@ const sampleCard: Card = {
   boardId: 'board-2',
 };
 
+/**
+ * `cards` standing in for the root program, so `--human` and `--pretty` are
+ * declared where `run()`'s `optsWithGlobals()` looks for them.
+ *
+ * #119 moved this file onto the runner: JSON is the DEFAULT and `--human` is the
+ * only way out (ADR-0002), so every arm asserting prose drives with the flag and
+ * the ones asserting a payload drive without it.
+ */
+function buildCards(): Command {
+  const cardsCmd = new Command('cards');
+  cardsCmd.option('--human').option('--pretty').option('--verbose');
+  registerCardsLinkCommands(cardsCmd);
+  return cardsCmd;
+}
+
 function buildMockApi(overrides: Partial<{
   linkCard: jest.Mock;
   unlinkCard: jest.Mock;
@@ -91,7 +106,10 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
     (config.readConfig as jest.Mock).mockResolvedValue(undefined);
     consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
     consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
-    exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => { throw new Error('process.exit'); });
+    process.exitCode = undefined;
+    exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => {
+      throw new Error('process.exit must not be called under run()');
+    });
   });
 
   afterEach(() => {
@@ -100,6 +118,7 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
     // The dir is per TEST, so removing it has to be too — this suite alone was
     // 74% of the repo's temp-dir leakage.
     fsSync.rmSync(configDir, { recursive: true, force: true });
+    process.exitCode = undefined;
     consoleSpy.mockRestore();
     consoleErrorSpy.mockRestore();
     exitSpy.mockRestore();
@@ -108,8 +127,7 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
   // ─── Registration ──────────────────────────────────────────────────────────
 
   test('registers link, unlink, move, show, dependencies, blocking, blocked-by subcommands', () => {
-    const cardsCmd = new Command('cards');
-    registerCardsLinkCommands(cardsCmd);
+    const cardsCmd = buildCards();
     const subNames = cardsCmd.commands.map(c => c.name());
     expect(subNames).toContain('link');
     expect(subNames).toContain('unlink');
@@ -122,40 +140,38 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
     expect(subNames).toContain('blocked-by');
   });
 
-  test('link command has --type and --json options (no --to)', () => {
-    const cardsCmd = new Command('cards');
-    registerCardsLinkCommands(cardsCmd);
+  test('link command has --type, and --json left the leaf (no --to)', () => {
+    const cardsCmd = buildCards();
     const linkCmd = cardsCmd.commands.find(c => c.name() === 'link')!;
     const optNames = linkCmd.options.map(o => o.long);
     expect(optNames).not.toContain('--to');
     expect(optNames).toContain('--type');
-    expect(optNames).toContain('--json');
+    // #119: JSON is the default and `--human` is the way out (ADR-0002), so a
+    // leaf `--json` would be a second spelling of a flag the root already owns.
+    expect(optNames).not.toContain('--json');
   });
 
   test('unlink command uses positional args (no --from option)', () => {
-    const cardsCmd = new Command('cards');
-    registerCardsLinkCommands(cardsCmd);
+    const cardsCmd = buildCards();
     const unlinkCmd = cardsCmd.commands.find(c => c.name() === 'unlink')!;
     const optNames = unlinkCmd.options.map(o => o.long);
     expect(optNames).not.toContain('--from');
   });
 
   test('move command has --to-board and --position options', () => {
-    const cardsCmd = new Command('cards');
-    registerCardsLinkCommands(cardsCmd);
+    const cardsCmd = buildCards();
     const moveCmd = cardsCmd.commands.find(c => c.name() === 'move')!;
     const optNames = moveCmd.options.map(o => o.long);
     expect(optNames).toContain('--to-board');
     expect(optNames).toContain('--position');
   });
 
-  test('show command has --relationships and --json options', () => {
-    const cardsCmd = new Command('cards');
-    registerCardsLinkCommands(cardsCmd);
+  test('show command has --relationships, and --json left the leaf', () => {
+    const cardsCmd = buildCards();
     const showCmd = cardsCmd.commands.find(c => c.name() === 'show')!;
     const optNames = showCmd.options.map(o => o.long);
     expect(optNames).toContain('--relationships');
-    expect(optNames).toContain('--json');
+    expect(optNames).not.toContain('--json');
   });
 
   // ─── VALID_LINK_TYPES ──────────────────────────────────────────────────────
@@ -222,56 +238,44 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
 
   test('exits with error on old type name "depends"', async () => {
     buildMockApi();
-    const cardsCmd = new Command('cards');
-    registerCardsLinkCommands(cardsCmd);
+    const cardsCmd = buildCards();
 
-    await expect(
-      cardsCmd.parseAsync(['node', 'cards', 'link', 'card-src', 'target', '--type', 'depends'])
-    ).rejects.toThrow('process.exit');
+    await cardsCmd.parseAsync(['node', 'cards', '--human', 'link', 'card-src', 'target', '--type', 'depends']);
 
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining("Invalid link type"));
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   test('exits with error on old type name "relates"', async () => {
     buildMockApi();
-    const cardsCmd = new Command('cards');
-    registerCardsLinkCommands(cardsCmd);
+    const cardsCmd = buildCards();
 
-    await expect(
-      cardsCmd.parseAsync(['node', 'cards', 'link', 'card-src', 'target', '--type', 'relates'])
-    ).rejects.toThrow('process.exit');
+    await cardsCmd.parseAsync(['node', 'cards', '--human', 'link', 'card-src', 'target', '--type', 'relates']);
 
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining("Invalid link type"));
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   test('exits with error on completely invalid link type', async () => {
     buildMockApi();
-    const cardsCmd = new Command('cards');
-    registerCardsLinkCommands(cardsCmd);
+    const cardsCmd = buildCards();
 
-    await expect(
-      cardsCmd.parseAsync(['node', 'cards', 'link', 'card-src', 'target', '--type', 'invalid-type'])
-    ).rejects.toThrow('process.exit');
+    await cardsCmd.parseAsync(['node', 'cards', '--human', 'link', 'card-src', 'target', '--type', 'invalid-type']);
 
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining("Invalid link type"));
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   // ─── Self-link prevention ──────────────────────────────────────────────────
 
   test('prevents self-linking a card to itself', async () => {
     buildMockApi();
-    const cardsCmd = new Command('cards');
-    registerCardsLinkCommands(cardsCmd);
+    const cardsCmd = buildCards();
 
-    await expect(
-      cardsCmd.parseAsync(['node', 'cards', 'link', 'CARD-A', 'CARD-A', '--type', 'depends-on'])
-    ).rejects.toThrow('process.exit');
+    await cardsCmd.parseAsync(['node', 'cards', '--human', 'link', 'CARD-A', 'CARD-A', '--type', 'depends-on']);
 
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining("Cannot link a card to itself"));
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   // ─── cards move ─────────────────────────────────────────────────────────────
@@ -288,9 +292,8 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
     const { mockMoveCard } = buildMockApi({
       moveCard: jest.fn().mockResolvedValue({ ...sampleCard, boardId: 'board-2' }),
     });
-    const cardsCmd = new Command('cards');
-    registerCardsLinkCommands(cardsCmd);
-    await cardsCmd.parseAsync(['node', 'cards', 'move', 'card-src', '--to-board', 'board-2']);
+    const cardsCmd = buildCards();
+    await cardsCmd.parseAsync(['node', 'cards', '--human', 'move', 'card-src', '--to-board', 'board-2']);
 
     expect(mockMoveCard).toHaveBeenCalledWith('card-src', { toBoardId: 'board-2', position: undefined });
     expect(consoleSpy).toHaveBeenCalledWith(
@@ -306,18 +309,15 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
     buildMockApi({
       moveCard: jest.fn().mockResolvedValue({ ...sampleCard, boardId: undefined }),
     });
-    const cardsCmd = new Command('cards');
-    registerCardsLinkCommands(cardsCmd);
+    const cardsCmd = buildCards();
 
-    await expect(
-      cardsCmd.parseAsync(['node', 'cards', 'move', 'card-src', '--to-board', 'board-2']),
-    ).rejects.toThrow('process.exit');
+    await cardsCmd.parseAsync(['node', 'cards', '--human', 'move', 'card-src', '--to-board', 'board-2']);
 
     const printed = consoleSpy.mock.calls.map((c) => String(c[0])).join('\n');
     expect(printed).not.toMatch(/✓/);
     expect(printed).toContain('UNCONFIRMED');
     expect(printed).toContain('carried no widgetCommonId');
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   /**
@@ -363,13 +363,12 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
       scopeCollectionName: 'Locked',
     });
 
-    const cardsCmd = new Command('cards');
-    registerCardsLinkCommands(cardsCmd);
-    await cardsCmd.parseAsync(['node', 'cards', 'move', 'card-src', '--to-board', HUB_NAME, '-y']);
+    const cardsCmd = buildCards();
+    await cardsCmd.parseAsync(['node', 'cards', '--human', 'move', 'card-src', '--to-board', HUB_NAME, '-y']);
 
     expect(requested).toContain(`/widgets/${HUB_ID}`);
     expect(requested.filter((u) => u.includes(HUB_NAME))).toEqual([]);
-    expect(exitSpy).not.toHaveBeenCalled();
+    expect(process.exitCode).toBeUndefined();
     expect(mockMoveCard).toHaveBeenCalledWith('card-src', { toBoardId: HUB_NAME, position: undefined });
     // TWO settlings of the same name — the intent's `board()` and `moveCard`'s
     // own `boardIdOf` — cost ONE board list, measured here rather than asserted:
@@ -381,44 +380,41 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
 
   test('moves card to target board with position top', async () => {
     const { mockMoveCard } = buildMockApi();
-    const cardsCmd = new Command('cards');
-    registerCardsLinkCommands(cardsCmd);
-    await cardsCmd.parseAsync(['node', 'cards', 'move', 'card-src', '--to-board', 'board-2', '--position', 'top']);
+    const cardsCmd = buildCards();
+    await cardsCmd.parseAsync(['node', 'cards', '--human', 'move', 'card-src', '--to-board', 'board-2', '--position', 'top']);
 
     expect(mockMoveCard).toHaveBeenCalledWith('card-src', { toBoardId: 'board-2', position: 'top' });
   });
 
   test('moves card to target board with position bottom', async () => {
     const { mockMoveCard } = buildMockApi();
-    const cardsCmd = new Command('cards');
-    registerCardsLinkCommands(cardsCmd);
-    await cardsCmd.parseAsync(['node', 'cards', 'move', 'card-src', '--to-board', 'board-2', '--position', 'bottom']);
+    const cardsCmd = buildCards();
+    await cardsCmd.parseAsync(['node', 'cards', '--human', 'move', 'card-src', '--to-board', 'board-2', '--position', 'bottom']);
 
     expect(mockMoveCard).toHaveBeenCalledWith('card-src', { toBoardId: 'board-2', position: 'bottom' });
   });
 
   test('exits with error on invalid position', async () => {
     buildMockApi();
-    const cardsCmd = new Command('cards');
-    registerCardsLinkCommands(cardsCmd);
+    const cardsCmd = buildCards();
 
-    await expect(
-      cardsCmd.parseAsync(['node', 'cards', 'move', 'card-src', '--to-board', 'board-2', '--position', 'middle'])
-    ).rejects.toThrow('process.exit');
+    await cardsCmd.parseAsync(['node', 'cards', '--human', 'move', 'card-src', '--to-board', 'board-2', '--position', 'middle']);
 
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining("Invalid position"));
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
-  test('outputs moved card JSON when --json flag set', async () => {
+  test('the machine default outputs the moved card, and NOTHING ahead of it', async () => {
+    // A live smoke run measured the pre-#119 shape putting `✓ Card … moved` on
+    // stdout in FRONT of the JSON, so the documented default did not parse. The
+    // ✓ is on the `human` formatter now.
     buildMockApi();
-    const cardsCmd = new Command('cards');
-    registerCardsLinkCommands(cardsCmd);
-    await cardsCmd.parseAsync(['node', 'cards', 'move', 'card-src', '--to-board', 'board-2', '--json']);
+    const cardsCmd = buildCards();
+    await cardsCmd.parseAsync(['node', 'cards', 'move', 'card-src', '--to-board', 'board-2']);
 
-    const calls = consoleSpy.mock.calls.map(c => c[0]);
-    const jsonCall = calls.find(c => typeof c === 'string' && c.includes('"cardId"'));
-    expect(jsonCall).toBeDefined();
+    const printed = consoleSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(JSON.parse(printed)).toMatchObject({ cardId: 'card-src' });
+    expect(printed).not.toContain('✓');
   });
 
   test('a destination board that does not resolve refuses BEFORE the move', async () => {
@@ -427,30 +423,24 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
     // problems. The intent settles the destination in `board()`, so an
     // unresolvable board now refuses by name, before anything is written.
     const { mockMoveCard } = buildMockApi();
-    const cardsCmd = new Command('cards');
-    registerCardsLinkCommands(cardsCmd);
+    const cardsCmd = buildCards();
 
-    await expect(
-      cardsCmd.parseAsync(['node', 'cards', 'move', 'bad-card', '--to-board', 'bad-board'])
-    ).rejects.toThrow('process.exit');
+    await cardsCmd.parseAsync(['node', 'cards', '--human', 'move', 'bad-card', '--to-board', 'bad-board']);
 
     expect(mockMoveCard).not.toHaveBeenCalled();
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('No board named "bad-board"'));
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   test('a 404 on the move itself is reported by the table, and exits 1', async () => {
     const err = Object.assign(new Error('Not Found'), { response: { status: 404 } });
     buildMockApi({ moveCard: jest.fn().mockRejectedValue(err) });
-    const cardsCmd = new Command('cards');
-    registerCardsLinkCommands(cardsCmd);
+    const cardsCmd = buildCards();
 
-    await expect(
-      cardsCmd.parseAsync(['node', 'cards', 'move', 'bad-card', '--to-board', 'board-2'])
-    ).rejects.toThrow('process.exit');
+    await cardsCmd.parseAsync(['node', 'cards', '--human', 'move', 'bad-card', '--to-board', 'board-2']);
 
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('✗ move-board failed'));
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   // ─── cards show ─────────────────────────────────────────────────────────────
@@ -458,18 +448,16 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
   test('shows card with --relationships flag as JSON', async () => {
     const cardWithLinks = { ...sampleCard, links: [sampleLink] };
     buildMockApi({ getCard: jest.fn().mockResolvedValue(cardWithLinks) });
-    const cardsCmd = new Command('cards');
-    registerCardsLinkCommands(cardsCmd);
-    await cardsCmd.parseAsync(['node', 'cards', 'show', 'card-src', '--relationships']);
+    const cardsCmd = buildCards();
+    await cardsCmd.parseAsync(['node', 'cards', '--human', 'show', 'card-src', '--relationships']);
 
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('"cardId"'));
   });
 
   test('shows card as table without --relationships', async () => {
     buildMockApi();
-    const cardsCmd = new Command('cards');
-    registerCardsLinkCommands(cardsCmd);
-    await cardsCmd.parseAsync(['node', 'cards', 'show', 'card-src']);
+    const cardsCmd = buildCards();
+    await cardsCmd.parseAsync(['node', 'cards', '--human', 'show', 'card-src']);
 
     // console.table is called
     const tableSpyCalls = consoleSpy.mock.calls;
@@ -479,15 +467,12 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
   test('handles 404 on show gracefully', async () => {
     const err = Object.assign(new Error('Not Found'), { response: { status: 404 } });
     buildMockApi({ getCard: jest.fn().mockRejectedValue(err) });
-    const cardsCmd = new Command('cards');
-    registerCardsLinkCommands(cardsCmd);
+    const cardsCmd = buildCards();
 
-    await expect(
-      cardsCmd.parseAsync(['node', 'cards', 'show', 'bad-id'])
-    ).rejects.toThrow('process.exit');
+    await cardsCmd.parseAsync(['node', 'cards', '--human', 'show', 'bad-id']);
 
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining("not found"));
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   // ─── cards dependencies ─────────────────────────────────────────────────────
@@ -498,9 +483,8 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
       { cardId: 'blocks-card-1', isBefore: false },
     ];
     buildMockApi({ getCardLinks: jest.fn().mockResolvedValue(links) });
-    const cardsCmd = new Command('cards');
-    registerCardsLinkCommands(cardsCmd);
-    await cardsCmd.parseAsync(['node', 'cards', 'dependencies', 'card-src']);
+    const cardsCmd = buildCards();
+    await cardsCmd.parseAsync(['node', 'cards', '--human', 'dependencies', 'card-src']);
 
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('dep-card-1'));
     const calls = consoleSpy.mock.calls.map(c => c[0] as string);
@@ -509,25 +493,24 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
 
   test('shows empty message when no dependencies', async () => {
     buildMockApi({ getCardLinks: jest.fn().mockResolvedValue([]) });
-    const cardsCmd = new Command('cards');
-    registerCardsLinkCommands(cardsCmd);
-    await cardsCmd.parseAsync(['node', 'cards', 'dependencies', 'card-src']);
+    const cardsCmd = buildCards();
+    await cardsCmd.parseAsync(['node', 'cards', '--human', 'dependencies', 'card-src']);
 
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('no dependencies'));
   });
 
-  test('outputs dependencies as JSON with --json', async () => {
+  test('the machine default outputs the dependencies envelope', async () => {
     const links: CardLink[] = [
       { cardId: 'dep-card-1', isBefore: true },
     ];
     buildMockApi({ getCardLinks: jest.fn().mockResolvedValue(links) });
-    const cardsCmd = new Command('cards');
-    registerCardsLinkCommands(cardsCmd);
-    await cardsCmd.parseAsync(['node', 'cards', 'dependencies', 'card-src', '--json']);
+    const cardsCmd = buildCards();
+    await cardsCmd.parseAsync(['node', 'cards', 'dependencies', 'card-src']);
 
-    const calls = consoleSpy.mock.calls.map(c => c[0] as string);
-    const jsonCall = calls.find(c => c?.includes('"isBefore"'));
-    expect(jsonCall).toBeDefined();
+    // The envelope every list read emits (#99), not a bare array — and it is
+    // what the leaf `--json` used to hand-roll.
+    const printed = consoleSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(JSON.parse(printed).rows).toEqual([{ cardId: 'dep-card-1', isBefore: true }]);
   });
 
   // ─── cards blocking ─────────────────────────────────────────────────────────
@@ -538,9 +521,8 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
       { cardId: 'dep-card', isBefore: true },
     ];
     buildMockApi({ getCardLinks: jest.fn().mockResolvedValue(links) });
-    const cardsCmd = new Command('cards');
-    registerCardsLinkCommands(cardsCmd);
-    await cardsCmd.parseAsync(['node', 'cards', 'blocking', 'card-src']);
+    const cardsCmd = buildCards();
+    await cardsCmd.parseAsync(['node', 'cards', '--human', 'blocking', 'card-src']);
 
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('blocked-card-1'));
     const calls = consoleSpy.mock.calls.map(c => c[0] as string);
@@ -549,9 +531,8 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
 
   test('shows empty message when blocking nothing', async () => {
     buildMockApi({ getCardLinks: jest.fn().mockResolvedValue([]) });
-    const cardsCmd = new Command('cards');
-    registerCardsLinkCommands(cardsCmd);
-    await cardsCmd.parseAsync(['node', 'cards', 'blocking', 'card-src']);
+    const cardsCmd = buildCards();
+    await cardsCmd.parseAsync(['node', 'cards', '--human', 'blocking', 'card-src']);
 
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('not blocking'));
   });
@@ -563,18 +544,16 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
       { cardId: 'blocker-card-1', isBefore: true },
     ];
     buildMockApi({ getCardLinks: jest.fn().mockResolvedValue(links) });
-    const cardsCmd = new Command('cards');
-    registerCardsLinkCommands(cardsCmd);
-    await cardsCmd.parseAsync(['node', 'cards', 'blocked-by', 'card-src']);
+    const cardsCmd = buildCards();
+    await cardsCmd.parseAsync(['node', 'cards', '--human', 'blocked-by', 'card-src']);
 
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('blocker-card-1'));
   });
 
   test('shows empty message when not blocked by any card', async () => {
     buildMockApi({ getCardLinks: jest.fn().mockResolvedValue([]) });
-    const cardsCmd = new Command('cards');
-    registerCardsLinkCommands(cardsCmd);
-    await cardsCmd.parseAsync(['node', 'cards', 'blocked-by', 'card-src']);
+    const cardsCmd = buildCards();
+    await cardsCmd.parseAsync(['node', 'cards', '--human', 'blocked-by', 'card-src']);
 
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('not blocked'));
   });
@@ -584,70 +563,55 @@ describe('Cards Link/Unlink/Move/Show/Dependencies/Blockers/BlockedBy Commands',
   test('exits when API key missing (link)', async () => {
     (config.resolveApiKey as jest.Mock).mockResolvedValue(undefined);
     buildMockApi();
-    const cardsCmd = new Command('cards');
-    registerCardsLinkCommands(cardsCmd);
+    const cardsCmd = buildCards();
 
-    await expect(
-      cardsCmd.parseAsync(['node', 'cards', 'link', 'card-src', 'target', '--type', 'depends-on'])
-    ).rejects.toThrow('process.exit');
+    await cardsCmd.parseAsync(['node', 'cards', '--human', 'link', 'card-src', 'target', '--type', 'depends-on']);
 
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('API key not found'));
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   test('exits when API key missing (unlink)', async () => {
     (config.resolveApiKey as jest.Mock).mockResolvedValue(undefined);
     buildMockApi();
-    const cardsCmd = new Command('cards');
-    registerCardsLinkCommands(cardsCmd);
+    const cardsCmd = buildCards();
 
-    await expect(
-      cardsCmd.parseAsync(['node', 'cards', 'unlink', 'card-src', 'target'])
-    ).rejects.toThrow('process.exit');
+    await cardsCmd.parseAsync(['node', 'cards', '--human', 'unlink', 'card-src', 'target']);
 
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('API key not found'));
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   test('exits when API key missing (move)', async () => {
     (config.resolveApiKey as jest.Mock).mockResolvedValue(undefined);
     buildMockApi();
-    const cardsCmd = new Command('cards');
-    registerCardsLinkCommands(cardsCmd);
+    const cardsCmd = buildCards();
 
-    await expect(
-      cardsCmd.parseAsync(['node', 'cards', 'move', 'card-src', '--to-board', 'board-2'])
-    ).rejects.toThrow('process.exit');
+    await cardsCmd.parseAsync(['node', 'cards', '--human', 'move', 'card-src', '--to-board', 'board-2']);
 
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('API key not found'));
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   test('exits when API key missing (show)', async () => {
     (config.resolveApiKey as jest.Mock).mockResolvedValue(undefined);
     buildMockApi();
-    const cardsCmd = new Command('cards');
-    registerCardsLinkCommands(cardsCmd);
+    const cardsCmd = buildCards();
 
-    await expect(
-      cardsCmd.parseAsync(['node', 'cards', 'show', 'card-src'])
-    ).rejects.toThrow('process.exit');
+    await cardsCmd.parseAsync(['node', 'cards', '--human', 'show', 'card-src']);
 
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('API key not found'));
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 
   test('exits when API key missing (dependencies)', async () => {
     (config.resolveApiKey as jest.Mock).mockResolvedValue(undefined);
     buildMockApi();
-    const cardsCmd = new Command('cards');
-    registerCardsLinkCommands(cardsCmd);
+    const cardsCmd = buildCards();
 
-    await expect(
-      cardsCmd.parseAsync(['node', 'cards', 'dependencies', 'card-src'])
-    ).rejects.toThrow('process.exit');
+    await cardsCmd.parseAsync(['node', 'cards', '--human', 'dependencies', 'card-src']);
 
     expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('API key not found'));
-    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(process.exitCode).toBe(1);
   });
 });

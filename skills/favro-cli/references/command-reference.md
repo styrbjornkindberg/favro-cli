@@ -196,7 +196,6 @@ Create a link between two cards.
 | Flag | Description |
 |------|-------------|
 | `--type <type>` | **Required.** `depends-on`, `blocks`, `relates-to` |
-| `--json` | Output raw JSON |
 | `-y, --yes` | Skip confirmation |
 | `--force` | Bypass scope check |
 
@@ -215,7 +214,6 @@ Move a card to a different board.
 |------|-------------|
 | `--to-board <boardId>` | **Required.** Destination board |
 | `--position <pos>` | `top` or `bottom` |
-| `--json` | Output raw JSON |
 | `-y, --yes` | Skip confirmation |
 | `--force` | Bypass scope check |
 
@@ -447,7 +445,6 @@ List all board instances of a specific card.
 | Flag | Description |
 |------|-------------|
 | `--card <cardCommonId>` | **Required.** The cardCommonId to trace |
-| `--json` | Output raw JSON |
 
 ### `widgets add <boardId> <cardCommonId>` ⚠️ WRITE
 
@@ -459,7 +456,6 @@ Commit an existing card to another board. The card remains on its current board(
 | `--dry-run` | Preview only |
 | `-y, --yes` | Skip confirmation |
 | `--force` | Bypass scope check |
-| `--json` | Output raw JSON |
 
 ---
 

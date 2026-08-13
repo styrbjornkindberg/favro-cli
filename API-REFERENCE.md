@@ -666,7 +666,7 @@ Create a relationship link between two cards.
 
 **Syntax:**
 ```
-favro cards link <cardId> <toCardId> --type <type> [--json]
+favro cards link <cardId> <toCardId> --type <type> [--human]
 ```
 
 **Arguments:**
@@ -681,7 +681,6 @@ favro cards link <cardId> <toCardId> --type <type> [--json]
 | Option | Required | Description |
 |---|---|---|
 | `--type <type>` | ✓ | Link type: `depends-on`, `blocks`, `related`, `duplicates` |
-| `--json` | — | Output link details as JSON |
 
 **Link types:**
 
@@ -703,7 +702,7 @@ favro cards link <cardId> <toCardId> --type <type> [--json]
 ```bash
 favro cards link CARD-A CARD-B --type depends-on
 favro cards link CARD-A CARD-B --type blocks
-favro cards link CARD-A CARD-B --type related --json
+favro cards link CARD-A CARD-B --type related --human
 ```
 
 **Error cases:**
@@ -761,13 +760,12 @@ favro cards move <cardId> --to-board <boardId> [--position top|bottom] [--json]
 |---|---|---|
 | `--to-board <boardId>` | ✓ | Destination board ID |
 | `--position <pos>` | — | Position on board: `top` or `bottom` |
-| `--json` | — | Output updated card as JSON |
 
 **Examples:**
 ```bash
 favro cards move card-abc123 --to-board board-456
 favro cards move card-abc123 --to-board board-456 --position top
-favro cards move card-abc123 --to-board board-456 --position bottom --json
+favro cards move card-abc123 --to-board board-456 --position bottom --human
 ```
 
 **Error cases:**
@@ -782,7 +780,7 @@ Show card details with optional relationship info.
 
 **Syntax:**
 ```
-favro cards show <cardId> [--relationships] [--json]
+favro cards show <cardId> [--relationships] [--human]
 ```
 
 **Arguments:**
@@ -796,13 +794,12 @@ favro cards show <cardId> [--relationships] [--json]
 | Option | Description |
 |---|---|
 | `--relationships` | Include all relationship links for this card |
-| `--json` | Output as JSON |
 
 **Examples:**
 ```bash
 favro cards show CARD-ID
 favro cards show CARD-ID --relationships
-favro cards show CARD-ID --relationships --json
+favro cards show CARD-ID --relationships --human
 ```
 
 ---
@@ -813,7 +810,7 @@ List all cards this card depends on (`depends-on` links).
 
 **Syntax:**
 ```
-favro cards dependencies <cardId> [--json]
+favro cards dependencies <cardId> [--limit <n>] [--human]
 ```
 
 **Output:**
@@ -826,7 +823,7 @@ Dependencies of card CARD-A:
 **Examples:**
 ```bash
 favro cards dependencies CARD-A
-favro cards dependencies CARD-A --json
+favro cards dependencies CARD-A --human
 ```
 
 **Error cases:**
@@ -840,7 +837,7 @@ List all cards blocked by this card (`blocks` links).
 
 **Syntax:**
 ```
-favro cards blocking <cardId> [--json]
+favro cards blocking <cardId> [--limit <n>] [--human]
 ```
 
 **Output:**
@@ -852,7 +849,7 @@ Cards blocked by CARD-A:
 **Examples:**
 ```bash
 favro cards blocking CARD-A
-favro cards blocking CARD-A --json
+favro cards blocking CARD-A --human
 ```
 
 ---
@@ -863,7 +860,7 @@ List all cards that are blocking this card (inferred from `depends-on` links).
 
 **Syntax:**
 ```
-favro cards blocked-by <cardId> [--json]
+favro cards blocked-by <cardId> [--limit <n>] [--human]
 ```
 
 **Output:**
@@ -875,7 +872,7 @@ Cards blocking CARD-D:
 **Examples:**
 ```bash
 favro cards blocked-by CARD-D
-favro cards blocked-by CARD-D --json
+favro cards blocked-by CARD-D --human
 ```
 
 ---
@@ -2021,7 +2018,7 @@ Map out what's blocking what before a release:
 CARD_IDS=$(favro cards list --board board-001 --json | jq -r '.[].cardId')
 
 for id in $CARD_IDS; do
-  BLOCKERS=$(favro cards blocking $id --json | jq -r '.[].cardId')
+  BLOCKERS=$(favro cards blocking $id | jq -r '.rows[].cardId')
   if [ -n "$BLOCKERS" ]; then
     NAME=$(favro cards get $id | jq -r '.name')
     echo "$id ($NAME) blocks: $BLOCKERS"
