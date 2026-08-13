@@ -126,11 +126,13 @@ export function registerCardsTrackerCommands(cardsCmd: Command): void {
       'The `retag` intent.\n\n' +
       `Category: ${CATEGORY_TAGS.join(' | ')}\n` +
       `State:    ${STATE_TAGS.join(' | ')}\n\n` +
-      'An unknown role name is REFUSED before the write: on a tag write Favro\n' +
-      'reads an unknown name as a tag CREATION, not as a match. Tags outside the\n' +
-      'two axes are carried through untouched — this swaps roles, it does not\n' +
-      'replace the card\'s tag array. Omit an axis to keep the role already on the\n' +
-      'card; if the card carries none, or more than one, it refuses and says so.\n\n' +
+      'A name outside those two lists is REFUSED before anything is looked up:\n' +
+      'the refusal is about the ROLE LIST, never about whether the tag exists.\n' +
+      'Tags outside the two axes are carried through untouched — this swaps\n' +
+      'roles, it does not replace the card\'s tag array, and it cannot ADD a\n' +
+      'non-role tag. `cards update --tags` writes one, by name, as the whole\n' +
+      'list. Omit an axis to keep the role already on the card; if the card\n' +
+      'carries none, or more than one, it refuses and says so.\n\n' +
       'Examples:\n' +
       '  favro cards retag CLA-1804 --category bug --state ready-for-agent\n' +
       '  favro cards retag CLA-1804 --state needs-info\n'

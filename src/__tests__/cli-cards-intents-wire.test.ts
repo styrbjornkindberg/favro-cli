@@ -80,6 +80,11 @@ const TAGS = [
   { tagId: 'tag-enhancement', name: 'enhancement' },
   { tagId: 'tag-needs-triage', name: 'needs-triage' },
   { tagId: 'tag-ready-for-agent', name: 'ready-for-agent' },
+  // A workspace tag that is NOT a triage role, which is the shape #164 is about:
+  // `retag` refuses it and used to justify the refusal by calling the name
+  // unknown. Modelled here so the refusal can be tested against a tag that
+  // resolves — the live one does, to `ZLAszhmCsDpuNGG66`.
+  { tagId: 'tag-wayfinder-map', name: 'wayfinder:map' },
 ];
 
 interface Received { method: string; url: string; path: string; body?: any }
@@ -592,5 +597,45 @@ describe('`cards retag` enforces the triage vocabulary before the wire', () => {
 
     expect(writes(stand.received)).toEqual([]);
     expect(said()).toContain('is not a state role');
+  });
+
+  it('the refusal is about the ROLE LIST and never calls the name unknown (#164)', async () => {
+    // Measured live, 2026-08-13: `cards retag <card> --category "wayfinder:map"`
+    // refused with *"an unknown name on a tag write is a tag creation, not a
+    // match"* — for a tag `tags get` resolves to `ZLAszhmCsDpuNGG66` one command
+    // earlier. The refusal was right, its stated reason was not, and a live run
+    // read it as "the tag does not exist" and abandoned the workflow.
+    //
+    // `wayfinder:map` is in this stand's TAGS, so it EXISTS here too: the axis
+    // refuses names that are not roles, and `settleAxis` looks nothing up, so it
+    // is in no position to say anything about existence either way.
+    const stand = await startServer({ cards: [card({ cardId: CARD, tags: ['tag-bug'] })] });
+
+    expect(await exitCodeAfter('retag', CARD, '--category', 'wayfinder:map')).toBe(1);
+    expect(writes(stand.received)).toEqual([]);
+
+    // Read off the envelope rather than the raw stream: the message rides inside
+    // the JSON refusal, so its own quoting is escaped there.
+    const message = JSON.parse(said()).error.message as string;
+    expect(message).toContain('"wayfinder:map" is not a category role');
+    expect(message).not.toMatch(/unknown name/i);
+    expect(message).not.toMatch(/tag creation/i);
+    // And the remedy it points at instead — pinned because a refusal that names
+    // a command the CLI does not have is this repo's remembered defect.
+    expect(message).toContain("'cards update <card> --tags");
+  });
+
+  it('the remedy that refusal prints does write a non-role tag, by name', async () => {
+    // The other half: the message is only true if `cards update --tags` really
+    // writes a pre-existing tag by name. Measured live on the same tag — exit 0,
+    // `tagIds` gained `ZLAszhmCsDpuNGG66`, no duplicate minted — and modelled
+    // here so a regression on the update path reddens the retag message too.
+    const stand = await startServer({ cards: [card({ cardId: CARD, tags: ['tag-bug'] })] });
+
+    await run('update', CARD, '--tags', 'bug,wayfinder:map', '--yes');
+
+    const put = writes(stand.received).find((r) => r.method === 'PUT');
+    expect(put!.body.addTagIds).toEqual(['tag-wayfinder-map']);
+    expect(stand.cards.get(CARD)!.tags.sort()).toEqual(['tag-bug', 'tag-wayfinder-map']);
   });
 });

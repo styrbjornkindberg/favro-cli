@@ -407,6 +407,21 @@ caller as a failure rather than as a finding, and the exit code is the failure's
 
 ### Fixed
 
+- **`cards retag` refused a tag that resolves, and blamed a reason that was not the
+  reason (#164).** The refusal itself was right — `retag` carries two closed
+  vocabularies, `bug|enhancement` and the five triage states, and writes nothing outside
+  them — but it justified itself with *"an unknown name on a tag write is a tag
+  creation, not a match"*, which is `TxCards.setTags`'s rule, not this one. `settleAxis`
+  looks nothing up, so it is in no position to call any name unknown. Measured live:
+  `tags get "wayfinder:map"` resolves to `ZLAszhmCsDpuNGG66`, and the very next
+  `cards retag <card> --category "wayfinder:map"` was told the name was unknown. A live
+  run read that as "the tag does not exist" and abandoned a workflow on it. The refusal
+  now says what is true — the name is not on the role list, and nothing was looked up —
+  and points at `cards update <card> --tags`, which writes a workspace tag by name;
+  measured on the same tag, exit 0, `tagIds` gained `ZLAszhmCsDpuNGG66`, no duplicate
+  minted. `cards retag --help` and the `retag` row in `favro help issue-tracker` carried
+  the same wrong reason and now carry the right one.
+
 - **`cards move --to-board` never moved anything — it FORKED the card onto a second
   board (#161).** `PUT /cards/{cardId}` defaults `dragMode` to `commit`, and `commit`
   adds a board instance instead of moving one. The command sent no `dragMode`, so every

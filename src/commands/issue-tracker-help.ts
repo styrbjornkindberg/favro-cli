@@ -65,9 +65,9 @@ INTENTS
                         TRACKER-BOARD instance only: assignment FORKS the card
                         into a boardless, columnless entity. CLI: cards claim.
   resolve               Move to the tracker's done column. CLI: cards resolve.
-  retag                 Exactly one category role and one state role. An unknown
-                        name refuses client-side: on a tag write Favro reads an
-                        unknown name as a tag CREATION. CLI: cards retag.
+  retag                 Exactly one category role and one state role. Any other
+                        name refuses on the ROLE LIST, existing tag or not —
+                        write those with 'cards update --tags'. CLI: cards retag.
   add-blocking-edge     Record that one card blocks another. CLI: cards link.
   remove-blocking-edge  Remove the edge between two cards. CLI: cards unlink.
   clear-blocking-edges  EVERY edge on one card, capped at 20 — over that it

@@ -1049,14 +1049,20 @@ function settleAxis(
   cardId: string,
 ): string {
   if (requested !== undefined) {
-    // Refused in CLI code, never sent: on a write Favro reads an unknown name as
-    // a tag CREATION, which either invents a tag or 403s on a key without that
-    // permission. Neither is an answer an agent can act on.
+    // Refused on the ROLE LIST, in CLI code, before anything is looked up: this
+    // axis is a closed vocabulary and `retag` writes nothing outside it. It is
+    // NOT a claim that the name is unknown to the org — that check belongs to
+    // `TxCards.setTags` (via `CardsAPI.tagReplacement`), which resolves names
+    // and refuses the ones the workspace does not carry. Saying otherwise sent a
+    // live run to the wrong diagnosis on `wayfinder:map`, a tag that resolves
+    // (#164).
     const known = inVocabulary(vocabulary, requested);
     if (!known) {
       throw new RefusalError(
-        `"${requested}" is not a ${axis} role. The tracker's ${axis} vocabulary is: ${vocabulary.join(', ')}.\n` +
-          `Refusing to write it: an unknown name on a tag write is a tag creation, not a match.`,
+        `"${requested}" is not a ${axis} role. The tracker's ${axis} vocabulary is closed: ${vocabulary.join(', ')}.\n` +
+          `Refused on that list alone — nothing was looked up, so this says nothing about whether the tag exists. ` +
+          `A tag outside the two axes goes on with 'cards update <card> --tags <the card's whole tag list>', ` +
+          `which writes a workspace tag by name and refuses one the workspace does not carry.`,
       );
     }
     return known;
