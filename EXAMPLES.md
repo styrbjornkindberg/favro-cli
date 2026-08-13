@@ -815,9 +815,9 @@ card-002,Done,bob@example.com
 
 ---
 
-**Error: `'favro batch-smart' was removed in 3.0`**
+**Error: `'favro batch-smart' was removed in 4.0`**
 ```
-Removed in 3.0. Decide the operations yourself, then 'favro cards update --from-csv'.
+Removed in 4.0. Decide the operations yourself, then 'favro cards update --from-csv'.
 ```
 **Fix:** the plain-English goal parser is gone, along with `batch update`,
 `batch move` and `batch assign`. All four derived their write set from a board

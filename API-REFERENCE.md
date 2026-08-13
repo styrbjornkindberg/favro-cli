@@ -1614,7 +1614,7 @@ Directly uses Favro's native Dependency API for strict blockers instead of gener
 ## Batch Operations
 
 `batch update`, `batch move`, `batch assign` and `batch-smart` were **removed in
-3.0**. Each is still a registered command, exits 1, and names its replacement, so
+4.0**. Each is still a registered command, exits 1, and names its replacement, so
 a script calling one gets a next move rather than `unknown command`. They are
 kept for one major.
 

@@ -163,9 +163,9 @@ Update one card, or up to twenty from a CSV file.
 | `--dry-run` | Preview only |
 | `-y, --yes` | Skip confirmation |
 | `--force` | Bypass scope check |
-| `--board <board>` | Removed in 3.0 as a batch selector; ignored on a single card |
-| `--label <label>` | Removed in 3.0 — see `--from-csv` |
-| `--assignee <user>` | Removed in 3.0 — see `--from-csv` |
+| `--board <board>` | Removed in 4.0 as a batch selector; ignored on a single card |
+| `--label <label>` | Removed in 4.0 — see `--from-csv` |
+| `--assignee <user>` | Removed in 4.0 — see `--from-csv` |
 
 Every field goes out through its own primitive with its own compensating write,
 so a failure on the third field unwinds the first two and reports `rolled-back`.
@@ -179,7 +179,7 @@ the first write, and a row naming nothing but `card_id` refuses rather than bein
 skipped.
 
 **`--board <board>` with no card id** was the predicate batch and is a refusal in
-3.0. Enumerate with `cards list --filter …`, then hand the list to `--from-csv`.
+4.0. Enumerate with `cards list --filter …`, then hand the list to `--from-csv`.
 
 ### `cards export <board>` 📖 READ
 Export all cards from a board.
@@ -756,7 +756,7 @@ Delete a user group.
 ## Batch Operations
 
 `batch update`, `batch move`, `batch assign` and `batch-smart` were **removed in
-3.0**. Each is still registered, exits 1, and names its replacement, so a script
+4.0**. Each is still registered, exits 1, and names its replacement, so a script
 calling one gets a next move rather than `unknown command`. Kept for one major.
 
 All four DERIVED their write set from a board read — a filter, a label or a

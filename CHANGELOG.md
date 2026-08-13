@@ -8,9 +8,104 @@ that set that version, `a13a02a`) and this release. Commands were driven with
 `FAVRO_CONFIG_DIR` pointed at a throwaway config and no real credentials, so exit codes
 and streams are real and no request reached a live org.
 
-## 3.1.0 — unreleased
+## 4.0.0 — unreleased
+
+**This section was headed `3.1.0` until #110 landed in it.** The map (#80) planned the
+whole write-seam collapse as one `3.0.0`, but `3.0.0` was dated in this file and tagged
+`v3.0.0` on 2026-08-12, before any of the removals below existed — so they cannot go
+there. A major after a released major is `4.0.0`. Two entries already under this heading
+were breaking and mis-filed under a minor (`git sync` and `git todos --create` gaining a
+cap that refuses); they are now under the right heading without being moved.
+
+### Breaking
+
+#### `batch update`, `batch move`, `batch assign` and `batch-smart` are removed (#110)
+
+All four are still REGISTERED. Each exits 1 and names its replacement, so a script that
+calls one gets a next move instead of `unknown command`:
+
+```
+$ favro batch update --from-csv cards.csv
+'favro batch update' was removed in 4.0.
+Use 'favro cards update --from-csv <file>' — same CSV, one transaction, capped at 20 rows.
+```
+
+| Removed | What to run |
+|---|---|
+| `favro batch update` | `favro cards update --from-csv <f>` |
+| `favro batch move` | `favro cards list --filter …`, then `--from-csv` |
+| `favro batch assign` | `favro cards list --filter …`, then `--from-csv` |
+| `favro batch-smart` | Decide the operations yourself, then `--from-csv` |
+| `favro cards update --board <b>` (no card id) | `favro cards list --filter …`, then `--from-csv` |
+
+The stubs accept the old flags (`allowUnknownOption`), because the real invocation
+carries them and `error: unknown option '--from-csv'` is the same dead end one token to
+the right. They are kept for one major.
+
+**Why no deprecation cycle.** A warning that still performed the write would keep alive
+exactly what the removal is for: five spellings that DERIVED their write set from a
+board read — a `--filter`, a `--label`, or a plain-English `--goal` chose the cards — so
+what was written appeared neither in the invocation nor in any record afterwards.
+`--from-csv` is the same job with the set enumerated by the caller.
+
+**What goes with them:** `BulkTransaction` (rollback engine #2, whole-field restore with
+no compare-before-restore, `ROLLBACK FAILED` to stderr) and `batch-smart`'s best-effort
+unwind (engine #3). `tx-cards` is now the only rollback engine in the codebase.
+**1 996 lines deleted** — `commands/batch.ts` 617, `commands/batch-smart.ts` 732,
+`lib/bulk.ts` 647, counted off the deletion commit rather than off #110's estimate of
+1 117, which was two releases stale.
+
+#### `cards update --from-csv` is capped at 20 rows, in one transaction
+
+The CSV goes through the shared `update` intent now, which is what buys the cap. **Over
+twenty rows the whole file refuses**, naming the cap; it does not write the first twenty.
+Splitting is the remedy, and each chunk is its own transaction.
+
+The same routing changes four more things about this command:
+
+- **A failure part-way unwinds field by field and reports `rolled-back`.** The old
+  transaction re-PUT the whole previous state best-effort and printed `ROLLBACK FAILED`
+  to stderr when that failed; an incomplete unwind is now in the result, with what it
+  left behind.
+- **A row naming nothing but `card_id` refuses** rather than being a silent no-op
+  success. In a batch, skipping it reports success for a card that was never written.
+- **An unresolvable `owner` is no longer refused before the first write.** The old
+  transaction pre-settled every name in one pass; the intent settles per entry, so a
+  typo on row 12 lands rows 1-11 and then unwinds them. The cap bounds that at 19 writes
+  and one unwind that reports what it left behind if it could not finish. `bulk.ts`'s own
+  note said the pre-pass existed because the lazy path cost 399 writes and a partial
+  rollback on a 500-row file — which the cap now makes unreachable. It is a regression in
+  wire cost on a bad row, not in what the caller is left holding.
+- **`--json` now prints the `DispatchResult`** (`{intent, outcome, retryable, value}`),
+  not `{total, success, failure, skipped, rolledBack, errors, operations}`. Success and
+  failure print the same shape; they used to print two.
+
+`--verbose` no longer shows per-card progress on this path — it is the root
+stack-trace flag and nothing else.
+
+#### The `custom_field_*` CSV columns are gone, and unknown columns now refuse
+
+`cards update --from-csv` accepts `card_id` (required), `status`, `owner`, `due_date`,
+with `cardId`, `assignee` and `dueDate` as aliases. **Every other column refuses**,
+naming itself and listing the columns that exist.
+
+`custom_field_*` was accepted, parsed, stored on the operation and **never sent** — the
+old parser's own comment said "stored but not directly mapped". A CSV naming a custom
+field reported success having written none of it. Refusing is the fail-closed half of
+the same fact.
 
 ### Changed
+
+- **`cards update` writes `dueDate` (#110).** The field was measured in #106 —
+  `null` clears, an ISO timestamp is honoured and echoed verbatim, `""` is a silent
+  no-op and is refused rather than forwarded — and then held out of the `update`
+  intent until a command passed one, because an arg nothing passes is a surface with
+  no caller to keep it honest. The CSV's `due_date` column is that caller. It carries
+  a real compensating write, like every other field on the intent.
+
+- **The `--from-csv` reader moved from `lib/bulk.ts` to `lib/csv.ts` (#110)**, next to
+  the CSV writer `cards export` already used. It is the only half of `bulk.ts` that
+  survived the collapse onto the dispatch table.
 
 - **Seven more write paths go through the one dispatch table (#109).** `git branch`'s
   auto-move, `git sync`, `git todos --create`, `custom-fields set`, `widgets add`,
@@ -140,6 +235,16 @@ and streams are real and no request reached a live org.
   invocation.
 
 ### Removed
+
+- **`src/commands/batch.ts`, `src/commands/batch-smart.ts` and `src/lib/bulk.ts` are
+  deleted (#110)** — 1 117 lines, and with them `BulkTransaction`, the CSV-to-operation
+  mapping, the bulk preview/summary formatters, and `batch-smart`'s goal parser and
+  rollback engine. `grep -r BulkTransaction src/` returns nothing.
+
+  `Profiler` and `ConcurrencyController` in `lib/profiling.ts` lose their only
+  production caller with `bulk.ts` and are now exercised only by their own tests.
+  Deleting a published export is a semver call rather than this ticket's, so they stay
+  and the fact is recorded here and in `profiling.test.ts`.
 
 - **`CardsAPI.deleteAllDependencies`, `CustomFieldsAPI.setFieldValue` and its private
   `putCardCustomField` are deleted (#109).** All three were un-instrumented card writes with

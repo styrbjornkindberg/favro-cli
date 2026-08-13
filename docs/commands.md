@@ -549,7 +549,7 @@ bodies, whole. It has no `--limit` — the board is fetched to completion.
 ## Batch Operations
 
 `batch update`, `batch move`, `batch assign` and `batch-smart` were **removed in
-3.0**. All four still exist as commands and all four exit 1 naming their
+4.0**. All four still exist as commands and all four exit 1 naming their
 replacement, so a script that calls one gets a next move rather than
 `unknown command`.
 
