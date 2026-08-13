@@ -39,7 +39,7 @@ import { registerBoardsUpdateCommand } from './commands/boards-update';
 import { registerBoardsDeleteCommand } from './commands/boards-delete';
 import { registerReleaseCheckCommand } from './commands/release-check';
 import { registerRisksCommand } from './commands/risks';
-import { registerRemovedCommands } from './commands/removed';
+import { registerRemovedCommands, refusePredicateBatch } from './commands/removed';
 import { registerCollectionsListCommand } from './commands/collections-list';
 import { registerCollectionsGetCommand } from './commands/collections-get';
 import { registerCollectionsCreateCommand } from './commands/collections-create';
@@ -666,7 +666,7 @@ cards
   .option('--force', 'Bypass scope check')
   .option('--json', 'Output as JSON')
   .option('--verbose', 'Show stack traces on failure')
-  .action(async (cardId: string | undefined, options) => {
+  .action(async (cardId: string | undefined, options, command: Command) => {
     // ── Removed in 4.0: the --board predicate batch ───────────────────────────
     // A DERIVED write set — "every card on this board matching this label" — is
     // the shape #92 retired along with `batch move` and `batch assign`. The
@@ -682,15 +682,15 @@ cards
     // measured against the built CLI with none configured this branch answered
     // "API key not found" — a refusal naming the wrong problem, on the one input
     // whose whole job is to name the right one.
-    if (options.board && !cardId) {
-      console.error(
-        `✗ 'favro cards update --board <board>' (predicate batch) was removed in 4.0.\n` +
-          `  Enumerate first with 'favro cards list --filter …', then ` +
-          `'favro cards update --from-csv <file>'.`,
-      );
-      process.exit(1);
-      return;
-    }
+    //
+    // Through `run()` and not `console.error` + `process.exit(1)`, which is what
+    // it was until review: this action is not migrated, so a hand-written refusal
+    // here lands on stderr with EMPTY STDOUT and ignores the JSON default
+    // entirely — and an agent reading the documented default gets exit 1 and
+    // nothing parseable, which is the dead end #110 exists to remove. The
+    // `command` is passed so the runner resolves `--human` from the real
+    // invocation. The other five refuse through the same boundary.
+    if (options.board && !cardId) return refusePredicateBatch(command);
 
     // Resolve client once — shared across the single-card and --from-csv paths
     let client: import('./lib/http-client').default;
@@ -789,6 +789,16 @@ cards
           // prints exactly this on the failure side under `--json`, so the two
           // sides of the branch answer in one shape — and an array on stdout is
           // what `read-shape.ts` rule 1 forbids.
+          //
+          // OPEN EDGE, recorded rather than fixed (#110 review). Both this line
+          // and the `reportDispatch` above key on the LEAF `--json` flag, so this
+          // path's default is human — while ADR-0002's default, which the runner
+          // holds and which the refusal at the top of this action now obeys, is
+          // JSON with `--human` opting out. Greppable from the two `options.json`
+          // reads; what is NOT measured is the successful `--json` shape off a
+          // real wire, which needs credentials. Closing it means migrating this
+          // action to `run()`, which is #118's business, not a side effect of a
+          // removal.
           if (options.json) console.log(JSON.stringify(result));
         }
       } catch (error) {
