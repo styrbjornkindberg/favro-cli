@@ -16,7 +16,7 @@
  */
 import { Command } from 'commander';
 import FavroHttpClient from '../lib/http-client';
-import ColumnDirectory from '../lib/column-directory';
+import ColumnDirectory, { listColumnsFor } from '../lib/column-directory';
 import type TagsAPI from '../lib/tags-api';
 import { TagLookupError } from '../lib/tags-api';
 import { ApiNamespace, apiNamespace, Ctx, run } from '../lib/run';
@@ -238,7 +238,7 @@ export async function initTracker(
     : proposed.done?.columnId;
 
   if (!activeId || !doneId || activeId === doneId) {
-    const listed = columns.map((c) => `  ${c.columnId}  ${c.name}`).join('\n');
+    const listed = listColumnsFor(columns);
     throw new TrackerConfigError(
       `Could not tell which column is open and which is closed on board ${boardId} from the column names alone. ` +
         `Pass --active <column> --done <column>:\n${listed}`,

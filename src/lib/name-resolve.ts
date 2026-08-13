@@ -154,18 +154,16 @@ export async function resolveNameToId(options: ResolveOptions): Promise<string> 
  * called by `CollectionsAPI.resolveCollectionId` and by
  * `BoardsAPI.listBoardsByCollection` (#123).
  *
- * It existed twice, byte-identically, and neither copy could import the other's
- * module: `boards-api` needs it for `listBoardsByCollection` and
- * `collections-api` already imports `boards-api` for `Board`, so putting the
- * survivor in either one is a cycle `madge --circular` fails on (`import type`
- * does not help — madge counts it). Here it is a cycle for nobody. ADR-0003's
- * cycle argument is about API classes importing each other, and `http-client`
- * and `paginate` are not any: nothing they reach imports this module.
+ * It existed twice, byte-identically. Hosting the survivor in `collections-api`
+ * is a cycle `madge --circular` fails on — `boards-api` would have to import it,
+ * and `collections-api` already imports `boards-api` for `Board`. `import type`
+ * does not help: madge counts it, measured both ways. `boards-api` would NOT
+ * cycle, measured too — that direction already exists. It is not there because a
+ * collections resolver on the boards class is the wrong home, which is taste,
+ * not a tooling verdict. Here it is a cycle for nobody and belongs to neither.
  *
- * It takes a `client` rather than the `fetch` callback the ADR's other callers
- * pass, because the listing is not the caller's to vary: both sites want exactly
- * `GET /collections` paged to completion, and a second `fetch` spelling is the
- * duplicate this deletes in miniature.
+ * ADR-0003's cycle argument is about API classes importing each other, and
+ * `http-client` and `paginate` are not any: nothing they reach imports this.
  *
  * `useIdWith` names the caller's own flag, so the refusal points at a command
  * that exists rather than at a generic one.

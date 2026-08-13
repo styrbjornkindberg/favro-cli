@@ -188,10 +188,18 @@ dependency edges all used to write, and each refuses as a whole now.
   `reason` changes, from `Favro said "Access denied" — the resource is missing or not
   visible to your key.` to `No collection named "<id>" — it is missing or not visible to
   your key.`, and the failing read costs a `/collections` listing when the name cache is
-cold. Both the
-  old and the new wording misattribute the cause the same way the board facet's does, and
-  `cards-get-include-unreachable-wire.test.ts` pins it so a fix to the escalation comes
-  back here.
+  cold. Both the old and the new wording misattribute the cause the same way the board
+  facet's does, and `cards-get-include-unreachable-wire.test.ts` pins it so a fix to the
+  escalation comes back here.
+
+- **A card on two boards refuses in the resolver's wording (#123).** Reachable from
+  `favro cards find <url>`, the one caller of `findCardBySequentialId`, which carried its
+  own copy of the refusal. The copy is deleted and the shared `pickOneInstance` answers
+  instead, so the reference is now quoted — `Card "8850" exists on 2 boards — pass
+  --board <board> to say which:` where it read `Card 8850 exists on 2 boards …` — and a
+  candidate Favro sent with no `name` is listed as `<cardId> (board <boardId>)` rather
+  than as `<cardId> (board <boardId>, "undefined")`. The candidate ids, their order and
+  the exit code are unchanged.
 
 - **`cards update` writes `dueDate` (#110).** The field was measured in #106 —
   `null` clears, an ISO timestamp is honoured and echoed verbatim, `""` is a silent
