@@ -138,6 +138,15 @@ export function classifyFavroError(status: number, message?: string): FavroError
     };
   }
 
+  // OPEN EDGE, measured 2026-08-13 and NOT fixed here. A 2xx carrying a denial
+  // message this module does not recognise lands on `kind: 'none', isFailure:
+  // false` — reported as SUCCESS. Two live shapes, both raw-probed on the
+  // scratch board: `PUT /cards/{id} {dueDate:"not-a-date"}` answers
+  // `202 {"message":"Invalid date"}`, and a `customFields` write of the wrong
+  // type answers `202 {"message":"Match failed"}`. Neither message is in a set
+  // above. Widening the sets is the obvious move and is not taken blind: it
+  // needs its own probe of what else Favro says on a 2xx, and the read-back
+  // checks in `TxCards` are what currently catch the write half.
   if (status >= 200 && status < 300) {
     return { kind: 'none', isFailure: false, message: '', raw, escalatableOnRead: false };
   }
@@ -185,3 +194,22 @@ export function classifyThrownError(error: unknown): FavroErrorClassification | 
 export const isWireFailure = (error: unknown): boolean =>
   (error as { isAxiosError?: unknown } | null | undefined)?.isAxiosError === true ||
   classifyThrownError(error) !== undefined;
+
+/**
+ * Is this HTTP status worth sending the same request against again? (#162)
+ *
+ * `undefined` is a transport failure that never got a response. 408 and 429
+ * describe a MOMENT — the request itself was fine — and 5xx is the server's own
+ * state. Everything else in 4xx names the REQUEST as the problem, so repeating
+ * it unchanged repeats the rejection.
+ *
+ * ONE expression, two readers, and they disagreed until #162: `HttpClient`
+ * retried exactly this set in-process, while `isRetryable` reported every status
+ * it could not name from its message as retryable. So `PUT /cards/{id}
+ * {name: <1025 chars>}` — Favro answers `400 "Card can't have more than 1024
+ * characters."`, measured live, never retried by the client — printed
+ * `"retryable": true` and *"safe to retry"* on both of two identical runs, at a
+ * command the tracker help topic tells agents to obey that field on.
+ */
+export const isTransientStatus = (status: number | undefined): boolean =>
+  !status || status === 408 || status === 429 || status >= 500;

@@ -422,6 +422,21 @@ caller as a failure rather than as a finding, and the exit code is the failure's
   minted. `cards retag --help` and the `retag` row in `favro help issue-tracker` carried
   the same wrong reason and now carry the right one.
 
+- **A deterministic failure was advertised as safe to retry (#162).** `retryable` was
+  derived by classifying the response MESSAGE; a message the closed sets do not
+  recognise was read as transient whatever the status. Measured live: `cards update
+  <card> --name <1115 chars>` answers `400 {"message":"Card can't have more than 1024
+  characters."}`, and the CLI printed
+  `{"intent":"update","outcome":"rolled-back","retryable":true,…}` with *"safe to
+  retry"* on stderr — identically on two identical runs. `favro help issue-tracker`
+  tells agents to *"read the 'retryable' field, never the outcome"*, so obeying the
+  documented contract there is an infinite loop against a wall. An unrecognised message
+  is now decided by status, through the same expression `FavroHttpClient` already
+  retries on (`isTransientStatus`: no response, 408, 429, 5xx) — so what the client
+  retries and what an agent is told to retry are one set, and every wire failure we
+  still call retryable has already been retried four times in-process. The same command
+  now answers `"retryable":false` and *"the failure is deterministic"*.
+
 - **`cards move --to-board` never moved anything — it FORKED the card onto a second
   board (#161).** `PUT /cards/{cardId}` defaults `dragMode` to `commit`, and `commit`
   adds a board instance instead of moving one. The command sent no `dragMode`, so every

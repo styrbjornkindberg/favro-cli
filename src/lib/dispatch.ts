@@ -65,7 +65,7 @@ import FavroHttpClient from './http-client';
 import { FavroConfig } from './config';
 import CardsAPI, { Card } from './cards-api';
 import { assertScope } from './safety';
-import { classifyThrownError, isWireFailure } from './favro-error';
+import { classifyThrownError, isTransientStatus, isWireFailure } from './favro-error';
 import { foldName } from './fold-name';
 import { CompensationLog, Orphan, ReadTx, TxCards, TxOutcome } from './tx-cards';
 import { CommittedWidget } from './widgets-api';
@@ -256,8 +256,12 @@ export { RefusalError };
  * or where `./favro-error` classifies the response as a deterministic refusal:
  * its closed, probed message sets (`not-found`, `conflict`, `invalid`), a 401,
  * or a 403 — which that module defaults to a permission denial whether or not
- * the message is one it recognises, the fail-closed arm. A failure it cannot
- * classify — a 5xx, a timeout, a bug of our own — keeps the
+ * the message is one it recognises, the fail-closed arm.
+ *
+ * A response whose message it cannot name is decided by STATUS, through
+ * `isTransientStatus` — the same expression `HttpClient` retries on, so what we
+ * retry and what we advertise as retryable are one set (#162). A timeout or a
+ * bug of our own reaches no status at all and keeps the
  * rolled-back-is-retryable reading: the world is genuinely back where it
  * started, and the next attempt may well behave differently.
  *
@@ -269,9 +273,14 @@ export function isRetryable(outcome: TxOutcome, error: unknown): boolean {
   if (outcome !== 'rolled-back') return false;
   if (error instanceof RefusalError) return false;
   const kind = classifyThrownError(error)?.kind;
-  // `undefined` is "no HTTP response to classify"; `unknown` is "a response we
-  // cannot name". Both are the transient family. `none` cannot reach here.
-  return kind === undefined || kind === 'unknown' || kind === 'none';
+  // `undefined` is "no HTTP response to classify" — the transient family.
+  // `none` cannot reach here. `unknown` is "a response we cannot name from its
+  // message", and it used to be read as transient too: that is what put
+  // `"retryable": true` on `400 "Card can't have more than 1024 characters."`,
+  // measured live and identical on both runs (#162). The status decides it now.
+  if (kind === undefined || kind === 'none') return true;
+  if (kind !== 'unknown') return false;
+  return isTransientStatus((error as { response?: { status?: number } } | null | undefined)?.response?.status);
 }
 
 /**

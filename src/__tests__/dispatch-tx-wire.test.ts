@@ -1533,14 +1533,24 @@ describe('a deterministic WIRE refusal is not retryable either (#66)', () => {
     expect(result.retryable).toBe(false);
   });
 
-  it('a failure we cannot NAME stays retryable — the rule is narrow on purpose', async () => {
-    // The discriminator. `retryable: false` is claimed only where the closed
-    // message set (or a 401) actually identifies a deterministic refusal;
-    // anything unnamed — a 5xx, a timeout, a bug in our own code — keeps the
+  it('a failure we cannot NAME on a 4xx is NOT retryable — the status decides (#162)', async () => {
+    // **PINNED `false`. It was pinned `true` until #162 — do not flip it back
+    // without reading this.**
+    //
+    // The old reading: anything the closed message set cannot name keeps the
     // rolled-back-is-retryable reading, because the world IS back where it
-    // started and the next call may well behave differently.
+    // started and the next call may well behave differently. True of a 5xx and a
+    // timeout. Not true of a 4xx, where the REQUEST is what was rejected —
+    // measured live, `PUT /cards/{id} {name: <1115 chars>}` answers `400 "Card
+    // can't have more than 1024 characters."` on every run, and this arm is what
+    // let `cards update` print `"retryable": true` and *"safe to retry"* over it
+    // on two identical runs.
+    //
+    // The transient half of the rule keeps its own arms: the status matrix in
+    // `favro-error.test.ts` (408/429/5xx, no wire, no backoff) and the socket
+    // reset below, which is the one shape no canned `{status}` can reach.
     const result = await batchRefusedBy(400, 'Something we have never probed');
-    expect(result.retryable).toBe(true);
+    expect(result.retryable).toBe(false);
   });
 
   it('the SAME unnameable failure is not retryable once the unwind left an orphan', async () => {
@@ -1551,19 +1561,30 @@ describe('a deterministic WIRE refusal is not retryable either (#66)', () => {
     // Measured: hardcoding `retryAdvice`'s outcome argument to `'rolled-back'`
     // passed all 3036 other tests. This is the one that kills that mutation.
     //
-    // Same 400 and same unprobed message as the test above, which is the whole
-    // construction: the CAUSE is identical and reads retryable, so the only thing
-    // that can move the answer is what the unwind left behind. An agent told
-    // "safe to retry" over an orphan would write on top of wreckage.
-    let puts = 0;
+    // The CAUSE has to read retryable on its own or this proves nothing, and
+    // since #162 that means a status `isTransientStatus` accepts — a 503, where
+    // the arm above now takes the 400. `http-client` retries a 503 four times at
+    // 1/2/4/8s before giving up, so this test costs ~15s; that is also why the
+    // compensating write is refused with a 403 rather than a second 503, which
+    // would buy a second round of backoff for nothing.
+    //
+    // Keyed on the BODY, not on a PUT counter: the retries make a counter
+    // meaningless. The tag write is the PUT carrying `addTagIds`; the
+    // compensating move-back is the one carrying `columnId` after it.
+    let sawTagWrite = false;
     const stand = await startServer({
       fail: (r) => {
         if (r.method !== 'PUT') return undefined;
-        puts += 1;
-        // PUT 1 is the move and lands. PUT 2 is the tag write — the failure. PUT 3
-        // is the compensating move-back, which fails too, so the column stays
-        // where we put it and the orphan is real.
-        return puts >= 2 ? { status: 400, message: 'Something we have never probed' } : undefined;
+        const body = (r.body ?? {}) as { addTagIds?: unknown; columnId?: unknown };
+        if (body.addTagIds) {
+          sawTagWrite = true;
+          return { status: 503, message: 'Something we have never probed' };
+        }
+        // The move landed first. This is the compensating move-back, refused so
+        // the column stays where we put it and the orphan is real. NOT "Access
+        // denied", which `alreadyGone` forgives as "the card is gone anyway" and
+        // which therefore leaves no orphan at all.
+        return sawTagWrite && body.columnId ? { status: 403, message: 'Insufficient privileges' } : undefined;
       },
     });
 
@@ -1574,7 +1595,7 @@ describe('a deterministic WIRE refusal is not retryable either (#66)', () => {
     // Read back, not counted: the wreckage the advice is about really is there.
     expect(stand.cards.get(CARD)!.columnId).toBe(DOING);
     expect(result.orphans?.map((o) => o.field)).toEqual(['columnId']);
-  });
+  }, 40000);
 
   it('a 429 mid-batch is absorbed by the client, not turned into an unwind', async () => {
     // #67 deleted the only assertion that pinned 429 through the multi-create
@@ -2091,19 +2112,24 @@ describe('delete logs nothing, and therefore cannot join a transaction', () => {
     // and `rolled-back / retryable: true` is then TRUE, which is the only
     // condition under which `skill run` may print "safe to retry".
     //
-    // Step 3 fails OFF THE WIRE, on an unprobed 400. It used to be `probe-fail`,
+    // Step 3 fails OFF THE WIRE, on an unprobed 503. It used to be `probe-fail`,
     // which throws a bare in-process `Error` — and once `retryAdvice` started
     // gating the table on the wire, that came back `retryable: false` and this
     // test stopped reaching the "safe to retry" condition it exists to guard.
     // Flipping the assertion instead would have left a test that cannot fail:
     // the lie being pinned is `rolled-back AND retryable` printing over a
-    // destroyed card, so the failure mode has to keep both halves true.
+    // destroyed card, so the failure mode has to keep both halves true. Same
+    // reason the 400 became a 503 in #162: a 400 stopped reading retryable, so
+    // the unprobed status here has to be one that still does.
     let posts = 0;
     const stand = await startServer({
       fail: (r) => {
         if (r.method !== 'POST' || r.path !== '/cards') return undefined;
         posts += 1;
-        return posts === 2 ? { status: 400, message: 'Something we have never probed' } : undefined;
+        // `>= 2`, not `=== 2`: `http-client` retries a 503, so a single-attempt
+        // predicate would let the retry succeed and the step would never fail.
+        // Those four retries at 1/2/4/8s are what this test costs.
+        return posts >= 2 ? { status: 503, message: 'Something we have never probed' } : undefined;
       },
     });
     const log = new CompensationLog();
@@ -2121,7 +2147,7 @@ describe('delete logs nothing, and therefore cannot join a transaction', () => {
     expect(stand.cards.has(made.value!.cardId)).toBe(false);
     expect(stand.cards.has(CARD)).toBe(true);
     expect(deletes(stand).map((r) => r.path)).toEqual([`/cards/${made.value!.cardId}`]);
-  });
+  }, 40000);
 
   it('refuses inside a caller-threaded transaction that already holds writes', async () => {
     // The reason the entry above must not exist is also why this must refuse:

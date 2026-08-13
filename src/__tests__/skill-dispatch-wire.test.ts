@@ -435,14 +435,19 @@ describe('the run is ONE transaction — one log, threaded through every step', 
     //
     // Only step 2's board is dead, named by path rather than by a call count:
     // step 1 checks `/widgets/board-a` and lands, step 2 checks
-    // `/widgets/board-b` and never gets an answer. `400` with a message nothing
-    // recognises, because `favro-error` calls that `unknown` — the transient
-    // family — and unlike a 429 or a 5xx `http-client` does not retry it, so
-    // this costs no backoff.
+    // `/widgets/board-b` and never gets an answer.
+    //
+    // A `503` with a message nothing recognises. It was a `400`, chosen because
+    // `http-client` does not retry one and it therefore cost no backoff — but
+    // #162 made that the whole defect: `favro-error` called any unrecognised
+    // message transient whatever the status, so a deterministic 400 came back
+    // "safe to retry". The two sets are one expression now, which means the only
+    // statuses that still read retryable are the ones the client retries, and
+    // this arm pays their backoff: four attempts at 1/2/4/8s.
     const stand = await startServer({
       fail: (r) =>
         r.path === `/widgets/${OTHER_BOARD}`
-          ? { status: 400, message: 'upstream had a moment' }
+          ? { status: 503, message: 'upstream had a moment' }
           : undefined,
     });
 
@@ -454,16 +459,16 @@ describe('the run is ONE transaction — one log, threaded through every step', 
       opts(stand, { config: { scopeCollectionId: 'coll-a' } }),
     );
 
-    expect(result.steps[1].error).toContain('400');
+    expect(result.steps[1].error).toContain('503');
     expect(result.status).toBe('failed');
     expect(result.rollback?.outcome).toBe('rolled-back');
     // Came off the wire, so the table's derivation runs behind the gate and
-    // answers for itself — a 400 nobody can name may behave differently next
-    // time, and that advice survives #151.
+    // answers for itself — a 503 nobody can name may behave differently next
+    // time, and that advice survives #151 and #162.
     expect(result.rollback?.retryable).toBe(true);
     // And the transaction still unwound: step 1's card is gone from the wire.
     expect(stand.cards.size).toBe(0);
-  });
+  }, 40000);
 
   it('the SAME escaping wire failure is not retryable once the unwind left an orphan', async () => {
     // The `outcome` argument at THIS site, isolated. `retryAdvice(unwound.outcome,
@@ -475,15 +480,18 @@ describe('the run is ONE transaction — one log, threaded through every step', 
     // engine shares the expression, so it needs its own or the shared function is
     // only half-covered.
     //
-    // Same 400 on the same board as the test above, which is the construction:
+    // Same 503 on the same board as the test above, which is the construction:
     // the CAUSE is identical and reads retryable, so the only thing that can move
-    // the answer is what the unwind left behind. Step 1's compensating
-    // `DELETE /cards/new-card-1` is refused with a 400 — not a 404, which
-    // `alreadyGone` would forgive — so the card survives and the orphan is real.
-    // An agent told "safe to retry" would write on top of it.
+    // the answer is what the unwind left behind. (Both were 400s until #162 made
+    // a 4xx deterministic; the pairing is what matters, not the number, and this
+    // arm inherits the ~15s of client backoff a 503 costs.) Step 1's compensating
+    // `DELETE /cards/new-card-1` stays a 400 — not a 404, which `alreadyGone`
+    // would forgive, and deterministic so it buys no second round of backoff —
+    // so the card survives and the orphan is real. An agent told "safe to retry"
+    // would write on top of it.
     const stand = await startServer({
       fail: (r) => {
-        if (r.path === `/widgets/${OTHER_BOARD}`) return { status: 400, message: 'upstream had a moment' };
+        if (r.path === `/widgets/${OTHER_BOARD}`) return { status: 503, message: 'upstream had a moment' };
         if (r.method === 'DELETE' && r.path.startsWith('/cards/')) {
           return { status: 400, message: 'upstream had a moment' };
         }
@@ -505,7 +513,7 @@ describe('the run is ONE transaction — one log, threaded through every step', 
     // Read back, not counted: the wreckage the advice is about really is there.
     expect(stand.cards.size).toBe(1);
     expect(result.rollback?.orphans.map((o) => o.cause)).toEqual(['compensation-failed']);
-  });
+  }, 40000);
 
   it('a DETERMINISTIC wire failure escaping uninstrumented is NOT retryable either', async () => {
     // #151's gate is two conjuncts and this pins the SECOND one: behind

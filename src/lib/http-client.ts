@@ -1,5 +1,6 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
 import { rateLimitMessage } from './error-handler';
+import { isTransientStatus } from './favro-error';
 import { RefusalError } from './refusal';
 
 /**
@@ -102,8 +103,10 @@ export class FavroHttpClient {
   }
 
   private shouldRetry(error: AxiosError): boolean {
-    const status = error.response?.status;
-    return !status || status === 408 || status === 429 || (status >= 500);
+    // `isTransientStatus` is shared with the `retryable` we REPORT (#162), so
+    // the set this client retries and the set an agent is told to retry cannot
+    // drift apart again.
+    return isTransientStatus(error.response?.status);
   }
 
   /**

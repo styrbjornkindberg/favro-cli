@@ -12,7 +12,7 @@ tempConfigDir('favro-error-test-');
 
 // Required after the env is set, so dispatch's module graph cannot see a real config.
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const { isRetryable } = require('../lib/dispatch') as typeof import('../lib/dispatch');
+const { isRetryable, retryAdvice } = require('../lib/dispatch') as typeof import('../lib/dispatch');
 
 describe('classifyFavroError — closed not-found set', () => {
   const notFound = [
@@ -64,10 +64,36 @@ describe('classifyFavroError — closed not-found set', () => {
     expect(isRetryable('rolled-back', error)).toBe(false);
   });
 
-  test('an unrecognised message on the same status is still retryable', () => {
+  // An unrecognised message is decided by STATUS now (#162). It used to be read
+  // as transient whatever the status, which is what put `"retryable": true` on a
+  // 400 — see the live case two tests down.
+  test('an unrecognised message on a 404 is NOT retryable — the status names the request', () => {
     const error: any = new Error('Request failed with status code 404');
     error.response = { status: 404, data: { message: 'Some brand new 404' } };
+    expect(isRetryable('rolled-back', error)).toBe(false);
+  });
+
+  // The other half of the same rule, so inverting the gate cannot pass by
+  // answering `false` to everything: these four are exactly what `HttpClient`
+  // already retries in-process, and `isTransientStatus` is the shared expression.
+  test.each([408, 429, 500, 503])('an unrecognised message on a %i is still retryable', (status) => {
+    const error: any = new Error(`Request failed with status code ${status}`);
+    error.response = { status, data: { message: 'Some brand new failure' } };
     expect(isRetryable('rolled-back', error)).toBe(true);
+  });
+
+  // The live case (#162 item 2), measured against the real API on 2026-08-13:
+  //   PUT /cards/{cardId} {"name": <1115 chars>}
+  //     → 400 {"message":"Card can't have more than 1024 characters."}
+  // Two identical runs, identical answer, and the CLI reported `retryable: true`
+  // with *"safe to retry"* on both — while `favro help issue-tracker` tells
+  // agents to "read the 'retryable' field, never the outcome".
+  test('the live 400 that reported retryable twice running', () => {
+    const error: any = new Error('Request failed with status code 400');
+    error.isAxiosError = true;
+    error.response = { status: 400, data: { message: "Card can't have more than 1024 characters." } };
+    expect(isRetryable('rolled-back', error)).toBe(false);
+    expect(retryAdvice('rolled-back', error)).toBe(false);
   });
 });
 
