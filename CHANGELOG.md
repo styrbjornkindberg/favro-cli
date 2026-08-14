@@ -15,8 +15,12 @@ day (`a649bd8`), and this release's notes kept landing in its section for every 
 after it — the same defect `4.0.0`'s own opening paragraph records happening to `3.1.0`.
 Cutting this release moved five top-level entries back out of it: #165 from its
 `Breaking`, #160 from its `Removed`, and three from its `Fixed` (#162 twice, #169). Each
-is in the matching section here, unedited. The `4.0.0` section below now describes only
-what the `v4.0.0` tarball shipped, which is the only thing a released section is for.
+is in the matching section here, unedited. Cutting it also found the opposite failure:
+**#167's post-tag fixes had no entry in either section**, so the largest behaviour change
+in this release — every aggregate count changing what it counts — was undocumented. It is
+written up below for the first time, from the commits' own measurements. The `4.0.0`
+section now describes only what the `v4.0.0` tarball shipped, which is the only thing a
+released section is for.
 
 ### Breaking
 
@@ -203,6 +207,64 @@ answer a clean 200 with a full entity and no effect (`removeTagIds`, an `assignm
 full-replace, `favroAttachments`, immutable fields) — only `TxCards`' read-backs catch
 those, and they stay; `dueDate: "2026-02-30"` accepted and stored as March 2nd; and a
 column move on an archived card silently un-archiving it.
+
+#### Every aggregate count is a board instance now, and two custom-field filters refuse (#167)
+
+`AggregateAPI` read the whole collection with `unique: true`, which returns one arbitrary
+row per `cardCommonId`, and then attributed each row to exactly one board. A card on two
+boards of the collection was counted on one of them and **missing from the other** —
+structurally, in `totalCards` and `stageDistribution` alike. Measured live on the #105
+scratch collection: a second board holding only a shared card was absent from `overview`'s
+`boards[]` entirely, `boardCount: 2, totalCards: 10` against `3` / `11` without the flag,
+while `cards list` on that board answered one.
+
+Dropping the flag makes every count in the report a **board instance** — `CONTEXT.md`'s own
+reading of `card`, what `cards list <board>` answers, and what the `__boards__` branch
+already did. `stats.total`, `by_status`, `by_owner` and `overview`'s `totalCards` /
+`stageDistribution` / `dueSummary` are one partition of that set and move together;
+`stageDistribution` renders as a percentage of `totalCards`, so they cannot count different
+things. `blockingCount` is the one number **not** in that partition, so it counts distinct
+blocked cards by `commonId` rather than edges — otherwise a blocker of a two-board card
+would have been reported as blocking two.
+
+The same partition then had to reach the member rollups, where it had stopped. `workload`
+and `team` now collapse per member on a shared `workItemKey` expression in `aggregate.ts`,
+so the four sites that must agree cannot drift. `totalEffort` / `effortSum` is the
+unarguable one: an estimate is a single card-level field holding a single number, and a
+card committed to two boards was reported as **twice the work**. `activeCards` gates
+`OVERLOAD_THRESHOLD`, so it would also have raised `⚠ OVERLOADED` on somebody carrying
+eight items across two boards. `activeBoards` and `workload`'s `cards[]` stay
+per-instance — they name the board, and those are the two the un-collapsed read genuinely
+improved. `next` dedupes for the same reason: both rows of a two-board card score
+identically and spent two of `--count`'s five slots on one thing. `stale` is left
+per-instance on purpose and now says so at the loop — it lists places to go, and divides by
+nothing. `ListCardsOptions.unique` goes with the flag; `aggregate` was its only caller.
+
+**`customField:` and `customFields:` now refuse instead of answering.**
+`favro query <board> "customField:Status=Todo"` answered `matches: []` over three cards
+that all carry `Status` = `Todo`, exit 0, with a summary saying it had searched. Two
+independent causes, both measured on a live card
+(`[{"customFieldId":"zxMLxD4zx4tSwJr75","value":["YLanLiuXKA8JpvEsX"]}]`): the predicate
+matched `f.name`, a key the wire does not send, and the found value is the option's **id**
+while the query names the **label**. Refused rather than repaired — resolving a field name
+and an option label needs the board's definitions, and `GET /customfields` is org-scoped
+and ignores its board filter (3797 rows over 38 pages on the measured org, for a board that
+defines 2), which is not a read this grammar can make on every filtered query. Matching the
+id and not the label would trade a wrong-empty for a wrong-populated, which is worse than
+both. One throw site, in `validateField`, so every spelling reaches it — including
+`customField in(…)`, which returns from a branch above the operator parse. The refusal
+names the two commands that DO read the values, and both exist: `custom-fields list <board>`
+and `cards list <board> --include custom-fields`.
+
+The plural `customFields` — the key on every card — refuses too, and that one was worse:
+`customFields~object` answered **true for every card**, because `compareValues` stringifies
+the array and `String([{…}])` is `[object Object]`. Populated and wrong rather than empty
+and wrong. The exclusion lives in `knownFields` rather than in the refusal's message,
+because the plural reaches that set from three directions, so striking it once at the
+source is what keeps the "Known fields" list from advertising a field that refuses.
+
+`preWarmCache` is deleted — no caller in `src/`, no test, and this ticket narrowed what it
+warmed — along with the three `PERFORMANCE.md` claims that described it.
 
 ### Added
 
@@ -432,6 +494,56 @@ co-tenants on a shared host, not containers.
   page-through per report — and that is the upgrade path recorded on `addEffort`. It was
   not taken here for the reason #167 refused the `customField:` filter: a lookup that can
   fail still needs this answer for the case where it does.
+
+- **`widgets list` answered `{"rows":[]}` for every card, and had since the filter was
+  written (#167).** `GET /widgets?cardCommonId=<x>` **ignores the filter** — measured
+  2026-08-14 on the #105 scratch board: 500 rows over 5 pages, every board in the
+  organisation. The rows are typed `backlog` and `board`, and the caller kept only
+  `type === 'card'`, so nothing ever survived. It is the command someone reaches for to
+  check whether a card forked onto several boards, and it said "no instances" for a card
+  that has one. It reads `GET /cards?cardCommonId=<x>` without `unique` now, one
+  entity per board instance, the route `docs/research/card-identifier-semantics.md` §3.3
+  prescribed and §5 had filed as unverified. The reference is settled to a `cardCommonId`
+  first: `/cards` takes it as a query value, so a `cardId` in that slot is a 200 with zero
+  rows — the same silent empty under a second spelling. The wire arm is paired-polarity,
+  two instances back for the matching card and empty for an unrelated one, because a lone
+  zero-row assertion cannot tell a silent wrong answer from a correct empty one.
+
+  `widgets list --card` also advertises `sequentialId`, and a colliding one refused through
+  `pickOneInstance` with "pass `--board <board>`" — **a flag the command did not have**,
+  which is `standup.ts:59` again. It has it now, threaded into the resolver, with an arm
+  asserting the board reaches the query. `listInstancesOfCard` sends no `archived`, and
+  that is the answer rather than a default taken: measured 2026-08-14, an archived instance
+  comes back carrying `archived: true`, and it is still an instance of that card on that
+  board.
+
+- **`custom-fields list <board>` reported the whole organisation as the board's (#167).**
+  `GET /customfields?widgetCommonId=<board>` **ignores the filter** — measured 2026-08-14
+  on the #105 org: 3797 rows came back for a board that defines 2, and the raw row carries
+  `widgetCommonId` and no `boardId` at all. The CLI forwarded the param and passed every
+  row through, so both `custom-fields list <board>` and the `customFields` facet of
+  `favro context <board>` answered with the organisation, with nothing in the envelope
+  saying so. The narrowing is client-side now, on `widgetCommonId` — the wire's own key —
+  inside `listFields`, so both callers get it from one place. The board argument is settled
+  through `resolveBoardId` first: with a client-side filter an unresolved **name** matches
+  no row, which would have traded an over-broad answer for an empty one.
+
+  Two edges recorded rather than asserted about: 270 of the 3797 rows carry no
+  `widgetCommonId` and belong to no board any probed endpoint can name, so they are listed
+  for none; and a card can carry a field whose definition names a different board — measured,
+  the write was accepted and echoed — so this is what a board **defines**, not everything
+  its cards can carry. The test fixtures had carried `boardId` and no `widgetCommonId`,
+  which is the shape the wire does not send; they carry the measured one now, and the new
+  arms are paired — the board's row in, the other board's and the boardless row out.
+
+- **`API-REFERENCE.md`'s custom-field reporting recipe emitted `null` per card (#167).** It
+  read `.fieldId` and `.displayValue` off a card's inlined array. Neither key is there —
+  `fieldId` is `CustomFieldsAPI`'s normalised spelling and `displayValue` lives on
+  `CustomFieldValue` — in the file that documents the CLI. Rewritten as the join it actually
+  is, against `.customFieldId` and `.value`, with the per-card loop deleted: one board read
+  carries every value. All three pipelines were run against the live board before being
+  written down. Two `cards list … | jq '.[].cardId'` pipelines nearby read a bare array off
+  an envelope; both fixed.
 
 ## 4.0.0 — 2026-08-14
 
