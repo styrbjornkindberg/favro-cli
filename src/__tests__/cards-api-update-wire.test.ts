@@ -460,13 +460,19 @@ describe('a column move carries the board the column is resolved against (#162)'
 
   test('the refusal carries the status and the request, not just Favro’s words', async () => {
     const { handler } = favroResolvingColumns();
-    const { api, close } = await startServer(handler);
+    const { api, received, close } = await startServer(handler);
     try {
       const error = await api
         .updateCard(CARD, { columnId: DONE, boardId: OTHER_BOARD })
         .then(() => undefined, (e: unknown) => e);
       expect((error as { response?: { status?: number } }).response?.status).toBe(202);
       expect((error as Error).message).toContain(`PUT /cards/${CARD}`);
+      // ONE PUT. The throw comes out of the interceptor's FULFILLED half, and
+      // axios chains each interceptor as a single `.then(fulfilled, rejected)`,
+      // so it cannot reach that pair's own retry handler. A denial is
+      // deterministic and retrying it four times would only cost 15s of backoff
+      // before failing identically.
+      expect(received.filter((r) => r.method === 'PUT')).toHaveLength(1);
     } finally {
       await close();
     }

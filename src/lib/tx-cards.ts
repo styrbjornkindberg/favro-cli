@@ -767,9 +767,10 @@ export class TxCards implements ReadTx {
     // this throw told an agent it was worth retrying. It no longer arrives —
     // `http-client` refuses a 2xx carrying a message before the PUT returns
     // (#165), `retryable: false` — so the three causes above are what is left,
-    // and two of the three genuinely are transient. The check STAYS: it is the
-    // only cover for the family that fix does not close, a rejected write that
-    // answers a clean 200 with a full entity and no effect (14 measured).
+    // and two of the three genuinely are transient. The check STAYS: nothing at
+    // the wire can see a rejected write that answers a clean 200 with a full
+    // entity and no effect (14 measured across the card-write surface), and on
+    // the column path this re-read is what would catch one.
     if (after.columnId !== columnId) {
       throw new TransientError(
         `Column move on card ${cardId} was accepted with no denial message but the card did not land ` +

@@ -226,9 +226,10 @@ function classifyByMessage(status: number, message?: string): FavroErrorClassifi
  *
  * `.response` and `isAxiosError` are the two structural properties the rest of
  * the codebase reads a wire failure by — `classifyThrownError`, `isWireFailure`,
- * `alreadyGone`, `logError` — so the ~15 existing call sites classify this the
- * same way they classify a 403, and the message they render comes from the same
- * classifier rather than from a second wording here.
+ * `alreadyGone`, `logError` — so the 20 `classifyThrownError` call sites across
+ * nine modules (counted 2026-08-14) classify this the same way they classify a
+ * 403, and the message they render comes from the same classifier rather than
+ * from a second wording here.
  *
  * **It satisfies only HALF of `RefusalError`'s contract, deliberately.** That
  * contract is "deterministic AND we did not write"; a 202 is measured to refuse
