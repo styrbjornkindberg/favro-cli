@@ -364,6 +364,37 @@ caller as a failure rather than as a finding, and the exit code is the failure's
 
 ### Removed
 
+- **The shipped skill's `references/command-reference.md` is deleted (#160)** — 896
+  lines, of which `git blame` dates 783 to 2026-03/04, before the map that replaced the
+  surface they documented. #8 had already ruled `--help` the single source of truth and
+  specified `SKILL.md` as a "thin stub, ~15 lines" whose body is a pointer, with no
+  duplicated content and nothing beside it. `SKILL.md:8-10` says the same in the shipped
+  prose: anything written there instead "would be a second
+  copy". Nothing reached it: `SKILL.md` never named it, and MCP `favro_help` shells out
+  to `favro <tokens> --help` (`mcp-server.ts:58`), so a file in `references/` cannot
+  appear there. It did ship — `package.json`'s `files` includes `skills` — so the tarball
+  drops 26.5 kB and goes from 268 files to 267. `skills/` still carries `SKILL.md` and the
+  four `skills/builtin/*.yaml`.
+
+  What the tests lose, stated rather than implied. It supplied **173 of the 308**
+  option-table rows `documented-commands-coverage.test.ts` reads (171 of the 302 it
+  scopes to a command) — more than half of both counters in one file. The floors are
+  re-measured to the exact new counts, 307/301 → 134/130 against 135/131 today, so they
+  still grip on a single lost row. It also supplied all 79 of the command headings the
+  `declaredHeadings` arm of `help-topic-drift.test.ts` read; that entry now reads
+  `docs/commands.md`, where the arm reads 22 command headings nothing was checking
+  before. Pointing it there found two defects on the first run: `cards blockers` — which
+  the built CLI answers with `unknown command 'blockers'` — still stood as a live
+  heading, and the heading spelling `favro query` was invisible to an arm that never
+  expected the `favro` prefix on a heading. Both are fixed.
+
+  `SKILL.md` survives the delete and needed no rewrite, but two of its own claims did.
+  Its frontmatter advertised "batch card operations", a family removed in 4.0 — it now
+  names the surviving spelling, keeping "batch" as a trigger word. Its body promised "the
+  seven intents"; the dispatch table holds thirteen, and the number is dropped rather than
+  re-pinned, for the reason `issue-tracker-help.ts:141-144` already records about the
+  sibling string: "a number here rots silently, and did".
+
 - **The command-runner allowlist is deleted (#119).** `command-runner-ratchet.test.ts`
   held the files not yet migrated to `run()`, and failed in both directions — a listed
   file that had gone clean failed too, so the list could not rust into cover. #119 struck

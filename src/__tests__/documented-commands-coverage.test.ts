@@ -67,8 +67,9 @@
  * options TABLE ROW is a `| \`--json\` | Output raw JSON |` — an inline code span
  * holding a flag and nothing else — so it built no fragment and no arm ever ran
  * on it. Every option table in every doc was invisible. Measured at the time:
- * `command-reference.md` gave a `--json` row to 19 commands that have no `--json`
- * option, and a reader copying it out of the table gets `unknown option '--json'`
+ * the skill reference (`command-reference.md`, deleted by #160) gave a `--json`
+ * row to 19 commands that have no `--json` option, and a reader copying it out
+ * of the table gets `unknown option '--json'`
  * — the exact failure this file exists to stop, one column over.
  *
  * `readOptionTables` closes that. It walks the table STRUCTURE (row → cells →
@@ -703,12 +704,12 @@ const FINDINGS = [
  * `ROWS_READ`, `ROWS_SCOPED` and `CONTINUED` are module-level counters that
  * `readOptionTables` and `readBody` increment — and the self-check tests below
  * call BOTH of those functions on synthetic Markdown. Asserting the floors
- * against the live counters therefore counts roughly twenty synthetic rows and a
- * handful of synthetic joins as though the docs had supplied them, which is
- * exactly enough slack to hide a real drop: delete every option table from
- * `command-reference.md` and the floor still passes on the self-check's own
- * contributions. That is the "module-level state satisfying a counter" trap, and
- * a floor that its own prover can satisfy is not a floor.
+ * against the live counters therefore counts twelve synthetic rows and a handful
+ * of synthetic joins as though the docs had supplied them, which is exactly
+ * enough slack to hide a real drop: delete every option table in
+ * `docs/git-integration.md` and a floor read off the live counter still passes
+ * on the self-check's own twelve. That is the "module-level state satisfying a
+ * counter" trap, and a floor that its own prover can satisfy is not a floor.
  *
  * It happens to be harmless today only because jest runs `it` bodies in
  * declaration order and the floor arm is declared first. That is an ordering
@@ -769,13 +770,22 @@ describe('every command the docs teach is a command the binary answers to', () =
     // header block (696/666 → 700/670) and left these two comments reading the
     // old numbers, which is the drift above happening to the line that describes
     // it. Both spellings are corrected together now.
-    expect(DOC_FILES.length).toBeGreaterThan(30); // 41 today
+    //
+    // A FOURTH: #160 deleted the skill reference outright, which takes one doc,
+    // five invocations and one file out of the scan (41→40, 700→695, 670→665,
+    // 29→28) — then its own CHANGELOG and README edits put two invocations back
+    // (695→697, 665→666), the drift this block keeps recording happening again
+    // to the ticket recording it. Both were measured on the finished tree, in
+    // that order. No floor moved for those four — the slack absorbed it, the
+    // same trade the #110 line above records. The two option-table floors could
+    // not absorb it and are re-measured below.
+    expect(DOC_FILES.length).toBeGreaterThan(30); // 40 today
     expect(SURFACE.size).toBeGreaterThan(140); // 148 today: 125 actions + groups
-    expect(INVOCATIONS.length).toBeGreaterThan(600); // 700 today
+    expect(INVOCATIONS.length).toBeGreaterThan(600); // 697 today
     // …and almost all of them met the real surface. See RESOLVED above: this is
     // the assertion a silently-matching-nothing walker cannot pass.
-    expect(RESOLVED).toBeGreaterThan(570); // 670 today; the rest are `<placeholder>` and bare `favro --help`
-    expect(new Set(INVOCATIONS.map((i) => i.file)).size).toBeGreaterThan(22); // 29 today
+    expect(RESOLVED).toBeGreaterThan(570); // 666 today; the rest are `<placeholder>` and bare `favro --help`
+    expect(new Set(INVOCATIONS.map((i) => i.file)).size).toBeGreaterThan(22); // 28 today
     // …and the option tables were read at all. `readOptionTables` matching
     // nothing is the #156 bug restored, and it would restore it silently: the
     // arms above never touched a table row, so every one of them stays green.
@@ -804,8 +814,19 @@ describe('every command the docs teach is a command the binary answers to', () =
     // out of both counters, nothing moved or reworded. Re-measured on the
     // finished tree by instrumenting these two expressions, not subtracted from
     // the diff.
-    expect(DOC_ROWS_READ).toBeGreaterThan(307); // 308 today, over 5 files
-    expect(DOC_ROWS_SCOPED).toBeGreaterThan(301); // 302 today; the other 6 are `## Global Options`
+    //
+    // 308/302 until #160 deleted the skill reference, which supplied 173 of the
+    // rows read and 171 of the rows scoped — more than half of both counters in
+    // one file. #8 had already ruled `--help` the single source of truth and
+    // specified no reference file at all; `git blame` dates 783 of the file's
+    // 896 lines to 2026-03/04, before the map that replaced the surface those
+    // lines documented. Nothing was moved or reworded into another doc, and
+    // the rows now come from three files instead of four. Re-measured by
+    // instrumenting these two expressions on the finished tree — including the
+    // file count, which is three and not four: `README.md` has a row that looks
+    // like an option table to a grep and is not one to `readOptionTables`.
+    expect(DOC_ROWS_READ).toBeGreaterThan(134); // 135 today: 67 API-REFERENCE, 61 docs/commands, 7 docs/git-integration
+    expect(DOC_ROWS_SCOPED).toBeGreaterThan(130); // 131 today; the other 4 are `## Global Options`
     // …and the `\`-continued commands were joined rather than read one line at a
     // time. Zero here means every flag past the first line went unchecked again.
     expect(DOC_CONTINUED).toBeGreaterThan(45); // 58 joins today

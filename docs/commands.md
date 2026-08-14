@@ -89,7 +89,7 @@ a **rendering** decision — the read still returns every field, so
 Bring them back with `--body` and `--include custom-fields`. There is no
 `--full`. `cards export` is carved out and always carries bodies.
 
-### `cards blockers` is now `cards blocking`
+### `cards blocking` (was `cards blockers`)
 
 It returns the cards this card *blocks*, exactly as its own help string always
 said. `blockers` named the other end; `cards blocked-by` is unchanged.

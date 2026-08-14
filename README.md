@@ -374,10 +374,10 @@ A fresh server instance is created per request, so credentials never cross reque
 Open the favro-cli folder in your LLM coding tool and ask it:
 
 ```
-Install the favro-cli skill for yourself. The skill is at
-skills/favro-cli/ in this directory (including the references/
-subfolder). Copy it to wherever you load instructions from
-automatically, so you'll have it in every future session.
+Install the favro-cli skill for yourself. The skill is
+skills/favro-cli/SKILL.md in this directory. Copy it to wherever you
+load instructions from automatically, so you'll have it in every
+future session.
 ```
 
 The LLM knows where it keeps its own instruction files. It will install the skill for itself and confirm when it's ready.

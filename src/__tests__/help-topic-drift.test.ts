@@ -131,10 +131,14 @@ function invocations(text: string): string[][] {
 }
 
 /**
- * The command-reference declares one command per `### \`<cmd> …\`` heading, and
- * drops the `favro ` prefix — so those headings need reading as invocations too,
- * or a whole deleted command's section stays invisible to this test. (`audit`
- * did exactly that.)
+ * `docs/commands.md` declares one command per `### \`<cmd> …\`` heading — so
+ * those headings need reading as invocations too, or a whole deleted command's
+ * section stays invisible to this test. (`audit` did exactly that.)
+ *
+ * A heading spells the command either way, `### \`cards list\`` or `### \`favro
+ * query\``, so a leading `favro` is dropped: `invocations` consumes that prefix
+ * in its own pattern, and without this the two spellings disagree about a
+ * command both of them can see.
  */
 function declaredHeadings(text: string): string[][] {
   const found: string[][] = [];
@@ -144,6 +148,7 @@ function declaredHeadings(text: string): string[][] {
       if (!/^[a-z][a-z0-9-]*$/.test(raw)) break;
       tokens.push(raw);
     }
+    if (tokens[0] === 'favro') tokens.shift();
     if (tokens.length > 0) found.push(tokens);
   }
   return found;
@@ -484,7 +489,7 @@ describe('shipped prose never names a command the CLI does not have', () => {
   // and an agent reading it burns a turn on a command that cannot run.
   const DOCS = [
     path.join(REPO_ROOT, 'skills', 'favro-cli', 'SKILL.md'),
-    path.join(REPO_ROOT, 'skills', 'favro-cli', 'references', 'command-reference.md'),
+    path.join(REPO_ROOT, 'docs', 'commands.md'),
   ];
 
   it.each([...DOCS, '<help topic>'])('%s', (file) => {
