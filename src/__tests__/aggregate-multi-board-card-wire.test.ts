@@ -28,6 +28,7 @@ import { overviewHandler } from '../commands/overview';
 import { workloadHandler } from '../commands/workload';
 import { teamHandler } from '../commands/team';
 import { nextHandler } from '../commands/next';
+import { EFFORT_UNAVAILABLE_NOTE } from '../lib/custom-field-map';
 import { tempConfigDir } from '../test-support/config-dir';
 
 const ORG = 'org-1';
@@ -237,6 +238,15 @@ function ctxFor(client: FavroHttpClient): Ctx {
   };
 }
 
+/**
+ * A handler's OWN human render, so the arms can assert what a human sees rather
+ * than only what the JSON carries (#117's parity rule). `String` because the
+ * runner's formatter type allows a `void` return for a formatter that prints for
+ * itself; `workload` and `team` both return the string.
+ */
+const formatOf = <T>(r: { item: T; human?: (item: T) => string | void }): string =>
+  String(r.human!(r.item));
+
 afterEach(async () => {
   await Promise.all(running.splice(0).map((s) => new Promise((done) => s.close(() => done(null)))));
 });
@@ -343,6 +353,13 @@ describe('a card on two boards is counted on both (#167 item 3)', () => {
     expect(member.activeBoards).toEqual([ONE, TWO]);
     // wip + done stay a partition of `totalCards`, which this divides by.
     expect(member.completionRate).toBe(0);
+
+    // The human polarity of the arm below: a readable total prints as a number and
+    // the note stays OFF, so a formatter that printed it unconditionally reddens.
+    for (const rendered of [formatOf(workload), formatOf(team)]) {
+      expect(rendered).toContain('Effort: 10');
+      expect(rendered).not.toContain(EFFORT_UNAVAILABLE_NOTE);
+    }
   });
 
   it('next spends one slot per work item, not one per board', async () => {
@@ -382,6 +399,14 @@ describe('a card on two boards is counted on both (#167 item 3)', () => {
 
     const team = await teamHandler(ctx, {});
     expect(team.item.members.find(m => m.name === 'Ada')!.effortSum).toBeNull();
+
+    // The human half, driven through the handler's own formatter (#117's parity
+    // rule). `null` is a word a JSON reader can look up; a human reader gets one
+    // cell and needs the sentence next to it, and both were deletable green.
+    for (const rendered of [formatOf(workload), formatOf(team)]) {
+      expect(rendered).toContain('Effort: unavailable');
+      expect(rendered).toContain(EFFORT_UNAVAILABLE_NOTE);
+    }
 
     // `next` loses two of its three weighted terms on this payload, and says so
     // rather than presenting a due-date-only ranking as a weighted one.
