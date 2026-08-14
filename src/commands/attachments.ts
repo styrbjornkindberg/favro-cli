@@ -32,7 +32,7 @@ export function registerAttachmentsCommands(program: Command): void {
       await checkResolvedScope(ctx.client, () => boardOfCard(ctx.client, cardCommonId), options.force);
 
       if (options.dryRun) {
-        dryRunLog('uploading', 'attachment', `${options.file} to card ${cardCommonId}`);
+        dryRunLog('upload', 'attachment', `${options.file} to card ${cardCommonId}`);
         return;
       }
 
@@ -61,7 +61,7 @@ export function registerAttachmentsCommands(program: Command): void {
       await checkResolvedScope(ctx.client, () => boardOfComment(ctx.client, commentId), options.force);
 
       if (options.dryRun) {
-        dryRunLog('uploading', 'attachment', `${options.file} to comment ${commentId}`);
+        dryRunLog('upload', 'attachment', `${options.file} to comment ${commentId}`);
         return;
       }
 

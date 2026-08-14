@@ -85,7 +85,7 @@ export function registerTaskListsCommands(program: Command): void {
       await checkResolvedScope(ctx.client, () => boardOfCard(ctx.client, cardCommonId), options.force);
 
       if (options.dryRun) {
-        dryRunLog('creating', 'task list', `"${options.name}" on card ${cardCommonId}`);
+        dryRunLog('create', 'task list', options.name!);
         return;
       }
 
@@ -121,7 +121,7 @@ export function registerTaskListsCommands(program: Command): void {
       await checkResolvedScope(ctx.client, () => boardOfTaskList(taskListId, ctx), options.force);
 
       if (options.dryRun) {
-        dryRunLog('updating', 'task list', taskListId, updateData);
+        dryRunLog('update', 'task list', taskListId, updateData);
         return;
       }
 
@@ -145,7 +145,7 @@ export function registerTaskListsCommands(program: Command): void {
       await checkResolvedScope(ctx.client, () => boardOfTaskList(taskListId, ctx), options.force);
 
       if (options.dryRun) {
-        dryRunLog('deleting', 'task list', taskListId);
+        dryRunLog('delete', 'task list', taskListId);
         return;
       }
 

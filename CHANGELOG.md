@@ -538,6 +538,23 @@ column move on an archived card silently un-archiving it.
   read alike — and names two remedies that exist: `favro auth login`, and passing a name,
   email or userId with `favro users list` to find one.
 
+- **`Would creating tag "x"` — every shared dry-run preview was ungrammatical (#162 item
+  10).** `dryRunLog` renders `Would ${verb} ${targetType} "${targetName}"`, and 17 of its
+  19 call sites passed a participle; the two that read correctly were the two that passed
+  a bare verb. All 19 pass an infinitive now, so the preview reads
+  `Would create tag "release"`, `Would delete task list "…"`, `Would upload attachment
+  "…"`. Three call sites also embedded their own quotes inside the name and printed
+  `Would creating column ""probe" on board 5dd7…"`; they pass the bare name, and the board
+  or card id they wrapped is the positional argument the caller typed.
+  `dry-run-verb-grammar.test.ts` scans the call sites, because this string was pinned
+  verbatim by a green test and one arm on one command would leave the other eighteen free.
+
+  Two other item-10 claims **do not reproduce** on this release, measured on the built
+  CLI: passing `--json` to `boards delete` or to `columns create` answers
+  `error: unknown option '--json'` on stderr at exit 1, with **nothing on stdout** — no
+  JSON, pretty-printed or otherwise. Neither command has that flag, and the advice that
+  suggested it went in #160, after #119 made JSON the default.
+
 - **`workload` and `team` reported `Effort: 0` for everyone, structurally (#169).**
   `extractEffort` matches a custom field by NAME (`/effort|story.?points?|points?|estimate/i`)
   and the card payload carries no name: `GET /cards` and the create echo both inline

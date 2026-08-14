@@ -112,7 +112,7 @@ export function registerTasksCommands(program: Command): void {
       await checkResolvedScope(ctx.client, () => boardOfCard(ctx.client, cardCommonId), options.force);
 
       if (options.dryRun) {
-        dryRunLog('adding', 'task', `"${name}" to card ${cardCommonId}`);
+        dryRunLog('add', 'task', name);
         return;
       }
 
@@ -178,7 +178,7 @@ export function registerTasksCommands(program: Command): void {
       await checkTaskScope(ctx.client, options.card, options.force);
 
       if (options.dryRun) {
-        dryRunLog('updating', 'task', taskId, updateData);
+        dryRunLog('update', 'task', taskId, updateData);
         return;
       }
 
@@ -203,7 +203,7 @@ export function registerTasksCommands(program: Command): void {
       await checkTaskScope(ctx.client, options.card, options.force);
 
       if (options.dryRun) {
-        dryRunLog('completing', 'task', taskId);
+        dryRunLog('complete', 'task', taskId);
         return;
       }
 
@@ -228,7 +228,7 @@ export function registerTasksCommands(program: Command): void {
       await checkTaskScope(ctx.client, options.card, options.force);
 
       if (options.dryRun) {
-        dryRunLog('deleting', 'task', taskId);
+        dryRunLog('delete', 'task', taskId);
         return;
       }
 

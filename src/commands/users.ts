@@ -114,7 +114,7 @@ export function registerUsersCommands(program: Command): void {
     .option('-y, --yes', 'Skip confirmation prompt')
     .action(run(async (ctx: Ctx, options: GroupWriteFlags) => {
       if (options.dryRun) {
-        dryRunLog('creating', 'group', options.name!);
+        dryRunLog('create', 'group', options.name!);
         return;
       }
 
@@ -147,7 +147,7 @@ export function registerUsersCommands(program: Command): void {
       }
 
       if (options.dryRun) {
-        dryRunLog('updating', 'group', groupId, updateData);
+        dryRunLog('update', 'group', groupId, updateData);
         return;
       }
 
@@ -174,7 +174,7 @@ export function registerUsersCommands(program: Command): void {
       await assertOrgScope(`Deleting group ${groupId}`, options.force);
 
       if (options.dryRun) {
-        dryRunLog('deleting', 'group', groupId);
+        dryRunLog('delete', 'group', groupId);
         return;
       }
 

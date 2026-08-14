@@ -129,7 +129,7 @@ export function registerTagsCommands(program: Command): void {
           );
           return;
         }
-        dryRunLog('creating', 'tag', options.name!);
+        dryRunLog('create', 'tag', options.name!);
         return;
       }
 
@@ -163,7 +163,7 @@ export function registerTagsCommands(program: Command): void {
       if (options.color) updateData.color = options.color;
 
       if (options.dryRun) {
-        dryRunLog('updating', 'tag', tagId, updateData);
+        dryRunLog('update', 'tag', tagId, updateData);
         return;
       }
 
@@ -191,7 +191,7 @@ export function registerTagsCommands(program: Command): void {
       await assertOrgScope(`Deleting tag ${tagId}`, options.force);
 
       if (options.dryRun) {
-        dryRunLog('deleting', 'tag', tagId);
+        dryRunLog('delete', 'tag', tagId);
         return;
       }
 

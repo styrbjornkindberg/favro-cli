@@ -110,7 +110,7 @@ describe('favro tags create --dry-run', () => {
     // The polarity that matters: the wrong answer is a preview promising a
     // create, and asserting only the presence of the new line would pass with
     // both lines printed.
-    expect(stdout).not.toContain('Would creating');
+    expect(stdout).not.toContain('Would create');
     expect(served.some((r) => r.method === 'POST')).toBe(false);
   });
 
@@ -120,12 +120,12 @@ describe('favro tags create --dry-run', () => {
     const { code, stdout } = await drive(['tags', 'create', '--name', 'wayfinder:absent', '--dry-run']);
 
     expect(code).toBeUndefined();
-    // `Would creating` is ungrammatical, and it is #162 item 10's, not this
-    // ticket's: 17 of `dryRunLog`'s 19 call sites pass a participle, and only
-    // `git.ts`'s two pass a bare verb. Pinned verbatim anyway, because this arm
-    // is about WHICH branch ran and a looser match would also admit the
-    // already-exists line. Fixing the grammar means editing this string too.
-    expect(stdout).toContain('Would creating tag');
+    // Was `Would creating tag` — ungrammatical, and #162 item 10's, not this
+    // ticket's. All 19 `dryRunLog` call sites pass a bare verb now (the two in
+    // `git.ts` always did); `dry-run-verb-grammar.test.ts` is the ratchet.
+    // Still pinned verbatim, because this arm is about WHICH branch ran and a
+    // looser match would also admit the already-exists line.
+    expect(stdout).toContain('Would create tag');
     expect(stdout).toContain('wayfinder:absent');
     expect(stdout).not.toContain('already exists');
     expect(served.some((r) => r.method === 'POST')).toBe(false);

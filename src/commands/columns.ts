@@ -69,7 +69,7 @@ export function registerColumnsCommands(program: Command): void {
       const position = options.position !== undefined ? parseInt(options.position, 10) : undefined;
 
       if (options.dryRun) {
-        dryRunLog('creating', 'column', `"${options.name}" on board ${boardId}`);
+        dryRunLog('create', 'column', options.name!);
         return;
       }
 
@@ -103,7 +103,7 @@ export function registerColumnsCommands(program: Command): void {
       const position = options.position !== undefined ? parseInt(options.position, 10) : undefined;
 
       if (options.dryRun) {
-        dryRunLog('updating', 'column', columnId);
+        dryRunLog('update', 'column', columnId);
         return;
       }
 
