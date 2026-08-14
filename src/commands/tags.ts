@@ -6,11 +6,12 @@
  * favro tags create --name "Bug" --color red
  */
 import { Command } from 'commander';
-import { Tag } from '../lib/tags-api';
+import { Tag, TagLookupError } from '../lib/tags-api';
 import { RefusalError } from '../lib/refusal';
 import { assertOrgScope, confirmAction, dryRunLog } from '../lib/safety';
 import { invalidateCache } from '../lib/name-cache';
 import { Ctx, run } from '../lib/run';
+import { c } from '../lib/theme';
 
 /** The flag row the tag writes share. */
 interface TagWriteFlags {
@@ -65,10 +66,19 @@ export function registerTagsCommands(program: Command): void {
   // #125 built that separate guard, and it covers exactly one of the three:
   // `assertOrgScope` on `tags delete`, because `tags delete` strips the tag from
   // every card in the organization and cannot be undone — a wider blast radius
-  // than anything the collection lock guards. `create` is additive and a stray
-  // one is undone by a delete; `update` renames org-wide but another rename puts
-  // it back. Irreversibility is the line. On those two the guard remains
-  // `confirmAction`, which `-y` waives.
+  // than anything the collection lock guards. `create` is additive and `update`
+  // renames org-wide but another rename puts it back. Irreversibility is the line.
+  // On those two the guard remains `confirmAction`, which `-y` waives.
+  //
+  // What that argument does NOT establish is that the undo is REACHABLE. #125's
+  // wording for `create` was "a stray one is undone by a delete" — but the delete
+  // it points at is the one write `assertOrgScope` refuses, so under a configured
+  // lock `create` is permitted and its stated undo needs `--force` (#163).
+  // `update`'s undo is another `update`, which takes no org guard, so `create` is
+  // the only one of the two whose remedy the lock withholds. Left as it is rather
+  // than guarded: adding an org check to `create` is a behaviour change on a
+  // command the lock was decided not to govern, and the argument above for why it
+  // is additive still holds. What is fixed here is the claim, not the guard.
   //
   // Not the reason, though #125's own body offers it: "an unknown tag name is
   // already refused client-side". `createTag` refuses nothing — it posts the name
@@ -86,6 +96,33 @@ export function registerTagsCommands(program: Command): void {
     .option('-y, --yes', 'Skip confirmation prompt')
     .action(run(async (ctx: Ctx, options: TagWriteFlags) => {
       if (options.dryRun) {
+        // The preview RESOLVES the name first (#163). It used to return here
+        // before the client existed, so it could not ask, and `Would create` was
+        // printed for `wayfinder:map` — a tag that exists with id
+        // `ZLAszhmCsDpuNGG66`. A caller reads that as "this does not exist yet",
+        // which is the one question a dry run is asked.
+        //
+        // Through `getTag`, the resolution `favro tags get` already makes, so the
+        // two commands cannot disagree about whether a name is taken. It costs
+        // the org tag list, cached — which is why this preview reaches for
+        // `ctx.api` and so pays the credential check `run()` defers for the
+        // argv-only previews (#135).
+        //
+        // Only an 'unknown' lookup means "would create". 'ambiguous' — the name
+        // matches several tags — is left to propagate as the refusal `tags get`
+        // raises: the tag plainly exists, and its message lists every colliding
+        // id, which is more than this line could say.
+        const existing = await ctx.api.tags.getTag(options.name!).catch((error: unknown) => {
+          if (error instanceof TagLookupError && error.kind === 'unknown') return undefined;
+          throw error;
+        });
+        if (existing) {
+          console.log(
+            `${c.dryRun('dry-run')} Tag "${c.bold(existing.name)}" already exists ` +
+              `(${existing.tagId}) — nothing to create`,
+          );
+          return;
+        }
         dryRunLog('creating', 'tag', options.name!);
         return;
       }
