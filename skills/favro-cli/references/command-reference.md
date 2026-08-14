@@ -433,11 +433,11 @@ Manage card instances across boards. In Favro, a card can exist on multiple boar
 
 ### `widgets list` 📖 READ
 
-List all board instances of a specific card.
+List all board instances of a specific card — one row per board the card lives on, carrying that instance's `cardId`, `boardId` and `columnId`. An instance with no `boardId` is a fork.
 
 | Flag | Description |
 |------|-------------|
-| `--card <cardCommonId>` | **Required.** The cardCommonId to trace |
+| `--card <card>` | **Required.** Card to trace — sequentialId, cardId or cardCommonId |
 
 ### `widgets add <boardId> <cardCommonId>` ⚠️ WRITE
 

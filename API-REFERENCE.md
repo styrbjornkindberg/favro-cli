@@ -1566,7 +1566,7 @@ Allows direct inspection and management of board workflows without full context 
 
 The Widget API is how Favro technically places the same `card` onto multiple different `boards` (e.g. from a Backlog board to a Kanban board). 
 
-- `favro widgets list --card <cardCommonId>` (See all boards a card sits on)
+- `favro widgets list --card <card>` (See all boards a card sits on)
 - `favro widgets add <boardId> <cardCommonId>` (Adds an existing card to a new board without duplicating the underlying card)
 
 ---

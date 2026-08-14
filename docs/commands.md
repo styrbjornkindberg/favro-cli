@@ -487,7 +487,7 @@ bodies, whole. It has no `--limit` — the board is fetched to completion.
 | `columns list <boardId>` | List columns on a board |
 | `columns create <boardId> --name "..."` | Create a column ⚠️ |
 | `columns update <columnId>` | Update a column ⚠️ |
-| `widgets list --card <cardCommonId>` | List boards a card sits on |
+| `widgets list --card <card>` | List boards a card sits on |
 | `widgets add <boardId> <cardCommonId>` | Add card to a board ⚠️ |
 
 ---

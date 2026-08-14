@@ -43,18 +43,63 @@ export interface CommittedWidget extends Omit<Widget, 'widgetCommonId'> {
   widgetCommonId?: string;
 }
 
+/**
+ * One board instance of a card — the row `widgets list --card` answers with.
+ *
+ * `boardId` is the instance's `widgetCommonId`, and it is OPTIONAL because an
+ * entity carrying none is a fork (an assignment entity with no board), which
+ * `query-parser.ts`'s `isUnblocked` already treats as nothing to act on. Such a
+ * row is listed rather than dropped: absent stays distinguishable from empty
+ * (`read-shape.ts` rule 3), and a card that exists only as a fork is exactly the
+ * answer someone asking "which boards is this on" needs to see.
+ */
+export interface CardInstance {
+  cardId: string;
+  cardCommonId?: string;
+  /** The instance's `widgetCommonId`. Absent on a fork. */
+  boardId?: string;
+  columnId?: string;
+  name?: string;
+  archived?: boolean;
+}
+
 export class WidgetsAPI {
   constructor(private client: FavroHttpClient) {}
 
   /**
-   * List widgets for a specific card.
-   * This reveals all the individual board instances (widgets) that span from a single cardCommonId.
+   * Every board instance of one card.
+   *
+   * `GET /cards?cardCommonId=<x>` **without `unique`** — one entity per
+   * instance, each carrying its own `cardId` and `widgetCommonId`. That is the
+   * route `docs/research/card-identifier-semantics.md` §3.3 named as the fix,
+   * and §5 filed as unverified; it is measured now, 2026-08-14 on the #105
+   * scratch board: one entity for a one-board card, `pages: 1`.
+   *
+   * It used to read `GET /widgets?cardCommonId=<x>` and keep the rows with
+   * `type === 'card'`, which answered `{"rows":[]}` for every card that has ever
+   * been passed to it. Both halves were wrong and each alone was fatal: the same
+   * probe measured `/widgets` returning **500 rows over 5 pages — every board in
+   * the organisation, `cardCommonId` ignored** — whose types are `backlog` and
+   * `board`. No row Favro sends on that endpoint has ever carried `type: 'card'`.
+   *
+   * `unique` is not sent. It collapses the multi-instance result to one row,
+   * which is the one thing this read must not do.
    */
-  async listWidgetsForCard(cardCommonId: string): Promise<Widget[]> {
-    const allWidgets = await getAllPages<Widget>(this.client, '/widgets', { cardCommonId });
+  async listInstancesOfCard(cardCommonId: string): Promise<CardInstance[]> {
+    const entities = await getAllPages<CardInstance & { widgetCommonId?: string }>(
+      this.client,
+      '/cards',
+      { cardCommonId },
+    );
 
-    // Filter to ensure we only return card widgets (not boards/lists)
-    return allWidgets.filter(w => w.type === 'card');
+    return entities.map(({ widgetCommonId, ...card }) => ({
+      cardId: card.cardId,
+      cardCommonId: card.cardCommonId,
+      boardId: widgetCommonId,
+      columnId: card.columnId,
+      name: card.name,
+      archived: card.archived,
+    }));
   }
 
   /**

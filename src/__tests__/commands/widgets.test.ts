@@ -116,9 +116,10 @@ beforeEach(() => {
     return card;
   }) as unknown as typeof MockClient.prototype.get;
 
-  MockWidgets.prototype.listWidgetsForCard = jest.fn().mockResolvedValue([
-    { widgetCommonId: 'w-1', boardId: 'board-a', type: 'board', name: 'Platform' },
-    { widgetCommonId: 'w-2', collectionIds: ['coll-1', 'coll-2'], type: 'backlog', name: 'Backlog' },
+  MockWidgets.prototype.listInstancesOfCard = jest.fn().mockResolvedValue([
+    { cardId: 'card-1', cardCommonId: 'ccid-1', boardId: 'board-a', columnId: 'col-a', name: 'Platform' },
+    // A fork: an assignment entity with no board instance.
+    { cardId: 'card-2', cardCommonId: 'ccid-1', name: 'Platform' },
   ]);
   MockWidgets.prototype.addWidgetToBoard = jest.fn().mockResolvedValue({ widgetCommonId: 'w-3' });
 });
@@ -128,15 +129,23 @@ afterEach(() => {
 });
 
 describe('widgets list', () => {
-  test('renders one row per board instance, falling back to collections when a widget has no board', async () => {
+  test('renders one row per board instance, and says so when an instance has no board', async () => {
     await runCli(['widgets', 'list', '--card', 'ccid-1']);
 
-    expect(MockWidgets.prototype.listWidgetsForCard).toHaveBeenCalledWith('ccid-1');
-    expect(output()).toContain('Found 2 widget(s) for card ccid-1');
+    expect(MockWidgets.prototype.listInstancesOfCard).toHaveBeenCalledWith('ccid-1');
+    expect(output()).toContain('Found 2 board instance(s) of card ccid-1');
     expect(tableSpy).toHaveBeenCalledWith([
-      { BoardID: 'board-a', WidgetID: 'w-1', Type: 'board', Name: 'Platform' },
-      { BoardID: 'coll-1,coll-2', WidgetID: 'w-2', Type: 'backlog', Name: 'Backlog' },
+      { BoardID: 'board-a', CardID: 'card-1', Column: 'col-a', Name: 'Platform' },
+      { BoardID: '—', CardID: 'card-2', Column: '—', Name: 'Platform' },
     ]);
+  });
+
+  test('a cardId is settled to its cardCommonId before the read, not passed through', async () => {
+    // `/cards` takes `cardCommonId` as a query value: a `cardId` in that slot is
+    // 200 with zero rows, which is exactly the silent empty this command shipped.
+    await runCli(['widgets', 'list', '--card', 'card-1']);
+
+    expect(MockWidgets.prototype.listInstancesOfCard).toHaveBeenCalledWith('ccid-1');
   });
 
   test('the machine DEFAULT emits the widgets untouched and skips the table', async () => {
@@ -149,17 +158,17 @@ describe('widgets list', () => {
     expect(JSON.parse(output()).rows).toHaveLength(2);
   });
 
-  test('reports zero widgets rather than failing', async () => {
-    MockWidgets.prototype.listWidgetsForCard = jest.fn().mockResolvedValue([]);
+  test('reports zero instances rather than failing', async () => {
+    MockWidgets.prototype.listInstancesOfCard = jest.fn().mockResolvedValue([]);
 
     await runCli(['widgets', 'list', '--card', 'ccid-1']);
 
-    expect(output()).toContain('Found 0 widget(s)');
+    expect(output()).toContain('Found 0 board instance(s)');
     expect(process.exitCode).toBeUndefined();
   });
 
   test('a failed read exits 1', async () => {
-    MockWidgets.prototype.listWidgetsForCard = jest.fn().mockRejectedValue(new Error('404 card not found'));
+    MockWidgets.prototype.listInstancesOfCard = jest.fn().mockRejectedValue(new Error('404 card not found'));
 
     await runCli(['widgets', 'list', '--card', 'ghost']);
 
