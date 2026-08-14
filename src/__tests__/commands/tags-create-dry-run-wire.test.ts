@@ -120,6 +120,11 @@ describe('favro tags create --dry-run', () => {
     const { code, stdout } = await drive(['tags', 'create', '--name', 'wayfinder:absent', '--dry-run']);
 
     expect(code).toBeUndefined();
+    // `Would creating` is ungrammatical, and it is #162 item 10's, not this
+    // ticket's: 17 of `dryRunLog`'s 19 call sites pass a participle, and only
+    // `git.ts`'s two pass a bare verb. Pinned verbatim anyway, because this arm
+    // is about WHICH branch ran and a looser match would also admit the
+    // already-exists line. Fixing the grammar means editing this string too.
     expect(stdout).toContain('Would creating tag');
     expect(stdout).toContain('wayfinder:absent');
     expect(stdout).not.toContain('already exists');

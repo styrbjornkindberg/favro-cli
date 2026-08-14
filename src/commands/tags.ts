@@ -92,7 +92,13 @@ export function registerTagsCommands(program: Command): void {
     .description('Create a new global tag')
     .requiredOption('--name <name>', 'Tag name')
     .option('--color <color>', 'Tag color (e.g. red, blue)')
-    .option('--dry-run', 'Preview without making API calls')
+    // "Preview without making API calls" until #163, which is the wording every
+    // dry-run in this file carries and the only one of the three this preview
+    // falsified: resolving the name is a `GET /tags`. Same shape as
+    // `boards-delete.ts:20` and the `comments` trio, which made the same trade
+    // and say so — and it is the flag text a caller reads before deciding
+    // whether a preview is safe, so it has to name the read.
+    .option('--dry-run', 'Preview the create. Reads the org tag list first to check whether the name is taken')
     .option('-y, --yes', 'Skip confirmation prompt')
     .action(run(async (ctx: Ctx, options: TagWriteFlags) => {
       if (options.dryRun) {

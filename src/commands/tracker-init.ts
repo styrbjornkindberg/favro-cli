@@ -280,11 +280,14 @@ export async function initTracker(
  * `New column` — as the problem, and proposed renaming it to something the role
  * proposal can classify. That remedy does nothing, measured through
  * `detectStage`: `New column`, `Todo` and `To Do` all classify `backlog`, and
- * `proposeColumnMapping` leaves the first column unmapped for all three. The
- * scaffold this same command writes when a collection has no board is `To Do` /
- * `Doing` / `Done` — which produces exactly the shape the report calls a defect.
- * So an unmapped landing column is the DESIGN, and what was missing is that
- * nothing said so. Nothing is renamed here.
+ * `proposeColumnMapping` leaves the first column unmapped for all three — on a
+ * board of three or more columns. On a TWO-column board `active` falls through
+ * to `rest[0]`, which IS the first column, so the same names map it. That is why
+ * the guard below asks the MAPPING rather than the stage. The scaffold this same
+ * command writes when a collection has no board is `To Do` / `Doing` / `Done` —
+ * which produces exactly the shape the report calls a defect. So an unmapped
+ * landing column is the DESIGN, and what was missing is that nothing said so.
+ * Nothing is renamed here.
  *
  * Silent when the first column IS one of the two mapped ones: then the open/
  * closed lines above already name where cards land.
