@@ -222,6 +222,47 @@ exit 0 and lost the finding silently.
 response that does not name the destination board, so an unobserved board reaches the
 caller as a failure rather than as a finding, and the exit code is the failure's own.
 
+#### A write Favro refuses with a SUCCESS status now fails instead of reporting `ok` (#165)
+
+Favro answers some rejected writes `202` with the reason in the body. Axios resolves a
+2xx, so the refusal arrived as the entity the caller asked for — every field `undefined`
+— and the CLI reported success. Both of this release's CRITICALs are that shape.
+
+The HTTP client now refuses **any** 2xx carrying a top-level `message`, on every
+endpoint. Measured 2026-08-14, 110 logged probes: 28 of 28 message-carrying 2xx were
+denials, and 47 of 47 successful 2xx — card writes, dependencies, tasklists, comments,
+deletes, and every single-entity and paginated GET in remit — carried no message at all.
+Keyed on the message rather than on 202, because 202 legitimately means "accepted" in
+HTTP and a message rule survives Favro moving a denial onto a 200.
+
+Live, on the #105 scratch board, same request through plain axios and through the client:
+
+```
+$ favro custom-fields set <card> 5XdsToqDtXLn2rtL9 nonsense --yes
+{"intent":"update","outcome":"rolled-back","retryable":false,
+ "error":"Favro answered 202 — a SUCCESS status — and said \"Unsupported custom field type\"..."}
+```
+
+`Unsupported custom field type` is the **eleventh** distinct denial message measured, and
+the first one found by driving the rule rather than probing for it — nothing had to be
+taught it, which is why the rule is a default rather than a longer list of known
+messages. `retryable: false`: the refusal is deterministic and repeating the call repeats
+it, where the read-back that used to catch some of these called them transient.
+
+**A 202 refuses at least one field, not necessarily all of them.** Measured the same day:
+`PUT /cards/{id} {name, columnId:<bogus>, widgetCommonId:<real>}` answers
+`202 {"message":"Invalid column"}` **and the name changes anyway**. So a transaction now
+unwinds around one of these rather than propagating it as "nothing was written" — driven
+live across two dispatches sharing one compensation log, where the second's first write
+was refused and the first's write was restored. What the 202 itself applied was never
+logged and cannot be undone; the refusal says so rather than claiming a clean rollback.
+
+**What this does NOT close**, and no message here claims it does: 14 rejected writes that
+answer a clean 200 with a full entity and no effect (`removeTagIds`, an `assignmentIds`
+full-replace, `favroAttachments`, immutable fields) — only `TxCards`' read-backs catch
+those, and they stay; `dueDate: "2026-02-30"` accepted and stored as March 2nd; and a
+column move on an archived card silently un-archiving it.
+
 ### Changed
 
 - **`favro tracker init --board "<name>"` refuses in the shared wording (#123).** It
