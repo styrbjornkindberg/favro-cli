@@ -86,7 +86,15 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
         );
       }
 
-      if (!(await confirmAction(`Link card ${cardId} to ${toCardId} (${type})?`, { yes: options.yes }))) {
+      // `!options.dryRun`, like every other write in the CLI that hands its
+      // preview to the dispatch table (#167 item 4). These two were the whole
+      // exception: `cards move` three commands down, `widgets add`, `cards
+      // archive`, `cards delete`, `custom-fields set`, the three `dependencies`
+      // writes and `cards update` all guard it, and the commands that return
+      // their own preview never reach a confirm at all. Unguarded, a preview
+      // demanded the flag that SUPPRESSES confirmation — and off a TTY
+      // `confirmAction` throws, so `--dry-run` alone exited 1 without previewing.
+      if (!options.dryRun && !(await confirmAction(`Link card ${cardId} to ${toCardId} (${type})?`, { yes: options.yes }))) {
         return { item: { linked: false, aborted: true }, human: () => 'Aborted.' };
       }
 
@@ -151,7 +159,9 @@ export function registerCardsLinkCommands(cardsCmd: Command): void {
       fromCardId: string,
       options: { yes?: boolean; dryRun?: boolean; force?: boolean },
     ) => {
-      if (!(await confirmAction(`Unlink card ${cardId} from ${fromCardId}?`, { yes: options.yes }))) {
+      // The sibling of the guard on `link` above. #167 named only `link`; this
+      // one carries the identical defect and would be the next report.
+      if (!options.dryRun && !(await confirmAction(`Unlink card ${cardId} from ${fromCardId}?`, { yes: options.yes }))) {
         return { item: { unlinked: false, aborted: true }, human: () => 'Aborted.' };
       }
 

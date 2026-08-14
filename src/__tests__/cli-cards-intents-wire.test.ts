@@ -572,6 +572,43 @@ describe('the three new commands confirm before writing, like every sibling writ
       asked.mockRestore();
     }
   });
+
+  /**
+   * The same rule at the two commands that did not follow it (#167 item 4).
+   *
+   * `cards link --dry-run` asked, and off a TTY `confirmAction` THROWS — so the
+   * preview exited 1 having printed nothing, and seeing it required passing the
+   * flag whose job is to suppress confirmation. `unlink` carried it too.
+   *
+   * The spy REJECTS rather than merely counting, because `confirmAction`
+   * short-circuits to `true` under NODE_ENV=test: an arm that only asserted
+   * "not called" would also go green for a command that asks and is answered
+   * yes, which is not what the live CLI does. And the preview is asserted
+   * PRESENT — skipping the confirm while printing nothing would satisfy a
+   * not-called assertion alone.
+   */
+  it.each([
+    ['link', [CARD, FAR, '--type', 'depends-on']],
+    ['unlink', [CARD, FAR]],
+  ])('`cards %s --dry-run` previews without -y', async (cmd, argv) => {
+    const stand = await startServer();
+    const asked = jest
+      .spyOn(safety, 'confirmAction')
+      .mockRejectedValue(
+        new Error('Non-interactive environment detected (no TTY). Pass -y / --yes to confirm without a prompt.'),
+      );
+
+    try {
+      await run(cmd, ...(argv as string[]), '--dry-run');
+
+      expect(asked).not.toHaveBeenCalled();
+      expect(process.exitCode).toBeUndefined();
+      expect(said()).toContain('[dry-run]');
+      expect(writes(stand.received)).toEqual([]);
+    } finally {
+      asked.mockRestore();
+    }
+  });
 });
 
 describe('`cards retag` enforces the triage vocabulary before the wire', () => {
