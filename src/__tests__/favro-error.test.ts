@@ -187,10 +187,6 @@ describe('classifyFavroError — 2xx carrying a denial', () => {
     // 2026-08-14. It needed nothing added here to be caught, which is the
     // property the default exists for.
     ['Unsupported custom field type'],
-    // Not a denial anybody has measured — the point is that an unrecognised
-    // message on a 2xx refuses by DEFAULT, so no future denial has to be
-    // enumerated here before it is caught.
-    ['Card updated'],
   ])('202 {"message":"%s"} is a failure even though no closed set names it', (said) => {
     const result = classifyFavroError(202, said);
     expect(result.isFailure).toBe(true);
@@ -201,13 +197,43 @@ describe('classifyFavroError — 2xx carrying a denial', () => {
     expect(result.message).toContain(`"${said}"`);
   });
 
-  test('the 2xx wording says a 202 may have applied part of the write', () => {
-    // Measured 2026-08-14: `PUT {name, columnId:<bogus>}` answers
-    // `202 {"message":"Invalid column"}` and the name changes anyway. A reader
-    // told only "refused" would not re-read the card.
-    expect(classifyFavroError(202, 'Lanes are not enabled on this widget').message).toContain(
-      'refuses at least ONE field of the request, not necessarily all of them',
-    );
+  test('a message nobody has measured refuses too — the default is what is being tested', () => {
+    // This row carries the ARGUMENT, not a measurement: `Card updated` is not a
+    // denial anybody has seen. The rule is fail-closed on the presence of a
+    // message, so a denial Favro invents next month is caught with nothing added
+    // to the list above — which is the whole reason the closed sets were not
+    // widened instead.
+    expect(classifyFavroError(202, 'Card updated').isFailure).toBe(true);
+  });
+
+  test('the 202 wording says part of the write may have applied, and is uncompensated', () => {
+    // Measured 2026-08-14: `PUT {name, columnId:<bogus>, widgetCommonId:<the
+    // card's board>}` answers `202 {"message":"Invalid column"}` and the name
+    // changes anyway. A reader told only "refused" would not re-read the card,
+    // and one told "rolled-back" would believe the applied half was undone.
+    const message = classifyFavroError(202, 'Lanes are not enabled on this widget').message;
+    expect(message).toContain('refuses at least ONE field of the request, not necessarily all of them');
+    expect(message).toContain('is not logged for compensation');
+  });
+
+  test('the caveat rides EVERY 202 refusal, including the three a closed set names', () => {
+    // The trap that ate it once already: `failureMessage` prefers the
+    // classifier's wording over the error's own, and the closed sets name three
+    // of the ten measured denial messages — so a caveat written into the 2xx
+    // branch alone, or onto `WireRefusalError` alone, silently skips those three.
+    for (const said of ['Access denied', 'Invalid column', 'Dependency already exists']) {
+      expect(classifyFavroError(202, said).message).toContain('is not logged for compensation');
+    }
+  });
+
+  test('and rides NOTHING else — not a 200, not a 4xx', () => {
+    // The caveat is a 202 measurement. On a 200 it would name a status the
+    // response falsifies, and `Read the card back` is not advice a refused GET
+    // or DELETE can act on. The REFUSAL is still wider than the wording: the
+    // wire boundary fires on any 2xx carrying a message.
+    expect(classifyFavroError(200, 'Card updated').isFailure).toBe(true);
+    expect(classifyFavroError(200, 'Card updated').message).not.toContain('A 202 refuses');
+    expect(classifyFavroError(403, 'Access denied').message).not.toContain('A 202 refuses');
   });
 
   test('a 2xx denial is never retryable, by status as well as by marker', () => {
@@ -226,7 +252,7 @@ describe('WireRefusalError — the 2xx-denial boundary throw (#165)', () => {
     expect(thrown()).toBeInstanceOf(RefusalError);
   });
 
-  test('carries the response the ~15 classifyThrownError call sites read', () => {
+  test('carries the response the 11 classifyThrownError call sites read', () => {
     const classified = classifyThrownError(thrown());
     expect(classified?.isFailure).toBe(true);
     expect(classified?.raw).toBe('Invalid column');
@@ -236,11 +262,14 @@ describe('WireRefusalError — the 2xx-denial boundary throw (#165)', () => {
     expect(isWireFailure(thrown())).toBe(true);
   });
 
-  test('its own message is the classifier’s, plus the request and the partial-write warning', () => {
+  test('its own message is the classifier’s, plus the request it was answering', () => {
+    // The request line is the ONE thing this error adds. Everything a reader
+    // needs to decide with — the refusal, the partial-write caveat, the
+    // uncompensated half — is in the classifier's wording, because that is what
+    // `failureMessage` reports and this error's own `.message` is not.
     const message = thrown().message;
     expect(message).toContain(classifyFavroError(202, 'Invalid column').message);
     expect(message).toContain('PUT /cards/abc');
-    expect(message).toContain('is logged for compensation');
   });
 });
 

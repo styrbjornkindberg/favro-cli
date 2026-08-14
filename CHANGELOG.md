@@ -257,6 +257,13 @@ live across two dispatches sharing one compensation log, where the second's firs
 was refused and the first's write was restored. What the 202 itself applied was never
 logged and cannot be undone; the refusal says so rather than claiming a clean rollback.
 
+**Inside the rollback report too.** A compensating write Favro refuses with
+`202 {"message":"Access denied"}` classifies `not-found` on its message — the same words
+a 403 uses for an absent resource — so the unwind counted it as already-undone and
+reported `rolled-back` with no orphan, for a change that is still there. It is a
+`compensation-failed` orphan now, quoting Favro's words, and the outcome is
+`rollback-incomplete`.
+
 **What this does NOT close**, and no message here claims it does: 14 rejected writes that
 answer a clean 200 with a full entity and no effect (`removeTagIds`, an `assignmentIds`
 full-replace, `favroAttachments`, immutable fields) — only `TxCards`' read-backs catch

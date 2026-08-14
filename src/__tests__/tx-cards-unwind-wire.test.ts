@@ -45,7 +45,7 @@ const running: http.Server[] = [];
  * Only the dependency routes — everything else in this transaction is a hex
  * reference, which `toCardId` settles without a call.
  */
-async function startServer(): Promise<Stand> {
+async function startServer(opts: { denyDeleteWith202?: true } = {}): Promise<Stand> {
   const received: Received[] = [];
   const edges: Stand['edges'] = [];
 
@@ -80,6 +80,12 @@ async function startServer(): Promise<Stand> {
         return send(200, { dependencies: depsOf(near) });
       }
       if (req.method === 'DELETE') {
+        // The compensating write REFUSED, in the shape Favro refuses with
+        // (#165): a 2xx whose body carries the denial. `Access denied` is in
+        // #38's closed not-found set, so on the message alone this is
+        // indistinguishable from "the edge is already gone" — which is exactly
+        // what `alreadyGone` used to conclude.
+        if (opts.denyDeleteWith202) return send(202, { message: 'Access denied' });
         const before = edges.length;
         for (let i = edges.length - 1; i >= 0; i -= 1) {
           const e = edges[i];
@@ -139,5 +145,34 @@ describe('already-gone on the inverse is decided by the wire, not only by the me
       method: 'DELETE',
       path: `/cards/${CARD}/dependencies/${FAR}`,
     });
+  });
+
+  it('a compensating write REFUSED with a 202 is an orphan, not an already-undone (#165)', async () => {
+    // The mirror of the arm above, and the reason `alreadyGone` cannot decide on
+    // the message alone. `202 {"message":"Access denied"}` classifies
+    // `not-found` — the same words a 403 uses for an absent resource — so
+    // without the type check the refusal was swallowed by `continue` and the run
+    // reported `rolled-back` with no orphan: the edge still there, the report
+    // saying the world was restored. That is a 2xx denial reading as success
+    // INSIDE the rollback report, which is the one place left where this
+    // release's defect class could still hide.
+    const stand = await startServer({ denyDeleteWith202: true });
+    const log = new CompensationLog();
+    const tx = new TxCards(new CardsAPI(stand.client), log, stand.client);
+
+    await tx.addBlockingEdge(CARD, FAR);
+    expect(stand.edges).toHaveLength(1);
+
+    const result = await log.unwind();
+
+    expect(result.outcome).toBe('rollback-incomplete');
+    expect(result.orphans).toHaveLength(1);
+    expect(result.orphans[0].cause).toBe('compensation-failed');
+    // Favro's own words reach the orphan's reason, so a reader is told WHY the
+    // edge is still there rather than being told it is not.
+    expect(result.orphans[0].reason).toContain('Access denied');
+    // And the edge really is still there — the assertion that makes the silence
+    // a defect rather than a cosmetic one.
+    expect(stand.edges).toHaveLength(1);
   });
 });

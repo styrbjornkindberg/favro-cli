@@ -162,9 +162,10 @@ function startServer(
      * The measured 202 partial (#165): the PUT applies every other field, does
      * NOT apply the column, and answers `202 {"message":"Invalid column"}` — a
      * SUCCESS status carrying a refusal. Measured live 2026-08-14 with
-     * `PUT {name, columnId:<bogus>}`, where the name changed anyway, which is
-     * what makes 202 mean "at least one field was refused" rather than "nothing
-     * happened".
+     * `PUT {name, columnId:<bogus>, widgetCommonId:<the card's board>}`, where the
+     * name changed anyway, which is what makes 202 mean "at least one field was
+     * refused" rather than "nothing happened". The board belongs in the recipe:
+     * without it the same write answers `202 "Access denied"` instead (#162).
      *
      * Distinct from `ignoreColumnWrites` on purpose: that one is the silent
      * family the read-backs exist for, this one is the loud family the wire
@@ -1467,16 +1468,22 @@ describe('a 2xx carrying a denial refuses, and takes the transaction with it (#1
 
   it('the report says the applied half is not compensated, rather than claiming a clean rollback', async () => {
     // `rolled-back` is the outcome vocabulary's closest word and it overstates
-    // what happened, because a field the 202 DID apply was never logged. The
-    // message is where that is said, and it is said on every path that renders a
-    // failure because it comes from the classifier, not from a wording here.
+    // what happened, because a field the 202 DID apply was never logged.
+    //
+    // **On `result.error`, deliberately.** `dispatch` reports
+    // `failureMessage(error)`, which prefers the classifier's wording and DROPS
+    // the thrown error's own — so a sentence written onto `WireRefusalError`
+    // reaches a reader of the exception and never reaches this envelope, which
+    // is what an agent actually reads. It was written there first and this arm
+    // is why it moved.
     const stand = await startServer({ refuseColumnWith202: true });
     await useTracker();
 
     const result = await dispatch('resolve', { card: CARD }, ctx(stand));
 
     expect(result.error).toContain('refuses at least ONE field of the request');
-    expect(result.error).toContain('Read the card back before retrying');
+    expect(result.error).toContain('is not logged for compensation, so an unwinding transaction');
+    expect(result.error).toContain('Read the card back before deciding what to do');
   });
 });
 

@@ -80,34 +80,50 @@ const CONFLICT_MESSAGES = new Set(['dependency already exists']);
 const INVALID_MESSAGES = new Set(['invalid column']);
 
 /**
- * What a 2xx denial means that a 4xx one does not: the write may be PART done.
+ * What a 202 denial means that a 4xx one does not: the write may be PART done.
  *
- * Measured 2026-08-14 — `PUT /cards/{id} {name, columnId:<bogus>}` answered
- * `202 {"message":"Invalid column"}` and the name changed anyway. So the closed
- * sets' own wordings are all wrong on a 2xx by omission: "nothing was changed"
- * and "the request was rejected as invalid" both let a reader believe the card
- * is untouched. Appended to whichever branch named the message rather than
- * written into the 2xx branch, because the three closed sets name three of the
- * ten measured denial messages and would otherwise each drop it.
+ * Measured 2026-08-14 — `PUT /cards/{id} {name, columnId:<bogus>,
+ * widgetCommonId:<the card's board>}` answered `202 {"message":"Invalid
+ * column"}` and the name changed anyway. The board is part of the recipe, not
+ * decoration: #162 measured that a `columnId` write with NO `widgetCommonId`
+ * answers `202 "Access denied"`, so only a resolvable board with an unresolvable
+ * column reproduces this (`cards-api-update-wire.test.ts` pins both branches).
+ *
+ * So the closed sets' own wordings are all wrong on a 202 by omission: "nothing
+ * was changed" and "the request was rejected as invalid" both let a reader
+ * believe the card is untouched. Appended to whichever branch named the message
+ * rather than written into the 2xx branch, because the three closed sets name
+ * three of the ten measured denial messages and would otherwise each drop it.
+ *
+ * The compensation half lives HERE and not on `WireRefusalError`, because
+ * `dispatch` reports `failureMessage(error)` — which prefers this wording and
+ * drops the error's own. A sentence written only on the error never reaches the
+ * report that needs it.
  */
 const TWO_XX_PARTIAL =
   `A 202 refuses at least ONE field of the request, not necessarily all of them: measured ` +
-  `2026-08-14, \`PUT /cards/{id} {name, columnId:<bogus>}\` answered ` +
-  `202 {"message":"Invalid column"} and the name changed anyway. Read the card back before ` +
-  `retrying.`;
+  `2026-08-14, \`PUT /cards/{id} {name, columnId:<bogus>, widgetCommonId:<the card's board>}\` ` +
+  `answered 202 {"message":"Invalid column"} and the name changed anyway. Whatever it DID apply ` +
+  `is not logged for compensation, so an unwinding transaction cannot undo that half. Read the ` +
+  `card back before deciding what to do.`;
 
 /**
  * Classify a Favro response by its message, not its status.
  *
- * A 2xx that classifies as a failure carries `TWO_XX_PARTIAL` on its wording,
- * whichever branch below named it.
+ * A **202** that classifies as a failure carries `TWO_XX_PARTIAL` on its
+ * wording, whichever branch below named it.
  *
  * @param status HTTP status of the response (2xx included — a 2xx can deny).
  * @param message `response.data.message` as Favro sent it, if any.
  */
 export function classifyFavroError(status: number, message?: string): FavroErrorClassification {
   const classified = classifyByMessage(status, message);
-  if (!classified.isFailure || status < 200 || status >= 300) return classified;
+  // 202 exactly, not the 2xx range. All 28 measured denials were 202s, and the
+  // caveat is a 202 measurement: on a 200 it would name a status the response
+  // falsifies, and "read the card back" is not advice a refused GET or DELETE
+  // can act on. The REFUSAL still fires for any 2xx — that is `http-client`'s
+  // rule and it is deliberately wider than this wording.
+  if (!classified.isFailure || status !== 202) return classified;
   return { ...classified, message: `${classified.message}\n${TWO_XX_PARTIAL}` };
 }
 
@@ -226,10 +242,14 @@ function classifyByMessage(status: number, message?: string): FavroErrorClassifi
  *
  * `.response` and `isAxiosError` are the two structural properties the rest of
  * the codebase reads a wire failure by — `classifyThrownError`, `isWireFailure`,
- * `alreadyGone`, `logError` — so the 20 `classifyThrownError` call sites across
- * nine modules (counted 2026-08-14) classify this the same way they classify a
- * 403, and the message they render comes from the same classifier rather than
- * from a second wording here.
+ * `alreadyGone`, `logError` — so the 11 `classifyThrownError` call sites across
+ * eight modules (counted 2026-08-14: `boards-api`, `error-handler`,
+ * `read-shape`, `tx-cards`, `dispatch`, `card-reference`, `collections-api`,
+ * `tracker-init`) classify this the same way they classify a 403, and the
+ * message they render comes from the same classifier rather than from a second
+ * wording here — which is also why the compensation warning lives on
+ * `TWO_XX_PARTIAL` and not below: `failureMessage` prefers the classifier's
+ * wording and drops this error's own.
  *
  * **It satisfies only HALF of `RefusalError`'s contract, deliberately.** That
  * contract is "deterministic AND we did not write"; a 202 is measured to refuse
@@ -246,8 +266,7 @@ export class WireRefusalError extends RefusalError {
     const said = (data as { message?: unknown } | null | undefined)?.message;
     super(
       `${classifyFavroError(status, typeof said === 'string' ? said : undefined).message}\n` +
-        `The request was ${method} ${url}. Nothing this request DID apply is logged for ` +
-        `compensation, so a transaction unwinding around this cannot undo it.`,
+        `The request was ${method} ${url}.`,
     );
     this.name = 'WireRefusalError';
     this.response = { status, data };

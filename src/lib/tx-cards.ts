@@ -56,7 +56,7 @@ import BoardsAPI from './boards-api';
 import CustomFieldsAPI from './custom-fields-api';
 import WidgetsAPI, { CommittedWidget } from './widgets-api';
 import FavroHttpClient from './http-client';
-import { classifyThrownError } from './favro-error';
+import { classifyThrownError, WireRefusalError } from './favro-error';
 import { isUserId } from './id-shapes';
 import { resolveAssignee } from './assignee';
 import { requireTrackerMapping, verifyTrackerMapping, VerifiedTracker } from './tracker-config';
@@ -244,6 +244,15 @@ export interface CompensationEntry {
  * behaviour either way.
  */
 function alreadyGone(error: unknown): boolean {
+  // A 2xx denial is the compensating write being REFUSED, never evidence its
+  // target is gone (#165). `202 {"message":"Access denied"}` classifies
+  // `not-found` on its message — the same words a 403 uses for an absent
+  // resource — so without this line an inverse Favro turned down was counted as
+  // already-undone and the run reported `rolled-back` with no orphan: the one
+  // place left where a 2xx denial reads as success, and it is inside the
+  // rollback report. Keyed on the type, not the status, because the type is what
+  // says the response was a 2xx that we chose to refuse.
+  if (error instanceof WireRefusalError) return false;
   const status = (error as { response?: { status?: number } })?.response?.status;
   if (status === 404) return true;
   return classifyThrownError(error)?.kind === 'not-found';
