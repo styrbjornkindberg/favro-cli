@@ -106,7 +106,12 @@ describe('attachments upload', () => {
     await runCli(['attachments', 'upload', 'card-1', '--file', './error.log', '--dry-run']);
 
     expect(MockAttachments.prototype.uploadAttachment).not.toHaveBeenCalled();
-    expect(output()).toContain('[dry-run]');
+    // The TARGET, not just the marker: this arm read `toContain('[dry-run]')` while
+    // the target went from `./error.log to card card-1` to the bare name (#162 item
+    // 10), so the string it exists to cover was free to drift either way.
+    // Anchored at end of line, not `toContain`: a composite target still CONTAINS
+    // the bare file name, so a substring match passes on the string being banned.
+    expect(output()).toMatch(/^\[dry-run\] upload attachment: \.\/error\.log$/m);
     expect(process.exitCode).toBeUndefined();
   });
 
@@ -172,7 +177,8 @@ describe('attachments upload-to-comment', () => {
     await runCli(['attachments', 'upload-to-comment', 'cm-1', '--file', './trace.txt', '--dry-run']);
 
     expect(MockAttachments.prototype.uploadAttachmentToComment).not.toHaveBeenCalled();
-    expect(output()).toContain('[dry-run]');
+    // The target, as on the card arm above.
+    expect(output()).toMatch(/^\[dry-run\] upload attachment: \.\/trace\.txt$/m);
   });
 
   test('--force reaches the lazy scope resolver', async () => {

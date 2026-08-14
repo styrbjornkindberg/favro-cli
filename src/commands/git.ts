@@ -434,8 +434,14 @@ export function registerGitCommands(program: Command): void {
         return {
           item: { dryRun: true, branches: mappings, linkedBoard: config?.boardId, wouldMove: cards },
           human: () => {
-            if (merged.length) dryRunLog('move', 'cards', `${merged.length} card(s) to "Done"`);
-            if (open.length) dryRunLog('move', 'cards', `${open.length} card(s) to "In Progress"`);
+            // No `"` inside the target: `dryRunLog` wraps it in quotes of its own,
+            // so the inner pair rendered `Would move cards "3 card(s) to "Done""`
+            // — the nested-quote defect #162 item 10 fixed at three other sites.
+            // The destination stays in the target here rather than being stripped
+            // to a bare count: unlike `attachments`, it is derived from the branch
+            // mapping, not an argument the caller typed back.
+            if (merged.length) dryRunLog('move', 'cards', `${merged.length} card(s) to Done`);
+            if (open.length) dryRunLog('move', 'cards', `${open.length} card(s) to In Progress`);
           },
         };
       }
