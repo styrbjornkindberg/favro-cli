@@ -8,7 +8,7 @@ that set that version, `a13a02a`) and this release. Commands were driven with
 `FAVRO_CONFIG_DIR` pointed at a throwaway config and no real credentials, so exit codes
 and streams are real and no request reached a live org.
 
-## 4.0.0 — unreleased
+## 4.0.0 — 2026-08-14
 
 **This section was headed `3.1.0` until #110 landed in it.** The map (#80) planned the
 whole write-seam collapse as one `3.0.0`, but `3.0.0` was dated in this file and tagged
@@ -857,7 +857,7 @@ Issue #95, ADR-0006.
   column names on them. `boards list --include stats,velocity` remains a separate and
   unfixed zero — `listBoardsByCollection` calls both helpers with no cards at all (#157).
 
-  **Superseded, later in this same unreleased section.** The `include=cards` edge has since been
+  **Superseded, later in this same 4.0.0 section.** The `include=cards` edge has since been
   measured, and it closed the other way: there is no `cards` array, so `boards get` was printing the
   same unconditional zeros this paragraph attributes only to `boards list`. Both are fixed — see the
   first entry under Fixed. The widening above is dormant, not latent: nothing calls those counters
