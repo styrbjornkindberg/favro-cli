@@ -735,8 +735,8 @@ export class TxCards implements ReadTx {
     // Unlike `setArchived`'s read-back, this observation is a SEPARATE request,
     // so it has a failure mode that reading a PUT's own echo does not: the read
     // can fail while the write stands. "We could not look" is not "nothing was
-    // written" — the PUT already answered a success status — so the entry goes in and the
-    // unwind's own compare decides. It re-reads: our column still there means
+    // written" — the PUT already answered a success status — so the entry goes in
+    // and the unwind's own compare decides. It re-reads: our column still there means
     // restore it, anything else means report the concurrent edit. Dropping the
     // entry here instead reported `rolled-back` — which this facade defines as
     // the world being genuinely back where it was — for a card still sitting in

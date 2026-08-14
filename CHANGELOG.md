@@ -546,14 +546,23 @@ column move on an archived card silently un-archiving it.
   "…"`. Three call sites also embedded their own quotes inside the name and printed
   `Would creating column ""probe" on board 5dd7…"`; they pass the bare name, and the board
   or card id they wrapped is the positional argument the caller typed —
-  `attachments upload` now does the same, so the target is as consistent as the verb.
-  `dry-run-verb-grammar.test.ts` scans the call sites, because this string was pinned
-  verbatim by a green test and one arm on one command would leave the other eighteen free.
+  `attachments upload` now does the same on both its arms.
+
+  Two sites kept the nesting through that fix, because the scan read the VERB only:
+  `git sync --dry-run` printed `Would move cards "3 card(s) to "Done""` — the only two
+  previews in the set that stand for a bulk card move rather than one named object.
+  Both drop the inner pair. Their destination stays inside the target —
+  unlike `attachments`, it is derived from the branch mapping, not an argument the caller
+  typed back — so what `dry-run-verb-grammar.test.ts` now bans across all 19 sites is the
+  `"` character, not the composite shape. The scan covers both halves of the string,
+  because this text was pinned verbatim by a green test and one arm on one command would
+  leave the other eighteen free.
 
   **The same item's `answered 200` claim was real.** `TxCards`' three echo read-backs
   (`setArchived`, `setText`, `setDueDate`) hardcoded the status into user-facing prose —
-  `Archive write on card X answered 200 but did not take` — and the one write status this
-  repo has measured is a **`202`** (`custom-fields set`, live on the #105 board, #165).
+  `Archive write on card X answered 200 but did not take` — and the one write status code
+  this repo has written down is a **`202`** (`custom-fields set`, live on the #105 board,
+  #165; 47 successful 2xx were measured there too, their codes just never recorded).
   That one was a refusal, and a message-carrying 2xx is classified as one before it
   reaches these checks — so what arrives here is a clean 2xx whose code nothing observed,
   and `200` was a number the message invented, in the one line an agent reads while
@@ -601,7 +610,13 @@ column move on an archived card silently un-archiving it.
   instead of importing the two regexes raw, which needed a `customFieldId` row and so a
   measurement: `GET /customfields` for org `b0b311ac…` serves **3799** rows, **3769**
   base62-17 and **30** hex-24 (2026-08-14). Both shapes are real for this resource, which
-  the previous docblock had asserted off option ids rather than field ids.
+  the previous docblock had asserted off option ids rather than field ids. That read was
+  repeated with and without `widgetCommonId` and returned the identical 3799-row set both
+  ways — which confirms the client-side-filter claim `listFields` rests on a second time,
+  and leaves the two-row gap from the **3797** recorded earlier the same day (below, and in
+  `custom-fields-api.ts`) unexplained: the 270-unattributed and 2-naming-the-board counts
+  match across all three reads, so it is not the filter. The reconciliation lives in
+  `custom-fields-api.ts`.
 
   `sprint-plan` fabricated the same miss into its central judgement, and that is fixed
   here too. Its per-card cell really did render `—`, but `cumulative`, `totalSuggested`
@@ -609,14 +624,36 @@ column move on an archived card silently un-archiving it.
   free, `running <= budget` was `0 <= 40` for all of them, and the command reported the
   entire backlog as fitting a 40-point sprint with `totalSuggested: 0` and `overflow: []`.
   All three are now `number | null` / `boolean | null`: a card whose cost could not be
-  read is neither claimed to fit a budget nor excluded as over it, human mode prints
-  `budget not applied — effort unavailable` in place of the count, and `overflow` holds
-  only cards MEASURED not to fit.
+  read is neither claimed to fit a budget nor excluded as over it, and `overflow` holds
+  only cards MEASURED not to fit. The human header has three states rather than two,
+  because `addEffort`'s `null` is sticky but POSITIONAL — a card measured to overflow can
+  rank ahead of the first unreadable one, so `overflow` is non-empty while the total is
+  `null`, and `no budget cut made` printed four lines above the cut it made.
+
+  **`priorityScore` was the same defect on the same payload, and the louder one.**
+  `extractPriority` looks up six literal field NAMES, so on an id-keyed payload every
+  lookup missed and every card carried `priorityScore: 0` under a field documented
+  "0–4 numeric (higher = more important)". `compareSprintCards` reads that score FIRST,
+  found them all equal, found every effort `undefined`, and fell through to its
+  alphabetical tiebreaker — so the command whose `--help` advertised a priority×effort
+  ranking was sorting by title and said so nowhere. `priorityScore` is now
+  `number | null` with `priority: "unavailable"` beside it, the same spelling `next`
+  reports; the comparator ranks `null` where `unset` ranks (it must stay a total order)
+  and human mode names the cards it could not read and says the order is not the
+  documented ranking. `--help` says which fields have to be readable for it to be.
+
+  `sprint-plan`'s `extractPriority` is **still not reconciled** with `next`'s — they use
+  different vocabularies (`urgent` scores 4 here and 0 there) and different fallbacks (a
+  non-band value like `P1` displays itself here, `unset` there), so merging them would
+  ride a sort and display change in on a disclosure fix. Both now answer the
+  unavailability question through the one shared predicate; the duplication is recorded on
+  `extractPriority` as the open edge it is.
 
   **Not fixed: the name is still not resolved.** The id→name map half-exists —
   `getSnapshot` already holds a board-filtered one (`listFields(boardId)`, filtered
-  CLIENT-side, and its own two measured gaps carry over: 270 of 3797 rows are attributed
-  to no board, and a card can carry a field whose definition names another), and the
+  CLIENT-side, and its own two measured gaps carry over: 270 rows of the same page-through
+  are attributed to no board, and a card can carry a field whose definition names
+  another), and the
   aggregate path could buy the whole thing with one org-scoped `/customfields`
   page-through per report — and that is the upgrade path recorded on `addEffort`. It was
   not taken here for the reason #167 refused the `customField:` filter: a lookup that can

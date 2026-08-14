@@ -240,12 +240,19 @@ function ctxFor(client: FavroHttpClient): Ctx {
 
 /**
  * A handler's OWN human render, so the arms can assert what a human sees rather
- * than only what the JSON carries (#117's parity rule). `String` because the
- * runner's formatter type allows a `void` return for a formatter that prints for
- * itself; `workload` and `team` both return the string.
+ * than only what the JSON carries (#117's parity rule).
+ *
+ * The runner's formatter type allows a `void` return for a formatter that prints
+ * for itself, and `workload`/`team` both return the string. The guard is not
+ * decoration: `String(undefined)` is `"undefined"`, on which every `not.toContain`
+ * polarity arm below would pass VACUOUSLY. A third caller whose formatter prints
+ * for itself fails here instead of quietly passing.
  */
-const formatOf = <T>(r: { item: T; human?: (item: T) => string | void }): string =>
-  String(r.human!(r.item));
+const formatOf = <T>(r: { item: T; human?: (item: T) => string | void }): string => {
+  const rendered = r.human?.(r.item);
+  if (typeof rendered !== 'string') throw new Error('formatter returned no string — assertions below would be vacuous');
+  return rendered;
+};
 
 afterEach(async () => {
   await Promise.all(running.splice(0).map((s) => new Promise((done) => s.close(() => done(null)))));
