@@ -69,6 +69,12 @@ export function scoreCard(card: AggregateCard): { score: number; reasons: string
   let score = 0;
   const reasons: string[] = [];
 
+  // Read before the priority term, which reports on it: `fieldNamesUnavailable`
+  // answers about ANY id-shaped key, so a card carrying a named `Effort` beside
+  // one id-keyed field said "effort unreadable" and `quick win (effort: 1)` in the
+  // same array. The joint sentence now needs effort to have actually missed.
+  const effort = extractEffort(card);
+
   // Priority (4x weight)
   const priority = extractPriority(card);
   score += priority.score * 4;
@@ -77,7 +83,9 @@ export function scoreCard(card: AggregateCard): { score: number; reasons: string
   // payload names them by id alone BOTH are silently absent from the score.
   // Said out loud rather than left to look like a card nothing weighed (#169).
   else if (priority.label === 'unavailable') {
-    reasons.push('priority and effort unreadable — ranked on due date and stage only');
+    reasons.push(effort === undefined
+      ? 'priority and effort unreadable — ranked on due date and stage only'
+      : 'priority unreadable — not weighted in this ranking');
   }
 
   // Due urgency (3x weight)
@@ -104,8 +112,7 @@ export function scoreCard(card: AggregateCard): { score: number; reasons: string
   // worth it, and scoring an unjudged blocker is how it was wrong before.
   // Ask the frontier instead: `cards list --board <id> --filter "unblocked"`.
 
-  // Low effort bonus (prefer quick wins)
-  const effort = extractEffort(card);
+  // Low effort bonus (prefer quick wins) — `effort` read above.
   if (effort !== undefined && effort <= 2) {
     score += 3;
     reasons.push(`quick win (effort: ${effort})`);

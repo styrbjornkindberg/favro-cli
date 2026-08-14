@@ -132,6 +132,25 @@ describe('scoreCard — one term at a time', () => {
       'already in progress',
     ]);
   });
+
+  it('does not claim effort was unreadable on a card whose effort it read (#169 review)', () => {
+    // A MIXED payload: one field the caller handed in by name, one the payload
+    // names only by id. `fieldNamesUnavailable` answers about ANY id-shaped key,
+    // so the joint sentence used to fire beside `quick win (effort: 1)` — the
+    // reason contradicting the reason next to it, and the `effort: 1` on the row.
+    // Not reachable where cards come off `GET /cards` (nothing there carries a
+    // name), but reachable through any caller that hands names in, which is what
+    // `customFieldMap` keeps `name` first for.
+    const { reasons } = scoreCard(
+      card({ customFields: { Effort: 1, zxMLxD4zx4tSwJr75: ['YLanLiuXKA8JpvEsX'] } }),
+    );
+
+    expect(reasons).toEqual(['priority unreadable — not weighted in this ranking', 'quick win (effort: 1)']);
+
+    // The polarity: drop the readable effort and the joint sentence is right again.
+    expect(scoreCard(card({ customFields: { zxMLxD4zx4tSwJr75: ['YLanLiuXKA8JpvEsX'] } })).reasons)
+      .toEqual(['priority and effort unreadable — ranked on due date and stage only']);
+  });
 });
 
 /**
