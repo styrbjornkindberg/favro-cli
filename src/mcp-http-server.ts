@@ -6,6 +6,12 @@
  * Each request authenticates with the caller's own Favro credentials, so a
  * single deployment serves many users without storing any secrets.
  *
+ * Two routes. POST /mcp is everything below. GET /health answers
+ * {"status":"ok","version":<package version>} with no auth, and returns before
+ * the transport's Host allowlist runs — so a platform probe can read it, but a
+ * 200 proves only that the process is up, NOT that FAVRO_MCP_ALLOWED_HOSTS is
+ * correct. A wrong allowlist surfaces as 403 on /mcp and nowhere else.
+ *
  * Auth (per request):
  *   Authorization: Basic base64(email:apiToken)
  *   X-Favro-Organization-Id: <orgId>   (optional — auto-resolved otherwise)
@@ -36,9 +42,10 @@ import * as os from 'os';
 import * as path from 'path';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import FavroHttpClient from './lib/http-client';
-import { createMcpServer } from './mcp-server';
+import { createMcpServer, version } from './mcp-server';
 
 const MCP_PATH = '/mcp';
+const HEALTH_PATH = '/health';
 const ORG_CACHE_TTL_MS = 10 * 60 * 1000;
 
 interface Creds {
@@ -222,6 +229,15 @@ function allowedHosts(): string[] {
 
 export function createHttpServer() {
   return createServer((req, res) => {
+    if (req.url === HEALTH_PATH) {
+      if (req.method !== 'GET') {
+        sendError(res, 405, `Only GET ${HEALTH_PATH} is supported.`);
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ status: 'ok', version }));
+      return;
+    }
     if (req.url !== MCP_PATH || req.method !== 'POST') {
       sendError(res, req.url === MCP_PATH ? 405 : 404, `Only POST ${MCP_PATH} is supported.`);
       return;

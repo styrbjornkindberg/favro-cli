@@ -23,7 +23,7 @@ import { z } from 'zod';
 import { splitCommand } from './lib/split-command';
 import { findInteractiveCommand, interactiveRefusal } from './lib/interactive-commands';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const { version } = require('../package.json') as { version: string };
+export const { version } = require('../package.json') as { version: string };
 
 const execFileAsync = promisify(execFile);
 
