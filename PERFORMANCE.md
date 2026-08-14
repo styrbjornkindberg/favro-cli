@@ -26,9 +26,16 @@ operation performance.
 
 ### Tools
 
-- **`src/lib/profiling.ts`** — Custom profiler with named span tracking, throughput
-  calculation, and heap memory measurement. Covered by
-  `src/__tests__/lib/profiling.test.ts`.
+- **`src/lib/profiling.ts` — no longer a profiler.** It held `Profiler` (named span
+  tracking, throughput, heap measurement), `ConcurrencyController`,
+  `formatBenchmarkReport()`, `formatDuration()` and `assertBenchmarkTarget()`. `bulk.ts`
+  was the only production caller any of them had, #110 deleted `bulk.ts`, and 4.0.0
+  deleted the rest — none of it was ever exported from `src/index.ts`. What survives is
+  `CustomFieldCache` and `globalFieldCache`, which `custom-fields-api.ts` uses; that is
+  what `src/__tests__/lib/profiling.test.ts` covers now. **Every number below this line
+  was measured with tooling that no longer exists in the tree** — they are kept because
+  they are the basis of the recommendations, and `git show 6c3aac5:src/lib/profiling.ts`
+  is where the instrument went.
 - **No standing benchmark harness.** `tests/integration/performance.test.ts` was
   deleted in #71 along with the rest of `tests/`. Its mock-API benchmarks asserted
   a 30-second and a 5-minute ceiling against a mocked client — they took ~3s to
@@ -37,27 +44,27 @@ operation performance.
   because they are the basis of the recommendations; they are not re-verified on
   each run.
 
-### Approach
+### Approach — how the recorded numbers were taken, in the past tense
 
-1. **Span-based timing**: Named spans wrap each logical phase (card fetch, field lookup,
-   individual updates, rollback). This pinpoints where time is spent.
-2. **Mock API benchmarks**: Simulate configurable network latency to measure algorithmic
-   efficiency without real API availability. **These are not real measurements.**
-3. **Real API integration tests**: Optional (require `FAVRO_API_TOKEN` + `FAVRO_TEST_BOARD_ID`)
-   for end-to-end validation. Currently skipped (see [Skipped Tests](#skipped-tests)).
-4. **N+1 measurement**: Cache hit/miss counters expose whether field lookups are redundant.
+1. **Span-based timing**: named spans wrapped each logical phase (card fetch, field
+   lookup, individual updates, rollback), which is what pinpointed where time went.
+2. **Mock API benchmarks**: simulated configurable network latency to measure
+   algorithmic efficiency without real API availability. **These are not real
+   measurements.**
+3. **Real API integration tests**: optional (required `FAVRO_API_TOKEN` +
+   `FAVRO_TEST_BOARD_ID`) for end-to-end validation. Deleted with `tests/` in #71.
+4. **N+1 measurement**: cache hit/miss counters expose whether field lookups are
+   redundant. This is the ONE item still standing — `CustomFieldsAPI.cacheStats()`
+   returns them from a live process.
 
 ### How to Profile
 
-There is no `test:integration` script any more. To take a fresh measurement, use
-the profiler directly against a real board — a mocked client cannot produce a
-number worth recording here:
-
-```bash
-# The profiler is a library, not a test. Wrap the operation you care about:
-#   import { profile } from './src/lib/profiling';
-# and run it against a real board with real credentials.
-```
+There is no profiler and no `test:integration` script. Item 4 above is all the
+instrumentation the tree still carries, and it answers one question — whether a field
+lookup repeated. For anything timed, bring your own clock in a throwaway script and run
+it against a real board with real credentials, the shape
+`scripts/probe-favro-errors.ts` uses. A mocked client cannot produce a number worth
+recording here; that is what the disclaimer at the top of this file is about.
 
 ---
 
@@ -253,73 +260,19 @@ const api = new CustomFieldsAPI(client, { cache });
 
 ---
 
-## Concurrency Safety
+## Concurrency Safety — the section this was is gone with its subject
 
-### ConcurrencyController Design
+This section described `ConcurrencyController`'s semaphore, the last-write-wins race two
+in-flight `PATCH`es to one `cardId` could produce, and what `BulkTransaction`'s rollback
+did and did not guarantee at `concurrency > 1`. **None of those exist.** #110 deleted
+`bulk.ts` and `BulkTransaction`; 4.0.0 deleted `ConcurrencyController`, which had no
+production caller left after that. The CLI issues no controlled-parallel batch of card
+writes today, so there is no concurrency to make safe — `git show 6c3aac5` and the #110
+CHANGELOG entry carry the reasoning if either comes back.
 
-`ConcurrencyController` uses an **application-level semaphore** (in-memory queue of
-Promise resolvers), not database transactions. There is no locking at the API or
-persistence layer.
-
-```typescript
-// Semaphore: limits simultaneous in-flight requests
-async acquire(): Promise<void> {
-  if (this.activeCount < this.maxConcurrent) {
-    this.activeCount++;
-    return;
-  }
-  await new Promise<void>((resolve) => {
-    this.queue.push(resolve);
-  });
-  this.activeCount++;
-}
-```
-
-### Race Condition Risk: Parallel Updates to Same cardId
-
-**Yes, race conditions are possible** when two operations in the same batch target the
-same `cardId` with `concurrency > 1`. The controller limits total in-flight count but
-does not prevent two concurrent requests from updating the same card.
-
-Example:
-```
-Op 1: PATCH /cards/card-42 { status: "Done" }      ← both in flight simultaneously
-Op 2: PATCH /cards/card-42 { assignees: ["alice"] }  ← last-write-wins at API
-```
-
-The final state depends on which PATCH request arrives last at the Favro API — the
-controller does not serialize or merge per-card operations.
-
-**Mitigation:** Ensure the input CSV/operation list contains at most one operation per
-cardId when using `concurrency > 1`. This is the caller's responsibility; `BulkTransaction`
-does not deduplicate by cardId.
-
-### Atomic Rollback in Parallel Mode
-
-**Atomic rollback is NOT guaranteed in parallel mode (`concurrency > 1`).**
-
-The code documents this explicitly:
-
-```typescript
-// NOTE: Parallel mode does NOT guarantee strict atomic rollback of all concurrent ops.
-// Use sequential mode when strict rollback semantics are required.
-```
-
-**What actually happens on failure in parallel mode:**
-1. One operation fails → sets `aborted = true`
-2. In-flight requests already dispatched will complete (no cancellation)
-3. Rollback iterates `completed[]` and attempts to reverse each op sequentially
-4. Between the failure and rollback completion, some operations may have committed
-   without their rollback being guaranteed (e.g., if rollback itself fails)
-
-**Sequential mode (`concurrency: 1`)** provides best-effort atomicity: on failure, all
-previously completed operations are rolled back in reverse order before returning.
-
-**Recommendation:** Use `concurrency: 1` (the default) when transactional correctness is
-required. Use `concurrency > 1` only for operations where partial success or eventual
-consistency is acceptable.
-
----
+The one thing worth carrying forward if it does: the risk was never the semaphore, it was
+that **two operations in one batch targeting the same `cardId` are resolved by arrival
+order at the Favro API**, and nothing in the client serialised or merged them.
 
 ## Unverified Claims (No Longer Covered By Any Test)
 
@@ -360,40 +313,17 @@ skips itself into silence.
 **Impact:** Eliminates N+1 API calls in batch operations that touch custom fields.
 **Limitation:** Cache staleness (see [Cache Staleness Risk](#cache-staleness-risk)).
 
-### 2. Parallel Request Execution with Rate-Limit Awareness
+### 2, 3 and 4 were `bulk.ts` and `profiling.ts`, and both are deleted
 
-**File:** `src/lib/bulk.ts` + `src/lib/profiling.ts`
+The three entries that stood here — parallel request execution behind
+`ConcurrencyController`, the profiling infrastructure itself (`Profiler`,
+`formatBenchmarkReport()`, `assertBenchmarkTarget()`), and `BulkTransaction`'s
+`execute({ profile: true })` returning a `BenchmarkResult` — described code that no longer
+exists. #110 deleted `bulk.ts` and its three commands; 4.0.0 deleted the profiling half
+that `bulk.ts` was the only caller of.
 
-- `BulkTransaction` accepts `concurrency` option (default: **1** for backward compatibility and safety)
-- `ConcurrencyController` implements an application-level semaphore for controlled parallelism
-- Parallel mode is ~5x faster for I/O-bound operations at `concurrency=5`
-- Rate limit backoff preserved (handled by `FavroHttpClient` interceptors)
-
-**Usage:**
-```typescript
-const tx = new BulkTransaction(api, { concurrency: 5 });
-```
-
-**Tradeoff:** Parallel mode does not guarantee per-card atomic ordering or strict rollback.
-See [Concurrency Safety](#concurrency-safety).
-
-### 3. Performance Profiling Infrastructure
-
-**File:** `src/lib/profiling.ts`
-
-- `Profiler`: Named span tracking, throughput calculation, heap measurement
-- `CustomFieldCache`: Generic TTL cache for field definitions; pre-warming support
-- `ConcurrencyController`: Semaphore-based parallel execution with progress callbacks
-- `formatBenchmarkReport()`: Markdown-formatted benchmark output
-- `assertBenchmarkTarget()`: Throws if benchmark exceeds target (for CI assertions)
-
-### 4. Profiling Integration in BulkTransaction
-
-**File:** `src/lib/bulk.ts`
-
-- `execute({ profile: true })` returns a `BenchmarkResult` in the result object
-- Spans: `sequential-updates`, `parallel-updates`, `rollback`
-- Zero overhead when `profile: false` (default)
+**Entry 1 above is the whole list now.** The caching optimisation is the one that had a
+consumer outside the benchmark harness, and it still does.
 
 ---
 
@@ -445,28 +375,32 @@ See [Concurrency Safety](#concurrency-safety).
 
 ## Testing
 
-There is no performance test suite. `src/__tests__/lib/profiling.test.ts` covers the
-profiler itself — span durations and derived throughput, the custom-field cache's
-hit/miss counters, and that concurrency is actually concurrent (it asserts more than
-one span overlaps, so a fully sequential implementation fails). It does **not**
-exercise nested spans, and nothing asserts a latency budget.
+There is no performance test suite and no profiler to test. `src/__tests__/lib/profiling.test.ts`
+now covers exactly one class, `CustomFieldCache`, in four arms — the hit/miss counters and
+the derived `hitRate`, TTL expiry, `preWarm`, and 1 000 repeat reads of one field landing as
+1 000 hits and no second miss. **Nothing asserts a latency budget, and nothing measures
+elapsed time on the critical path**, because the code that did was deleted with its only
+caller (see *Tools* above).
+
+The two arms that went with it — `Profiler`'s span/throughput measurement and
+`ConcurrencyController`'s "never more than `maxConcurrent` at once" — were the last
+references either class had anywhere in the tree, so no behaviour that still runs lost an
+assertion.
 
 ```bash
-npm test    # the whole suite, including the profiler's own tests
+npm test    # the whole suite, including the cache's tests
 ```
 
 ### Test Coverage
 
 | Test | Type | Target | Status |
 |------|------|--------|--------|
-| Profiler span measurement | Unit | N/A | ✅ Always runs |
+| Cache hit/miss counters and `hitRate` | Unit | 50% on 1 hit + 1 miss | ✅ Always runs |
 | Cache TTL expiry | Unit | N/A | ✅ Always runs |
-| Cache N+1 elimination (1000 hits) | Unit | 100% hit rate | ✅ Always runs |
-| Concurrency limiter (max 3 parallel) | Unit | ≤3 concurrent | ✅ Always runs |
-| Parallel speedup vs sequential | Unit | ≥2x faster | ✅ Always runs |
-| 100-card sequential (mock 5ms) | Benchmark | < 30s | ✅ Always runs |
-| 100-card parallel speedup (mock) | Benchmark | ≥2x | ✅ Always runs |
-| 1000-card parallel (mock 5ms) | Benchmark | **< 5 min** | ✅ Always runs |
-| Card fetch timing | Integration | N/A (real API) | ⏭ Skipped (no env vars) |
-| Cache effectiveness (real API) | Integration | hit < miss time | ⏭ Skipped (no env vars) |
-| Pre-warm N+1 (real API) | Integration | ≥10 hits post-warm | ⏭ Skipped (no env vars) |
+| `preWarm` populates from a field array | Unit | N/A | ✅ Always runs |
+| Cache N+1 elimination (1000 repeat reads) | Unit | 100% hit rate | ✅ Always runs |
+
+The benchmark and real-API rows this table used to carry are gone: the benchmarks were in
+`tests/integration/performance.test.ts`, which #71 deleted, and the three env-gated real-API
+checks are recorded under *Unverified Claims* above, which is the honest place for a check
+CI never ran.

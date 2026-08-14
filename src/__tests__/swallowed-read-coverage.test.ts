@@ -638,7 +638,14 @@ describe('no read answers a failure with emptiness, outside the two lists', () =
     // finished tree rather than slackened once to cover the whole migration: a
     // floor with room for a whole file's clauses to vanish cannot notice the
     // walk collapsing, which is the only thing it is for.
-    expect(catchClauses).toBeGreaterThanOrEqual(73);
+    //
+    // 73 → 72 when 4.0.0 deleted the dead half of `lib/profiling.ts`. ONE clause,
+    // and it is named rather than estimated: `ConcurrencyController.runAll`'s
+    // `catch (err: any)` around each task. Both figures come from instrumenting
+    // THIS expression — 73 on `2ec3247`, 72 here — so the drop is a ledger and
+    // not a shape this time. The rest of that deletion was `try/finally` and
+    // plain functions, which this walk never counted.
+    expect(catchClauses).toBeGreaterThanOrEqual(72);
   });
 
   it('no read swallows its failure outside DEBT and DECIDED', () => {

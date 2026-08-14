@@ -383,7 +383,33 @@ caller as a failure rather than as a finding, and the exit code is the failure's
   `Profiler` and `ConcurrencyController` in `lib/profiling.ts` lose their only
   production caller with `bulk.ts` and are now exercised only by their own tests.
   Deleting a published export is a semver call rather than this ticket's, so they stay
-  and the fact is recorded here and in `profiling.test.ts`.
+  and the fact is recorded here and in `profiling.test.ts`. **Superseded by the entry
+  below**, which found the premise wrong: they were never published.
+
+- **The dead half of `src/lib/profiling.ts` is deleted** — 257 of its 354 lines.
+  `Profiler`, `ConcurrencyController`, `formatBenchmarkReport()`, `formatDuration()`,
+  `assertBenchmarkTarget()` and the two types they passed around (`ProfileSpan`,
+  `BenchmarkResult`) are gone. `CustomFieldCache` and `globalFieldCache` stay — they are
+  the half with a consumer, `lib/custom-fields-api.ts`.
+
+  **This is not a breaking change and is not under `### Breaking`.** #110 left the two
+  classes standing on the grounds that deleting a published export is a semver call; the
+  premise was wrong. `src/index.ts` exports four names — `FavroHttpClient`, `CardsAPI`,
+  `BoardsAPI` and `version` — and none of these was ever among them, so no documented
+  entry point loses a symbol. It rides 4.0.0 for one reason only: shipping dead code in a
+  fresh major is silly. #89 was the dead-module ticket and never named this file, which
+  was a miss rather than a decision.
+
+  What that costs, stated rather than implied: `src/__tests__/lib/profiling.test.ts` drops
+  two arms — `Profiler`'s span/throughput measurement and `ConcurrencyController`'s
+  concurrency ceiling. Both were the last references their subject had anywhere in the
+  tree, so nothing that still runs lost an assertion. #110's `SLEPT = 49` fix went with
+  them and is deliberately not transplanted: it loosened a floor across a `setTimeout(50)`
+  that only `Profiler` measured, and the surviving TTL arm sleeps 20ms against a 10ms TTL,
+  which is a whole timer period of margin rather than a millisecond. `PERFORMANCE.md`
+  named every deleted symbol and is corrected — including a *How to Profile* block that
+  told the reader to `import { profile } from './src/lib/profiling'`, a name that never
+  existed on that module in any commit.
 
 - **`CardsAPI.deleteAllDependencies`, `CustomFieldsAPI.setFieldValue` and its private
   `putCardCustomField` are deleted (#109).** All three were un-instrumented card writes with
