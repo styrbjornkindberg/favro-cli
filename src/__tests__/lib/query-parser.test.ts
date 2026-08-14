@@ -9,7 +9,7 @@
  *   3. Parenthesised sub-expressions
  *   4. Date predicates — absolute, relative, relative-math, week, quarter
  *   5. Dependency predicates (unblocked, blocks:, blocked-by:)
- *   6. Custom field queries
+ *   6. customField: refusal
  *   7. Error cases (unclosed parens, bad dates, unknown fields)
  *   8. Fail-closed field validation
  *   9. filterCards() integration helper
@@ -27,7 +27,6 @@ import {
   type QueryNode,
   type FieldPredicate,
   type DatePredicate,
-  type CustomFieldPredicate,
   type AndExpression,
   type OrExpression,
 } from '../../lib/query-parser';
@@ -485,52 +484,40 @@ describe('parseQuery — dependency predicates', () => {
 // 6. Custom field queries
 // ---------------------------------------------------------------------------
 
-describe('parseQuery — custom field predicates', () => {
-  test('parses customField:Priority=High', () => {
-    const q = parseQuery('customField:Priority=High');
-    const ast = q.ast as CustomFieldPredicate;
-    expect(ast.kind).toBe('customField');
-    expect(ast.fieldName).toBe('Priority');
-    expect(ast.operator).toBe('=');
-    expect(ast.value).toBe('High');
+describe('parseQuery — customField: is refused, not parsed', () => {
+  /**
+   * Every spelling reaches the one refusal. The `in(` form matters on its own:
+   * it returns from a branch ABOVE the operator parse, so it would otherwise
+   * have escaped through `validateField` as an unknown field.
+   */
+  test.each([
+    'customField:Priority=High',
+    'customField:Estimate>5',
+    'customField:Score>=80',
+    'customField:Label~important',
+    'customField:Impact<=3',
+    'customField:noOperator',
+    'customField in(High,Low)',
+    'CUSTOMFIELD:Priority=High',
+    'status:todo AND customField:Priority=High',
+  ])('refuses %s', (filter) => {
+    expect(() => parseQuery(filter)).toThrow(ParseError);
+    expect(() => parseQuery(filter)).toThrow(/'customField' filters are refused/);
   });
 
-  test('parses customField:Estimate>5', () => {
-    const q = parseQuery('customField:Estimate>5');
-    const ast = q.ast as CustomFieldPredicate;
-    expect(ast.operator).toBe('>');
-    expect(ast.value).toBe('5');
+  test('the refusal points at two commands that exist', () => {
+    // `standup.ts:59` printing `favro unblocked` is the defect this repo
+    // remembers; both of these are registered commands.
+    expect(() => parseQuery('customField:Priority=High'))
+      .toThrow(/favro custom-fields list <board>/);
+    expect(() => parseQuery('customField:Priority=High'))
+      .toThrow(/favro cards list <board> --include custom-fields/);
   });
 
-  test('parses customField:Score>=80', () => {
-    const q = parseQuery('customField:Score>=80');
-    const ast = q.ast as CustomFieldPredicate;
-    expect(ast.operator).toBe('>=');
-  });
-
-  test('parses customField:Label~important', () => {
-    const q = parseQuery('customField:Label~important');
-    const ast = q.ast as CustomFieldPredicate;
-    expect(ast.operator).toBe('~');
-    expect(ast.value).toBe('important');
-  });
-
-  test('parses customField:Impact<=3', () => {
-    const q = parseQuery('customField:Impact<=3');
-    const ast = q.ast as CustomFieldPredicate;
-    expect(ast.operator).toBe('<=');
-  });
-
-  test('throws on invalid customField syntax', () => {
-    expect(() => parseQuery('customField:noOperator')).toThrow(ParseError);
-    expect(() => parseQuery('customField:noOperator')).toThrow(/Invalid customField syntax/i);
-  });
-
-  test('customField in compound query', () => {
-    const q = parseQuery('status:todo AND customField:Priority=High');
-    expect(q.ast?.kind).toBe('and');
-    const andNode = q.ast as AndExpression;
-    expect(andNode.right).toMatchObject({ kind: 'customField', fieldName: 'Priority' });
+  test('`customFields`, the card key itself, is still a field the grammar accepts', () => {
+    // The refusal is the exact token `customField`, not a prefix: the plural is
+    // a real key on every card and `knownFields` derives it from `CARD_FIELDS`.
+    expect(parseQuery('customFields:x').ast).toMatchObject({ kind: 'field', field: 'customfields' });
   });
 });
 
@@ -900,9 +887,12 @@ describe('evaluateNode — direct evaluation', () => {
     dueDate: '2099-12-31',
     createdAt: '2026-01-01',
     updatedAt: '2026-03-01',
+    // The measured wire shape (#167): `{customFieldId, value}` — no `name`, and
+    // a select's value is the option's ID. `customField:` is refused rather than
+    // read; the paired-polarity arms over this shape live in
+    // `custom-field-filter-wire.test.ts`, where the card enters via the wire.
     customFields: [
-      { name: 'Priority', value: 'High' },
-      { name: 'Score', value: '90' },
+      { customFieldId: 'zxMLxD4zx4tSwJr75', value: ['YLanLiuXKA8JpvEsX'] },
     ],
     links: [
       // The measured edge shape, not an invented one (#162): a dependency
@@ -998,30 +988,11 @@ describe('evaluateNode — direct evaluation', () => {
     expect(evaluateNode(q.ast!, cardNoDue)).toBe(false);
   });
 
-  test('customField: equality match', () => {
-    const q = parseQuery('customField:Priority=High');
-    expect(evaluateNode(q.ast!, card)).toBe(true);
-  });
-
-  test('customField: no match', () => {
-    const q = parseQuery('customField:Priority=Low');
-    expect(evaluateNode(q.ast!, card)).toBe(false);
-  });
-
-  test('customField: field not present returns false', () => {
-    const q = parseQuery('customField:NonExistent=value');
-    expect(evaluateNode(q.ast!, card)).toBe(false);
-  });
-
-  test('customField: numeric > operator', () => {
-    const q = parseQuery('customField:Score>50');
-    expect(evaluateNode(q.ast!, card)).toBe(true);
-  });
-
-  test('customField: uses custom_fields alias', () => {
-    const cardAlt = { ...card, customFields: undefined, custom_fields: card.customFields };
-    const q = parseQuery('customField:Priority=High');
-    expect(evaluateNode(q.ast!, cardAlt)).toBe(true);
+  test('customField: refuses at parse time — nothing reaches evaluateNode', () => {
+    // It used to build a predicate that read `f.name` off this card. The card
+    // has no `name` key on the entry and holds an option id, so the predicate
+    // returned false for a card that DOES carry the field.
+    expect(() => parseQuery('customField:Status=Todo')).toThrow(ParseError);
   });
 
   test.each(['far-card-id', 'far-common-id'])('blocks: matches the outgoing edge by %s', (id) => {

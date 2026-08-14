@@ -306,7 +306,7 @@ const cards = program.command('cards').description(
   '  retag   Set the triage roles — one category, one state\n\n' +
   'Examples:\n' +
   '  favro cards get <card> --include board,collection\n' +
-  '  favro cards list <board> --filter "customField:value"\n' +
+  '  favro cards list <board> --filter "status:Todo AND tag:bug"\n' +
   '  favro cards link <card> --to <targetId> --type depends\n' +
   '  favro cards unlink <card> --from <linkedCardId>\n' +
   '  favro cards move <card> --to-board <board>\n' +

@@ -9,7 +9,7 @@
  *   - Relative date maths: due_in:7d, due_in:2w
  *   - Absolute date formats: 2026-04-01, 2026-Q2, 2026-W15
  *   - Dependency predicates: unblocked, blocks:<ref>, blocked-by:<ref>
- *   - Custom field queries: customField:name=value
+ *   - customField: queries — REFUSED, see `customFieldRefusal`
  *   - Numeric operators on any numeric card field
  *   - Fail-closed field validation against a DERIVED field list (#46)
  *
@@ -49,13 +49,6 @@ export interface DatePredicate {
   dateValue: DateValue;
 }
 
-export interface CustomFieldPredicate {
-  kind: 'customField';
-  fieldName: string;
-  operator: Operator;
-  value: string;
-}
-
 export interface AndExpression {
   kind: 'and';
   left: QueryNode;
@@ -71,7 +64,6 @@ export interface OrExpression {
 export type QueryNode =
   | FieldPredicate
   | DatePredicate
-  | CustomFieldPredicate
   | AndExpression
   | OrExpression;
 
@@ -119,7 +111,7 @@ export const DECLARED_FIELDS: readonly string[] = [
   'title', 'label', 'tag', 'assignee', 'due_date', 'due_before', 'due_after',
   'created_at', 'updated_at',
   // Computed here — nothing on the card is named this.
-  'due_in', 'unblocked', 'blocks', 'blocked-by', 'customfield',
+  'due_in', 'unblocked', 'blocks', 'blocked-by',
 ];
 
 /**
@@ -404,22 +396,8 @@ class Parser {
     // Strip surrounding quotes from value
     valuePart = valuePart.replace(/^"(.*)"$/, '$1').replace(/^'(.*)'$/, '$1');
 
-    // --- Handle customField:name=value ---
-    if (fieldRaw.toLowerCase() === 'customfield') {
-      // format: customField:Name=value or customField:Name>value etc.
-      const cfMatch = valuePart.match(/^([^=><~]+)(>=|<=|>|<|~|=)(.+)$/);
-      if (!cfMatch) {
-        throw new ParseError(`Invalid customField syntax at position ${pos}. Use: customField:Name=value`);
-      }
-      const [, cfName, cfOp, cfVal] = cfMatch;
-      const cfOperator: Operator = operatorMap[cfOp] ?? '=';
-      return {
-        kind: 'customField',
-        fieldName: cfName.trim(),
-        operator: cfOperator,
-        value: cfVal.trim(),
-      } as CustomFieldPredicate;
-    }
+    // `customField:` is refused in `validateField`, which every spelling of it
+    // reaches — including `customField in(…)`, which returns above this point.
 
     // --- Handle date-specific fields ---
     const dateFields = ['due_date', 'created_at', 'updated_at', 'due_before', 'due_after', 'due_in'];
@@ -460,8 +438,7 @@ class Parser {
   }
 
   private validateField(field: string, pos: number): void {
-    // Allow any field that starts with 'customfield' (dynamic)
-    if (field.startsWith('customfield')) return;
+    if (field === 'customfield') throw customFieldRefusal(pos);
     if (this.fields.has(field)) return;
     const known = [...this.fields].sort().join(', ');
     throw new ParseError(
@@ -565,6 +542,43 @@ export class ParseError extends Error {
   }
 }
 
+/**
+ * `customField:` is refused, not evaluated (#167 item 3).
+ *
+ * It used to parse into a predicate that read `f.name` off the card's
+ * `customFields` array and compared it to the queried value. Both halves were
+ * wrong, independently, and the measurement is one card:
+ * `[{"customFieldId":"zxMLxD4zx4tSwJr75","value":["YLanLiuXKA8JpvEsX"]}]` — read
+ * live 2026-08-14 off `GET /cards`. There is no `name` key to find the field by,
+ * and the stored value is an option **id** whose label is `Todo`, so
+ * `customField:Status=Todo` failed twice over and answered `matches: []` with a
+ * summary claiming it had searched. That is the same wrong model `blocked-by:`
+ * (#162) and the `"undefined"` key (#167 item 5) were built on.
+ *
+ * Refusing rather than fixing, deliberately: resolving a field NAME and an
+ * option LABEL needs the board's definitions, and the only route to them is
+ * `GET /customfields`, which is org-scoped and ignores its board filter — 3797
+ * rows over 38 pages on the measured org, for a board that defines 2. That is a
+ * read on every filtered query, and a partial fix (match the id, not the label)
+ * would turn a wrong-empty into a wrong-populated, which is worse than both.
+ *
+ * The remedies below both exist: `custom-fields list <board>` (`custom-fields.ts`)
+ * and `cards list <board> --include custom-fields` (`cli.ts`, the one accepted
+ * `--include` value).
+ */
+function customFieldRefusal(pos: number): ParseError {
+  return new ParseError(
+    `'customField' filters are refused at position ${pos} — a card cannot answer them, and this ` +
+      `filter used to answer zero rows as if it had.\n` +
+      `A card inlines its custom fields as {customFieldId, value} — no field NAME, and the value of ` +
+      `a select is the option's ID, not its label. So a name and a label both fail to match, ` +
+      `silently.\n` +
+      `Read the values instead:\n` +
+      `  favro custom-fields list <board>                  the field ids, and each option's id and label\n` +
+      `  favro cards list <board> --include custom-fields  what each card stores, by id`,
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Evaluation helpers — apply a parsed Query to a Card
 // ---------------------------------------------------------------------------
@@ -653,15 +667,6 @@ export function evaluateNode(
       // later in it. An ISO day string is already lexicographically ordered,
       // which is the whole reason this branch built one.
       return compareDayStrings(cardDateStr, node.operator, targetDateStr);
-    }
-
-    case 'customField': {
-      const fields: Record<string, any>[] = card.customFields ?? card.custom_fields ?? [];
-      // A custom field's name is Favro's, the one in the query is the user's.
-      const cf = fields.find(f => foldName(f.name) === foldName(node.fieldName));
-      if (!cf) return false;
-      const cfVal = String(cf.value ?? '');
-      return compareValues(cfVal, node.operator, node.value);
     }
 
     default:
@@ -986,9 +991,6 @@ export interface ParseOptions {
  *
  * @example
  * const q = parseQuery('(status:todo OR status:in-progress) AND assignee:john');
- *
- * @example
- * const q = parseQuery('customField:Priority=High');
  *
  * @example
  * const q = parseQuery('unblocked AND blocked-by:CLA-1804');

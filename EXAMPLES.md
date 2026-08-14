@@ -729,7 +729,9 @@ debt_board=$(favro boards create "$collection_id" --name "Tech Debt Q1 2026" | j
 favro context $debt_board > debt-snapshot.json
 
 # 3. Query for high-priority backlog items
-favro query $debt_board "customField:Priority=high AND status:Backlog"
+# (customField: is refused — a card stores field/option ids, never names.
+#  Read them with: favro custom-fields list $debt_board)
+favro query $debt_board "tag:priority-high AND status:Backlog"
 
 # 4. Assign that debt to the platform owner (drop --dry-run to apply)
 favro cards list --board $debt_board \

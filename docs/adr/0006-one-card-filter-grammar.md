@@ -44,7 +44,8 @@ Three consequences were accepted deliberately.
 
 **1. It is a breaking change, and the break is the point.** Every input the deleted parser
 *invented* now refuses: `assigned:`/`owner:` (say `assignee:`), `priority:` (say
-`customField:Priority=`), `due:` (say `due_date:`), and bare words (say `title~"…"`). Nothing
+`customField:Priority=` — itself refused since #167, see the note below), `due:` (say
+`due_date:`), and bare words (say `title~"…"`). Nothing
 that now refuses used to answer *correctly* — each was swept into a title search. Version 3.0.0
 is unreleased (`package.json`), and the ticket records `npm view @square-moon/favro-cli`
 answering 404, so the change costs nothing today and stops being free the day this ships.
@@ -53,11 +54,21 @@ answering 404, so the change costs nothing today and stops being free the day th
 > `4.0.0` now (#110). The paragraph above is left as the argument that was made at the time,
 > not as a claim about today — its "unreleased" and its 404 are both false now.
 
+> **`customField:` is refused too, since #167** (2026-08-14). It was the remedy this ADR
+> pointed `priority:` at, and it was itself a plausible zero rows: a card inlines
+> `{customFieldId, value}` — measured, `[{"customFieldId":"zxMLxD4zx4tSwJr75","value":
+> ["YLanLiuXKA8JpvEsX"]}]` — so there is no field NAME to match and a select's value is the
+> option's id, not its label. Resolving either needs the board's field definitions, and
+> `GET /customfields` is org-scoped and ignores its board filter (3797 rows on the measured
+> org for a board that defines 2), which is a read this grammar will not make on every
+> query. Matching the id only would turn a wrong-empty into a wrong-populated, which is
+> worse. So the token refuses and names the two commands that DO read the values.
+
 **2. The filter runs over RAW cards, not the `ContextCard` snapshot.** The grammar evaluates a
 card by Favro's own field names — `name`, `dueDate`, `customFields` as the array the wire sends.
 `ContextCard` renames three of those and flattens the fourth, so running the grammar over
-`ContextAPI.getSnapshot`'s output would silently answer `false` for `due_date:`, throw on
-`customField:`, and read `description:` as absent on every card. That is a *new*
+`ContextAPI.getSnapshot`'s output would silently answer `false` for `due_date:` and read
+`description:` as absent on every card. That is a *new*
 plausible-zero-rows on fields the grammar advertises, so `QueryAPI` reads `listCards` directly
 and normalises only the survivors. A dead card read is still recorded as `unreachable` rather
 than swallowed as an empty board (#116).

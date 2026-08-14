@@ -760,8 +760,13 @@ outside the org or a column the board lacks all REFUSE, naming what they
 refused. None of them answers zero rows.
 
 Query patterns: `status:done`, `assignee:alice`, `tag:bug`, `due_date:overdue`,
-`customField:Priority=high`, `title~"login"`, `blocks:<ref>`,
-`blocked-by:<ref>`, and `AND`/`OR`/parentheses.
+`title~"login"`, `blocks:<ref>`, `blocked-by:<ref>`, and `AND`/`OR`/parentheses.
+
+`customField:` is **refused** (#167). A card stores `{customFieldId, value}` —
+field ids and, for a select, option ids — so a filter naming the field and the
+option by NAME matched nothing while reporting a search. Read the values with
+`favro custom-fields list <board>` and `favro cards list <board> --include
+custom-fields`.
 
 Free text is `title~"…"` and nothing else. `assigned:`, `owner:`, `priority:`,
 `due:` and bare words were the deleted parser's inventions and refuse.

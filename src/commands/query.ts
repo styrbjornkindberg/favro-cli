@@ -69,13 +69,16 @@ export function registerQueryCommand(program: Command): void {
       '  tag:bug                      By exact tag name\n' +
       '  due_date:overdue             Past their due date\n' +
       '  title~"login"                Free text — this is the ONLY spelling of it\n' +
-      '  customField:Priority=high    Any custom field on the board\n' +
+      '  customField:…                REFUSED — a card stores field ids and option\n' +
+      '                               ids, no names, so this could only ever answer\n' +
+      '                               zero rows. Read them with `favro custom-fields\n' +
+      '                               list <board>`.\n' +
       '  status:done AND tag:bug      AND / OR / parentheses\n\n' +
       'Free text is `title~"…"` and nothing else (#95). This command used to sweep\n' +
       'anything it could not parse into a title search, so `"statuz:done"` answered\n' +
       'a confident zero rows; it now refuses. `assigned:`, `owner:`, `priority:`,\n' +
       '`due:` and bare words were that parser\'s inventions and refuse too — say\n' +
-      '`assignee:`, `customField:Priority=`, `due_date:`.\n\n' +
+      '`assignee:` or `due_date:`.\n\n' +
       'Blocking: `blocks:<ref>` and `blocked-by:<ref>` are answered here.\n' +
       '`unblocked` is NOT — it has to judge each blocker, and this command makes\n' +
       'no reads to report on. Ask the frontier where it is answered:\n' +
@@ -83,7 +86,7 @@ export function registerQueryCommand(program: Command): void {
       'Examples:\n' +
       '  favro query boards-1234 "status:done"\n' +
       '  favro query "Sprint 42" "assignee:alice AND tag:bug"\n' +
-      '  favro query boards-1234 "title~\\"login\\" OR customField:Priority=high"\n\n' +
+      '  favro query boards-1234 "title~\\"login\\" OR tag:urgent"\n\n' +
       'Use --human for the summary view; JSON is the default.'
     )
     .action(run(queryHandler));

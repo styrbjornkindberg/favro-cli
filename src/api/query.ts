@@ -20,7 +20,8 @@
  * known fields:
  *
  *   - `assigned:@alice` / `owner:bob`      → `assignee:alice`
- *   - `priority:high` / `high priority`    → `customField:Priority=high`
+ *   - `priority:high` / `high priority`    → the column, tag or field that carries
+ *                                            it; `customField:` is refused too (#167)
  *   - `due:overdue`                        → `due_date:overdue`
  *   - `authentication refactor` (free text) → `title~"authentication refactor"`
  *   - `done`, `overdue`, `assigned to bob` (naked shorthands) → say the field
@@ -33,7 +34,7 @@
  * The grammar evaluates a card by Favro's own field names — `name`, `dueDate`,
  * `customFields` as the array the wire sends. `ContextCard` renames three of
  * those and flattens the fourth, so running the grammar over a snapshot would
- * silently answer `false` for `due_date:`, throw on `customField:`, and read
+ * silently answer `false` for `due_date:` and read
  * `description:` as absent on every card — a NEW plausible-zero-rows on fields
  * the grammar advertises. So the filter runs over `listCards`, exactly as
  * `cards list --filter` does, and only the SURVIVORS are normalised for output.
