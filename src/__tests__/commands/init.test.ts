@@ -299,6 +299,40 @@ describe('init — the file it writes', () => {
     expect(fields.Priority).toEqual({ fieldId: 'f-1', type: 'Single select', options: { High: 'o-1' } });
   });
 
+  test('two custom fields with the same name both survive, and the first keeps the bare key', async () => {
+    // The board-slug collision above, one map over. `customFields[field.name]`
+    // was a bare assignment onto a map whose key is a field NAME, and a name is
+    // unique to a BOARD, not to the collection: two boards can each own a
+    // `Priority`, and the second write dropped the first field's `fieldId` and
+    // its whole `options` map. The lost field was then absent from context.json
+    // with nothing saying so — indistinguishable from a field the boards do not
+    // have, which is the lie #154 fixed for `team` and the board key fixed one
+    // map over.
+    MockBoards.prototype.listBoardsByCollection = jest.fn().mockResolvedValue([
+      { boardId: 'board-a', name: 'Sprint 42' },
+      { boardId: 'board-b', name: 'Roadmap' },
+    ]);
+    MockFields.prototype.listFields = jest.fn().mockResolvedValue([
+      { fieldId: 'f-1', name: 'Priority', type: 'Single select', widgetCommonId: 'board-a', options: [{ name: 'High', optionId: 'o-1' }] },
+      { fieldId: 'f-2', name: 'Priority', type: 'Number', widgetCommonId: 'board-b' },
+      // `in` would call this a collision against `Object.prototype.toString`
+      // and suffix it on a field list where nothing collides.
+      { fieldId: 'f-3', name: 'toString', type: 'Text', widgetCommonId: 'board-a' },
+    ]);
+
+    await runCli(['init']);
+
+    const fields = writtenContext().customFields;
+    expect(Object.keys(fields).sort()).toEqual(['Priority', 'Priority-2', 'toString']);
+    // The first holder keeps the bare key, and keeps its OPTIONS: the option ids
+    // are the whole reason an agent reads this map, and they were what the
+    // second assignment threw away.
+    expect(fields['Priority']).toEqual({ fieldId: 'f-1', type: 'Single select', options: { High: 'o-1' } });
+    expect(fields['Priority-2']).toEqual({ fieldId: 'f-2', type: 'Number' });
+    expect(fields['toString'].fieldId).toBe('f-3');
+    expect(process.exitCode).toBeUndefined();
+  });
+
   test('a malformed field stops the write instead of silently truncating the map', async () => {
     // The `catch {}` used to wrap the whole 20-line transform, not just the
     // fetch it was written for. `customFields[field.name] = entry` mutates the

@@ -127,6 +127,40 @@ function slugify(name: string): string {
     .slice(0, 30);
 }
 
+/**
+ * `key` if `map` does not hold it, else `key-2`, `key-3`, … — the first free one.
+ *
+ * BOTH maps in `context.json` are keyed by a value that is not unique per
+ * collection, and both used to assign straight in, so the later entry silently
+ * REPLACED the earlier one and the lost one was then absent from the file with
+ * nothing saying so. That is indistinguishable from a thing the collection does
+ * not have, and this file's contract is that an absent thing is a finding and
+ * not a failed read (#154). The two derivations differ — a board's key is
+ * `slugify(name)`, a custom field's key is its name verbatim — but the loss and
+ * the remedy are one, so this is one function and not two inline probes.
+ *
+ * The FIRST holder keeps the bare key, deliberately: these keys are the
+ * interface agents resolve entries by (`docs/repo-context.md` rules 2 and 5), so
+ * a collision must not move a key that was never in one. A collection with no
+ * collision therefore writes exactly the bytes it wrote before.
+ *
+ * `hasOwnProperty`, not `in`: these maps are object literals, so `in` walks the
+ * prototype and a board named `Constructor` or a field named `toString` would
+ * read as colliding with `Object.prototype` and be suffixed where nothing
+ * collides at all.
+ *
+ * ponytail: linear probe, and a suffix may push a board slug past `slugify`'s 30
+ * characters. A collection holds tens of boards, and re-truncating to fit could
+ * only collide again.
+ */
+function freeKey(map: Record<string, unknown>, key: string): string {
+  const taken = (k: string) => Object.prototype.hasOwnProperty.call(map, k);
+  if (!taken(key)) return key;
+  let n = 2;
+  while (taken(`${key}-${n}`)) n++;
+  return `${key}-${n}`;
+}
+
 // ─── Command ─────────────────────────────────────────────────────────────────
 
 interface InitOptions {
@@ -228,29 +262,9 @@ export async function initHandler(ctx: Ctx, options: InitOptions) {
 
     // The key is DERIVED, and derivation loses information: `slugify` collapses
     // every `[^a-z0-9]+` run and truncates to 30, so two distinct board names
-    // can collapse to one key. `boards[slug] = {…}` below was a bare assignment,
-    // so the later board silently REPLACED the earlier one, which was then
-    // absent from context.json with nothing saying so. This file's contract is
-    // that an absent thing is a finding and not a failed read (#154) — a board
-    // that is simply gone is that same lie one level up.
-    //
-    // The first board to claim a slug keeps the bare one, deliberately: these
-    // keys are the interface agents resolve boards by (`docs/repo-context.md`
-    // rule 2), so a collision must not move a key that was never in it.
-    //
-    // `hasOwnProperty`, not `in`: `in` walks the prototype, so a board named
-    // `Constructor` would read as colliding with `Object.prototype.constructor`
-    // and be renumbered on a board list where nothing collides at all.
-    //
-    // ponytail: linear probe, and the suffix may push the key past 30 chars. A
-    // collection holds tens of boards; re-truncating to fit could only collide
-    // again.
-    let slug = slugify(board.name);
-    if (Object.prototype.hasOwnProperty.call(boards, slug)) {
-      let n = 2;
-      while (Object.prototype.hasOwnProperty.call(boards, `${slug}-${n}`)) n++;
-      slug = `${slug}-${n}`;
-    }
+    // can collapse to one key. `freeKey` is why the later board no longer
+    // silently replaces the earlier one — see its header for the rest.
+    const slug = freeKey(boards, slugify(board.name));
 
     // Fetch columns for workflow. NOT tolerated — see the header. A failed
     // read became `[]`, which the ternary below wrote as an ABSENT `workflow`,
@@ -319,7 +333,12 @@ export async function initHandler(ctx: Ctx, options: InitOptions) {
         entry.options[opt.name] = opt.optionId;
       }
     }
-    customFields[field.name] = entry;
+    // The board key's collision, one map over, and it was the half that stayed
+    // broken. `field.name` is unique to a BOARD, not to the collection — two of
+    // our boards can each own a `Priority` — and the bare assignment that used
+    // to stand here dropped the first field's `fieldId` and its whole `options`
+    // map, which is the part an agent actually reads.
+    customFields[freeKey(customFields, field.name)] = entry;
   }
 
   // Fetch team members — /users is org-scoped, so we filter by the
