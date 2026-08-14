@@ -534,6 +534,78 @@ sticks (200, `archived:true`), which is what makes re-archiving a viable inverse
 
 ---
 
+## 6c. The clean-200 population, re-measured for #170 — 2026-08-14
+
+#165's 145-request probe counted **fourteen** rejected writes that answer a clean `200`
+with a full entity, no `message`, and the change absent, in four families
+(`removeTagIds`, a whole-array `assignmentIds` replace, `favroAttachments`, immutable
+fields). **That per-request log is not committed to this repo** — the count and the family
+names exist only in #170's body — so the fourteen are not reproduced here. What follows is
+an independent re-measurement of the four families, same org and board as §6b, three
+throwaway `probe: #170` cards, each deleted `?everywhere=true` with the follow-up `GET`
+verified 403.
+
+Every row below is `PUT /cards/:cardId` unless noted, and every response was **200/201
+with no `message` and a full card entity**; `echo` is that response's own value and `GET`
+a separate read after it.
+
+| # | request | card held before | echo | GET | took? |
+|---|---|---|---|---|---|
+| 1 | `{assignmentIds:["U2"]}` | `["U1"]` | `["U1"]` | `["U1"]` | **no** |
+| 2 | `{favroAttachments:[{itemCommonId:"x",type:"card"}]}` | `[]` | `[]` | `[]` | **no** |
+| 3 | `{cardId:"000…000"}` | `59e6e38b…` | `59e6e38b…` | `59e6e38b…` | **no** |
+| 4 | `{cardCommonId:"000…000"}` | `2683d2dc…` | `2683d2dc…` | `2683d2dc…` | **no** |
+| 5 | `{organizationId:"000…000"}` | `b0b311ac…` | `b0b311ac…` | `b0b311ac…` | **no** |
+| 6 | `{sequentialId:999999}` | `24577` | `24577` | `24577` | **no** |
+| 7 | `{createdAt:"2001-01-01T00:00:00.000Z"}` | `2026-08-14T10:37:37.856Z` | unchanged | unchanged | **no** |
+| 8 | `POST /cards {addTagIds:[A]}` | — | `tags: []` | `tags: []` | **no** |
+| 9 | `POST /cards {addAssignmentIds:[U1]}` | — | `assignments: []` | `assignments: []` | **no** |
+
+Nine reproduce. Rows 3–7 are the `immutable fields` family, made concrete. Rows 8–9 are
+new and are **not** a defect in this CLI: `CardsAPI.createCard` sends `tags` (names) and
+`assignmentIds` on the POST, and both of those **are** honoured — measured, `201`, echo
+and GET agreeing. It is the `add*` spellings that a POST ignores.
+
+**`removeTagIds` does NOT reproduce.** Measured twice:
+
+| request | card held before | echo | GET | took? |
+|---|---|---|---|---|
+| `{removeTagIds:[B]}` | `[A]` | `[A]` | `[A]` | n/a — B was not held |
+| `{removeTagIds:[A]}` | `[A, B]` | `[B]` | `[B]` | **yes** |
+| `{removeTagIds:[B]}` | `[B]` | `[]` | `[]` | **yes** |
+
+So on this org, at this date, `removeTagIds` is honoured for a tag the card carries, and
+the "no effect" of the first row is the CORRECT outcome for removing a tag that was never
+there — indistinguishable from a refusal, and not evidence of one. Either #165's probe met
+a case this did not construct, or the family was mis-attributed. Recorded as a
+non-reproduction rather than dropped.
+
+Two things this measurement does **not** establish. Row 2's `itemCommonId` was `"x"`, not
+a real id, so a correct server might legitimately ignore it — what makes it a member of
+the family is the clean 200 with no message rather than the absence of the change alone.
+And nothing here probes whether any of the nine would answer differently for a caller
+whose key carries different rights.
+
+### Which write paths would catch one
+
+Not measured on the wire — read off `TxCards` and verified by mutation (replace each
+comparison with `if (false as boolean)` and run the suite). **Five** of its twelve numbered
+ops re-read and compare: `moveColumn`, `setArchived`, `setText`, `setDueDate`,
+`setFieldValue`. The other seven card ops have no read-back — `create`, `deleteCard`,
+`setTags`, `setAssignees`, `addBlockingEdge`, `removeBlockingEdge`,
+`moveToBoard`/`commitToBoard` — and neither does any write off the card. A clean-200
+refusal on one of those is reported as success, which is what "unprotected by
+construction" means.
+
+`setTags` and `setAssignees` deserve their own note, because their diff is often mistaken
+for protection: both compute a delta against the card's read state and send
+`addTagIds`/`removeTagIds` and `addAssignmentIds`/`removeAssignmentIds`, so the CLI never
+sends `{tags:[…]}` or a whole-array `assignmentIds` — rows 1 and the `tags` no-op of
+§1.4 (iii) are unreachable through the intents. But the delta is not a read-back: nothing
+re-reads afterwards, so a refused `removeTagIds` would still report success.
+
+---
+
 ## 7. Sources consulted
 
 Demand side, read in full:

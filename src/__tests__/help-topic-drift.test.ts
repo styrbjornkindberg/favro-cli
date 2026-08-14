@@ -192,7 +192,7 @@ describe('the topic is reachable the way its consumers reach it', () => {
     expect(guard).toBeLessThan(intents);
   });
 
-  it('is a model, not a field reference — 60 to 113 lines of content', () => {
+  it('is a model, not a field reference — 60 to 116 lines of content', () => {
     // 80 until #109, and the raise is recorded rather than quietly taken. The
     // cap exists so the topic stays a MODEL, and a row per intent is not
     // padding, it is the table: #109 added three — `clear-blocking-edges` (2
@@ -224,7 +224,7 @@ describe('the topic is reachable the way its consumers reach it', () => {
     // 84 was `awk length` counting BYTES — the block's em-dashes are three
     // apiece — and 230 was the paragraph measured with its indent included.
     //
-    // 89 → 113 in #168/#170, the largest raise this cap has taken, and
+    // 89 → 116 in #168/#170, the largest raise this cap has taken, and
     // **NOTHING WAS EVICTED** — stated plainly, in the form the paragraph above
     // demands, because no honest saving was available and a reshuffle that nets to
     // zero is not one.
@@ -232,28 +232,32 @@ describe('the topic is reachable the way its consumers reach it', () => {
     // What it buys is two measured write-path defects and one measured population,
     // all three of which an agent needs BEFORE it trusts a write, and this topic is
     // the only place MCP can reach (`favro_help` shells out to `--help`):
-    //   - **7 lines** in WIRE NOTES, #168: an impossible due date is stored two days
+    //   - **8 lines** in WIRE NOTES, #168: an impossible due date is stored two days
     //     out by Favro on a clean 200, and a column move un-archives the card as its
     //     own side effect. Both are silent wrong answers on write paths.
-    //   - **17 lines**, its own section header included, #170: the fourteen
-    //     clean-200 refusals, WHICH five write paths re-read and which have nothing,
-    //     and what an agent should do instead — including that `retryable: true` on
-    //     a read-back failure cannot separate a blip from a deterministic refusal,
-    //     so a second identical failure means stop, not retry.
-    // 7 + 17 = 24, and 89 + 24 = 113. Both figures counted between headers with
-    // this test's own filter, after a first draft of this comment guessed "6 and
-    // 17" and did not add up.
+    //   - **19 lines**, its own section header included, #170: the clean-200
+    //     refusals, WHICH five write paths re-read and which have nothing, and what
+    //     an agent should do instead — including that `retryable: true` on a
+    //     read-back failure cannot separate a blip from a deterministic refusal, so
+    //     a second identical failure means stop, not retry.
+    // 8 + 19 = 27, and 89 + 27 = 116. Counted between headers with this test's own
+    // filter, twice: a first draft guessed "6 and 17" and did not add up, and the
+    // 113 that replaced it was measured before the unprotected CARD write paths
+    // were folded in. Seven of them — create, delete, tags, assignees, both
+    // blocking-edge directions, board moves — were missing from a sentence that
+    // opened "Every other write path", so it read as exhaustive while naming only
+    // the off-card ones. That is #170's central ask, and 3 of the 27 lines are it.
     //
     // This is still a MODEL and not a field reference: "which write paths verify
     // themselves and which do not" is the shape of the write surface, not a list of
-    // its fields. Measured with this test's own expression, not off the file — 113
+    // its fields. Measured with this test's own expression, not off the file — 116
     // content lines, widest 84 code points (`[...l].length`, so em-dashes count
     // once; `awk length` counts their bytes and reads 3 higher).
     //
-    // 113 is the true floor with zero slack, which is what makes it a ratchet.
+    // 116 is the true floor with zero slack, which is what makes it a ratchet.
     const content = TOPIC_LINES.filter((l) => l.trim() !== '');
     expect(content.length).toBeGreaterThanOrEqual(60);
-    expect(content.length).toBeLessThanOrEqual(113);
+    expect(content.length).toBeLessThanOrEqual(116);
   });
 
   it('keeps the contract facts the line cap makes tempting to cut', () => {

@@ -121,25 +121,42 @@ The first probe run measured nothing about archiving and is recorded anyway: `PU
 an unarchived one, which is this repo's existing #162 finding (Favro resolves the column
 against `widgetCommonId`), not a new one.
 
-#### The fourteen clean-200 refusals are documented, and the fifth read-back is now pinned (#170)
+#### The clean-200 refusals are documented and re-measured, and a wire-level arm added (#170)
 
-`favro help issue-tracker` gains a section naming the population — fourteen measured
-across `removeTagIds`, a whole-array `assignmentIds` replace, `favroAttachments` and
-immutable fields — and, more usefully, **which write paths verify themselves**: five
-re-read and compare (column move, archive, name/description, dueDate, custom-field
-value), and every other write path has no read-back and is unprotected by construction.
-An agent is told to read the entity back after a write on one of those. The `retryable`
-consequence is written down as the known edge it is, with the one actionable rule the
-ambiguity permits: obey the field, but a second identical failure means stop and read the
-card, because that is the deterministic case.
+`favro help issue-tracker` gains a section naming the population and, more usefully,
+**which write paths verify themselves**: five re-read and compare (column move, archive,
+name/description, dueDate, custom-field value), and **every other write path** has no
+read-back and is unprotected by construction — on the card that is `create`, `delete`,
+tags, assignees, both blocking-edge directions and board moves, plus everything off it.
+That list was the point of the ticket and the first draft of this section omitted the seven
+card ones while opening with "Every other write path", which read as exhaustive. An agent
+is told to read the entity back after a write on any of them. The `retryable` consequence
+is written down as the known edge it is, with the one actionable rule the ambiguity
+permits: obey the field, but a second identical failure means stop and read the card,
+because that is the deterministic case.
 
-**And the guard turned out to be missing where it mattered.** Four of the five read-backs
-already redden when deleted — `moveColumn` 4 arms, `setArchived` 1, `setText` 2,
-`setDueDate` 2, each verified by mutation. **`setFieldValue`'s did not: removing it left
-151 tests green**, so it was the one member of the five that a "these are redundant now
-that #165 refuses denials" cleanup could have deleted silently — the exact reopening the
-ticket warns about. It has an arm now, driving the clean-200 shape (200, untouched row, no
-message) through the real facade.
+**The fourteen are re-measured, because the per-request log is not in this repo** — only
+#170's count and its four family names were. Nine of the four families reproduce on the
+scratch org, enumerated with request, echo and follow-up GET in
+`docs/research/tracker-contract-favro-carriers.md` §6c: the `assignmentIds` full replace,
+`favroAttachments`, five immutable fields, and `addTagIds`/`addAssignmentIds` ignored on a
+POST. **`removeTagIds` does NOT reproduce** — it is honoured for a tag the card carries,
+and the "no effect" of removing a tag that was never there is the correct outcome, not
+evidence of a refusal. Recorded as a non-reproduction rather than repeated. The two POST
+rows are new and are *not* a defect here: `createCard` sends `tags` and `assignmentIds`,
+both measured honoured.
+
+**And the wire level had no arm for one of the five.** Each read-back was mutation-tested
+by replacing its comparison with `if (false)`. Four redden in the two wire suites —
+`moveColumn` 4 arms there (6 across the full suite), `setArchived` 1, `setText` 2,
+`setDueDate` 2 — and `setFieldValue`'s left **151 tests in
+`tx-cards-field-writes-wire.test.ts` and `dispatch-tx-wire.test.ts` green**. Scoped
+deliberately: the mock-level arm at `src/__tests__/commands/custom-fields.test.ts` DOES
+redden, so the guard was pinned and a cleanup would not have gone green — an earlier draft
+of this entry claimed it was the one member a cleanup could delete silently, and that was
+false. The new arm drives the clean-200 shape (200, untouched row, no
+message) through the real facade rather than a mocked `updateCard`, which is better cover
+for the same guard — that is the reason to keep it, not a hole it closes.
 
 Not attempted: a per-field echo comparison, and probing for a shared precondition. Both
 are unmeasured, and the ticket asks for neither.

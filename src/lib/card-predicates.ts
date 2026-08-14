@@ -92,12 +92,21 @@ function localMidnight(match: RegExpMatchArray): Date {
  * write nothing, which #165's rule already classifies as a refusal. So the hole
  * this closes is exactly "valid month, day beyond that month's length".
  *
- * Anything that is not date-only is NOT judged here: a full ISO timestamp is
- * Favro's to parse, and `2026-02-30T00:00:00.000Z` was not probed.
+ * The DATE PART of a full ISO timestamp is judged the same way. Not because a
+ * caller can send one today — `csv.ts` validates the bare shape and no flag or MCP
+ * argument takes a due date — but because the day one lands, the alternative is a
+ * silent regression into exactly the failure this exists to kill: a `dueDay`
+ * mismatch raising `TransientError`, i.e. `retryable: true`, on a date that can
+ * never succeed. One extra pattern is cheaper than the caveat the help topic would
+ * otherwise need, and it makes that topic's claim unconditional.
+ *
+ * `2026-02-30T00:00:00.000Z` is UNPROBED on the wire — this refuses it on the
+ * arithmetic of the date part, not on a measurement of what Favro would store.
  */
 export function isImpossibleDate(value: string): boolean {
-  const dateOnly = value.trim().match(DATE_ONLY);
-  return dateOnly !== null && isNaN(localMidnight(dateOnly).getTime());
+  const v = value.trim();
+  const parts = v.match(DATE_ONLY) ?? v.match(/^(\d{4})-(\d{2})-(\d{2})T/);
+  return parts !== null && isNaN(localMidnight(parts).getTime());
 }
 
 /** Is the card's due date strictly before today? An undated card is never overdue. */

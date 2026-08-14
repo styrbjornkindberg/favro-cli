@@ -280,6 +280,10 @@ describe('setDueDate — three write shapes, and one that answers 200 and writes
     await expect(tx.setDueDate(CARD, '2026-02-30')).rejects.toThrow(RefusalError);
     await expect(tx.setDueDate(CARD, '2026-02-30')).rejects.toThrow(/is not a date that exists/);
     await expect(tx.setDueDate(CARD, '2026-04-31')).rejects.toThrow(RefusalError);
+    // The date PART of a full ISO timestamp too. No caller can send one today, so
+    // this is the guard against a `--due` flag or an MCP argument reintroducing the
+    // retry-forever failure silently. Unprobed on the wire — refused on arithmetic.
+    await expect(tx.setDueDate(CARD, '2026-02-30T00:00:00.000Z')).rejects.toThrow(RefusalError);
     // Refused, not attempted — not even the read. A rolled-over date that reached
     // the wire would be stored, and nothing downstream could tell.
     expect(stand.received).toEqual([]);
@@ -299,6 +303,10 @@ describe('setDueDate — three write shapes, and one that answers 200 and writes
     await tx.setDueDate(CARD, '2024-02-29');
     expect(stand.row.dueDate).toBe('2024-02-29T00:00:00.000Z');
     await expect(tx.setDueDate(CARD, '2026-02-29')).rejects.toThrow(RefusalError);
+    // A real day inside a full ISO timestamp still writes — the ISO arm above must
+    // not have turned every timestamp into a refusal.
+    await tx.setDueDate(CARD, '2026-10-15T07:00:00.000Z');
+    expect(stand.row.dueDate).toBe('2026-10-15T07:00:00.000Z');
   });
 
   it('a date-only write is confirmed on the DAY, not on the string it sent', async () => {
@@ -384,13 +392,15 @@ describe('setFieldValue — a 202 with a message is a failure, and axios calls i
     expect(stand.row.customFields).toEqual([{ customFieldId: FIELD, value: [TODO_OPTION] }]);
   });
 
-  it('a clean 200 that wrote NOTHING is caught — the one read-back nothing pinned (#170)', async () => {
-    // THE GAP THIS ARM CLOSES, measured: deleting `setFieldValue`'s read-back left
-    // 151 tests in this file and `dispatch-tx-wire.test.ts` GREEN. Its four
-    // siblings all redden when theirs is removed — `moveColumn` 4 arms,
-    // `setArchived` 1, `setText` 2, `setDueDate` 2 — so this was the only member of
-    // the five that a cleanup could have deleted silently, which is exactly the
-    // reopening #170 warns about.
+  it('a clean 200 that wrote NOTHING is caught, at the wire (#170)', async () => {
+    // Measured, and SCOPED — an earlier version of this comment overclaimed.
+    // Disabling `setFieldValue`'s comparison leaves 151 tests in this file and
+    // `dispatch-tx-wire.test.ts` green, where its four siblings all redden
+    // (`moveColumn` 4 arms here, `setArchived` 1, `setText` 2, `setDueDate` 2). But
+    // it is NOT unpinned: the mock-level arm in `commands/custom-fields.test.ts`
+    // reddens, so a "redundant now that #165 refuses denials" cleanup would have
+    // gone red. What this adds is cover at the WIRE, through the real facade rather
+    // than a mocked `updateCard` — better cover for the same guard, not a hole.
     //
     // The stand answers 200 with the untouched row and NO message, which is the
     // clean-200 shape (#170): no denial to key on, an ordinary success status, and
