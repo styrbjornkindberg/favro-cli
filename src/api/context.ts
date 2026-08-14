@@ -169,7 +169,7 @@ export function extractEffort(card: ContextCard): number | undefined {
  *
  * ponytail: this reports the hole rather than filling it. The upgrade path is
  * the id→name map — `getSnapshot` ALREADY holds it (`listFields(boardId)`,
- * fetched at line 297 and used only for the snapshot's own field list), and the
+ * fetched for the snapshot's own field list and read for nothing else), and the
  * aggregate path would pay one org-scoped `/customfields` page-through per
  * report to build the same thing. Both would still need this fail-closed answer
  * for the case where that read is the one that fails.

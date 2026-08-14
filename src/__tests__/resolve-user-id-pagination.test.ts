@@ -7,8 +7,8 @@
  * 135 users and the caller's own account sits at index 112 — so the match
  * failed, `undefined` came back, and every `@me` path refused:
  * `cards claim` (whose default assignee is `@me`), `next`, `my-cards`,
- * `my-standup` and the interactive menu. `--assignee "<name>"` worked
- * throughout, because `UsersAPI` has always paged.
+ * `my-standup` and the interactive menu. `--assignee "<name>"` was unaffected,
+ * because it resolves through `UsersAPI`, which pages.
  *
  * The seam is the mocked `http-client`, not a socket: `resolveUserId`
  * constructs its OWN client from the config's credentials and there is no

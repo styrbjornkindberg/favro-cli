@@ -158,9 +158,9 @@ export async function loadConfig(overrides: Partial<FavroConfig> = {}): Promise<
  * `listUsers`, not one hand-rolled page (#162 item 7). `/users` answered
  * `{page: 0, pages: 2, limit: 100}` for a 135-user organization — measured
  * 2026-08-14 — and the caller's own account sat at index 112, so the match
- * failed for anyone past the first page and `@me`, `next`, `my-cards` and
- * `my-standup` all refused with "no userId is cached". `getAllPages` is what
- * every other user read already uses.
+ * failed for anyone past the first page, and every caller below refuses on a
+ * falsy answer: `@me` (`assignee.ts`), `next`, `my-cards`, `my-standup` and the
+ * interactive menu. `getAllPages` is what every other user read goes through.
  */
 export async function resolveUserId(): Promise<string | undefined> {
   const config = await readConfig();
