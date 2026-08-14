@@ -765,6 +765,14 @@ export class TxCards implements ReadTx {
     // needs a version carrier or a measured read-after-write to close, neither of
     // which exists.
     //
+    // A fourth cause reaches here and is NOT transient: the clean-200 family
+    // (#170) — fourteen rejected writes that answer 200 with a full entity and
+    // no `message`, so #165's wire refusal cannot see them and only this
+    // read-back catches them at all. That is why these five read-backs cannot
+    // be removed as redundant now that the wire refuses denials: doing so
+    // reopens #170 silently. Telling it apart from the two observations above
+    // needs the same thing they do, so it is named rather than classified.
+    //
     // `TransientError`, and NOT a `RefusalError`: a refusal claims
     // "deterministic, wrote nothing, repair the call", and the call is not what
     // is wrong — the column resolved and the write was accepted. What failed is
