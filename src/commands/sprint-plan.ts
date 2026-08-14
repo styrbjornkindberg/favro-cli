@@ -15,6 +15,7 @@
  */
 
 import { Command } from 'commander';
+import { EFFORT_UNAVAILABLE_NOTE } from '../lib/custom-field-map';
 import { parseLimit } from '../lib/read-shape';
 import { RefusalError } from '../lib/refusal';
 import { Ctx, run } from '../lib/run';
@@ -37,9 +38,14 @@ function formatSprintCard(card: SprintCard, index: number): string {
  */
 function formatHuman(result: SprintPlanResult): void {
   const backlogTotal = result.suggestions.length + result.overflow.length;
+  // No total means no card's cost was readable, so "N fit in budget" is a claim
+  // nothing behind it supports — the budget simply was not applied (#169).
+  const unreadable = result.totalSuggested === null;
   console.log(`\n🗓️  Sprint Plan: ${result.board.name}`);
   console.log(`   Budget: ${result.budget} pts · ${backlogTotal} backlog cards · ` +
-    `${result.suggestions.length} fit in budget (${result.totalSuggested} pts)`);
+    (unreadable
+      ? 'budget not applied — effort unavailable'
+      : `${result.suggestions.length} fit in budget (${result.totalSuggested} pts)`));
 
   // Named before the early return below: "no backlog cards found" over a board
   // whose card fetch died is advice, not an answer (#116).
@@ -57,7 +63,9 @@ function formatHuman(result: SprintPlanResult): void {
   }
 
   const header = `  #.  ${'Card ID'.padEnd(12)}  ${'Title'.padEnd(45)}  ${'Priority'.padEnd(8)}  Effort`;
-  console.log(`\n  ✅ Within budget (${result.suggestions.length} cards, ${result.totalSuggested} pts):`);
+  console.log(unreadable
+    ? `\n  📋 Ranked backlog (${result.suggestions.length} cards, no budget cut made):`
+    : `\n  ✅ Within budget (${result.suggestions.length} cards, ${result.totalSuggested} pts):`);
   console.log(header);
   console.log('  ' + '─'.repeat(header.length - 2));
 
@@ -77,6 +85,10 @@ function formatHuman(result: SprintPlanResult): void {
       console.log(formatSprintCard(card, i));
     });
   }
+
+  // Human mode must not print a word the JSON's `null` explains nowhere — the
+  // same note `workload` and `team` print, from the one place it lives (#169).
+  if (unreadable) console.log(`\n  ${EFFORT_UNAVAILABLE_NOTE}`);
 
   holes();
   console.log('');

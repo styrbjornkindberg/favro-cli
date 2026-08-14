@@ -294,6 +294,33 @@ describe('SprintPlanAPI', () => {
     expect(lastSuggestion.cumulative).toBe(result.totalSuggested);
   });
 
+  it('an id-keyed payload makes the budget verdict UNDISCLOSED, not "everything fits" (#169 review)', async () => {
+    // The key is what `normalizeCard` → `customFieldMap` produces off the wire:
+    // `GET /cards` inlines `{customFieldId, value}` and no `name`, so every card's
+    // `effort` is `undefined` here. Under `?? 0` that made every card free —
+    // `running <= budget` was `0 <= 40` for all of them — and `sprint-plan`
+    // reported the whole backlog as fitting a 40-point sprint, `totalSuggested: 0`,
+    // `overflow: []`. The central judgement of the command, silently wrong.
+    mockGetSnapshot.mockResolvedValue({
+      ...SAMPLE_SNAPSHOT,
+      cards: SAMPLE_SNAPSHOT.cards.map(c => ({
+        ...c,
+        customFields: { zxMLxD4zx4tSwJr75: ['YLanLiuXKA8JpvEsX'] },
+      })),
+    });
+
+    const result = await new SprintPlanAPI({} as any).getSuggestions('Sprint 42', 40);
+
+    expect(result.totalSuggested).toBeNull();
+    expect(result.suggestions.map(c => [c.cumulative, c.withinBudget]))
+      .toEqual([[null, null], [null, null], [null, null], [null, null]]);
+    // Nothing was MEASURED not to fit, so nothing may be excluded as over budget.
+    expect(result.overflow).toEqual([]);
+    // The cards are still ranked and still returned — this withholds the budget
+    // cut, it does not drop the backlog.
+    expect(result.suggestions).toHaveLength(4);
+  });
+
   it('uses default budget of 40', async () => {
     const client = {} as any;
     const api = new SprintPlanAPI(client);

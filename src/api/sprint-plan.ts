@@ -13,7 +13,7 @@
  */
 
 import FavroHttpClient from '../lib/http-client';
-import ContextAPI, { extractEffort, type ContextCard, type BoardContextSnapshot } from './context';
+import ContextAPI, { addEffort, extractEffort, type ContextCard, type BoardContextSnapshot } from './context';
 import type { Unreachable } from '../lib/read-shape';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -26,8 +26,18 @@ export interface SprintCard {
   priority?: string;
   effort?: number;
   priorityScore: number;  // 0–4 numeric (higher = more important)
-  cumulative: number;     // running total of effort points after this card
-  withinBudget: boolean;  // true if adding this card stays within budget
+  /**
+   * Running total of effort points after this card, or `null` once a counted
+   * card's effort could not be read at all (#169). `?? 0` here used to turn an
+   * unreadable estimate into a free card.
+   */
+  cumulative: number | null;
+  /**
+   * True if adding this card stays within budget, false if it does not, `null`
+   * when the running total is unreadable — a card whose cost is unknown cannot
+   * be asserted to fit a budget, and cannot be asserted to overflow one either.
+   */
+  withinBudget: boolean | null;
 }
 
 export interface SprintPlanResult {
@@ -36,9 +46,10 @@ export interface SprintPlanResult {
     name: string;
   };
   budget: number;
-  totalSuggested: number;
+  /** Effort of the suggested cards, or `null` when one of them was unreadable. */
+  totalSuggested: number | null;
   suggestions: SprintCard[];
-  overflow: SprintCard[];  // cards that didn't fit in budget
+  overflow: SprintCard[];  // cards MEASURED not to fit; empty when effort is unreadable
   /**
    * Carried straight off the snapshot (#116). An empty plan from a failed cards
    * read would otherwise read as "no backlog cards found", which is advice.
@@ -147,43 +158,51 @@ export class SprintPlanAPI {
     // Filter to backlog cards only
     const backlogCards = snapshot.cards.filter(isBacklogCard);
 
-    // Build sprint cards with priority/effort metadata
-    const sprintCards: SprintCard[] = backlogCards.map(card => {
+    // Build sprint cards with priority/effort metadata. Paired with the card they
+    // came from: the budget accumulator is `addEffort`, which needs the raw
+    // `customFields` to tell an effort of nothing from an effort nobody could read
+    // (#169), and `SprintCard` is the JSON shape and does not carry them.
+    const paired = backlogCards.map(card => {
       const priority = extractPriority(card);
       const effort = extractEffort(card);
       const score = priorityScore(priority);
 
       return {
-        id: card.id,
-        title: card.title,
-        status: card.status,
-        assignees: card.assignees ?? [],
-        priority,
-        effort,
-        priorityScore: score,
-        cumulative: 0,     // filled in below
-        withinBudget: false, // filled in below
+        source: card,
+        sprint: {
+          id: card.id,
+          title: card.title,
+          status: card.status,
+          assignees: card.assignees ?? [],
+          priority,
+          effort,
+          priorityScore: score,
+          cumulative: 0 as number | null,       // filled in below
+          withinBudget: false as boolean | null, // filled in below
+        },
       };
     });
 
     // Sort by priority desc, effort asc (feasibility-first)
-    sprintCards.sort(compareSprintCards);
+    paired.sort((a, b) => compareSprintCards(a.sprint, b.sprint));
 
     // Calculate cumulative effort and budget fit
-    let running = 0;
+    let running: number | null = 0;
     const suggestions: SprintCard[] = [];
     const overflow: SprintCard[] = [];
 
-    for (const card of sprintCards) {
-      const cardEffort = card.effort ?? 0;
-      running += cardEffort;
-      card.cumulative = running;
-      card.withinBudget = running <= budget;
+    for (const { source, sprint } of paired) {
+      running = addEffort(running, source);
+      sprint.cumulative = running;
+      // Undisclosed rather than `true`: `?? 0` made every unreadable card free,
+      // so `running <= budget` was `0 <= 40` for every card on the measured wire
+      // and the whole backlog reported as fitting one sprint (#169).
+      sprint.withinBudget = running === null ? null : running <= budget;
 
-      if (card.withinBudget) {
-        suggestions.push(card);
+      if (sprint.withinBudget === false) {
+        overflow.push(sprint);
       } else {
-        overflow.push(card);
+        suggestions.push(sprint);
       }
     }
 
@@ -193,7 +212,11 @@ export class SprintPlanAPI {
         name: snapshot.board.name,
       },
       budget,
-      totalSuggested: suggestions.reduce((sum, c) => sum + (c.effort ?? 0), 0),
+      // `?? 0` survives only behind the `running !== null` guard, and that is what
+      // makes it honest: a card reaches here with no effort either because it read
+      // as nothing, or because it carried no custom fields at all — and `addEffort`
+      // has already turned `running` to `null` for the first case.
+      totalSuggested: running === null ? null : suggestions.reduce((sum, c) => sum + (c.effort ?? 0), 0),
       suggestions,
       overflow,
       ...(snapshot.unreachable ? { unreachable: snapshot.unreachable } : {}),

@@ -6,6 +6,7 @@ import { Command } from 'commander';
 import { registerSprintPlanCommand, sprintPlanHandler } from '../../commands/sprint-plan';
 import * as config from '../../lib/config';
 import * as sprintPlanApi from '../../api/sprint-plan';
+import { EFFORT_UNAVAILABLE_NOTE } from '../../lib/custom-field-map';
 
 jest.mock('../../lib/http-client');
 jest.mock('../../lib/config');
@@ -170,6 +171,38 @@ describe('favro sprint-plan', () => {
     expect(getSuggestions).toHaveBeenCalledWith('Sprint 42', 20);
     expect(result.item).toBe(SAMPLE_RESULT);
     expect(typeof result.human).toBe('function');
+  });
+
+  it('human mode withholds the budget verdict when effort was unreadable (#169 review)', async () => {
+    MockSprintPlanAPI.prototype.getSuggestions.mockResolvedValue({
+      ...SAMPLE_RESULT,
+      totalSuggested: null,
+      suggestions: SAMPLE_RESULT.suggestions.map(c => ({ ...c, cumulative: null, withinBudget: null })),
+      overflow: [],
+    });
+
+    await runCli(['sprint-plan', '--board', 'Sprint 42', '--human']);
+
+    const all = consoleSpy.mock.calls.map(c => c[0] as string).join('\n');
+    // "N fit in budget" and "✅ Within budget" are both claims about a cost nothing
+    // read, and the section header was the louder of the two.
+    expect(all).not.toContain('fit in budget');
+    expect(all).not.toContain('Within budget');
+    expect(all).toContain('budget not applied — effort unavailable');
+    expect(all).toContain('Ranked backlog (2 cards, no budget cut made)');
+    // The reason, not just the absence — same note `workload` and `team` print.
+    expect(all).toContain(EFFORT_UNAVAILABLE_NOTE);
+  });
+
+  it('a readable total keeps the budget verdict, and the note stays off', async () => {
+    // The polarity. A render that dropped "Within budget" or printed the note
+    // unconditionally reddens here.
+    await runCli(['sprint-plan', '--board', 'Sprint 42', '--human']);
+
+    const all = consoleSpy.mock.calls.map(c => c[0] as string).join('\n');
+    expect(all).toContain('2 fit in budget (7 pts)');
+    expect(all).toContain('✅ Within budget (2 cards, 7 pts)');
+    expect(all).not.toContain(EFFORT_UNAVAILABLE_NOTE);
   });
 
   it('shows (no backlog cards found) when both lists are empty', async () => {

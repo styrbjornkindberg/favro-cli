@@ -678,7 +678,7 @@ Semi-automatic sprint plan based on priority and capacity:
 favro sprint-plan --board sprint-42 --budget 40 > sprint-plan.json
 
 # 2. Review suggestions (see cards, priority scores)
-cat sprint-plan.json | jq '.suggestions[] | {title, priority_score, cumulative}'
+cat sprint-plan.json | jq '.suggestions[] | {title, priorityScore, cumulative}'
 
 # 3. Turn the suggestions into a CSV and preview the status change
 jq -r '"card_id,status", (.suggestions[] | "\(.id),Approved")' sprint-plan.json > approve.csv
