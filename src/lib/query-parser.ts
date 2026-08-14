@@ -615,24 +615,15 @@ export function evaluateNode(
         const raw = resolveFieldValue('due_date', card) ?? resolveFieldValue('dueDate', card);
         if (!raw) return false;
 
-        // Extract card's due date — for consistency with day-level comparison below, use YYYY-MM-DD string
-        let cardDateStr: string;
-        if (typeof raw === 'string') {
-          cardDateStr = raw.includes('T') ? raw.split('T')[0] : raw.slice(0, 10);
-        } else {
-          const d = new Date(raw);
-          if (isNaN(d.getTime())) return false;
-          cardDateStr = d.toISOString().split('T')[0];
-        }
+        const cardDateStr = cardDay(raw);
+        if (cardDateStr === undefined) return false;
 
-        // Create today's date in UTC for consistent comparison
-        const now = new Date();
-        const todayDateStr = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
-          .toISOString().split('T')[0];
-
-        // Resolve the target date (e.g., 7 days from today)
-        const target = resolveDateValue(node.dateValue);
-        const targetDateStr = target.toISOString().split('T')[0];
+        // Both bounds in the same frame as the card day — this branch used to
+        // build "today" from `Date.UTC` and the target from `toISOString()`, so
+        // a window whose ends came from `resolveDateValue`'s LOCAL midnight was
+        // measured against a UTC card day at both ends.
+        const todayDateStr = ymd(new Date());
+        const targetDateStr = ymd(resolveDateValue(node.dateValue));
 
         // For due_in, check if cardDate is between today and the target date (inclusive)
         return cardDateStr >= todayDateStr && cardDateStr <= targetDateStr;
@@ -641,17 +632,8 @@ export function evaluateNode(
       const raw = resolveFieldValue(node.field, card);
       if (!raw) return false;
 
-      // Extract YYYY-MM-DD string from raw (could be ISO string with time, or plain date string)
-      let cardDateStr: string;
-      if (typeof raw === 'string') {
-        // Handle both "2026-03-27" and "2026-03-27T14:30:00" formats
-        cardDateStr = raw.includes('T') ? raw.split('T')[0] : raw.slice(0, 10);
-      } else {
-        // If it's a Date object, convert to YYYY-MM-DD
-        const d = new Date(raw);
-        if (isNaN(d.getTime())) return false;
-        cardDateStr = d.toISOString().split('T')[0];
-      }
+      const cardDateStr = cardDay(raw);
+      if (cardDateStr === undefined) return false;
 
       // Convert target date to YYYY-MM-DD for day-level comparison.
       //
@@ -827,6 +809,52 @@ function ymd(d: Date): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+/**
+ * The calendar day a card's date field names, `YYYY-MM-DD`, in the LOCAL frame —
+ * `undefined` when the value will not parse.
+ *
+ * The frame is a product decision, so it is written down here rather than
+ * inferred from the arithmetic. A due date is the calendar day the person who
+ * set it meant, and the day they meant is the one their own clock reads. Favro
+ * sends a full ISO instant and never a bare date — measured over 853 dated cards
+ * in #132 — and those instants encode a *local* day boundary: `T07:00:00.000Z`,
+ * `T21:59:59.999Z` and `T22:59:59.999Z` are among the eleven time-of-day parts
+ * that scan saw (`card-predicates.ts` records it).
+ *
+ * Truncating such an instant to ten characters names the UTC day, which for a
+ * due date set east of Greenwich is the day BEFORE the one on the card: measured
+ * at a frozen clock in Europe/Stockholm, a card due at local midnight today was
+ * returned by `due_date:overdue` and by `due_date<today`, and `due_date:today`
+ * did not return it. That truncation is what this replaced. `isOverdue` in
+ * `card-predicates.ts` already reads these instants with `new Date(…)` against a
+ * local start-of-day, so the two overdue answers this CLI can give now agree.
+ *
+ * Frozen-clock sweeps of all 24 hours in Europe/Stockholm, Pacific/Auckland,
+ * America/Los_Angeles and UTC show the old comparison was wrong only where the
+ * local and UTC calendar days disagree; in UTC the two frames coincide and it
+ * was right at every hour. The time of day alone never decided it.
+ *
+ * A bare `YYYY-MM-DD` carries no zone, so it means midnight *here* and its day
+ * is the digits as written. Nothing measured sends one; our own writes can
+ * (`UpdateCardRequest.dueDate`), which is why the branch is kept.
+ *
+ * OPEN EDGE, and the price of choosing a frame: Favro normalises a bare-date
+ * write to `T00:00:00.000Z` (#106, §3.1) — UTC midnight, not the writer's. Read
+ * back here, west of Greenwich that instant's local day is the day BEFORE the
+ * one written, so a due date set through `setDueDate('2026-09-01')` reads as
+ * `2026-08-31` to this filter in, say, America/Los_Angeles. No frame is right
+ * for both producers: the UI writes a local boundary, a bare-date write lands on
+ * a UTC one, and nothing in the payload says which. The local frame is the one
+ * that serves the 853 measured cards. This edge is recorded, not handled — the
+ * combination is unmeasured, and a rule keyed on the exact instant
+ * `T00:00:00.000Z` would guess at a producer rather than read one.
+ */
+function cardDay(raw: unknown): string | undefined {
+  if (typeof raw === 'string' && ABSOLUTE_ISO_RE.test(raw)) return raw;
+  const d = new Date(raw as string | number | Date);
+  return isNaN(d.getTime()) ? undefined : ymd(d);
+}
+
 /** Two `YYYY-MM-DD` day strings, compared as the ordered strings they are. */
 function compareDayStrings(card: string, op: Operator, target: string): boolean {
   switch (op) {
@@ -858,7 +886,14 @@ function resolveDateValue(dv: DateValue): Date {
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
   switch (dv.type) {
-    case 'absolute': return new Date(dv.iso!);
+    // `dv.iso` is a bare `YYYY-MM-DD` (`ABSOLUTE_ISO_RE` is the only way to
+    // reach this case), and a bare date carries no zone: it names the day HERE,
+    // like every other branch of this function. `new Date('2026-08-13')` parses
+    // it as UTC midnight instead, which `ymd` then reads back as the PREVIOUS
+    // day west of Greenwich — measured at a frozen clock in
+    // America/Los_Angeles, `due_date:2026-08-13` matched a card due
+    // `2026-08-13T09:00:00Z` at none of the 24 hours of the day.
+    case 'absolute': return new Date(`${dv.iso!}T00:00:00`);
     case 'relative': return resolveRelativeKeyword(dv.keyword!, today);
     case 'relative-math': {
       const d = new Date(today);

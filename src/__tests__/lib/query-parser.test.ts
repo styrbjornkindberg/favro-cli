@@ -789,27 +789,83 @@ describe('filterCards', () => {
    * shape, which `() => []` and `() => cards` satisfy alike, so it could not
    * fail. Under it, `due_date:overdue` matched NOTHING on any board: `:` is `=`,
    * the keyword resolves to today, and the target is a local-midnight `Date` read
-   * back through `toISOString()`, so it did not even match a card due today. The
-   * dates here are built relative to now, so the membership is knowable.
+   * back through `toISOString()`, so it did not even match a card due today.
+   *
+   * Then it built its dates from `toISOString()` off the real clock, which named
+   * the UTC day and made the answer depend on the hour the suite ran (#166): the
+   * card called `today` was genuinely yesterday's, locally, after local midnight.
+   * The clock is frozen here so the fixture and the filter cannot land on
+   * opposite sides of local midnight, and every date below is built in the LOCAL
+   * frame — the one the predicate compares in.
+   *
+   * The due instants are built at a local hour and serialised with
+   * `toISOString()`, which is the measured wire shape (#132): a full ISO instant
+   * whose time part encodes a local day boundary. Both hours that separate the
+   * two frames are covered — local midnight falls on the previous UTC day east of
+   * Greenwich, local 23:00 on the next UTC day west of it — so whichever side of
+   * Greenwich this runs on, one of them is a day the old UTC truncation got
+   * wrong. The ZONE cannot be pinned from inside a test: reassigning
+   * `process.env.TZ` in a jest worker leaves `Date` on the zone the process
+   * started with (measured — `new Date(iso).getHours()` is unchanged across the
+   * assignment). Nor would pinning help under `TZ=UTC`, where the local and UTC
+   * calendar days coincide and a 24-hour sweep was green against the unfixed
+   * comparison: there is no defect there to catch. Measured against the unfixed
+   * comparison, these arms are red — four of them — in Europe/London,
+   * Europe/Stockholm, Asia/Kolkata, Pacific/Auckland, Pacific/Chatham,
+   * America/Los_Angeles, America/Sao_Paulo and Pacific/Honolulu, and green in
+   * UTC. The clock they run at is their own, so the hour of the run is not a
+   * variable in any of them.
    */
   describe('overdue is a comparison, not a date', () => {
-    const day = (offset: number): string => {
-      const d = new Date();
-      d.setUTCDate(d.getUTCDate() + offset);
-      return `${d.toISOString().split('T')[0]}T09:00:00Z`;
-    };
-    // Four cards, one on each side of today plus one carrying no due date at
-    // all — the omit arm. `() => true` admits `none`, `() => false` admits
-    // nothing, and a predicate that drifted a day admits `today`.
-    const dated = [
-      { cardId: 'past', name: 'a', dueDate: day(-3) },
-      { cardId: 'today', name: 'b', dueDate: day(0) },
-      { cardId: 'future', name: 'c', dueDate: day(3) },
-      { cardId: 'none', name: 'd' },
-    ];
+    const NOW = '2026-08-13T12:00:00.000Z';
 
-    test.each(['due_date:overdue', 'due_date<today'])('%s is past-due only', (filter) => {
-      expect(filterCards(parseQuery(filter), dated).map(c => c.cardId)).toEqual(['past']);
+    beforeEach(() => {
+      jest.useFakeTimers().setSystemTime(new Date(NOW));
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    /** Four cards around today, one undated — the omit arm. */
+    const dated = (localHour: number) => {
+      const dueAt = (offsetDays: number): string => {
+        const d = new Date();
+        d.setDate(d.getDate() + offsetDays);
+        d.setHours(localHour, 0, 0, 0);
+        return d.toISOString();
+      };
+      return [
+        { cardId: 'past', name: 'a', dueDate: dueAt(-3) },
+        { cardId: 'today', name: 'b', dueDate: dueAt(0) },
+        { cardId: 'future', name: 'c', dueDate: dueAt(3) },
+        { cardId: 'none', name: 'd' },
+      ];
+    };
+
+    const ids = (filter: string, cards: Record<string, any>[]): string[] =>
+      filterCards(parseQuery(filter), cards).map(c => c.cardId);
+
+    describe.each([[0], [23]])('for a card due at local %i:00', (localHour) => {
+      test.each(['due_date:overdue', 'due_date<today'])('%s is past-due only', (filter) => {
+        expect(ids(filter, dated(localHour))).toEqual(['past']);
+      });
+
+      test('the card due today is due today, by every spelling that says so', () => {
+        const cards = dated(localHour);
+        // `en-CA` is `YYYY-MM-DD` in the local zone — the day a user reads off
+        // their own calendar, which is what they type as an absolute date.
+        const localToday = new Date().toLocaleDateString('en-CA');
+        expect(ids('due_date:today', cards)).toEqual(['today']);
+        expect(ids('due_date<=today', cards)).toEqual(['past', 'today']);
+        expect(ids('due_date>today', cards)).toEqual(['future']);
+        expect(ids(`due_date:${localToday}`, cards)).toEqual(['today']);
+        // `3d` lands the `future` card exactly on the window's far edge, which
+        // is where `due_in`'s own bounds have to be in the same frame as the
+        // card day: built from `toISOString()` off a local-midnight Date, the
+        // edge named the day before and dropped the card sitting on it.
+        expect(ids('due_in:3d', cards)).toEqual(['today', 'future']);
+      });
     });
 
     test('the keyword carries `<`, so a typed `:` cannot make it mean "due today"', () => {
@@ -820,10 +876,9 @@ describe('filterCards', () => {
 
     test('every other date keyword keeps the operator the caller typed', () => {
       // The rewrite is scoped to `overdue`. `due_date:today` still means the
-      // equality it reads as, and still admits the card due today.
-      const q = parseQuery('due_date:today');
-      expect((q.ast as DatePredicate).operator).toBe('=');
-      expect(filterCards(parseQuery('due_date<=today'), dated).map(c => c.cardId)).toEqual(['past', 'today']);
+      // equality it reads as — the membership that follows is asserted per zone
+      // above, where the clock and the frame are both pinned.
+      expect((parseQuery('due_date:today').ast as DatePredicate).operator).toBe('=');
     });
   });
 });
