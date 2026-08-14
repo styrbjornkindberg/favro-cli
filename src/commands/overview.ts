@@ -99,19 +99,33 @@ export function findTopBlockers(
   cards: AggregateCard[],
   count: number = 5,
 ): { topBlockers: OverviewResult['topBlockers']; unreachable: Unreachable[] } {
-  const edgeCount = new Map<string, number>();
+  // Distinct blocked CARDS per blocker, not edges. Since #167 item 3 the
+  // snapshot carries one row per board instance, so a card sitting on two boards
+  // states its `blockedBy` twice — and an edge tally would report a blocker as
+  // blocking two cards when it blocks one card that happens to live on two
+  // boards. Every other number in this report is a partition of the instance set
+  // and counts instances on purpose; `blockingCount` is a statement about work
+  // items, so it is the one that has to collapse them.
+  //
+  // `commonId` is the card across its instances (`AggregateCard.commonId`); `id`
+  // is a `cardId` and stands in only for a row that arrived without one, where
+  // one-row-one-card is the best available reading.
+  const blockedCards = new Map<string, Set<string>>();
   for (const card of cards) {
     for (const blockerId of card.blockedBy ?? []) {
-      edgeCount.set(blockerId, (edgeCount.get(blockerId) ?? 0) + 1);
+      const blocked = blockedCards.get(blockerId) ?? new Set<string>();
+      blocked.add(card.commonId ?? card.id);
+      blockedCards.set(blockerId, blocked);
     }
   }
+  const blockedCount = new Map([...blockedCards].map(([id, blocked]) => [id, blocked.size] as const));
 
   // `blockedBy` holds `cardCommonId`s — `blockingEdges` reports the
   // board-independent id, and since #162 that is a CHOICE: an inlined edge
   // carries `cardId` too. `id` here is the `cardId`, so matching on it misses.
   const byCommonId = new Map(cards.filter(c => c.commonId).map(c => [c.commonId!, c]));
 
-  const ranked = [...edgeCount].sort((a, b) => b[1] - a[1]);
+  const ranked = [...blockedCount].sort((a, b) => b[1] - a[1]);
 
   const topBlockers: OverviewResult['topBlockers'] = [];
   const outsideFetch: string[] = [];
@@ -141,7 +155,7 @@ export function findTopBlockers(
   const unreachable: Unreachable[] = outsideFetch.map(blockerId => ({
     id: blockerId,
     reason:
-      `blocks ${edgeCount.get(blockerId)} card(s) in this scope, but the blocking card is ` +
+      `blocks ${blockedCount.get(blockerId)} card(s) in this scope, but the blocking card is ` +
       `outside the fetched set (blocking edges are not board-scoped), so it could not be ` +
       `ranked or named.`,
   }));

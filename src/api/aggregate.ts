@@ -238,13 +238,43 @@ export class AggregateAPI {
         boards = extBoards as unknown as Board[];
       }
 
-      // Fetch cards for the entire collection in one API call
+      // Fetch cards for the entire collection in one API call.
+      //
+      // No `unique`, and that is the whole of #167 item 3. It collapses a card's
+      // N board instances to ONE row with no documented ordering
+      // (`docs/research/card-identifier-semantics.md` §3.3), while the
+      // `boardCards` filter below attributes each surviving row to exactly one
+      // board — so a card on two boards of this collection was counted on one of
+      // them and simply missing from the other's `totalCards` and
+      // `stageDistribution`. Structural, not intermittent, and at the limit it
+      // costs a whole BOARD: measured 2026-08-14 on the #105 scratch collection,
+      // a second board whose only card was shared with Kanban was absent from
+      // `overview`'s `boards[]` altogether — `boardCount: 2, totalCards: 10`
+      // against `3` / `11` for the same collection read without `unique`, while
+      // `cards list` on that board answered one card.
+      //
+      // What `unique` picks was NOT the thing to fix. It picked the same
+      // instance on eight repeats of that card, and on a card-scoped
+      // `GET /cards?cardCommonId=X&unique=true` it picked the boardless FORK ten
+      // times out of ten — but no fork reaches this branch: the same probe
+      // measured `GET /cards?collectionId=X` returning eleven rows and not one
+      // without a `widgetCommonId`, on a collection that holds a card with a
+      // fork. So on this read the collapse loses instances, not attribution.
+      //
+      // What this snapshot counts is therefore a BOARD INSTANCE — CONTEXT.md's
+      // own reading of `card` ("a card exists once per board it sits on"), what
+      // `cards list <board>` answers, and what the `__boards__` branch below
+      // already does. The price is that a card on two boards is two rows in
+      // `allCards`, so `stats.total`, `by_status`, `by_owner` and `overview`'s
+      // `totalCards` / `stageDistribution` / `dueSummary` all count it twice.
+      // That is one partition of one instance set — `stageDistribution` is a
+      // percentage OF `totalCards`, so the two cannot use different denominators
+      // — and the alternative is per-board counts that disagree with
+      // `cards list`. The one number that is not part of that partition is
+      // `overview`'s `blockingCount`, which counts distinct blocked cards.
       let cards: Card[];
       if (collId !== '__boards__') {
-        cards = await this.cardsApi.listCards({
-          collectionId: collId,
-          unique: true,
-        });
+        cards = await this.cardsApi.listCards({ collectionId: collId });
       } else {
         // Fetch per-board when we only have boardIds
         const perBoard = await Promise.all(
@@ -282,7 +312,12 @@ export class AggregateAPI {
         const workflow = buildWorkflow(columns);
         const workflowByColumnId = new Map(workflow.map(w => [w.columnId, w]));
 
-        // Filter cards belonging to this board
+        // Filter cards belonging to this board. A row matching NO board of the
+        // collection lands in no `boardCards` and never reaches `allCards` — it
+        // is DROPPED, not bucketed under `overview`'s `'Unknown'`, which keys on
+        // a missing board NAME and is given one for every card built here. The
+        // collection read was measured not to serve such a row (above), so this
+        // is what the code does with one, not a case anybody has seen.
         const boardCards = cards.filter(c => c.boardId === board.boardId);
         const aggCards = boardCards.map(c =>
           normalizeToAggregateCard(c, board.boardId, board.name, collId !== '__boards__' ? collId : undefined, collId !== '__boards__' ? collName : undefined, workflowByColumnId),

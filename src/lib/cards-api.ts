@@ -525,7 +525,6 @@ export type ArchivedSelector = 'true' | 'false' | 'all';
 export interface ListCardsOptions {
   boardId?: string;
   collectionId?: string;
-  unique?: boolean;
   /**
    * Which cards to select, defaulting to `'false'` — live cards only.
    *
@@ -770,7 +769,7 @@ export class CardsAPI {
    * `capRows` in `read-shape`.
    *
    * Accepts an options object, or a bare boardId as shorthand:
-   *   listCards({ boardId, collectionId, status, archived, unique })
+   *   listCards({ boardId, collectionId, status, archived })
    *   listCards(boardId?)
    */
   async listCards(optsOrBoardId?: string | ListCardsOptions): Promise<Card[]> {
@@ -794,7 +793,7 @@ export class CardsAPI {
     // once instead of at seven call sites.
     //
     // Strictly `=== ''`, so an ABSENT board stays legal: `aggregate` reads a whole
-    // collection with `{ collectionId, unique }` and no board at all, on purpose.
+    // collection with `{ collectionId }` and no board at all, on purpose.
     // Omission is a caller saying "not by board"; an empty string is a caller
     // that meant to name one and did not.
     if (opts.boardId === '') {
@@ -843,10 +842,11 @@ export class CardsAPI {
       params.collectionId = opts.collectionId;
     }
 
-    // Deduplicate cards that appear on multiple boards in the same collection
-    if (opts.unique) {
-      params.unique = true;
-    }
+    // No `unique` option, and none is coming back by request: it collapses a
+    // card's board instances to one arbitrary row, and the only caller that
+    // sent it — `aggregate`'s collection sweep — was under-reporting every
+    // per-board count because of it (#167 item 3). A caller that wants one
+    // instance of one card has `CardReferenceResolver`; this reads a scope.
 
     // `archived` rides the wire. Favro's default includes archived cards, so
     // omitting it is what 'all' means — the live-only default is the ask.

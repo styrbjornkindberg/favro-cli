@@ -471,8 +471,19 @@ other way round. This is the opposite of what `src/commands/widgets.ts:21,49` ch
    codebase.
 3. **Does `GET /widgets` silently ignore an undocumented `cardCommonId` param, or error?** Determines
    whether §3.3's bug is "returns everything" or "returns nothing". Needs a live call.
-4. **Does `unique=true` have a deterministic ordering?** Undocumented. Determines whether
-   `entities[0]` is stable across calls.
+4. ~~**Does `unique=true` have a deterministic ordering?**~~ **Partly measured 2026-08-14** (#167
+   item 3), against the #105 scratch org. Stability: `GET /cards?cardCommonId=<x>&unique=true`
+   returned the same single entity on 10 consecutive calls for card `74480953b9749f43bf515b6b`, and
+   on 8 for a freshly-made two-board card — so `entities[0]` did not flap within a session. What it
+   picks is the finding: for `74480953b9749f43bf515b6b` the survivor was the **fork** (no
+   `widgetCommonId`) on all 10, while the unfiltered call returned the fork *and* the board
+   instance. So the collapsed row is not necessarily a board instance at all.
+   **The open edge that leaves:** `addWidgetToBoard` (§3.3) resolves `cardCommonId` → `cardId`
+   through exactly this call and then `PUT`s that `cardId`. Whether a commit `PUT` against a fork's
+   `cardId` lands is **not measured** — nobody has run it — and it is not the same question as the
+   ordering one. What is measured is that the `collectionId` sweep cannot hit this: the same
+   collection answered 11 rows with no `widgetCommonId`-less row among them, with and without
+   `unique`, which is why `AggregateAPI` only had to drop the parameter.
 5. **Are the §3.6 undocumented endpoints real private routes or dead code?** `/cards/search`,
    `/cards/bulk`, `/boards/:boardId/activity`, `/members`, `/usergroups`,
    `/collections/:id/boards/:id`. Needs live calls against a real org.
