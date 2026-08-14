@@ -14,6 +14,7 @@
 
 import FavroHttpClient from '../lib/http-client';
 import ContextAPI, { addEffort, extractEffort, type ContextCard, type BoardContextSnapshot } from './context';
+import { fieldNamesUnavailable } from '../lib/custom-field-map';
 import type { Unreachable } from '../lib/read-shape';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -25,7 +26,12 @@ export interface SprintCard {
   assignees?: string[];
   priority?: string;
   effort?: number;
-  priorityScore: number;  // 0–4 numeric (higher = more important)
+  /**
+   * 0–4 numeric (higher = more important), or `null` where no priority field
+   * could have been matched by name at all (#169) — NOT the same as a card that
+   * was read and holds no priority, which is `0`.
+   */
+  priorityScore: number | null;
   /**
    * Running total of effort points after this card, or `null` once a counted
    * card's effort could not be read at all (#169). `?? 0` here used to turn an
@@ -87,6 +93,19 @@ export function priorityScore(priority: string | undefined): number {
 /**
  * Extract priority value from a card's custom fields.
  * Looks for fields named "priority", "urgency", "severity".
+ *
+ * `undefined` means "matched nothing", which on the measured wire is what
+ * ALWAYS happens: the keys here are field names and `GET /cards` sends
+ * `customFieldId`s (`custom-field-map.ts`). `priorityOf` below is what a caller
+ * should use — it is the one that can tell an absent priority from an unreadable
+ * one, and this alone cannot (#169).
+ *
+ * Deliberately NOT reconciled with `next.ts`'s `extractPriority`, which returns
+ * `{label, score}` off a `/priority|urgency|severity/` regex. Two measured
+ * differences would ride along on that refactor: `Priority: urgent` scores 4
+ * here (`PRIORITY_SCORES`) and 0 there, and a non-band value (`P1`) displays
+ * itself here and would display `unset` there. Both are sort/display changes
+ * nobody asked for. Recorded as the open edge it is rather than merged blind.
  */
 export function extractPriority(card: ContextCard): string | undefined {
   const fields = card.customFields ?? {};
@@ -96,6 +115,24 @@ export function extractPriority(card: ContextCard): string | undefined {
     if (val !== undefined && val !== null) return String(val);
   }
   return undefined;
+}
+
+/**
+ * A card's priority and its 0–4 rank, or the fail-closed answer (#169).
+ *
+ * `score: null` where nothing could have matched — same split `addEffort` makes,
+ * off the same shared predicate `next.ts` uses. Without it every card on the
+ * measured wire carried `priorityScore: 0` under a field documented "0–4 numeric
+ * (higher = more important)", and since `compareSprintCards` reads that score
+ * FIRST, the ranking the `--help` advertises as priority×effort was in fact
+ * alphabetical by title, silently.
+ */
+export function priorityOf(card: ContextCard): { priority?: string; score: number | null } {
+  const priority = extractPriority(card);
+  if (priority !== undefined) return { priority, score: priorityScore(priority) };
+  return fieldNamesUnavailable(card.customFields)
+    ? { priority: 'unavailable', score: null }
+    : { score: 0 };
 }
 
 // ─── Backlog Filter ───────────────────────────────────────────────────────────
@@ -117,11 +154,18 @@ export function isBacklogCard(card: ContextCard): boolean {
  * 1. Higher priority first
  * 2. Lower effort first (feasibility-first) when priority is equal
  * 3. Alphabetically by title as tiebreaker
+ *
+ * An unreadable priority (`null`) ranks where an unset one does. This has to stay
+ * a TOTAL order — `null` arithmetic is `NaN`, and a comparator returning `NaN`
+ * leaves the array in an implementation-defined order — so the honest answer here
+ * is a rank, and the disclosure lives in the output (#169).
  */
 export function compareSprintCards(a: SprintCard, b: SprintCard): number {
   // Higher priority first
-  if (b.priorityScore !== a.priorityScore) {
-    return b.priorityScore - a.priorityScore;
+  const scoreA = a.priorityScore ?? 0;
+  const scoreB = b.priorityScore ?? 0;
+  if (scoreB !== scoreA) {
+    return scoreB - scoreA;
   }
   // Lower effort first (undefined effort goes last)
   const effortA = a.effort ?? Infinity;
@@ -163,9 +207,8 @@ export class SprintPlanAPI {
     // `customFields` to tell an effort of nothing from an effort nobody could read
     // (#169), and `SprintCard` is the JSON shape and does not carry them.
     const paired = backlogCards.map(card => {
-      const priority = extractPriority(card);
+      const { priority, score } = priorityOf(card);
       const effort = extractEffort(card);
-      const score = priorityScore(priority);
 
       return {
         source: card,

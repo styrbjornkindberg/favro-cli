@@ -319,6 +319,28 @@ describe('SprintPlanAPI', () => {
     // The cards are still ranked and still returned — this withholds the budget
     // cut, it does not drop the backlog.
     expect(result.suggestions).toHaveLength(4);
+
+    // The PRIORITY half of the same payload, and the one that decides ORDER.
+    // `extractPriority` looks up six literal field NAMES, so every lookup missed
+    // and every card carried `priorityScore: 0` under a field documented "0–4
+    // (higher = more important)" — which made `compareSprintCards` fall through to
+    // its alphabetical tiebreaker while `--help` advertised priority×effort.
+    expect(result.suggestions.map(c => [c.priority, c.priorityScore]))
+      .toEqual([['unavailable', null], ['unavailable', null], ['unavailable', null], ['unavailable', null]]);
+  });
+
+  it('a card carrying no custom fields keeps a measured priority score of 0', async () => {
+    // The polarity: nothing was unreadable, so `0` is the answer rather than a
+    // fabrication, and `priority` stays absent rather than reading `unavailable`.
+    mockGetSnapshot.mockResolvedValue({
+      ...SAMPLE_SNAPSHOT,
+      cards: [{ id: 'c1', title: 'Bare', status: 'Backlog', assignees: [], tags: [], blockedBy: [], blocking: [] }],
+    });
+
+    const result = await new SprintPlanAPI({} as any).getSuggestions('Sprint 42', 40);
+
+    expect(result.suggestions.map(c => [c.priority, c.priorityScore])).toEqual([[undefined, 0]]);
+    expect(result.totalSuggested).toBe(0);
   });
 
   it('uses default budget of 40', async () => {

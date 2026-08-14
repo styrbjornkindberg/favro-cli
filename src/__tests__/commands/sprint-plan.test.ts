@@ -194,6 +194,45 @@ describe('favro sprint-plan', () => {
     expect(all).toContain(EFFORT_UNAVAILABLE_NOTE);
   });
 
+  it('does not say "no budget cut made" while displaying the cards it cut (#169 review)', async () => {
+    // `addEffort`'s `null` is sticky but POSITIONAL: a card measured to overflow can
+    // rank BEFORE the first unreadable one, so `overflow` is non-empty while the
+    // total is `null`. The render keyed both its headers off the total alone and
+    // printed `no budget cut made` four lines above `Over budget (1 cards excluded)`.
+    MockSprintPlanAPI.prototype.getSuggestions.mockResolvedValue({
+      ...SAMPLE_RESULT,
+      totalSuggested: null,
+      suggestions: [{ ...SAMPLE_RESULT.suggestions[0], effort: undefined, cumulative: null, withinBudget: null }],
+      overflow: [SAMPLE_RESULT.overflow[0]],
+    });
+
+    await runCli(['sprint-plan', '--board', 'Sprint 42', '--human']);
+
+    const all = consoleSpy.mock.calls.map(c => c[0] as string).join('\n');
+    expect(all).not.toContain('no budget cut made');
+    expect(all).toContain('budget applied until effort ran out — 1 card(s) unmeasured');
+    expect(all).toContain('Ranked backlog (1 cards, 1 not measured against budget)');
+    // The cut it DID make is still reported as one.
+    expect(all).toContain('Over budget (1 cards excluded)');
+  });
+
+  it('says the ranking is not priority-ordered when priority could not be read (#169 review)', async () => {
+    MockSprintPlanAPI.prototype.getSuggestions.mockResolvedValue({
+      ...SAMPLE_RESULT,
+      suggestions: SAMPLE_RESULT.suggestions.map(c => ({ ...c, priority: 'unavailable', priorityScore: null })),
+      overflow: [],
+    });
+
+    await runCli(['sprint-plan', '--board', 'Sprint 42', '--human']);
+
+    const all = consoleSpy.mock.calls.map(c => c[0] as string).join('\n');
+    expect(all).toContain('Priority "unavailable" on 2 card(s)');
+    expect(all).toContain('not the priority×effort ranking');
+    // The whole word, not an 8-char slice of it: the column widened for this value.
+    expect(all).toContain('unavailable');
+    expect(all).not.toContain('unavaila ');
+  });
+
   it('a readable total keeps the budget verdict, and the note stays off', async () => {
     // The polarity. A render that dropped "Within budget" or printed the note
     // unconditionally reddens here.
@@ -203,6 +242,8 @@ describe('favro sprint-plan', () => {
     expect(all).toContain('2 fit in budget (7 pts)');
     expect(all).toContain('✅ Within budget (2 cards, 7 pts)');
     expect(all).not.toContain(EFFORT_UNAVAILABLE_NOTE);
+    // …and a readable priority prints no disclosure either.
+    expect(all).not.toContain('not the priority×effort ranking');
   });
 
   it('shows (no backlog cards found) when both lists are empty', async () => {
