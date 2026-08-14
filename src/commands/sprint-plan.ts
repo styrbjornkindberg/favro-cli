@@ -49,11 +49,15 @@ function formatHuman(result: SprintPlanResult): void {
   // `overflow` is non-empty while the total is `null` — and "no budget cut made"
   // then printed four lines above the cut it made.
   const unmeasured = result.suggestions.filter(c => c.withinBudget === null).length;
+  // Branch (c) said `budget not applied` — but a card measured to FIT can rank
+  // before the first unreadable one, so `withinBudget: true` sits in the JSON of
+  // the same run. Keyed on the same fact the section header uses: nothing was
+  // excluded, which is all an empty `overflow` establishes.
   const verdict = !unreadable
     ? `${result.suggestions.length} fit in budget (${result.totalSuggested} pts)`
     : result.overflow.length
       ? `budget applied until effort ran out — ${unmeasured} card(s) unmeasured`
-      : 'budget not applied — effort unavailable';
+      : `no card excluded — ${unmeasured} card(s) unmeasured`;
   console.log(`\n🗓️  Sprint Plan: ${result.board.name}`);
   console.log(`   Budget: ${result.budget} pts · ${backlogTotal} backlog cards · ${verdict}`);
 

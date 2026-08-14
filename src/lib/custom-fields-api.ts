@@ -168,8 +168,10 @@ export class CustomFieldsAPI {
    * and 2-naming-this-board counts are identical across all three reads, which
    * rules the filter out and leaves "two fields were created in the org between
    * the reads" as the untested remainder. `id-shapes.ts` and `custom-field-map.ts`
-   * carry the 3799 figure and point here; `query-parser.ts:575`, `context.ts:180`
-   * and ADR-0006 record the earlier 3797 read.
+   * carry the 3799 figure and point here; `query-parser.ts`, `context.ts`,
+   * `custom-fields.test.ts`'s docblock and ADR-0006 record the earlier 3797 read.
+   * File names, not line numbers: a `:NNN` in prose rots on the next edit to
+   * either file and nothing checks it.
    *
    * `widgetCommonId` is the only board attribution the wire offers, and only on
    * THIS endpoint: `GET /customfields/<id>` omits the key entirely (measured the

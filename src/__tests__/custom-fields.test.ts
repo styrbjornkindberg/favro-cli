@@ -191,7 +191,10 @@ describe('CustomFieldsAPI', () => {
      * The board filter is client-side because Favro ignores `widgetCommonId`
      * here — measured 2026-08-14: 3797 rows came back for a board that defines
      * 2. So the wire below answers the SAME page whatever board is asked for,
-     * which is the shape the defect had.
+     * which is the shape the defect had. A later read the same day counted 3799
+     * and returned the identical set filtered and unfiltered, confirming the
+     * client-side reading twice; the two-row gap is reconciled and left
+     * unexplained in `custom-fields-api.ts`.
      *
      * Paired polarity, over the wire's own key: `widgetCommonId` is what a
      * `/customfields` row carries and `boardId` is not (measured — the raw row

@@ -188,10 +188,37 @@ describe('favro sprint-plan', () => {
     // read, and the section header was the louder of the two.
     expect(all).not.toContain('fit in budget');
     expect(all).not.toContain('Within budget');
-    expect(all).toContain('budget not applied — effort unavailable');
+    expect(all).toContain('no card excluded — 2 card(s) unmeasured');
     expect(all).toContain('Ranked backlog (2 cards, no budget cut made)');
     // The reason, not just the absence — same note `workload` and `team` print.
     expect(all).toContain(EFFORT_UNAVAILABLE_NOTE);
+    // The note's WORDING, not only its identity: every other arm asserts the
+    // imported constant, so a rewording to something false stays green in all six.
+    // One literal here is the whole cover for what the sentence says.
+    expect(all).toContain('it is not a zero.');
+  });
+
+  it('does not claim the budget went unapplied when a card was measured to fit (#169 review)', async () => {
+    // The third state's own polarity. Sticky `null` is POSITIONAL, so a card
+    // measured to FIT can rank before the first unreadable one: `overflow` is
+    // empty (nothing was excluded) while `withinBudget: true` sits in the JSON of
+    // the same run. `budget not applied` contradicted that field.
+    MockSprintPlanAPI.prototype.getSuggestions.mockResolvedValue({
+      ...SAMPLE_RESULT,
+      totalSuggested: null,
+      suggestions: [
+        { ...SAMPLE_RESULT.suggestions[0], cumulative: 5, withinBudget: true },
+        { ...SAMPLE_RESULT.suggestions[1], effort: undefined, cumulative: null, withinBudget: null },
+      ],
+      overflow: [],
+    });
+
+    await runCli(['sprint-plan', '--board', 'Sprint 42', '--human']);
+
+    const all = consoleSpy.mock.calls.map(c => c[0] as string).join('\n');
+    expect(all).not.toContain('budget not applied');
+    expect(all).toContain('no card excluded — 1 card(s) unmeasured');
+    expect(all).toContain('no budget cut made');
   });
 
   it('does not say "no budget cut made" while displaying the cards it cut (#169 review)', async () => {
