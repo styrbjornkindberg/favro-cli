@@ -51,7 +51,7 @@ export class RefusalError extends Error {
  * **The whole population is five throw sites, and all five are read-backs in
  * `TxCards`** — `moveColumn`, `setArchived`, `setText`, `setDueDate` and
  * `setFieldValue`, each raising when its own re-read disagrees with what it
- * sent. `setArchived`'s "answered 200 but did not take" and `moveColumn`'s "did
+ * sent. `setArchived`'s "answered a SUCCESS status but did not take" and `moveColumn`'s "did
  * not land there" (#101) are the two the shape was named for. They are the only
  * in-process failures in
  * `dispatch.ts`'s import closure that are transient rather than deterministic —

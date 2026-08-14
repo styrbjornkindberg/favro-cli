@@ -2434,7 +2434,10 @@ describe('archive is ONE intent with a direction, and it writes `archive` not `a
     const result = await dispatch('archive', { card: CARD, archived: true }, ctx(stand));
 
     expect(result.outcome).not.toBe('ok');
-    expect(result.error).toMatch(/answered 200 but did not take/);
+    // The message says "a SUCCESS status", not the code: this stand answers 200,
+    // but the live wire answers 202 on writes too (#165) and the code is not
+    // threaded out of the write seam, so the string states the class (#162 item 10).
+    expect(result.error).toMatch(/answered a SUCCESS status but did not take/);
     // Nothing to compensate: the write landed nothing, so the log stayed empty
     // and the unwind had nothing to leave behind.
     expect(result.orphans).toBeUndefined();

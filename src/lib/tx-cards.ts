@@ -735,7 +735,7 @@ export class TxCards implements ReadTx {
     // Unlike `setArchived`'s read-back, this observation is a SEPARATE request,
     // so it has a failure mode that reading a PUT's own echo does not: the read
     // can fail while the write stands. "We could not look" is not "nothing was
-    // written" — the PUT already answered 200 — so the entry goes in and the
+    // written" — the PUT already answered a success status — so the entry goes in and the
     // unwind's own compare decides. It re-reads: our column still there means
     // restore it, anything else means report the concurrent edit. Dropping the
     // entry here instead reported `rolled-back` — which this facade defines as
@@ -1010,9 +1010,19 @@ export class TxCards implements ReadTx {
     //
     // Absent normalises to false, exactly as the capture above does. The two
     // must agree about the same card, and `Card.archived` is optional.
+    //
+    // "a SUCCESS status", not "200", here and at the two sibling read-backs
+    // (`setText`, `setDueDate`) — #162 item 10 bullet 1. Favro is measured to
+    // answer a write `202`: `favro custom-fields set` came back `202` with the
+    // reason in the body, live on the #105 board (#165). That one was a REFUSAL,
+    // and a message-carrying 2xx is classified as one before it reaches this
+    // check — so what arrives here is a clean 2xx whose code nothing observed,
+    // and 200 was a number this message invented. The status is not threaded out
+    // of the write seam; interpolating the observed one is the upgrade if a caller
+    // ever needs to tell 200 from 202 here.
     if ((after.archived === true) !== archived) {
       throw new TransientError(
-        `Archive write on card ${cardId} answered 200 but did not take: sent ` +
+        `Archive write on card ${cardId} answered a SUCCESS status but did not take: sent ` +
           `{archive: ${archived}}, the response reads archived=${JSON.stringify(after.archived)}.\n` +
           `Nothing was written, so nothing needs undoing. The write field \`archive\` is probed ` +
           `honoured in both directions (#75); the read-side \`archived\` spelling is the one that ` +
@@ -1157,7 +1167,7 @@ export class TxCards implements ReadTx {
       // written and this throw is leaving it unlogged. Rare, and not worth guessing
       // about in the message.
       throw new TransientError(
-        `Name write on card ${cardId} answered 200 but did not take: sent ${JSON.stringify(value)}, ` +
+        `Name write on card ${cardId} answered a SUCCESS status but did not take: sent ${JSON.stringify(value)}, ` +
           `the response reads name=${JSON.stringify(stored)}.\n` +
           (stored === (was ?? '')
             ? `The card still reads what it read before, so nothing was written and nothing needs undoing.`
@@ -1238,7 +1248,7 @@ export class TxCards implements ReadTx {
       // written and this throw is leaving it unlogged. Only the equal case can
       // honestly claim nothing happened.
       throw new TransientError(
-        `Due-date write on card ${cardId} answered 200 but did not take: sent ` +
+        `Due-date write on card ${cardId} answered a SUCCESS status but did not take: sent ` +
           `{dueDate: ${JSON.stringify(dueDate)}}, the response reads ` +
           `dueDate=${JSON.stringify(stored)}.\n` +
           (stored === was
