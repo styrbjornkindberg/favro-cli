@@ -79,6 +79,27 @@ function localMidnight(match: RegExpMatchArray): Date {
   return rolledOver ? new Date(NaN) : date;
 }
 
+/**
+ * True when `value` is a date-only string naming a day that does not exist —
+ * `2026-02-30`, `2026-04-31` (#168).
+ *
+ * The detector is `localMidnight`'s round-trip, already here for `isOverdue`.
+ * What it guards is a WRITE: measured live 2026-08-14 on the #105 board,
+ * `PUT {dueDate: "2026-02-30"}` answers **200 with no message** and both the echo
+ * and a follow-up GET read `2026-03-02T00:00:00.000Z` — Favro rolls a day past
+ * the month's end silently. An out-of-range MONTH does not slip through:
+ * `2026-13-01` and `not-a-date` both answer `202 {"message":"Invalid date"}` and
+ * write nothing, which #165's rule already classifies as a refusal. So the hole
+ * this closes is exactly "valid month, day beyond that month's length".
+ *
+ * Anything that is not date-only is NOT judged here: a full ISO timestamp is
+ * Favro's to parse, and `2026-02-30T00:00:00.000Z` was not probed.
+ */
+export function isImpossibleDate(value: string): boolean {
+  const dateOnly = value.trim().match(DATE_ONLY);
+  return dateOnly !== null && isNaN(localMidnight(dateOnly).getTime());
+}
+
 /** Is the card's due date strictly before today? An undated card is never overdue. */
 export function isOverdue(card: Card): boolean {
   if (!card.dueDate) return false;

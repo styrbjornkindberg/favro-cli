@@ -159,6 +159,16 @@ function startServer(
      */
     ignoreColumnWrites?: true;
     /**
+     * A column write also UN-ARCHIVES the card — MEASURED, unlike the two above
+     * (#168). Live 2026-08-14 on the #105 board: archive a card
+     * (`PUT {archive:true}` → 200, `archived:true`, confirmed by a GET), then
+     * `PUT {columnId, widgetCommonId}` → 200, no message, and the write's own echo
+     * already reads `archived:false`. So this belongs on the FAR side of the wire:
+     * it is Favro's behaviour, not ours, and `moveColumn`'s `columnId` compare
+     * passes right through it because the move itself landed.
+     */
+    unarchiveOnColumnWrite?: true;
+    /**
      * The measured 202 partial (#165): the PUT applies every other field, does
      * NOT apply the column, and answers `202 {"message":"Invalid column"}` — a
      * SUCCESS status carrying a refusal. Measured live 2026-08-14 with
@@ -299,6 +309,10 @@ function startServer(
           if (b.detailedDescription !== undefined) next.detailedDescription = b.detailedDescription;
           if (b.columnId !== undefined && !opts.ignoreColumnWrites && !opts.refuseColumnWith202) {
             next.columnId = b.columnId;
+            // Applied with the column and before the echo is taken, which is where
+            // the measurement puts it: the un-archive is already in the response to
+            // the write, not something a later read discovers.
+            if (opts.unarchiveOnColumnWrite) next.archived = false;
           }
           // The measured asymmetry (#75), modelled where it actually lives: the
           // wire honours the WRITE field `archive` and answers 200-and-nothing to
@@ -2419,6 +2433,50 @@ describe('archive is ONE intent with a direction, and it writes `archive` not `a
 
       expect(archiveBodies(stand)).toEqual([{ archive: expected }]);
       expect(stand.cards.get(CARD)!.archived).toBe(expected);
+    }
+  });
+
+  it('names the un-archive a column write causes, and does NOT fail the move (#168)', async () => {
+    // MEASURED, and the ticket's open question answered: the un-archive is in the
+    // COLUMN WRITE's own echo, not in the read-back that follows it. The stand
+    // models it there (`unarchiveOnColumnWrite`). `moveColumn`'s `columnId` compare
+    // passes straight through — the move landed — so nothing in the CLI observed
+    // this state change until now.
+    const stand = await startServer({ unarchiveOnColumnWrite: true });
+    stand.cards.get(CARD)!.archived = true;
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+    try {
+      const result = await dispatch('update', { card: CARD, status: 'Done' }, ctx(stand));
+
+      // The requested change HAPPENED. This is not a failure and must not become one:
+      // refusing here would break `claim` and `resolve` on an archived card.
+      expect(result.outcome).toBe('ok');
+      expect(stand.cards.get(CARD)!.columnId).toBe(DONE);
+      // …and the card is back on the board, which nobody asked for.
+      expect(stand.cards.get(CARD)!.archived).toBe(false);
+
+      const said = warn.mock.calls.map((c) => String(c[0])).join('\n');
+      expect(said).toContain('was ARCHIVED and is now on the board again');
+      expect(said).toContain('side effect of a column write');
+      // The remedy must be a command that exists — `cards archive` does.
+      expect(said).toContain(`favro cards archive ${CARD}`);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('says nothing about archiving when the card was not archived (#168 polarity)', async () => {
+    // A warning on every move would be noise, and would pass the arm above.
+    const stand = await startServer({ unarchiveOnColumnWrite: true });
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+    try {
+      expect(stand.cards.get(CARD)!.archived).not.toBe(true);
+      await dispatch('update', { card: CARD, status: 'Done' }, ctx(stand));
+      expect(warn.mock.calls.map((c) => String(c[0])).join('\n')).not.toContain('ARCHIVED');
+    } finally {
+      warn.mockRestore();
     }
   });
 

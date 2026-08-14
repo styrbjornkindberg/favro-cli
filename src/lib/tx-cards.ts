@@ -57,6 +57,7 @@ import CustomFieldsAPI from './custom-fields-api';
 import WidgetsAPI, { CommittedWidget } from './widgets-api';
 import FavroHttpClient from './http-client';
 import { classifyThrownError, WireRefusalError } from './favro-error';
+import { isImpossibleDate } from './card-predicates';
 import { isUserId } from './id-shapes';
 import { resolveAssignee } from './assignee';
 import { requireTrackerMapping, verifyTrackerMapping, VerifiedTracker } from './tracker-config';
@@ -801,6 +802,34 @@ export class TxCards implements ReadTx {
           `the PUT response's echo is unprobed and is never read here (#101).`,
       );
     }
+    // A state change nobody asked for, and it is FAVRO's, not ours (#168).
+    // MEASURED live 2026-08-14 on the #105 board, `probe: #168 archive-move`:
+    // archive a card (`PUT {archive:true}` → 200, `archived:true`, confirmed by a
+    // GET), then `PUT {columnId, widgetCommonId}` → **200, no message, and the
+    // WRITE'S OWN ECHO already reads `archived:false`**. So the un-archive is the
+    // column write, not this read-back — the ticket's open question — and it is
+    // invisible to #165's rule and to the `columnId` compare above, which passes
+    // because the move genuinely landed.
+    //
+    // Reported, not fought: refusing the move would break `claim` and `resolve` on
+    // an archived card, which no ticket asked for. Not a throw either — the
+    // requested change DID happen.
+    //
+    // ponytail: stderr, because `DispatchResult` has no warnings channel and one
+    // would have to be plumbed through `reportDispatch`, the human render and the
+    // MCP shape. The upgrade, if an agent needs this in the JSON, is that channel —
+    // or a compensation entry, so a later failure re-archives; `PUT {archive:true}`
+    // after a move was measured to stick (200, `archived:true`) in the same run, so
+    // the inverse is known to work. Until then this is on stderr and in
+    // `favro help issue-tracker`, NOT in the machine envelope.
+    if (before.archived === true && after.archived !== true) {
+      console.warn(
+        `⚠ Card ${cardId} was ARCHIVED and is now on the board again. Favro un-archives a card as a ` +
+          `side effect of a column write — measured, and it is not something this move asked for ` +
+          `(#168). The move itself landed. Re-archive with \`favro cards archive ${cardId}\` if the ` +
+          `card was meant to stay off the board.`,
+      );
+    }
     this.log.push(entry);
     return after;
   }
@@ -1233,6 +1262,26 @@ export class TxCards implements ReadTx {
           `measured silent no-op — 200, and the card keeps the date it had (#106) — so forwarding ` +
           `it would report a clear that never happened.\n` +
           `Pass null to clear the date, or "YYYY-MM-DD" / a full ISO timestamp to set one.`,
+      );
+    }
+    // Refused BEFORE the request, not interpreted after it (#168). Measured live
+    // 2026-08-14 on the #105 board: `PUT {dueDate: "2026-02-30"}` answers 200 with
+    // no message and stores `2026-03-02T00:00:00.000Z` — so the caller gets a card
+    // dated two days past anything they typed, and no 2xx rule can see it. The
+    // read-back below DOES catch it (`dueDay` compares the digits), but it catches
+    // it as a `TransientError`, and `favro help issue-tracker` tells an agent to
+    // obey `retryable` — which would retry an impossible date forever. A refusal
+    // is the honest classification: the same call fails the same way every time.
+    //
+    // Only the DAY needs guarding. `2026-13-01` and `not-a-date` answer
+    // `202 {"message":"Invalid date"}` and write nothing, which #165's rule already
+    // turns into a refusal (`card-predicates.ts` carries both measurements).
+    if (dueDate !== null && isImpossibleDate(dueDate)) {
+      throw new RefusalError(
+        `${JSON.stringify(dueDate)} is not a date that exists. Favro does not refuse it: ` +
+          `\`PUT {dueDate: "2026-02-30"}\` answers 200 and stores 2026-03-02 — measured — so ` +
+          `forwarding this would set a due date two days past the one you asked for.\n` +
+          `Pass a real calendar date, or null to clear it.`,
       );
     }
     const before = await this.api.getCard(cardRef);

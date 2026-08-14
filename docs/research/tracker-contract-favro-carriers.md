@@ -482,6 +482,58 @@ Where the reading points somewhere, it is marked as a **lean** — not a decisio
 
 ---
 
+## 6b. Two write-path measurements for #168 — 2026-08-14
+
+Raw axios, not `FavroHttpClient`: #165's rule refuses a message-carrying 2xx before a
+caller sees it, and the question was what the wire says. Org
+`b0b311ac98a0250191573541`, board `5dd75f0d5116020817ebe70a` (`Kanban`), three
+throwaway cards prefixed `probe: #168`, each deleted with `?everywhere=true` (200) and
+the follow-up `GET` verified **403**, which is this org's answer for a card that is gone
+(§1.4's closing note).
+
+### (i) An out-of-range DAY is rolled over silently; an out-of-range MONTH is refused
+
+| request | status | `message` | echoed / stored `dueDate` |
+|---|---|---|---|
+| `PUT /cards/:id {dueDate:"2026-02-30"}` | **200** | *(none)* | `"2026-03-02T00:00:00.000Z"` |
+| `GET /cards/:id` after it | 200 | *(none)* | `"2026-03-02T00:00:00.000Z"` |
+| `PUT /cards/:id {dueDate:"2026-13-01"}` | **202** | `"Invalid date"` | no card row; stored value unchanged |
+| `PUT /cards/:id {dueDate:"not-a-date"}` | **202** | `"Invalid date"` | no card row; stored value unchanged |
+
+Measurement: the rollover is **server-side** — the CLI does no date parsing on this path
+(`setDueDate` → `updateCard` → PUT sends the digits given) — and it is confined to a day
+past the end of a valid month. The two `202`s carry a message, so #165's rule already
+turns those into refusals. `2026-02-30T00:00:00.000Z` (an impossible day inside a full
+ISO timestamp) was **not** probed.
+
+### (ii) A column move un-archives the card, and the un-archive is in the write's own echo
+
+Two runs. The first sent `PUT {columnId}` alone and answered `202 "Access denied"` on an
+archived card — but the polarity run showed the same `202` on an **unarchived** card, so
+that reproduced this repo's existing #162 measurement (Favro resolves `columnId` against
+`widgetCommonId`; a column with no board has nothing to resolve against) and said nothing
+about archiving. The second run used the body `updateCard` actually sends:
+
+| step | request | status | `message` | `archived` | `columnId` |
+|---|---|---|---|---|---|
+| A | `PUT {columnId:Doing, widgetCommonId}` | 200 | *(none)* | `false` | `Doing` |
+| B | `PUT {archive:true}` | 200 | *(none)* | **`true`** | `Doing` |
+| B′ | `GET /cards/:id` | 200 | *(none)* | **`true`** | `Doing` |
+| C | `PUT {columnId:Todo, widgetCommonId}` | **200** | *(none)* | **`false`** | `Todo` |
+| C′ | `GET /cards/:id` | 200 | *(none)* | `false` | `Todo` |
+
+Measurement: step C's own response already reads `archived:false`, so the un-archive is
+the **column write**, not a read-back that follows it — the question #168 asked. It
+carries no `message` and an ordinary 200, so nothing at the wire can see it, and
+`moveColumn`'s `columnId` comparison passes because the move genuinely landed.
+
+Also measured in the same run, and consistent with §1.4 (ii)/(iii)'s family:
+`PUT {archived:true}` — the READ-side spelling used as a write — answers **200** and
+leaves `archived:false`. And `PUT {archive:true}` on a card that has already been moved
+sticks (200, `archived:true`), which is what makes re-archiving a viable inverse.
+
+---
+
 ## 7. Sources consulted
 
 Demand side, read in full:

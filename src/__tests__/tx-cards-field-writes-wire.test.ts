@@ -142,7 +142,7 @@ async function startServer(options: StandOptions = {}): Promise<Stand> {
         else if (/^\d{4}-\d{2}-\d{2}$/.test(String(value))) row.dueDate = `${value}T00:00:00.000Z`;
         else row.dueDate = value;
       }
-      if ('customFields' in put) {
+      if ('customFields' in put && options.ignore !== 'customFields') {
         const entries = (put.customFields ?? []) as Array<Record<string, unknown>>;
         for (const entry of entries) {
           // MEASURED: each of these three answers 202 with a message and NO card
@@ -268,6 +268,39 @@ describe('setDueDate — three write shapes, and one that answers 200 and writes
     expect(stand.received).toEqual([]);
   });
 
+  it('refuses a day that does not exist before any request leaves (#168)', async () => {
+    // MEASURED live 2026-08-14: `PUT {dueDate: "2026-02-30"}` answers 200 with no
+    // message and stores `2026-03-02T00:00:00.000Z`. The read-back below WOULD have
+    // caught it — but as a `TransientError`, i.e. `retryable: true`, and the help
+    // topic tells agents to obey that field, so an impossible date was retried
+    // forever. A refusal is what the same-call-same-failure actually is.
+    const stand = await startServer({ row: { dueDate: '2026-09-01T00:00:00.000Z' } });
+    const { tx } = txOn(stand);
+
+    await expect(tx.setDueDate(CARD, '2026-02-30')).rejects.toThrow(RefusalError);
+    await expect(tx.setDueDate(CARD, '2026-02-30')).rejects.toThrow(/is not a date that exists/);
+    await expect(tx.setDueDate(CARD, '2026-04-31')).rejects.toThrow(RefusalError);
+    // Refused, not attempted — not even the read. A rolled-over date that reached
+    // the wire would be stored, and nothing downstream could tell.
+    expect(stand.received).toEqual([]);
+  });
+
+  it('a real end-of-month date is NOT refused — the guard is the rollover, not the 30th', async () => {
+    // Polarity. A predicate that rejected every day above 28, or every February
+    // date, would pass the arm above and break every legitimate month end.
+    const stand = await startServer();
+    const { tx } = txOn(stand);
+
+    await tx.setDueDate(CARD, '2026-02-28');
+    expect(stand.row.dueDate).toBe('2026-02-28T00:00:00.000Z');
+    await tx.setDueDate(CARD, '2026-03-31');
+    expect(stand.row.dueDate).toBe('2026-03-31T00:00:00.000Z');
+    // A leap-year 29th is real; 2026 is not a leap year, so its 29th is not.
+    await tx.setDueDate(CARD, '2024-02-29');
+    expect(stand.row.dueDate).toBe('2024-02-29T00:00:00.000Z');
+    await expect(tx.setDueDate(CARD, '2026-02-29')).rejects.toThrow(RefusalError);
+  });
+
   it('a date-only write is confirmed on the DAY, not on the string it sent', async () => {
     const stand = await startServer();
     const { tx, log } = txOn(stand);
@@ -348,6 +381,28 @@ describe('setFieldValue — a 202 with a message is a failure, and axios calls i
     // two structurally equal arrays are never `===`. An un-serialised record
     // declines every restore and orphans every rollback of a custom field.
     expect(result).toEqual({ outcome: 'rolled-back', orphans: [] });
+    expect(stand.row.customFields).toEqual([{ customFieldId: FIELD, value: [TODO_OPTION] }]);
+  });
+
+  it('a clean 200 that wrote NOTHING is caught — the one read-back nothing pinned (#170)', async () => {
+    // THE GAP THIS ARM CLOSES, measured: deleting `setFieldValue`'s read-back left
+    // 151 tests in this file and `dispatch-tx-wire.test.ts` GREEN. Its four
+    // siblings all redden when theirs is removed — `moveColumn` 4 arms,
+    // `setArchived` 1, `setText` 2, `setDueDate` 2 — so this was the only member of
+    // the five that a cleanup could have deleted silently, which is exactly the
+    // reopening #170 warns about.
+    //
+    // The stand answers 200 with the untouched row and NO message, which is the
+    // clean-200 shape (#170): no denial to key on, an ordinary success status, and
+    // the requested change simply absent from the entity.
+    const stand = await startServer({ ignore: 'customFields' });
+    const { tx, log } = txOn(stand);
+
+    await expect(tx.setFieldValue(CARD, FIELD, [DOING_OPTION])).rejects.toThrow(TransientError);
+    await expect(tx.setFieldValue(CARD, FIELD, [DOING_OPTION]))
+      .rejects.toThrow(/answered with a card row that does not carry what we sent/);
+    // Nothing logged: the write landed nothing, so there is nothing to compensate.
+    expect(log.depth).toBe(0);
     expect(stand.row.customFields).toEqual([{ customFieldId: FIELD, value: [TODO_OPTION] }]);
   });
 
