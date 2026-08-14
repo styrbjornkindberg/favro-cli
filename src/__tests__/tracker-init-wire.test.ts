@@ -558,3 +558,73 @@ describe('detectStage', () => {
     expect(proposal.done?.columnId).toBe(DONE);
   });
 });
+
+/**
+ * Where a new card LANDS is said out loud when it is not the open column
+ * (#162 item 9).
+ *
+ * The report read the landing column's NAME as the problem — Favro's default
+ * `New column` — and proposed renaming it to something the role proposal can
+ * classify. The arms below carry the measurement that kills that remedy: `New
+ * column`, `Todo` and `To Do` all classify `backlog`, and the proposal leaves
+ * the first column unmapped for all three. `To Do` is what this command's own
+ * scaffold writes, so the shape is the design and only the silence was a defect.
+ */
+describe('the landing column', () => {
+  const printed = async (argv: { collection: string; board?: string }): Promise<string> => {
+    const { client } = await startServer({ tags: [...TRIAGE_TAGS] });
+    const { apiNamespace } = await import('../lib/run');
+    const { trackerInitHandler } = await import('../commands/tracker-init');
+    const lines: string[] = [];
+    const log = jest.spyOn(console, 'log').mockImplementation((...a) => void lines.push(a.map(String).join(' ')));
+    try {
+      await trackerInitHandler(
+        { client, config: {}, verbose: false, api: apiNamespace(client) } as never,
+        argv,
+      );
+    } finally {
+      log.mockRestore();
+    }
+    return lines.join('\n');
+  };
+
+  it('names the unmapped first column, its stage, and the verb that moves a card out of it', async () => {
+    const out = await printed({ collection: COLL });
+
+    expect(out).toContain(`a new card lands in "To Do" (${TODO}, stage backlog)`);
+    expect(out).toContain('carries neither role');
+    // The remedy has to be a command that exists and does the move — `claim`'s
+    // second arm is `moveColumn(card, mapping.columns.active)`.
+    expect(out).toContain("'favro cards claim <card> --assignee <user>' is what moves it to Doing");
+  });
+
+  it('says nothing when the first column IS the open one — there is nothing to warn about', async () => {
+    // Board Y is `Doing` / `Done`, so a card lands in the mapped open column and
+    // the two lines above already say where. Without this arm the note could be
+    // unconditional and still pass the one above.
+    const out = await printed({ collection: COLL_MANY, board: BOARD_Y });
+
+    expect(out).toContain('open   → Doing');
+    expect(out).not.toContain('a new card lands in');
+  });
+
+  it('renaming the landing column would not have mapped it — every spelling is backlog', async () => {
+    // The measurement the report's proposed remedy rests on, and it does not
+    // hold. `To Do` is this command's OWN scaffold.
+    const { detectStage, proposeColumnMapping } = await import('../lib/workflow-stage');
+
+    for (const name of ['New column', 'Todo', 'To Do', 'Backlog']) {
+      expect(detectStage(name)).toBe('backlog');
+      expect(
+        proposeColumnMapping([
+          { columnId: TODO, name },
+          { columnId: DOING, name: 'In Progress' },
+          { columnId: DONE, name: 'Done' },
+        ]),
+      ).toEqual({
+        active: { columnId: DOING, name: 'In Progress' },
+        done: { columnId: DONE, name: 'Done' },
+      });
+    }
+  });
+});

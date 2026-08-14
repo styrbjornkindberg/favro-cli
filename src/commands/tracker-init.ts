@@ -267,6 +267,39 @@ export async function initTracker(
 }
 
 /**
+ * Where a new card LANDS, said out loud when it is not the open column (#162
+ * item 9).
+ *
+ * The mapping is two roles, and every other column carries none — so the two
+ * lines above describe the board a card is moved INTO, and say nothing about the
+ * one it arrives in. Measured on the scratch board 2026-08-14: `cards create`
+ * with no `--status` put the card in `Todo`, `position: 0`. One board, so this
+ * says "the first column" and leaves the general rule unclaimed.
+ *
+ * WHAT THIS IS NOT. #162 item 9 read the landing column's name — Favro's default
+ * `New column` — as the problem, and proposed renaming it to something the role
+ * proposal can classify. That remedy does nothing, measured through
+ * `detectStage`: `New column`, `Todo` and `To Do` all classify `backlog`, and
+ * `proposeColumnMapping` leaves the first column unmapped for all three. The
+ * scaffold this same command writes when a collection has no board is `To Do` /
+ * `Doing` / `Done` — which produces exactly the shape the report calls a defect.
+ * So an unmapped landing column is the DESIGN, and what was missing is that
+ * nothing said so. Nothing is renamed here.
+ *
+ * Silent when the first column IS one of the two mapped ones: then the open/
+ * closed lines above already name where cards land.
+ */
+function landingNote(result: InitTrackerResult): string[] {
+  const first = result.columns[0];
+  const { active, done } = result.mapping.columns;
+  if (!first || first.columnId === active || first.columnId === done) return [];
+  return [
+    `  a new card lands in "${first.name}" (${first.columnId}, stage ${first.stage}), which carries neither role —`,
+    `    'favro cards claim <card> --assignee <user>' is what moves it to ${result.activeColumnName}.`,
+  ];
+}
+
+/**
  * ON THE `void` ARM (ADR-0002, #118), except under `--json`.
  *
  * The default output is a paste-ready block — a document for a human to move
@@ -320,6 +353,7 @@ export async function trackerInitHandler(
   );
   console.log(`  open   → ${result.activeColumnName} (${result.mapping.columns.active})`);
   console.log(`  closed → ${result.doneColumnName} (${result.mapping.columns.done})`);
+  landingNote(result).forEach((line) => console.log(line));
   if (result.tags.created.length > 0) console.log(`  tags created: ${result.tags.created.join(', ')}`);
   if (result.tags.existing.length > 0) console.log(`  tags already there: ${result.tags.existing.join(', ')}`);
   if (result.tags.ambiguous.length > 0) {
