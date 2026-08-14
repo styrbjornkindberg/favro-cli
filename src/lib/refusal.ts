@@ -48,9 +48,12 @@ export class RefusalError extends Error {
  * `isWireFailure`, the gate — and this type is the ONE exemption behind it
  * (`retryAdvice` in `dispatch.ts`, ADR-0002 "Two populations").
  *
- * **The whole population is two throw sites, and both are read-backs in
- * `TxCards`.** `setArchived`'s "answered 200 but did not take" and
- * `moveColumn`'s "did not land there" (#101) are the only in-process failures in
+ * **The whole population is five throw sites, and all five are read-backs in
+ * `TxCards`** — `moveColumn`, `setArchived`, `setText`, `setDueDate` and
+ * `setFieldValue`, each raising when its own re-read disagrees with what it
+ * sent. `setArchived`'s "answered 200 but did not take" and `moveColumn`'s "did
+ * not land there" (#101) are the two the shape was named for. They are the only
+ * in-process failures in
  * `dispatch.ts`'s import closure that are transient rather than deterministic —
  * every other non-`RefusalError` throw in there is either deterministic or
  * unreachable from inside the table's try, enumerated one by one in ADR-0002

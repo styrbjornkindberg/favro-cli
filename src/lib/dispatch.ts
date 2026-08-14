@@ -300,9 +300,10 @@ export function isRetryable(outcome: TxOutcome, error: unknown): boolean {
  * came back `retryable: true`, which is #134's `--include bogus` bug wearing the
  * table's clothes. The reason it survived #151 was the fear that inverting the
  * default would break the in-process failures that ARE transient; the
- * enumeration says that population is two throw sites, both read-backs in
- * `TxCards` (`setArchived` and `moveColumn`, see `TransientError`), so the
- * marker costs one line each and the default gets to be fail-closed.
+ * enumeration says that population is five throw sites, ALL read-backs in
+ * `TxCards` (`moveColumn`, `setArchived`, `setText`, `setDueDate`,
+ * `setFieldValue` — see `TransientError`), so the marker costs one line each and
+ * the default gets to be fail-closed.
  *
  * `isWireFailure` FIRST is not decoration: it is what keeps a deterministic
  * error of ours out of `isRetryable`'s unclassifiable-is-transient arm at all.
@@ -448,14 +449,16 @@ export async function dispatch<T = unknown>(
     // `isWireFailure` is what keeps a 2xx denial OUT of that fast path (#165).
     // `RefusalError` carries two claims — deterministic, and nothing was written —
     // and this line reads the second. A `WireRefusalError` only satisfies the
-    // first: measured 2026-08-14, `PUT {name, columnId:<bogus>}` answers
-    // `202 {"message":"Invalid column"}` and the name changes anyway, so a 202 means
-    // "at least one field was refused", never "nothing happened". Taking the fast
-    // path on one would propagate a partial write with the transaction's earlier
-    // steps left standing, which is this ticket's own defect class wearing the
-    // repair's clothes. Unwinding cannot recover the applied half either — it was
-    // never logged — and `WireRefusalError`'s message says so; what it does recover
-    // is everything the transaction wrote before the denial.
+    // first: measured 2026-08-14, `PUT {name, columnId:<bogus>, widgetCommonId:<the
+    // card's board>}` answers `202 {"message":"Invalid column"}` and the name changes
+    // anyway, so a 202 means "at least one field was refused", never "nothing
+    // happened". Taking the fast path on one would propagate a partial write with the
+    // transaction's earlier steps left standing, which is this ticket's own defect
+    // class wearing the repair's clothes. Unwinding cannot recover the applied half
+    // either — it was never logged — and `TWO_XX_PARTIAL` says so in the wording
+    // `failureMessage` puts on this envelope's `error` field, which is where an
+    // agent reads it; what it does recover is everything the transaction wrote
+    // before the denial.
     if (error instanceof RefusalError && !isWireFailure(error) && log.depth === depthAtEntry) {
       throw error;
     }

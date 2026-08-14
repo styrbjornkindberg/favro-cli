@@ -466,12 +466,11 @@ export interface UpdateCardRequest {
    *   {"message":"Match failed"}`.
    *
    * All three failures answer **202, which axios reads as success**, with a body
-   * carrying `message` and **no card row at all**. So the observable signal is the
-   * missing row, not the status — and `updateCard` refuses on it below, at the
-   * seam, so a caller reaching this door does not have to know that. That is the
-   * whole reason the check is not left in `TxCards.setFieldValue`: this field is
-   * the one new way to send a custom-field write, and #109's `cards update` will
-   * come through here too.
+   * carrying `message` and **no card row at all**. The signal read to be the
+   * missing ROW, and `updateCard` had a guard of its own for it; since #165 the
+   * signal is the MESSAGE, and the refusal is `http-client`'s success
+   * interceptor — every endpoint, not this field, so a caller reaching this door
+   * does not have to know about it and neither does the next door.
    */
   customFields?: CustomFieldWrite[];
 }
@@ -1333,11 +1332,12 @@ export class CardsAPI {
     // scoped to one field of one endpoint because the wider shape was unprobed. It
     // is probed now: `http-client`'s success interceptor refuses ANY 2xx carrying a
     // top-level `message`, for every endpoint, before this line ever returns. The
-    // list of measured causes that guard carried (#106 §4.3 — an unknown
-    // customFieldId, a value in the wrong shape for the field's type, an empty
-    // array on a select) went with it. What replaces it is Favro's own message for
-    // the request that was actually made: `Match failed` for the wrong shape,
-    // `Invalid status value` for the empty select array, both measured.
+    // list of measured causes that guard carried (#106 §4.3) went with it, and
+    // what replaces it is Favro's own message for the request that was actually
+    // made. All three of those causes have one, all three measured and recorded at
+    // `UpdateCardRequest.customFields` above: `Custom field is not valid` for an
+    // unknown customFieldId, `Match failed` for a value in the wrong shape,
+    // `Invalid status value` for an empty array on a select.
     return await this.client.put<Card>(`/cards/${cardId}`, payload, MARKDOWN_BODY);
   }
 

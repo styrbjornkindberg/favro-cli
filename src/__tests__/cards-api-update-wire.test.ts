@@ -382,8 +382,10 @@ function favroResolvingColumns(): {
       if (req.method === 'PUT') {
         const body = JSON.parse(req.body || '{}') as Record<string, unknown>;
         // Applied BEFORE the column is judged, which is the measured 202 partial
-        // (#165): `PUT {name, columnId:<bogus>}` answered
-        // `202 {"message":"Invalid column"}` and the name changed anyway.
+        // (#165): `PUT {name, columnId:<bogus>, widgetCommonId:<the card's board>}`
+        // answered `202 {"message":"Invalid column"}` and the name changed anyway.
+        // The two branches below are why the board is part of that recipe — drop
+        // it and the same write answers `Access denied` instead (#162).
         if (typeof body.name === 'string') state.name = body.name;
         if (body.columnId !== undefined) {
           if (body.widgetCommonId === undefined) return { status: 202, body: { message: 'Access denied' } };
