@@ -113,6 +113,31 @@ WIRE NOTES THAT CHANGE WHAT YOU SEND
   'columns list' already carries cardCount / timeSum / estimationSum.
   Tasklist lines Favro injects into a body are PERMANENT: a read-modify-write of
   the description re-persists them as literal body text.
+  An IMPOSSIBLE date is REFUSED here, not forwarded: Favro answers
+  'dueDate: 2026-02-30' with 200 and stores March 2nd (measured). An out-of-range
+  MONTH it refuses itself, with a message.
+  A COLUMN MOVE UN-ARCHIVES THE CARD — Favro's own side effect, in the write's own
+  echo (measured), so 'cards update --status', 'claim' and 'resolve' all put an
+  archived card back on the board. The move lands; the un-archive is named on
+  stderr, NOT in the JSON. Re-archive with 'cards archive <card>'.
+
+REFUSED WITH A CLEAN 200 — WHAT TO VERIFY
+  Some rejected writes answer an ordinary 200 with a full entity, NO 'message', and
+  the change simply absent — nothing at the wire can see that. Fourteen measured,
+  in four families: 'removeTagIds', a whole-array 'assignmentIds' replace,
+  'favroAttachments', immutable fields. The intents TRANSLATE the first two (tags
+  diff to addTagIds/removeTagIds; assignment is add-only), so you do not meet those
+  two through this CLI.
+  What catches the rest is a READ-BACK, and only that. FIVE writes re-read and
+  compare: column move, archive, name/description, dueDate, custom-field value.
+  Every other write path — comments, tasks, tasklists, attachments, boards,
+  columns, members — has NONE and is unprotected by construction. After a write on
+  one of those, READ THE ENTITY BACK ('cards get', or the matching list command).
+  A read-back failure reports 'retryable: true' because "what I sent is not what I
+  read" cannot separate a transient blip from a deterministic refusal that made a
+  clean entity — the wire offers nothing that would. Obey the field, but if the SAME
+  write fails the same way TWICE, stop and read the card: that is the deterministic
+  case and a third attempt will not land either.
 
 BUILT-IN SKILLS
   One call, not a chain: 'favro skill run <name>'. List them: 'favro skill list'.

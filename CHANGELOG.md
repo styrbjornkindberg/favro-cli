@@ -63,6 +63,75 @@ The third difference was the key match: `sprint-plan` looked up six literal spel
 `/priority|urgency|severity/i` over every key. The regex wins, so a field named
 `Priority Level` is now read on the sprint path too.
 
+#### An impossible due date is refused instead of stored two days late (#168)
+
+`PUT {dueDate: "2026-02-30"}` answers **200 with no message** and stores
+`2026-03-02T00:00:00.000Z` — measured live on the #105 board, echo and follow-up GET
+agreeing. The CLI does no date parsing on this path, so the rollover is Favro's; the
+digits went out exactly as given. A caller setting an invalid date got a card dated two
+days past anything they typed, at exit 0.
+
+`setDueDate` now declines it before the request. It is a **`RefusalError`**, and that is
+the load-bearing part: the read-back below already caught the rollover (`dueDay` compares
+the digits) but caught it as a `TransientError`, i.e. `retryable: true` — and
+`favro help issue-tracker` tells an agent to obey that field, so an impossible date was
+retried forever. Same call, same failure, every time: that is a refusal.
+
+The guard is the rollover only, and it reuses the detector `isOverdue` already had
+(`localMidnight`'s round-trip). `2026-02-28`, `2026-03-31` and `2024-02-29` all still
+write; `2026-02-29` does not, because 2026 is not a leap year. An out-of-range **month**
+never needed us: `2026-13-01` and `not-a-date` both answer `202 {"message":"Invalid
+date"}` and write nothing, which #165's rule already refuses.
+
+#### A column move un-archives the card, and the CLI now says so (#168)
+
+Measured, and it answers the question the ticket left open: the un-archive is the
+**column write**, not the read-back that follows it. Archive a card (`PUT {archive:true}`
+→ 200, `archived:true`, confirmed by a GET), then `PUT {columnId, widgetCommonId}` → 200,
+no message, and the write's **own echo** already reads `archived:false`. So it is Favro's
+side effect, and `moveColumn`'s `columnId` comparison passes straight through it because
+the move itself landed. `cards update --status`, `claim` and `resolve` all put an archived
+card back on the board.
+
+Reported, not fought: refusing the move would break `claim` and `resolve` on an archived
+card, and it is not a failure — the requested change happened. `moveColumn` compares the
+card's `archived` before and after and names it.
+
+**Known edge, recorded rather than closed:** the warning is on **stderr** and in
+`favro help issue-tracker`, NOT in the JSON envelope — `DispatchResult` has no warnings
+channel and adding one means plumbing it through `reportDispatch`, the human render and
+the MCP shape. The upgrade is that channel, or a compensation entry so a later failure
+re-archives; `PUT {archive:true}` after a move was measured to stick, so the inverse is
+known to work.
+
+The first probe run measured nothing about archiving and is recorded anyway: `PUT
+{columnId}` **alone** answers `202 "Access denied"` on an archived card — and equally on
+an unarchived one, which is this repo's existing #162 finding (Favro resolves the column
+against `widgetCommonId`), not a new one.
+
+#### The fourteen clean-200 refusals are documented, and the fifth read-back is now pinned (#170)
+
+`favro help issue-tracker` gains a section naming the population — fourteen measured
+across `removeTagIds`, a whole-array `assignmentIds` replace, `favroAttachments` and
+immutable fields — and, more usefully, **which write paths verify themselves**: five
+re-read and compare (column move, archive, name/description, dueDate, custom-field
+value), and every other write path has no read-back and is unprotected by construction.
+An agent is told to read the entity back after a write on one of those. The `retryable`
+consequence is written down as the known edge it is, with the one actionable rule the
+ambiguity permits: obey the field, but a second identical failure means stop and read the
+card, because that is the deterministic case.
+
+**And the guard turned out to be missing where it mattered.** Four of the five read-backs
+already redden when deleted — `moveColumn` 4 arms, `setArchived` 1, `setText` 2,
+`setDueDate` 2, each verified by mutation. **`setFieldValue`'s did not: removing it left
+151 tests green**, so it was the one member of the five that a "these are redundant now
+that #165 refuses denials" cleanup could have deleted silently — the exact reopening the
+ticket warns about. It has an arm now, driving the clean-200 shape (200, untouched row, no
+message) through the real facade.
+
+Not attempted: a per-field echo comparison, and probing for a shared precondition. Both
+are unmeasured, and the ticket asks for neither.
+
 ## 4.0.0 — 2026-08-14
 
 **This section was headed `3.1.0` until #110 landed in it.** The map (#80) planned the
