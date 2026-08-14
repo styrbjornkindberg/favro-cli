@@ -8,6 +8,40 @@ that set that version, `a13a02a`) and this release. Commands were driven with
 `FAVRO_CONFIG_DIR` pointed at a throwaway config and no real credentials, so exit codes
 and streams are real and no request reached a live org.
 
+## 5.0.1 — 2026-08-14
+
+### Docs
+
+#### The shipped skill now defines the vocabulary the contract gives instructions in (#173)
+
+`favro help issue-tracker` — the topic `SKILL.md` and bare `--help` both send an agent to
+before its first write — says *"delete removes ONE board instance; other instances of the
+same `cardCommonId` survive."* Measured against the built `5.0.0` CLI, **nothing an
+installed agent can reach defines either term.** There is one help topic; it uses
+`cardCommonId` at line 39 and `board instance` at lines 38 and 280, and defines neither.
+`CONTEXT.md` does define them, but `package.json`'s `files` is `["dist","skills",…]`, so it
+does not ship. A write-safety instruction written in undefined vocabulary is worse than a
+missing one.
+
+The skill carries the model now: the containment chain (organization → collection → board →
+column → card), **card as one work item existing once per board it sits on**, the three card
+identifiers and the fact that `cardId` and `cardCommonId` share one 24-char-hex syntax so
+nothing can tell them apart by looking, board-as-widget on the wire, the **fork** Favro
+creates on assignment, column-as-status (there is no `state` field), collection as what the
+scope lock locks, tags written by name, and the one-edge-per-pair blocking relationship
+together with the unordered one that does not exist.
+
+**Deliberately not the command surface.** That is what #160 deleted 920 lines of, and its
+measurement was drift: 820 of those lines predated the map that replaced the surface they
+described, while `--help` stayed generated from the code. The model is the part of that file
+that did **not** drift — a card has existed once per board since before this CLI. The split
+is the one #8 was reaching for: the surface changes every release and belongs to `--help`;
+the model does not change and belongs where an agent reads it first.
+
+Ported from `CONTEXT.md`'s entities section, stripped of `src/` paths, ticket references, and
+the `resolveBoardId` open edge, which is about resolution behaviour rather than the model.
+No code changed; no help topic changed.
+
 ## 5.0.0 — 2026-08-14
 
 **Section hygiene, fixed in the release cut.** `v4.0.0` was tagged at 05:37 on the same
