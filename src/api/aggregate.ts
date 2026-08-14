@@ -7,6 +7,7 @@
  */
 import FavroHttpClient from '../lib/http-client';
 import CardsAPI, { Card } from '../lib/cards-api';
+import { customFieldMap } from '../lib/custom-field-map';
 import BoardsAPI, { Board } from '../lib/boards-api';
 import { CollectionsAPI, Collection } from '../lib/collections-api';
 import { ColumnsAPI, Column } from '../lib/columns-api';
@@ -118,11 +119,10 @@ function normalizeToAggregateCard(
     ...blockingEdges(card),
   };
 
+  // The same key as `context.ts`, through the same expression — the two copies
+  // of this loop shared one defect (#167 item 5).
   if (card.customFields && card.customFields.length > 0) {
-    ac.customFields = {};
-    for (const cf of card.customFields) {
-      ac.customFields[cf.name ?? cf.fieldId] = cf.value;
-    }
+    ac.customFields = customFieldMap(card.customFields);
   }
 
   if (card.columnId) {

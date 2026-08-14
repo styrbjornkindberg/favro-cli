@@ -8,6 +8,7 @@
 import FavroHttpClient from '../lib/http-client';
 import BoardsAPI, { Board, BoardMember, BoardColumn, CustomField as BoardCustomField } from '../lib/boards-api';
 import CardsAPI, { Card } from '../lib/cards-api';
+import { customFieldMap } from '../lib/custom-field-map';
 import { FavroApiClient } from './members';
 import { CustomFieldsAPI, CustomFieldDefinition } from '../lib/custom-fields-api';
 import { ColumnsAPI } from '../lib/columns-api';
@@ -173,12 +174,11 @@ export function normalizeCard(card: Card): ContextCard {
     createdAt: card.createdAt,
   };
 
-  // Custom fields — build a key→value map
+  // Custom fields — build a key→value map. `customFieldMap` owns the key,
+  // shared with `aggregate.ts` since #167 item 5: both copies keyed on
+  // `name ?? fieldId`, neither of which the wire sends.
   if (card.customFields && card.customFields.length > 0) {
-    ctx.customFields = {};
-    for (const cf of card.customFields) {
-      ctx.customFields[cf.name ?? cf.fieldId] = cf.value;
-    }
+    ctx.customFields = customFieldMap(card.customFields);
   }
 
   // Blocking edges, from the one place that knows Favro's direction flag.

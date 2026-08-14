@@ -138,10 +138,24 @@ function normalizeInlinedDependency(dep: RawDependency): CardLink {
   return { ...dep, isBefore: dep.isBefore === true };
 }
 
+/**
+ * One custom field's stored value on a card.
+ *
+ * EVERY member is optional, and that is the wire rather than caution:
+ * `normalizeCard` passes `raw.customFields` through unmapped, and what Favro
+ * inlines on a card is `{customFieldId, value}` — measured on a live create
+ * echo, 2026-08-14: `[{"customFieldId":"zxMLxD4zx4tSwJr75","value":
+ * ["YLanLiuXKA8JpvEsX"]}]`. `fieldId` and `name` are `CustomFieldsAPI`'s
+ * normalised spellings, not this array's. Declaring the two absent ones as
+ * required is what let `cf.name ?? cf.fieldId` compile as a total key and emit
+ * the literal string `"undefined"` (#167 item 5).
+ */
 export interface CustomField {
-  fieldId: string;
-  name: string;
-  value: unknown;
+  /** The wire's own key. `tx-cards.ts` matches its write echo on this. */
+  customFieldId?: string;
+  fieldId?: string;
+  name?: string;
+  value?: unknown;
   type?: string;
 }
 
