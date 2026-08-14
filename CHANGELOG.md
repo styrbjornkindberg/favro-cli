@@ -10,18 +10,13 @@ and streams are real and no request reached a live org.
 
 ## 5.0.0 — 2026-08-14
 
-**Section hygiene, measured, and NOT fixed here.** `v4.0.0` was tagged at 05:37 today
-(`a649bd8`), and this release's notes have been landing in its section ever since —
-measured at `db69400`, `git rev-list --count v4.0.0..HEAD` read 31 and
-`git diff v4.0.0..HEAD -- CHANGELOG.md` added **227 lines** into the `4.0.0` section
-below. Both counts move with every commit, so they are attributed to that sha rather
-than left to read as current; the sentence they support does not
-depend on them. Four top-level entries, one under its `Removed` and three under its `Fixed`
-(#160, #162, #169). So most of this release's work is currently filed under a version that has
-already shipped, which is the same defect `4.0.0`'s own opening paragraph records
-happening to `3.1.0`. This section holds only the ranking change below, because
-relocating the other 227 lines means moving three other agents' prose and is a call for
-whoever cuts the release, not for the change that noticed it.
+**Section hygiene, fixed in the release cut.** `v4.0.0` was tagged at 05:37 on the same
+day (`a649bd8`), and this release's notes kept landing in its section for every commit
+after it — the same defect `4.0.0`'s own opening paragraph records happening to `3.1.0`.
+Cutting this release moved five top-level entries back out of it: #165 from its
+`Breaking`, #160 from its `Removed`, and three from its `Fixed` (#162 twice, #169). Each
+is in the matching section here, unedited. The `4.0.0` section below now describes only
+what the `v4.0.0` tarball shipped, which is the only thing a released section is for.
 
 ### Breaking
 
@@ -161,6 +156,54 @@ for the same guard — that is the reason to keep it, not a hole it closes.
 Not attempted: a per-field echo comparison, and probing for a shared precondition. Both
 are unmeasured, and the ticket asks for neither.
 
+#### A write Favro refuses with a SUCCESS status now fails instead of reporting `ok` (#165)
+
+Favro answers some rejected writes `202` with the reason in the body. Axios resolves a
+2xx, so the refusal arrived as the entity the caller asked for — every field `undefined`
+— and the CLI reported success. Both of this release's CRITICALs are that shape.
+
+The HTTP client now refuses **any** 2xx carrying a top-level `message`, on every
+endpoint. Measured 2026-08-14, 110 logged probes: 28 of 28 message-carrying 2xx were
+denials, and 47 of 47 successful 2xx — card writes, dependencies, tasklists, comments,
+deletes, and every single-entity and paginated GET in remit — carried no message at all.
+Keyed on the message rather than on 202, because 202 legitimately means "accepted" in
+HTTP and a message rule survives Favro moving a denial onto a 200.
+
+Live, on the #105 scratch board, same request through plain axios and through the client:
+
+```
+$ favro custom-fields set <card> 5XdsToqDtXLn2rtL9 nonsense --yes
+{"intent":"update","outcome":"rolled-back","retryable":false,
+ "error":"Favro answered 202 — a SUCCESS status — and said \"Unsupported custom field type\"..."}
+```
+
+`Unsupported custom field type` is the **eleventh** distinct denial message measured, and
+the first one found by driving the rule rather than probing for it — nothing had to be
+taught it, which is why the rule is a default rather than a longer list of known
+messages. `retryable: false`: the refusal is deterministic and repeating the call repeats
+it, where the read-back that used to catch some of these called them transient.
+
+**A 202 refuses at least one field, not necessarily all of them.** Measured the same day:
+`PUT /cards/{id} {name, columnId:<bogus>, widgetCommonId:<real>}` answers
+`202 {"message":"Invalid column"}` **and the name changes anyway**. So a transaction now
+unwinds around one of these rather than propagating it as "nothing was written" — driven
+live across two dispatches sharing one compensation log, where the second's first write
+was refused and the first's write was restored. What the 202 itself applied was never
+logged and cannot be undone; the refusal says so rather than claiming a clean rollback.
+
+**Inside the rollback report too.** A compensating write Favro refuses with
+`202 {"message":"Access denied"}` classifies `not-found` on its message — the same words
+a 403 uses for an absent resource — so the unwind counted it as already-undone and
+reported `rolled-back` with no orphan, for a change that is still there. It is a
+`compensation-failed` orphan now, quoting Favro's words, and the outcome is
+`rollback-incomplete`.
+
+**What this does NOT close**, and no message here claims it does: 14 rejected writes that
+answer a clean 200 with a full entity and no effect (`removeTagIds`, an `assignmentIds`
+full-replace, `favroAttachments`, immutable fields) — only `TxCards`' read-backs catch
+those, and they stay; `dueDate: "2026-02-30"` accepted and stored as March 2nd; and a
+column move on an archived card silently un-archiving it.
+
 ### Added
 
 #### `favro-mcp-http` answers `GET /health` with its version
@@ -183,6 +226,39 @@ transport's `Host` allowlist runs, so a `200` proves the process is up and NOT t
 header` on `/mcp` and nowhere else. `docs/DEPLOY-MCP-HTTP.md` says so at the probe step.
 
 `GET` only — any other method on `/health` still gets `405`, and unknown paths still `404`.
+
+### Removed
+
+- **The shipped skill's `references/command-reference.md` is deleted (#160)** — 896
+  lines, of which `git blame` dates 783 to 2026-03/04, before the map that replaced the
+  surface they documented. #8 had already ruled `--help` the single source of truth and
+  specified `SKILL.md` as a "thin stub, ~15 lines" whose body is a pointer, with no
+  duplicated content and nothing beside it. `SKILL.md:8-10` says the same in the shipped
+  prose: anything written there instead "would be a second
+  copy". Nothing reached it: `SKILL.md` never named it, and MCP `favro_help` shells out
+  to `favro <tokens> --help` (`mcp-server.ts:58`), so a file in `references/` cannot
+  appear there. It did ship — `package.json`'s `files` includes `skills` — so the tarball
+  drops 26.5 kB and goes from 268 files to 267. `skills/` still carries `SKILL.md` and the
+  four `skills/builtin/*.yaml`.
+
+  What the tests lose, stated rather than implied. It supplied **173 of the 308**
+  option-table rows `documented-commands-coverage.test.ts` reads (171 of the 302 it
+  scopes to a command) — more than half of both counters in one file. The floors are
+  re-measured to the exact new counts, 307/301 → 134/130 against 135/131 today, so they
+  still grip on a single lost row. It also supplied all 79 of the command headings the
+  `declaredHeadings` arm of `help-topic-drift.test.ts` read; that entry now reads
+  `docs/commands.md`, where the arm reads 22 command headings nothing was checking
+  before. Pointing it there found two defects on the first run: `cards blockers` — which
+  the built CLI answers with `unknown command 'blockers'` — still stood as a live
+  heading, and the heading spelling `favro query` was invisible to an arm that never
+  expected the `favro` prefix on a heading. Both are fixed.
+
+  `SKILL.md` survives the delete and needed no rewrite, but two of its own claims did.
+  Its frontmatter advertised "batch card operations", a family removed in 4.0 — it now
+  names the surviving spelling, keeping "batch" as a trigger word. Its body promised "the
+  seven intents"; the dispatch table holds thirteen, and the number is dropped rather than
+  re-pinned, for the reason `issue-tracker-help.ts:141-144` already records about the
+  sibling string: "a number here rots silently, and did".
 
 ### Docs
 
@@ -207,6 +283,155 @@ per instance recycle and are per-instance across replicas — and that the liven
 belongs on `GET /health`, not on the `401` smoke test, which stays green in exactly the
 failure state above. The localhost notes in **Run target** now say the rule is about
 co-tenants on a shared host, not containers.
+
+### Fixed
+
+- **`cards claim`, `next`, `my-cards` and `my-standup` were unreachable for anyone past
+  the first page of `/users` (#162 item 7).** `resolveUserId` issued one
+  `GET /users?limit=100` and matched the caller's email against that page alone. Favro
+  answered `{page: 0, pages: 2, limit: 100}` for the 135-user organization this CLI is
+  developed against, with the caller's own account at index 112 — so the match failed,
+  `undefined` came back, and `cards claim`'s `@me` default refused
+  `Cannot resolve "@me" — no userId is cached for your credentials`. `--assignee "<name>"`
+  worked throughout, because `UsersAPI` has always paged; only the default was broken.
+
+  Both copies of that lookup now go through `UsersAPI.listUsers()` and its `getAllPages`.
+  The second copy was **inside `favro auth login`** — the remedy the refusal printed — so
+  the advice did not work either: it stored no `userId` and printed
+  `⚠ (not found in org users)` for the caller's own account. Driven live against the
+  scratch board with the cached `userId` deleted first:
+
+  ```
+  $ favro cards claim 67aeaf77a49d4618a6f16c19 -y
+  {"cardId":"67aeaf77a49d4618a6f16c19","columnId":"635d44b1e9de8d4de07ba795","assignee":"pk3qK36WHjnJt5jwr"}
+  ```
+
+  `my-cards` and `next` answer for the same identity and cache it, so the next call costs
+  no lookup. The `@me` refusal that remains states an outcome rather than a mechanism —
+  `resolveUserId` returns `undefined` for a missing cache, an unmatched email and a failed
+  read alike — and names two remedies that exist: `favro auth login`, and passing a name,
+  email or userId with `favro users list` to find one.
+
+- **`Would creating tag "x"` — every shared dry-run preview was ungrammatical (#162 item
+  10).** `dryRunLog` renders `Would ${verb} ${targetType} "${targetName}"`, and 17 of its
+  19 call sites passed a participle; the two that read correctly were the two that passed
+  a bare verb. All 19 pass an infinitive now, so the preview reads
+  `Would create tag "release"`, `Would delete task list "…"`, `Would upload attachment
+  "…"`. Three call sites also embedded their own quotes inside the name and printed
+  `Would creating column ""probe" on board 5dd7…"`; they pass the bare name, and the board
+  or card id they wrapped is the positional argument the caller typed —
+  `attachments upload` now does the same on both its arms.
+
+  Two sites kept the nesting through that fix, because the scan read the VERB only:
+  `git sync --dry-run` printed `Would move cards "3 card(s) to "Done""` — the only two
+  previews in the set that stand for a bulk card move rather than one named object.
+  Both drop the inner pair. Their destination stays inside the target —
+  unlike `attachments`, it is derived from the branch mapping, not an argument the caller
+  typed back — so what `dry-run-verb-grammar.test.ts` now bans across all 19 sites is the
+  `"` character, not the composite shape. The scan covers both halves of the string,
+  because this text was pinned verbatim by a green test and one arm on one command would
+  leave the other eighteen free.
+
+  **The same item's `answered 200` claim was real.** `TxCards`' three echo read-backs
+  (`setArchived`, `setText`, `setDueDate`) hardcoded the status into user-facing prose —
+  `Archive write on card X answered 200 but did not take` — and the one write status code
+  this repo has written down is a **`202`** (`custom-fields set`, live on the #105 board,
+  #165; 47 successful 2xx were measured there too, their codes just never recorded).
+  That one was a refusal, and a message-carrying 2xx is classified as one before it
+  reaches these checks — so what arrives here is a clean 2xx whose code nothing observed,
+  and `200` was a number the message invented, in the one line an agent reads while
+  deciding whether a write landed. All three now say `answered a SUCCESS status`, the
+  wording `favro-error.ts` already uses. The observed code is not threaded out of the
+  write seam; that is the upgrade if anything ever needs to tell 200 from 202 here.
+
+  Two other item-10 claims **do not reproduce** on this release, measured on the built
+  CLI: passing `--json` to `boards delete` or to `columns create` answers
+  `error: unknown option '--json'` on stderr at exit 1, with **nothing on stdout** — no
+  JSON, pretty-printed or otherwise. Neither command has that flag, and the advice that
+  suggested it went in #160, after #119 made JSON the default.
+
+- **`workload` and `team` reported `Effort: 0` for everyone, structurally (#169).**
+  `extractEffort` matches a custom field by NAME (`/effort|story.?points?|points?|estimate/i`)
+  and the card payload carries no name: `GET /cards` and the create echo both inline
+  `[{"customFieldId":"zxMLxD4zx4tSwJr75","value":["YLanLiuXKA8JpvEsX"]}]`, so the regex
+  was matched against a base62 id and could never hit. Both commands then summed the miss
+  as `?? 0` and printed a confident zero for estimates nothing had looked at.
+
+  Effort now fails **closed**: `totalEffort` / `effortSum` are `null`, printed
+  `Effort: unavailable`, as soon as a counted card carries a custom field the payload
+  identifies only by id. A card carrying no custom fields at all still contributes an
+  honest `0`, so a measured zero and an unmeasurable one are different values for the
+  first time. Measured live on board `5dd75f0d5116020817ebe70a`, same card both runs:
+
+  | | before | after |
+  |---|---|---|
+  | `workload --board` (JSON) | `"totalEffort":0` | `"totalEffort":null` |
+  | `workload --board` (human) | `Effort: 0` | `Effort: unavailable` + the reason |
+
+  `next` loses two of its three weighted terms on the same payload — priority and effort
+  both read those fields — so a card whose priority could not be read now says
+  `priority and effort unreadable — ranked on due date and stage only` in `reasons`, and
+  reports `priority: "unavailable"` rather than `"unset"`. `"unset"` still means the
+  fields were read and held no priority. The joint sentence is gated on effort having
+  actually missed: the predicate under it answers about ANY id-shaped key, so a card
+  carrying a named `Effort` beside one id-keyed field claimed effort was unreadable in the
+  same `reasons` array that said `quick win (effort: 1)`. Such a card now says
+  `priority unreadable — not weighted in this ranking`. Not reachable where cards come off
+  `GET /cards` — nothing there carries a name at all — but reachable through any caller
+  that hands names in.
+
+  The shape test that decides all of this went through the declared table (ADR-0003)
+  instead of importing the two regexes raw, which needed a `customFieldId` row and so a
+  measurement: `GET /customfields` for org `b0b311ac…` serves **3799** rows, **3769**
+  base62-17 and **30** hex-24 (2026-08-14). Both shapes are real for this resource, which
+  the previous docblock had asserted off option ids rather than field ids. That read was
+  repeated with and without `widgetCommonId` and returned the identical 3799-row set both
+  ways — which confirms the client-side-filter claim `listFields` rests on a second time,
+  and leaves the two-row gap from the **3797** recorded earlier the same day (below, and in
+  `custom-fields-api.ts`) unexplained: the 270-unattributed and 2-naming-the-board counts
+  match across all three reads, so it is not the filter. The reconciliation lives in
+  `custom-fields-api.ts`.
+
+  `sprint-plan` fabricated the same miss into its central judgement, and that is fixed
+  here too. Its per-card cell really did render `—`, but `cumulative`, `totalSuggested`
+  and `withinBudget` were all built from `?? 0` — so on the payload above every card was
+  free, `running <= budget` was `0 <= 40` for all of them, and the command reported the
+  entire backlog as fitting a 40-point sprint with `totalSuggested: 0` and `overflow: []`.
+  All three are now `number | null` / `boolean | null`: a card whose cost could not be
+  read is neither claimed to fit a budget nor excluded as over it, and `overflow` holds
+  only cards MEASURED not to fit. The human header has three states rather than two,
+  because `addEffort`'s `null` is sticky but POSITIONAL — a card measured to overflow can
+  rank ahead of the first unreadable one, so `overflow` is non-empty while the total is
+  `null`, and `no budget cut made` printed four lines above the cut it made.
+
+  **`priorityScore` was the same defect on the same payload, and the louder one.**
+  `extractPriority` looks up six literal field NAMES, so on an id-keyed payload every
+  lookup missed and every card carried `priorityScore: 0` under a field documented
+  "0–4 numeric (higher = more important)". `compareSprintCards` reads that score FIRST,
+  found them all equal, found every effort `undefined`, and fell through to its
+  alphabetical tiebreaker — so the command whose `--help` advertised a priority×effort
+  ranking was sorting by title and said so nowhere. `priorityScore` is now
+  `number | null` with `priority: "unavailable"` beside it, the same spelling `next`
+  reports; the comparator ranks `null` where `unset` ranks (it must stay a total order)
+  and human mode names the cards it could not read and says the order is not the
+  documented ranking. `--help` says which fields have to be readable for it to be.
+
+  `sprint-plan`'s `extractPriority` is **still not reconciled** with `next`'s — they use
+  different vocabularies (`urgent` scores 4 here and 0 there) and different fallbacks (a
+  non-band value like `P1` displays itself here, `unset` there), so merging them would
+  ride a sort and display change in on a disclosure fix. Both now answer the
+  unavailability question through the one shared predicate; the duplication is recorded on
+  `extractPriority` as the open edge it is.
+
+  **Not fixed: the name is still not resolved.** The id→name map half-exists —
+  `getSnapshot` already holds a board-filtered one (`listFields(boardId)`, filtered
+  CLIENT-side, and its own two measured gaps carry over: 270 rows of the same page-through
+  are attributed to no board, and a card can carry a field whose definition names
+  another), and the
+  aggregate path could buy the whole thing with one org-scoped `/customfields`
+  page-through per report — and that is the upgrade path recorded on `addEffort`. It was
+  not taken here for the reason #167 refused the `customField:` filter: a lookup that can
+  fail still needs this answer for the case where it does.
 
 ## 4.0.0 — 2026-08-14
 
@@ -422,54 +647,6 @@ exit 0 and lost the finding silently.
 response that does not name the destination board, so an unobserved board reaches the
 caller as a failure rather than as a finding, and the exit code is the failure's own.
 
-#### A write Favro refuses with a SUCCESS status now fails instead of reporting `ok` (#165)
-
-Favro answers some rejected writes `202` with the reason in the body. Axios resolves a
-2xx, so the refusal arrived as the entity the caller asked for — every field `undefined`
-— and the CLI reported success. Both of this release's CRITICALs are that shape.
-
-The HTTP client now refuses **any** 2xx carrying a top-level `message`, on every
-endpoint. Measured 2026-08-14, 110 logged probes: 28 of 28 message-carrying 2xx were
-denials, and 47 of 47 successful 2xx — card writes, dependencies, tasklists, comments,
-deletes, and every single-entity and paginated GET in remit — carried no message at all.
-Keyed on the message rather than on 202, because 202 legitimately means "accepted" in
-HTTP and a message rule survives Favro moving a denial onto a 200.
-
-Live, on the #105 scratch board, same request through plain axios and through the client:
-
-```
-$ favro custom-fields set <card> 5XdsToqDtXLn2rtL9 nonsense --yes
-{"intent":"update","outcome":"rolled-back","retryable":false,
- "error":"Favro answered 202 — a SUCCESS status — and said \"Unsupported custom field type\"..."}
-```
-
-`Unsupported custom field type` is the **eleventh** distinct denial message measured, and
-the first one found by driving the rule rather than probing for it — nothing had to be
-taught it, which is why the rule is a default rather than a longer list of known
-messages. `retryable: false`: the refusal is deterministic and repeating the call repeats
-it, where the read-back that used to catch some of these called them transient.
-
-**A 202 refuses at least one field, not necessarily all of them.** Measured the same day:
-`PUT /cards/{id} {name, columnId:<bogus>, widgetCommonId:<real>}` answers
-`202 {"message":"Invalid column"}` **and the name changes anyway**. So a transaction now
-unwinds around one of these rather than propagating it as "nothing was written" — driven
-live across two dispatches sharing one compensation log, where the second's first write
-was refused and the first's write was restored. What the 202 itself applied was never
-logged and cannot be undone; the refusal says so rather than claiming a clean rollback.
-
-**Inside the rollback report too.** A compensating write Favro refuses with
-`202 {"message":"Access denied"}` classifies `not-found` on its message — the same words
-a 403 uses for an absent resource — so the unwind counted it as already-undone and
-reported `rolled-back` with no orphan, for a change that is still there. It is a
-`compensation-failed` orphan now, quoting Favro's words, and the outcome is
-`rollback-incomplete`.
-
-**What this does NOT close**, and no message here claims it does: 14 rejected writes that
-answer a clean 200 with a full entity and no effect (`removeTagIds`, an `assignmentIds`
-full-replace, `favroAttachments`, immutable fields) — only `TxCards`' read-backs catch
-those, and they stay; `dueDate: "2026-02-30"` accepted and stored as March 2nd; and a
-column move on an archived card silently un-archiving it.
-
 ### Changed
 
 - **`favro tracker init --board "<name>"` refuses in the shared wording (#123).** It
@@ -612,37 +789,6 @@ column move on an archived card silently un-archiving it.
 
 ### Removed
 
-- **The shipped skill's `references/command-reference.md` is deleted (#160)** — 896
-  lines, of which `git blame` dates 783 to 2026-03/04, before the map that replaced the
-  surface they documented. #8 had already ruled `--help` the single source of truth and
-  specified `SKILL.md` as a "thin stub, ~15 lines" whose body is a pointer, with no
-  duplicated content and nothing beside it. `SKILL.md:8-10` says the same in the shipped
-  prose: anything written there instead "would be a second
-  copy". Nothing reached it: `SKILL.md` never named it, and MCP `favro_help` shells out
-  to `favro <tokens> --help` (`mcp-server.ts:58`), so a file in `references/` cannot
-  appear there. It did ship — `package.json`'s `files` includes `skills` — so the tarball
-  drops 26.5 kB and goes from 268 files to 267. `skills/` still carries `SKILL.md` and the
-  four `skills/builtin/*.yaml`.
-
-  What the tests lose, stated rather than implied. It supplied **173 of the 308**
-  option-table rows `documented-commands-coverage.test.ts` reads (171 of the 302 it
-  scopes to a command) — more than half of both counters in one file. The floors are
-  re-measured to the exact new counts, 307/301 → 134/130 against 135/131 today, so they
-  still grip on a single lost row. It also supplied all 79 of the command headings the
-  `declaredHeadings` arm of `help-topic-drift.test.ts` read; that entry now reads
-  `docs/commands.md`, where the arm reads 22 command headings nothing was checking
-  before. Pointing it there found two defects on the first run: `cards blockers` — which
-  the built CLI answers with `unknown command 'blockers'` — still stood as a live
-  heading, and the heading spelling `favro query` was invisible to an arm that never
-  expected the `favro` prefix on a heading. Both are fixed.
-
-  `SKILL.md` survives the delete and needed no rewrite, but two of its own claims did.
-  Its frontmatter advertised "batch card operations", a family removed in 4.0 — it now
-  names the surviving spelling, keeping "batch" as a trigger word. Its body promised "the
-  seven intents"; the dispatch table holds thirteen, and the number is dropped rather than
-  re-pinned, for the reason `issue-tracker-help.ts:141-144` already records about the
-  sibling string: "a number here rots silently, and did".
-
 - **The command-runner allowlist is deleted (#119).** `command-runner-ratchet.test.ts`
   held the files not yet migrated to `run()`, and failed in both directions — a listed
   file that had gone clean failed too, so the list could not rust into cover. #119 struck
@@ -711,153 +857,6 @@ column move on an archived card silently un-archiving it.
   through `src/commands` are redundant rather than wrong"*.
 
 ### Fixed
-
-- **`cards claim`, `next`, `my-cards` and `my-standup` were unreachable for anyone past
-  the first page of `/users` (#162 item 7).** `resolveUserId` issued one
-  `GET /users?limit=100` and matched the caller's email against that page alone. Favro
-  answered `{page: 0, pages: 2, limit: 100}` for the 135-user organization this CLI is
-  developed against, with the caller's own account at index 112 — so the match failed,
-  `undefined` came back, and `cards claim`'s `@me` default refused
-  `Cannot resolve "@me" — no userId is cached for your credentials`. `--assignee "<name>"`
-  worked throughout, because `UsersAPI` has always paged; only the default was broken.
-
-  Both copies of that lookup now go through `UsersAPI.listUsers()` and its `getAllPages`.
-  The second copy was **inside `favro auth login`** — the remedy the refusal printed — so
-  the advice did not work either: it stored no `userId` and printed
-  `⚠ (not found in org users)` for the caller's own account. Driven live against the
-  scratch board with the cached `userId` deleted first:
-
-  ```
-  $ favro cards claim 67aeaf77a49d4618a6f16c19 -y
-  {"cardId":"67aeaf77a49d4618a6f16c19","columnId":"635d44b1e9de8d4de07ba795","assignee":"pk3qK36WHjnJt5jwr"}
-  ```
-
-  `my-cards` and `next` answer for the same identity and cache it, so the next call costs
-  no lookup. The `@me` refusal that remains states an outcome rather than a mechanism —
-  `resolveUserId` returns `undefined` for a missing cache, an unmatched email and a failed
-  read alike — and names two remedies that exist: `favro auth login`, and passing a name,
-  email or userId with `favro users list` to find one.
-
-- **`Would creating tag "x"` — every shared dry-run preview was ungrammatical (#162 item
-  10).** `dryRunLog` renders `Would ${verb} ${targetType} "${targetName}"`, and 17 of its
-  19 call sites passed a participle; the two that read correctly were the two that passed
-  a bare verb. All 19 pass an infinitive now, so the preview reads
-  `Would create tag "release"`, `Would delete task list "…"`, `Would upload attachment
-  "…"`. Three call sites also embedded their own quotes inside the name and printed
-  `Would creating column ""probe" on board 5dd7…"`; they pass the bare name, and the board
-  or card id they wrapped is the positional argument the caller typed —
-  `attachments upload` now does the same on both its arms.
-
-  Two sites kept the nesting through that fix, because the scan read the VERB only:
-  `git sync --dry-run` printed `Would move cards "3 card(s) to "Done""` — the only two
-  previews in the set that stand for a bulk card move rather than one named object.
-  Both drop the inner pair. Their destination stays inside the target —
-  unlike `attachments`, it is derived from the branch mapping, not an argument the caller
-  typed back — so what `dry-run-verb-grammar.test.ts` now bans across all 19 sites is the
-  `"` character, not the composite shape. The scan covers both halves of the string,
-  because this text was pinned verbatim by a green test and one arm on one command would
-  leave the other eighteen free.
-
-  **The same item's `answered 200` claim was real.** `TxCards`' three echo read-backs
-  (`setArchived`, `setText`, `setDueDate`) hardcoded the status into user-facing prose —
-  `Archive write on card X answered 200 but did not take` — and the one write status code
-  this repo has written down is a **`202`** (`custom-fields set`, live on the #105 board,
-  #165; 47 successful 2xx were measured there too, their codes just never recorded).
-  That one was a refusal, and a message-carrying 2xx is classified as one before it
-  reaches these checks — so what arrives here is a clean 2xx whose code nothing observed,
-  and `200` was a number the message invented, in the one line an agent reads while
-  deciding whether a write landed. All three now say `answered a SUCCESS status`, the
-  wording `favro-error.ts` already uses. The observed code is not threaded out of the
-  write seam; that is the upgrade if anything ever needs to tell 200 from 202 here.
-
-  Two other item-10 claims **do not reproduce** on this release, measured on the built
-  CLI: passing `--json` to `boards delete` or to `columns create` answers
-  `error: unknown option '--json'` on stderr at exit 1, with **nothing on stdout** — no
-  JSON, pretty-printed or otherwise. Neither command has that flag, and the advice that
-  suggested it went in #160, after #119 made JSON the default.
-
-- **`workload` and `team` reported `Effort: 0` for everyone, structurally (#169).**
-  `extractEffort` matches a custom field by NAME (`/effort|story.?points?|points?|estimate/i`)
-  and the card payload carries no name: `GET /cards` and the create echo both inline
-  `[{"customFieldId":"zxMLxD4zx4tSwJr75","value":["YLanLiuXKA8JpvEsX"]}]`, so the regex
-  was matched against a base62 id and could never hit. Both commands then summed the miss
-  as `?? 0` and printed a confident zero for estimates nothing had looked at.
-
-  Effort now fails **closed**: `totalEffort` / `effortSum` are `null`, printed
-  `Effort: unavailable`, as soon as a counted card carries a custom field the payload
-  identifies only by id. A card carrying no custom fields at all still contributes an
-  honest `0`, so a measured zero and an unmeasurable one are different values for the
-  first time. Measured live on board `5dd75f0d5116020817ebe70a`, same card both runs:
-
-  | | before | after |
-  |---|---|---|
-  | `workload --board` (JSON) | `"totalEffort":0` | `"totalEffort":null` |
-  | `workload --board` (human) | `Effort: 0` | `Effort: unavailable` + the reason |
-
-  `next` loses two of its three weighted terms on the same payload — priority and effort
-  both read those fields — so a card whose priority could not be read now says
-  `priority and effort unreadable — ranked on due date and stage only` in `reasons`, and
-  reports `priority: "unavailable"` rather than `"unset"`. `"unset"` still means the
-  fields were read and held no priority. The joint sentence is gated on effort having
-  actually missed: the predicate under it answers about ANY id-shaped key, so a card
-  carrying a named `Effort` beside one id-keyed field claimed effort was unreadable in the
-  same `reasons` array that said `quick win (effort: 1)`. Such a card now says
-  `priority unreadable — not weighted in this ranking`. Not reachable where cards come off
-  `GET /cards` — nothing there carries a name at all — but reachable through any caller
-  that hands names in.
-
-  The shape test that decides all of this went through the declared table (ADR-0003)
-  instead of importing the two regexes raw, which needed a `customFieldId` row and so a
-  measurement: `GET /customfields` for org `b0b311ac…` serves **3799** rows, **3769**
-  base62-17 and **30** hex-24 (2026-08-14). Both shapes are real for this resource, which
-  the previous docblock had asserted off option ids rather than field ids. That read was
-  repeated with and without `widgetCommonId` and returned the identical 3799-row set both
-  ways — which confirms the client-side-filter claim `listFields` rests on a second time,
-  and leaves the two-row gap from the **3797** recorded earlier the same day (below, and in
-  `custom-fields-api.ts`) unexplained: the 270-unattributed and 2-naming-the-board counts
-  match across all three reads, so it is not the filter. The reconciliation lives in
-  `custom-fields-api.ts`.
-
-  `sprint-plan` fabricated the same miss into its central judgement, and that is fixed
-  here too. Its per-card cell really did render `—`, but `cumulative`, `totalSuggested`
-  and `withinBudget` were all built from `?? 0` — so on the payload above every card was
-  free, `running <= budget` was `0 <= 40` for all of them, and the command reported the
-  entire backlog as fitting a 40-point sprint with `totalSuggested: 0` and `overflow: []`.
-  All three are now `number | null` / `boolean | null`: a card whose cost could not be
-  read is neither claimed to fit a budget nor excluded as over it, and `overflow` holds
-  only cards MEASURED not to fit. The human header has three states rather than two,
-  because `addEffort`'s `null` is sticky but POSITIONAL — a card measured to overflow can
-  rank ahead of the first unreadable one, so `overflow` is non-empty while the total is
-  `null`, and `no budget cut made` printed four lines above the cut it made.
-
-  **`priorityScore` was the same defect on the same payload, and the louder one.**
-  `extractPriority` looks up six literal field NAMES, so on an id-keyed payload every
-  lookup missed and every card carried `priorityScore: 0` under a field documented
-  "0–4 numeric (higher = more important)". `compareSprintCards` reads that score FIRST,
-  found them all equal, found every effort `undefined`, and fell through to its
-  alphabetical tiebreaker — so the command whose `--help` advertised a priority×effort
-  ranking was sorting by title and said so nowhere. `priorityScore` is now
-  `number | null` with `priority: "unavailable"` beside it, the same spelling `next`
-  reports; the comparator ranks `null` where `unset` ranks (it must stay a total order)
-  and human mode names the cards it could not read and says the order is not the
-  documented ranking. `--help` says which fields have to be readable for it to be.
-
-  `sprint-plan`'s `extractPriority` is **still not reconciled** with `next`'s — they use
-  different vocabularies (`urgent` scores 4 here and 0 there) and different fallbacks (a
-  non-band value like `P1` displays itself here, `unset` there), so merging them would
-  ride a sort and display change in on a disclosure fix. Both now answer the
-  unavailability question through the one shared predicate; the duplication is recorded on
-  `extractPriority` as the open edge it is.
-
-  **Not fixed: the name is still not resolved.** The id→name map half-exists —
-  `getSnapshot` already holds a board-filtered one (`listFields(boardId)`, filtered
-  CLIENT-side, and its own two measured gaps carry over: 270 rows of the same page-through
-  are attributed to no board, and a card can carry a field whose definition names
-  another), and the
-  aggregate path could buy the whole thing with one org-scoped `/customfields`
-  page-through per report — and that is the upgrade path recorded on `addEffort`. It was
-  not taken here for the reason #167 refused the `customField:` filter: a lookup that can
-  fail still needs this answer for the case where it does.
 
 - **`blocked-by:` and `blocks:` returned zero rows for a live dependency edge (#162).**
   `normalizeCard` mapped each inlined edge through a normaliser that enumerated three
