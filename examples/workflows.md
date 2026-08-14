@@ -142,6 +142,6 @@ favro cards create --bulk tasks.json --board <boardId>
 ## Tips
 
 - Use `--dry-run` to preview any create/update before committing.
-- Use `--json` flag on any command to get machine-readable output for scripting.
+- JSON is already the output: read commands print JSON by default and `--human` opts out. The `--json` flag is gone from them — passing one answers `error: unknown option '--json'`.
 - Run `favro <command> --help` for full option reference.
 - Set `FAVRO_API_KEY` env var for CI/CD pipelines (no config file needed).

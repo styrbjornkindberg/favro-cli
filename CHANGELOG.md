@@ -481,20 +481,27 @@ caller as a failure rather than as a finding, and the exit code is the failure's
   still call retryable has already been retried four times in-process. The same command
   now answers `"retryable":false` and *"the failure is deterministic"*.
 
-- **Five places still taught a `--json` flag no command takes any more (#162).** The
+- **Seven places still taught a `--json` flag no command takes any more (#162).** The
   report this fixes said the opposite — that the root `--human` line claimed a JSON
   default the read commands lacked — and that was true when it was filed and is not true
   now: #119 finished the ADR-0002 migration, so `boards list`, `cards list`, `columns
-  list`, `scope show`, `comments list`, `my-cards`, `overview` and `cards update
-  --from-csv` all answer `error: unknown option '--json'`, and every one of them this
-  run could drive to an answer printed JSON on stdout — measured one by one on the built
-  binary against the live org. What survived was the advice pointing the
-  other way: four `--json` examples in `cards list --help`, a `cards update` tip telling
-  the reader to run `cards list` with a `--json` on it, an `overview --human` line offering
-  *"(use --json for all)"* for a flag that command has never had, and the same claim in
-  `EXAMPLES.md`, `API-REFERENCE.md` and `docs/commands.md`. All now say what the binary
-  does. `favro init`, `favro board` and `favro tracker init` still declare a real
+  list`, `scope show`, `comments list`, `members list`, `my-cards`, `overview`,
+  `activity`, `cards create` and `cards update` all answer `error: unknown option
+  '--json'`, and every one of them this run could drive to an answer printed JSON on
+  stdout — measured one by one on the built binary against the live org. What survived
+  was the advice pointing the other way: four `--json` examples in `cards list --help`, a
+  `cards update` tip telling the reader to run `cards list` with a `--json` on it, an
+  `overview --human` line offering *"(use --json for all)"* for a flag that command has
+  never had, and the same claim in `EXAMPLES.md`, `API-REFERENCE.md`,
+  `docs/commands.md` and `examples/workflows.md`. All now say what the binary does.
+  `favro init`, `favro board`, `favro tracker init` and `cards move` still declare a real
   `--json` and are untouched.
+
+  Eleven calls in `src/__integration__` were passing the dead flag too. Those files are
+  outside `npm test` (`jest.config.js` ignores them), so nothing was red — they would
+  have failed on the first run with credentials. The flag is gone from the eleven, and
+  the assertions in the tests touched now read the `{"rows":[…]}` envelope those
+  commands actually print, measured live.
 
 - **`cards move --to-board` never moved anything — it FORKED the card onto a second
   board (#161).** `PUT /cards/{cardId}` defaults `dragMode` to `commit`, and `commit`

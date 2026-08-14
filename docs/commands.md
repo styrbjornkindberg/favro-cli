@@ -10,7 +10,7 @@ Complete reference for every `favro` CLI command, flag, and option.
 
 Changes to how reads answer, and to two names. Each is visible; none is silent.
 
-### `--json` on a list read is an object, not an array
+### A list read answers an object, not an array
 
 Every **list** read now prints one envelope:
 
