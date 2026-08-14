@@ -4,16 +4,15 @@
  */
 
 import {
-  priorityScore,
-  extractPriority,
   isBacklogCard,
   compareSprintCards,
   SprintPlanAPI,
   type SprintCard,
 } from '../../api/sprint-plan';
-// `extractEffort` moved to its one home in `api/context` (#89); `sprint-plan`
-// is now a caller like the rest.
-import { extractEffort, type ContextCard } from '../../api/context';
+// `extractEffort` moved to its one home in `api/context` (#89) and `readPriority`
+// followed it in #169's review round; `sprint-plan` is now a caller for both, and
+// their unit arms stay here — this is the file that has always held them.
+import { extractEffort, readPriority, type ContextCard } from '../../api/context';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -43,43 +42,6 @@ function makeSprintCard(overrides: Partial<SprintCard> = {}): SprintCard {
     ...overrides,
   };
 }
-
-// ─── priorityScore ────────────────────────────────────────────────────────────
-
-describe('priorityScore', () => {
-  it('returns 4 for "critical"', () => {
-    expect(priorityScore('critical')).toBe(4);
-  });
-
-  it('returns 3 for "high"', () => {
-    expect(priorityScore('high')).toBe(3);
-  });
-
-  it('returns 2 for "medium"', () => {
-    expect(priorityScore('medium')).toBe(2);
-  });
-
-  it('returns 1 for "low"', () => {
-    expect(priorityScore('low')).toBe(1);
-  });
-
-  it('returns 0 for undefined', () => {
-    expect(priorityScore(undefined)).toBe(0);
-  });
-
-  it('is case-insensitive', () => {
-    expect(priorityScore('HIGH')).toBe(3);
-    expect(priorityScore('Medium')).toBe(2);
-  });
-
-  it('returns 4 for "urgent"', () => {
-    expect(priorityScore('urgent')).toBe(4);
-  });
-
-  it('returns 0 for unrecognized priority', () => {
-    expect(priorityScore('banana')).toBe(0);
-  });
-});
 
 // ─── extractEffort ────────────────────────────────────────────────────────────
 
@@ -113,23 +75,60 @@ describe('extractEffort', () => {
   });
 });
 
-// ─── extractPriority ──────────────────────────────────────────────────────────
+// ─── readPriority ─────────────────────────────────────────────────────────────
+//
+// Carries what the deleted `priorityScore` and `extractPriority` describes
+// covered — every band, case-insensitivity, `urgent`, an unrecognised value, and
+// the three field spellings — plus the three answers neither copy had.
 
-describe('extractPriority', () => {
-  it('extracts "priority" field', () => {
-    expect(extractPriority(makeCard({ customFields: { priority: 'high' } }))).toBe('high');
+describe('readPriority', () => {
+  const read = (customFields?: Record<string, unknown>) => readPriority(makeCard({ customFields }));
+
+  it('scores every band in the vocabulary', () => {
+    expect(read({ priority: 'critical' })).toEqual({ label: 'critical', score: 4 });
+    expect(read({ priority: 'blocker' })).toEqual({ label: 'blocker', score: 4 });
+    expect(read({ priority: 'high' })).toEqual({ label: 'high', score: 3 });
+    expect(read({ priority: 'medium' })).toEqual({ label: 'medium', score: 2 });
+    expect(read({ priority: 'normal' })).toEqual({ label: 'normal', score: 2 });
+    expect(read({ priority: 'low' })).toEqual({ label: 'low', score: 1 });
   });
 
-  it('extracts "Priority" field (capital)', () => {
-    expect(extractPriority(makeCard({ customFields: { Priority: 'Medium' } }))).toBe('Medium');
+  it('scores "urgent" as 4 — `next`\'s copy scored it 0 and called it unset', () => {
+    // The defect the merge exists for. `sprint-plan` scored 4, `next` scored 0 and
+    // pushed no reason, so the most urgent card on a board ranked as unprioritised
+    // with no marker beside it.
+    expect(read({ Priority: 'urgent' })).toEqual({ label: 'urgent', score: 4 });
   });
 
-  it('extracts "urgency" field', () => {
-    expect(extractPriority(makeCard({ customFields: { urgency: 'critical' } }))).toBe('critical');
+  it('reads all three field spellings, whatever their case', () => {
+    expect(read({ priority: 'high' }).score).toBe(3);
+    expect(read({ Priority: 'HIGH' })).toEqual({ label: 'high', score: 3 });
+    expect(read({ urgency: 'critical' }).score).toBe(4);
+    expect(read({ Severity: 'Low' })).toEqual({ label: 'low', score: 1 });
+    // The regex reaches a compound name the six literal spellings never did.
+    expect(read({ 'Priority Level': 'medium' }).score).toBe(2);
   });
 
-  it('returns undefined when no priority field', () => {
-    expect(extractPriority(makeCard({ customFields: {} }))).toBeUndefined();
+  it('a value outside the vocabulary is reported as itself and ranks nowhere', () => {
+    // NOT `unset`: the field was read and holds `p1`. Both former copies lied about
+    // this one — `next` said `unset`, `sprint-plan` scored it 0 as if ranked.
+    expect(read({ Priority: 'P1' })).toEqual({ label: 'p1', score: null });
+    expect(read({ priority: 'banana' })).toEqual({ label: 'banana', score: null });
+  });
+
+  it('a banded field wins over an unbanded one anywhere in the map', () => {
+    expect(read({ Priority: 'P1', Urgency: 'high' })).toEqual({ label: 'high', score: 3 });
+  });
+
+  it('no priority field on a readable card is "unset", score 0', () => {
+    expect(read({})).toEqual({ label: 'unset', score: 0 });
+    expect(read(undefined)).toEqual({ label: 'unset', score: 0 });
+    // An empty value is not a priority — same rule `extractEffort` applies.
+    expect(read({ Priority: '' })).toEqual({ label: 'unset', score: 0 });
+  });
+
+  it('an id-keyed payload is "unavailable", score null — not a scored zero', () => {
+    expect(read({ zxMLxD4zx4tSwJr75: ['YLanLiuXKA8JpvEsX'] })).toEqual({ label: 'unavailable', score: null });
   });
 });
 
@@ -331,7 +330,7 @@ describe('SprintPlanAPI', () => {
 
   it('a card carrying no custom fields keeps a measured priority score of 0', async () => {
     // The polarity: nothing was unreadable, so `0` is the answer rather than a
-    // fabrication, and `priority` stays absent rather than reading `unavailable`.
+    // fabrication, and the label is `unset` — read, no priority — not `unavailable`.
     mockGetSnapshot.mockResolvedValue({
       ...SAMPLE_SNAPSHOT,
       cards: [{ id: 'c1', title: 'Bare', status: 'Backlog', assignees: [], tags: [], blockedBy: [], blocking: [] }],
@@ -339,7 +338,7 @@ describe('SprintPlanAPI', () => {
 
     const result = await new SprintPlanAPI({} as any).getSuggestions('Sprint 42', 40);
 
-    expect(result.suggestions.map(c => [c.priority, c.priorityScore])).toEqual([[undefined, 0]]);
+    expect(result.suggestions.map(c => [c.priority, c.priorityScore])).toEqual([['unset', 0]]);
     expect(result.totalSuggested).toBe(0);
   });
 

@@ -8,13 +8,19 @@
  *   - Respects a point budget (default 40)
  *   - Priority and effort read from custom fields
  *
- * Priority ranking: critical > high > medium > low > (unset)
+ * Priority ranking: critical/blocker, urgent > high > medium/normal > low > (unset).
+ * A value outside that vocabulary is reported and ranks nowhere (`readPriority`).
  * Effort ranking: lower numbers first (feasibility-first)
  */
 
 import FavroHttpClient from '../lib/http-client';
-import ContextAPI, { addEffort, extractEffort, type ContextCard, type BoardContextSnapshot } from './context';
-import { fieldNamesUnavailable } from '../lib/custom-field-map';
+import ContextAPI, {
+  addEffort,
+  extractEffort,
+  readPriority,
+  type ContextCard,
+  type BoardContextSnapshot,
+} from './context';
 import type { Unreachable } from '../lib/read-shape';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -55,7 +61,7 @@ export interface SprintPlanResult {
   /** Effort of the suggested cards, or `null` when one of them was unreadable. */
   totalSuggested: number | null;
   suggestions: SprintCard[];
-  overflow: SprintCard[];  // cards MEASURED not to fit; empty when effort is unreadable
+  overflow: SprintCard[];  // cards MEASURED not to fit — nothing else is excluded
   /**
    * Carried straight off the snapshot (#116). An empty plan from a failed cards
    * read would otherwise read as "no backlog cards found", which is advice.
@@ -65,75 +71,11 @@ export interface SprintPlanResult {
 }
 
 // ─── Priority Scoring ─────────────────────────────────────────────────────────
-
-const PRIORITY_SCORES: Record<string, number> = {
-  critical: 4,
-  urgent: 4,
-  high: 3,
-  medium: 2,
-  normal: 2,
-  low: 1,
-};
-
-/**
- * Convert priority string to a numeric score (higher = more important).
- */
-export function priorityScore(priority: string | undefined): number {
-  if (!priority) return 0;
-  const p = priority.toLowerCase().trim();
-  // Exact match first
-  if (PRIORITY_SCORES[p] !== undefined) return PRIORITY_SCORES[p];
-  // Partial match
-  for (const [key, score] of Object.entries(PRIORITY_SCORES)) {
-    if (p.includes(key)) return score;
-  }
-  return 0;
-}
-
-/**
- * Extract priority value from a card's custom fields.
- * Looks for fields named "priority", "urgency", "severity".
- *
- * `undefined` means "matched nothing", which on the measured wire is what
- * ALWAYS happens: the keys here are field names and `GET /cards` sends
- * `customFieldId`s (`custom-field-map.ts`). `priorityOf` below is what a caller
- * should use — it is the one that can tell an absent priority from an unreadable
- * one, and this alone cannot (#169).
- *
- * Deliberately NOT reconciled with `next.ts`'s `extractPriority`, which returns
- * `{label, score}` off a `/priority|urgency|severity/` regex. Two measured
- * differences would ride along on that refactor: `Priority: urgent` scores 4
- * here (`PRIORITY_SCORES`) and 0 there, and a non-band value (`P1`) displays
- * itself here and would display `unset` there. Both are sort/display changes
- * nobody asked for. Recorded as the open edge it is rather than merged blind.
- */
-export function extractPriority(card: ContextCard): string | undefined {
-  const fields = card.customFields ?? {};
-  const priorityKeys = ['priority', 'Priority', 'urgency', 'Urgency', 'severity', 'Severity'];
-  for (const key of priorityKeys) {
-    const val = fields[key];
-    if (val !== undefined && val !== null) return String(val);
-  }
-  return undefined;
-}
-
-/**
- * A card's priority and its 0–4 rank, or the fail-closed answer (#169).
- *
- * `score: null` where nothing could have matched — same split `addEffort` makes,
- * off the same shared predicate `next.ts` uses. Without it every card on the
- * measured wire carried `priorityScore: 0` under a field documented "0–4 numeric
- * (higher = more important)", and since `compareSprintCards` reads that score
- * FIRST, the ranking the `--help` advertises as priority×effort was in fact
- * alphabetical by title, silently.
- */
-export function priorityOf(card: ContextCard): { priority?: string; score: number | null } {
-  const priority = extractPriority(card);
-  if (priority !== undefined) return { priority, score: priorityScore(priority) };
-  return fieldNamesUnavailable(card.customFields)
-    ? { priority: 'unavailable', score: null }
-    : { score: 0 };
-}
+//
+// Was a local `PRIORITY_SCORES` + `priorityScore` + `extractPriority`, all three
+// deleted: the vocabulary, the key match and the four answers now live once in
+// `readPriority` (`api/context.ts`), shared with `next` (#169 review). The three
+// ways the two copies disagreed are recorded there.
 
 // ─── Backlog Filter ───────────────────────────────────────────────────────────
 
@@ -207,7 +149,7 @@ export class SprintPlanAPI {
     // `customFields` to tell an effort of nothing from an effort nobody could read
     // (#169), and `SprintCard` is the JSON shape and does not carry them.
     const paired = backlogCards.map(card => {
-      const { priority, score } = priorityOf(card);
+      const { label: priority, score } = readPriority(card);
       const effort = extractEffort(card);
 
       return {

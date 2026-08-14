@@ -8,6 +8,61 @@ that set that version, `a13a02a`) and this release. Commands were driven with
 `FAVRO_CONFIG_DIR` pointed at a throwaway config and no real credentials, so exit codes
 and streams are real and no request reached a live org.
 
+## 5.0.0 — 2026-08-14
+
+**Section hygiene, measured, and NOT fixed here.** `v4.0.0` was tagged at 05:37 today
+(`a649bd8`); `git rev-list --count v4.0.0..HEAD` is 30 and
+`git diff v4.0.0..HEAD -- CHANGELOG.md` adds **227 lines** into the `4.0.0` section
+below — four top-level entries, one under its `Removed` and three under its `Fixed`
+(#160, #162, #169). So most of this release's work is currently filed under a version that has
+already shipped, which is the same defect `4.0.0`'s own opening paragraph records
+happening to `3.1.0`. This section holds only the ranking change below, because
+relocating the other 227 lines means moving three other agents' prose and is a call for
+whoever cuts the release, not for the change that noticed it.
+
+### Breaking
+
+#### `next` and `sprint-plan` now score one priority vocabulary, and `urgent` is in it
+
+The two commands carried a copy each of the priority reader, and they disagreed in
+**three measured ways**. One home now — `readPriority` in `api/context.ts`, beside
+`extractEffort`, which went there under #89 for the same reason.
+
+The defect that forced it: **`next` scored a card whose `Priority` field literally read
+`urgent` as ZERO**, because its band list was `critical|blocker` / `high` /
+`medium|normal` / `low` and `urgent` matches none of them. `scoreCard` then pushed no
+priority reason either, so the most urgent card on a board came back
+`reasons: ["available in queue"]` — indistinguishable from a card nobody had
+prioritised. `sprint-plan`'s copy scored the same value 4. Same fabricated-zero species
+as the rest of #169, one vocabulary over.
+
+What changes in output:
+
+| | before | after |
+|---|---|---|
+| `next`, `Priority: urgent` | score 0, no priority reason | score **16**, `priority: urgent` |
+| `next`, `Priority: normal` | score 8 (matched `normal`) | score 8 — unchanged |
+| `next`, `Priority: P1` | `unset`, silent | `p1`, reported as outside the vocabulary |
+| `sprint-plan`, `Priority: High` | displayed `High` | displayed `high` |
+| `sprint-plan`, no priority field | `priority` absent from JSON | `priority: "unset"` |
+| `sprint-plan`, `Priority Level: medium` | not read at all | scored 2 |
+
+The scored vocabulary is `critical/blocker, urgent > high > medium/normal > low`, quoted
+into both `--help` texts from the one constant so they cannot drift from the code. Both
+also now name the field names each term matches, which neither did.
+
+**A value that is set but outside the vocabulary is no longer reported as `unset`.**
+That was false in both copies — `unset` means "no priority field", and a card holding
+`P1` has one. It is reported as itself, ranked nowhere, and both commands say so:
+`next` in `reasons`, `sprint-plan` in a line naming the values it could not rank. That
+line is separate from the `unavailable` one on purpose — `P1` DID match a field name,
+so one sentence for the two would be false about whichever it was not written for.
+
+The third difference was the key match: `sprint-plan` looked up six literal spellings
+(`priority`, `Priority`, `urgency`, `Urgency`, `severity`, `Severity`) and `next` used
+`/priority|urgency|severity/i` over every key. The regex wins, so a field named
+`Priority Level` is now read on the sprint path too.
+
 ## 4.0.0 — 2026-08-14
 
 **This section was headed `3.1.0` until #110 landed in it.** The map (#80) planned the

@@ -43,10 +43,21 @@ describe('extractPriority', () => {
     expect(extractPriority(card({ customFields: { Priority: 'Critical' } })).label).toBe('critical');
   });
 
-  it('reports unset for no custom fields, an unrelated field, or an unrecognised value', () => {
+  it('reports unset for no custom fields or an unrelated field', () => {
     expect(extractPriority(card())).toEqual({ label: 'unset', score: 0 });
     expect(extractPriority(card({ customFields: { Team: 'Platform' } }))).toEqual({ label: 'unset', score: 0 });
-    expect(extractPriority(card({ customFields: { Priority: 'someday' } }))).toEqual({ label: 'unset', score: 0 });
+  });
+
+  it('an unrecognised value is NOT unset — the field was read and holds it', () => {
+    // This arm asserted `{label:'unset', score:0}` and was green: a `Priority` of
+    // `someday` was reported as though the card had no priority field at all.
+    expect(extractPriority(card({ customFields: { Priority: 'someday' } })))
+      .toEqual({ label: 'someday', score: null });
+  });
+
+  it('scores `urgent` with `critical` — it used to score 0 (#169 review)', () => {
+    expect(extractPriority(card({ customFields: { Priority: 'urgent' } })))
+      .toEqual({ label: 'urgent', score: 4 });
   });
 });
 
@@ -131,6 +142,33 @@ describe('scoreCard — one term at a time', () => {
       'quick win (effort: 1)',
       'already in progress',
     ]);
+  });
+
+  it('an urgent card scores and says so — it used to score 0 with no reason (#169 review)', () => {
+    // The whole point of the merge. `urgent` matched no band in this command's copy,
+    // so `score` was 0, `priority.score > 0` was false, no `else if` caught it, and
+    // the card came back with `reasons: ['available in queue']` — the most urgent
+    // card on the board, indistinguishable from one nobody had prioritised.
+    const { score, reasons } = scoreCard(card({ customFields: { Priority: 'urgent' } }));
+
+    expect(score).toBe(16);
+    expect(reasons).toEqual(['priority: urgent']);
+  });
+
+  it('a priority outside the vocabulary is reported and weighs nothing', () => {
+    // The polarity of the arm above: still unscored, but no longer SILENT. `unset`
+    // would be a false statement about a field holding `p1`.
+    const { score, reasons } = scoreCard(card({ customFields: { Priority: 'P1' } }));
+
+    expect(score).toBe(0);
+    expect(reasons).toEqual([
+      'priority: p1 — outside the scored vocabulary (critical/blocker, urgent > high > medium/normal > low), not weighted',
+    ]);
+  });
+
+  it('a card with no priority field says nothing about priority at all', () => {
+    // `unset` is the one case that stays silent: there is no field to report.
+    expect(scoreCard(card({ customFields: { Team: 'Platform' } })).reasons).toEqual(['available in queue']);
   });
 
   it('does not claim effort was unreadable on a card whose effort it read (#169 review)', () => {

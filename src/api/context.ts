@@ -159,6 +159,69 @@ export function extractEffort(card: ContextCard): number | undefined {
   return undefined;
 }
 
+/** The field names a priority is guessed from. Favro has no priority concept. */
+const PRIORITY_FIELD = /priority|urgency|severity/i;
+
+/**
+ * The scored priority vocabulary, in match order — a value is banded by the FIRST
+ * row it matches, so `medium-high` is high, as it was under both former copies.
+ *
+ * `urgent` and `normal` are here because `sprint-plan`'s copy scored them (4 and
+ * 2) and `next`'s did not: a card whose `Priority` literally read `urgent` scored
+ * ZERO in `next` and got no priority reason at all, so `favro next` showed the
+ * most urgent card on the board as unprioritised with no marker. Same
+ * fabricated-zero species as the rest of #169, one vocabulary over. This is the
+ * fuller list and the one kept.
+ */
+const PRIORITY_BANDS: ReadonlyArray<readonly [RegExp, number]> = [
+  [/critical|blocker/i, 4],
+  [/urgent/i, 4],
+  [/high/i, 3],
+  [/medium|normal/i, 2],
+  [/low/i, 1],
+];
+
+/**
+ * A card's priority and its 0–4 rank — the ONE home (#169 review), after
+ * `next.ts` and `api/sprint-plan.ts` each carried a copy that disagreed with the
+ * other in three measured ways: the vocabulary above, the key match (six literal
+ * spellings vs this regex, which also reaches `Priority Level`), and the case of
+ * the value returned (`High` vs `high`). Reconciling them is a ranking change and
+ * belongs in a major.
+ *
+ * Four answers, and the label tells them apart:
+ *
+ *   - a banded value → the value, score 1–4.
+ *   - **set but unbanded** (`P1`) → the value, score `null`. The field WAS read
+ *     and DOES hold something, so `'unset'` was a false statement about it and
+ *     both copies made it. Reported as itself, ranked nowhere.
+ *   - no priority field on a card whose fields were readable → `'unset'`, 0.
+ *   - no field name matchable at all → `'unavailable'`, `null`. Same split
+ *     `addEffort` makes between a measured 0 and no measurement.
+ *
+ * A banded match WINS over an unbanded one anywhere in the map, which is what
+ * `next`'s copy did (it looped every key and returned only on a band) — so
+ * `{Priority: 'P1', Urgency: 'high'}` is still high.
+ */
+export function readPriority(card: ContextCard): { label: string; score: number | null } {
+  let unbanded: string | undefined;
+  for (const [key, val] of Object.entries(card.customFields ?? {})) {
+    if (!PRIORITY_FIELD.test(key)) continue;
+    if (val === undefined || val === null || val === '') continue;
+    const v = String(val).toLowerCase();
+    const band = PRIORITY_BANDS.find(([re]) => re.test(v));
+    if (band) return { label: v, score: band[1] };
+    unbanded ??= v;
+  }
+  if (unbanded !== undefined) return { label: unbanded, score: null };
+  return fieldNamesUnavailable(card.customFields)
+    ? { label: 'unavailable', score: null }
+    : { label: 'unset', score: 0 };
+}
+
+/** The vocabulary `readPriority` scores, for the two `--help` texts to quote. */
+export const PRIORITY_VOCABULARY = 'critical/blocker, urgent > high > medium/normal > low';
+
 /**
  * Add one card's effort to a running total, or fail the total closed (#169).
  *

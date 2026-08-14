@@ -260,6 +260,28 @@ describe('favro sprint-plan', () => {
     expect(all).not.toContain('unavaila ');
   });
 
+  it('distinguishes an unmatched priority from one outside the vocabulary (#169 review)', async () => {
+    // Both give `priorityScore: null`, and one sentence for the two would be false
+    // about whichever it was not written for: `P1` DID match a field name.
+    MockSprintPlanAPI.prototype.getSuggestions.mockResolvedValue({
+      ...SAMPLE_RESULT,
+      suggestions: [
+        { ...SAMPLE_RESULT.suggestions[0], priority: 'unavailable', priorityScore: null },
+        { ...SAMPLE_RESULT.suggestions[1], priority: 'p1', priorityScore: null },
+      ],
+      overflow: [],
+    });
+
+    await runCli(['sprint-plan', '--board', 'Sprint 42', '--human']);
+
+    const all = consoleSpy.mock.calls.map(c => c[0] as string).join('\n');
+    expect(all).toContain('Priority "unavailable" on 1 card(s) — no priority field could be matched by name');
+    expect(all).toContain('Priority outside the scored vocabulary');
+    expect(all).toContain('on 1 card(s) — p1.');
+    // The vocabulary is quoted, not described, so `--help` and this line cannot drift.
+    expect(all).toContain('critical/blocker, urgent > high > medium/normal > low');
+  });
+
   it('a readable total keeps the budget verdict, and the note stays off', async () => {
     // The polarity. A render that dropped "Within budget" or printed the note
     // unconditionally reddens here.

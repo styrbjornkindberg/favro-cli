@@ -12,8 +12,7 @@
 import { Command } from 'commander';
 import { resolveUserId } from '../lib/config';
 import { AggregateCard, workItemKey } from '../api/aggregate';
-import { extractEffort } from '../api/context';
-import { fieldNamesUnavailable } from '../lib/custom-field-map';
+import { PRIORITY_VOCABULARY, extractEffort, readPriority } from '../api/context';
 import { Unreachable } from '../lib/read-shape';
 import { Ctx, run } from '../lib/run';
 
@@ -47,23 +46,11 @@ interface NextResult {
 }
 
 /**
- * `label` is `'unset'` only where the fields were READ and held no priority.
- * Where the payload names a field by id alone, nothing could be matched against
- * `/priority|urgency|severity/` and the answer is `'unavailable'` (#169) — the
- * same split `addEffort` makes between a measured 0 and no measurement.
+ * Kept as the name this command's callers and tests already use; the vocabulary,
+ * the key match and the four answers all live in `readPriority` now (#169 review)
+ * — this copy scored `urgent` as ZERO and labelled it `unset`.
  */
-export function extractPriority(card: AggregateCard): { label: string; score: number } {
-  for (const [key, val] of Object.entries(card.customFields ?? {})) {
-    if (/priority|urgency|severity/i.test(key)) {
-      const v = String(val).toLowerCase();
-      if (/critical|blocker/i.test(v)) return { label: v, score: 4 };
-      if (/high/i.test(v)) return { label: v, score: 3 };
-      if (/medium|normal/i.test(v)) return { label: v, score: 2 };
-      if (/low/i.test(v)) return { label: v, score: 1 };
-    }
-  }
-  return { label: fieldNamesUnavailable(card.customFields) ? 'unavailable' : 'unset', score: 0 };
-}
+export const extractPriority = readPriority;
 
 export function scoreCard(card: AggregateCard): { score: number; reasons: string[] } {
   let score = 0;
@@ -75,10 +62,11 @@ export function scoreCard(card: AggregateCard): { score: number; reasons: string
   // same array. The joint sentence now needs effort to have actually missed.
   const effort = extractEffort(card);
 
-  // Priority (4x weight)
-  const priority = extractPriority(card);
-  score += priority.score * 4;
-  if (priority.score > 0) reasons.push(`priority: ${priority.label}`);
+  // Priority (4x weight). `?? 0` because an unranked priority weighs nothing —
+  // `null` arithmetic is `NaN` and would take the whole score with it.
+  const priority = readPriority(card);
+  score += (priority.score ?? 0) * 4;
+  if (priority.score) reasons.push(`priority: ${priority.label}`);
   // Two of the three weighted terms read the same custom fields, so when the
   // payload names them by id alone BOTH are silently absent from the score.
   // Said out loud rather than left to look like a card nothing weighed (#169).
@@ -86,6 +74,12 @@ export function scoreCard(card: AggregateCard): { score: number; reasons: string
     reasons.push(effort === undefined
       ? 'priority and effort unreadable — ranked on due date and stage only'
       : 'priority unreadable — not weighted in this ranking');
+  }
+  // Set, read, and outside the scored vocabulary. `unset` would be a false
+  // statement about it and this used to say nothing at all, so the card ranked as
+  // unprioritised with no marker beside it (#169 review).
+  else if (priority.label !== 'unset') {
+    reasons.push(`priority: ${priority.label} — outside the scored vocabulary (${PRIORITY_VOCABULARY}), not weighted`);
   }
 
   // Due urgency (3x weight)
@@ -252,7 +246,14 @@ export async function nextHandler(ctx: Ctx, options: NextOptions) {
 export function registerNextCommand(program: Command): void {
   program
     .command('next')
-    .description('"What should I work on next?" — AI-ranked suggestions (LLM-first JSON)')
+    .description(
+      '"What should I work on next?" — AI-ranked suggestions (LLM-first JSON)\n\n' +
+      'Score: priority (4x) + due urgency (3x) + a low-effort bonus. Blocking is\n' +
+      'deliberately not scored — see the module comment on `scoreCard`.\n\n' +
+      `Priority is a custom field matched BY NAME (priority, urgency, severity) and\n` +
+      `scored ${PRIORITY_VOCABULARY}. A value outside that vocabulary is reported in\n` +
+      '`reasons` and weighs nothing. Where the payload names its fields by id alone,\n' +
+      'priority reads "unavailable" and the ranking says which terms it lost.')
     .option('--collection <name>', 'Filter to a specific collection')
     .option('--count <n>', 'Number of suggestions', '5')
     .action(run(nextHandler));

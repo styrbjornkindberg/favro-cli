@@ -15,11 +15,15 @@
  */
 
 import { Command } from 'commander';
+import { PRIORITY_VOCABULARY } from '../api/context';
 import { EFFORT_UNAVAILABLE_NOTE } from '../lib/custom-field-map';
 import { parseLimit } from '../lib/read-shape';
 import { RefusalError } from '../lib/refusal';
 import { Ctx, run } from '../lib/run';
 import type { SprintCard, SprintPlanResult } from '../api/sprint-plan';
+
+/** Width of the priority cell. 11 so `unavailable` prints as the word (#169). */
+const PRIORITY_COL = 11;
 
 function formatSprintCard(card: SprintCard, index: number): string {
   const num = String(index + 1).padStart(2);
@@ -28,13 +32,9 @@ function formatSprintCard(card: SprintCard, index: number): string {
     ? card.title.slice(0, 42) + '...'
     : card.title.padEnd(45);
   const effort = card.effort !== undefined ? String(card.effort).padStart(3) + 'pt' : '  —  ';
-  // 11, not 8: `unavailable` is now a value this cell carries (#169) and an 8-char
-  // slice printed `unavaila`. The header below pads to the same width.
   const priority = card.priority ? card.priority.slice(0, PRIORITY_COL).padEnd(PRIORITY_COL) : '  —' + ' '.repeat(PRIORITY_COL - 3);
   return `  ${num}. ${id}  ${title}  ${priority}  ${effort}`;
 }
-
-const PRIORITY_COL = 11;
 
 /**
  * The human render. Prints for itself and returns `void`, so the runner appends
@@ -107,15 +107,22 @@ function formatHuman(result: SprintPlanResult): void {
   if (unreadable) console.log(`\n  ${EFFORT_UNAVAILABLE_NOTE}`);
 
   // The other half of the same payload, and the one that decides ORDER:
-  // `compareSprintCards` reads `priorityScore` first, so cards whose priority
-  // could not be matched rank as if unset and the list stops being the
-  // priority×effort ranking `--help` advertises. Said out loud rather than left
-  // for a reader to infer from a column of `unavailable`.
-  const priorityBlind = [...result.suggestions, ...result.overflow]
-    .filter(c => c.priorityScore === null).length;
-  if (priorityBlind) {
-    console.log(`\n  ⚠️  Priority "unavailable" on ${priorityBlind} card(s) — no priority field could be ` +
+  // `compareSprintCards` reads `priorityScore` first, so a card with no score ranks
+  // as if unset and the list stops being the priority×effort ranking `--help`
+  // advertises. TWO reasons a score is `null` and they are not the same sentence —
+  // a name that could not be matched, and a name that was matched onto a value
+  // outside the vocabulary (`readPriority`).
+  const ranked = [...result.suggestions, ...result.overflow];
+  const unavailable = ranked.filter(c => c.priority === 'unavailable').length;
+  const unranked = ranked.filter(c => c.priorityScore === null && c.priority !== 'unavailable');
+  if (unavailable) {
+    console.log(`\n  ⚠️  Priority "unavailable" on ${unavailable} card(s) — no priority field could be ` +
       'matched by name, so those rank as if unset and the order above is not the priority×effort ranking.');
+  }
+  if (unranked.length) {
+    console.log(`\n  ⚠️  Priority outside the scored vocabulary (${PRIORITY_VOCABULARY}) on ` +
+      `${unranked.length} card(s) — ${[...new Set(unranked.map(c => c.priority))].join(', ')}. ` +
+      'Read, reported, and ranked as if unset.');
   }
 
   holes();
@@ -158,12 +165,15 @@ export function registerSprintPlanCommand(program: Command): void {
     .description(
       'Sprint planning — suggests backlog cards by priority×effort heuristic.\n\n' +
       'Filters cards with status="Backlog" and sorts by:\n' +
-      '  1. Priority (critical > high > medium > low)\n' +
+      `  1. Priority (${PRIORITY_VOCABULARY})\n` +
       '  2. Effort (lower first — feasibility-first)\n\n' +
-      'Both terms are custom fields matched BY NAME, and the card payload is\n' +
-      'measured to name its fields by id alone. Where no name can be matched the\n' +
-      'ranking says so — priority reads "unavailable" and no budget total is\n' +
-      'claimed — rather than scoring the miss as a zero.\n\n' +
+      'Both terms are custom fields matched BY NAME — a field whose name contains\n' +
+      'priority, urgency or severity for the first, and effort, estimate, points or\n' +
+      'story points for the second. A priority OUTSIDE the vocabulary above is\n' +
+      'reported as itself and ranks nowhere.\n\n' +
+      'The card payload is measured to name its fields by id alone. Where no name\n' +
+      'can be matched the ranking says so — priority reads "unavailable" and no\n' +
+      'budget total is claimed — rather than scoring the miss as a zero.\n\n' +
       'Shows which cards fit in the budget and which overflow.\n\n' +
       'Examples:\n' +
       '  favro sprint-plan --board "Sprint 42"\n' +
