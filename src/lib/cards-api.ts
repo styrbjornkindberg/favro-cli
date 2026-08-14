@@ -1033,10 +1033,13 @@ export class CardsAPI {
    * mismatch throws. Compared on the BOARD and never on the card: a move onto a
    * board that already holds an instance of this card merges, and answers with
    * the surviving instance's `cardId`, so `raw.cardId` legitimately differs from
-   * the id we addressed. The same comparison is the catch for the denial shape
-   * this endpoint answers with — a board id outside the key's reach answers
+   * the id we addressed. It USED to be the catch for the denial shape this
+   * endpoint answers with too — a board id outside the key's reach answers
    * `202 {"message":"Access denied"}`, a 2xx that axios hands back as success and
-   * whose body carries no board at all.
+   * whose body carries no board at all. That half no longer reaches here:
+   * `http-client` refuses any 2xx carrying a message before this line runs
+   * (#165). What is left for the comparison is the UNMEASURED half — a 2xx with
+   * no message whose echo names a different board.
    *
    * The response goes through `normalizeCard` like `getCard` does — and unlike
    * `updateCard`, which returns its PUT body raw, so a caller reading a card back
@@ -1055,11 +1058,12 @@ export class CardsAPI {
       widgetCommonId: boardId,
       dragMode: 'move',
     });
-    // A bare `Error`: neither marker's claim is measured for both branches this
-    // catches. `RefusalError` would claim the write landed nowhere, which holds
-    // for the 202 denial and is unknown for a mismatched echo; `TransientError`
-    // would claim the next attempt may differ, which is false for the denial. An
-    // unmarked throw is the fail-closed default the table already reads (#151).
+    // A bare `Error`: the branch this still catches is a 2xx that carried NO
+    // message and echoed a board other than the one we sent, and nothing has
+    // measured that. `RefusalError` would claim the write landed nowhere and
+    // `TransientError` that the next attempt may differ; neither is observed
+    // here. An unmarked throw is the fail-closed default the table reads (#151).
+    // The 202-denial branch this used to share is refused at the wire now (#165).
     //
     // Spelled `!==`, and not `!(… === …)`: #82's ratchet reads `widgetCommonId
     // ===` as a WIRE WRITE whose value must be `boardId`, and this line is a
@@ -1069,9 +1073,10 @@ export class CardsAPI {
       throw new Error(
         `Move of card ${cardId} to board ${boardId} was accepted (2xx) but the response does not put the ` +
           `card on that board: it reads ${JSON.stringify(raw.widgetCommonId)}.\n` +
-          `A move that lands echoes the destination board back (measured #161). Favro answers ` +
-          `202 {"message":"Access denied"} — a success status to every HTTP client — for a board this key ` +
-          `cannot write to, and that body carries no board at all, so this is the only place it is visible.\n` +
+          `A move that lands echoes the destination board back (measured #161). The response carried no ` +
+          `denial message — a board this key cannot write to answers 202 {"message":"Access denied"}, ` +
+          `and that is refused at the wire before it reaches here (#165) — so what this observed is a ` +
+          `2xx that neither refused nor moved the card, which nothing has measured.\n` +
           `Verify with: favro cards get ${cardId}`,
       );
     }
@@ -1321,33 +1326,19 @@ export class CardsAPI {
       if (invented.length > 0) throw new RefusalError(unknownTagMessage(invented));
       Object.assign(payload, delta);
     }
-    // Favro uses PUT for card updates, not PATCH
-    const updated = await this.client.put<Card>(`/cards/${cardId}`, payload, MARKDOWN_BODY);
-
-    // A `customFields` write Favro rejects answers **202 with `{message}` and no
-    // card row** (#106 §4.3), and 202 is a SUCCESS to axios — so without this the
-    // denial is handed back typed as a `Card` on which every field is `undefined`,
-    // and a caller reporting `card.name` prints nothing for a write that never
-    // happened. Refused at the seam rather than in `TxCards.setFieldValue`, because
-    // `UpdateCardRequest.customFields` is a door every future caller comes through
-    // (#109's `cards update --field` included) and a guard per call site is the
-    // pattern this facade exists to stop.
+    // Favro uses PUT for card updates, not PATCH.
     //
-    // Scoped to `customFields`, deliberately. Other write shapes have 202 families
-    // of their own — `parentCardId` answers `202 Access denied` — and widening the
-    // refusal to every response without a `cardId` would assert a shape nobody has
-    // probed on those paths, on the endpoint every command writes through.
-    if (data.customFields !== undefined && (updated as { cardId?: string }).cardId === undefined) {
-      const said = (updated as { message?: unknown }).message;
-      throw new RefusalError(
-        `Custom field write on card ${cardId} was rejected: Favro answered ` +
-          `${typeof said === 'string' ? `"${said}"` : 'no message'} and sent no card row.\n` +
-          `Nothing was written. Measured causes (#106): an unknown customFieldId, a value in the ` +
-          `wrong shape for the field's type, or an empty array on a select — which is how "clear it" ` +
-          `is spelled everywhere else and is not a clear here.`,
-      );
-    }
-    return updated;
+    // The `customFields` 202 guard that used to stand here is GONE (#165). It was
+    // this exact check — "a 2xx carrying `{message}` and no card row is a denial" —
+    // scoped to one field of one endpoint because the wider shape was unprobed. It
+    // is probed now: `http-client`'s success interceptor refuses ANY 2xx carrying a
+    // top-level `message`, for every endpoint, before this line ever returns. The
+    // list of measured causes that guard carried (#106 §4.3 — an unknown
+    // customFieldId, a value in the wrong shape for the field's type, an empty
+    // array on a select) went with it. What replaces it is Favro's own message for
+    // the request that was actually made: `Match failed` for the wrong shape,
+    // `Invalid status value` for the empty select array, both measured.
+    return await this.client.put<Card>(`/cards/${cardId}`, payload, MARKDOWN_BODY);
   }
 
   /**

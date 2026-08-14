@@ -10,7 +10,12 @@
  * actually probed (see scripts/probe-favro-errors.ts) are read as "missing";
  * any other 403 is refused as a permission denial and quotes Favro's raw
  * message verbatim rather than guessing at its meaning.
+ *
+ * A 2xx is default-refuse too, on the MESSAGE rather than the closed sets
+ * (#165). See the 2xx branch below for the measurement, and `WireRefusalError`
+ * for the throw that finally routes those responses in here at all.
  */
+import { RefusalError } from './refusal';
 
 export type FavroErrorKind =
   /** Clean response, no denial message. */
@@ -75,12 +80,38 @@ const CONFLICT_MESSAGES = new Set(['dependency already exists']);
 const INVALID_MESSAGES = new Set(['invalid column']);
 
 /**
+ * What a 2xx denial means that a 4xx one does not: the write may be PART done.
+ *
+ * Measured 2026-08-14 — `PUT /cards/{id} {name, columnId:<bogus>}` answered
+ * `202 {"message":"Invalid column"}` and the name changed anyway. So the closed
+ * sets' own wordings are all wrong on a 2xx by omission: "nothing was changed"
+ * and "the request was rejected as invalid" both let a reader believe the card
+ * is untouched. Appended to whichever branch named the message rather than
+ * written into the 2xx branch, because the three closed sets name three of the
+ * ten measured denial messages and would otherwise each drop it.
+ */
+const TWO_XX_PARTIAL =
+  `A 202 refuses at least ONE field of the request, not necessarily all of them: measured ` +
+  `2026-08-14, \`PUT /cards/{id} {name, columnId:<bogus>}\` answered ` +
+  `202 {"message":"Invalid column"} and the name changed anyway. Read the card back before ` +
+  `retrying.`;
+
+/**
  * Classify a Favro response by its message, not its status.
+ *
+ * A 2xx that classifies as a failure carries `TWO_XX_PARTIAL` on its wording,
+ * whichever branch below named it.
  *
  * @param status HTTP status of the response (2xx included — a 2xx can deny).
  * @param message `response.data.message` as Favro sent it, if any.
  */
 export function classifyFavroError(status: number, message?: string): FavroErrorClassification {
+  const classified = classifyByMessage(status, message);
+  if (!classified.isFailure || status < 200 || status >= 300) return classified;
+  return { ...classified, message: `${classified.message}\n${TWO_XX_PARTIAL}` };
+}
+
+function classifyByMessage(status: number, message?: string): FavroErrorClassification {
   const raw = typeof message === 'string' && message.trim() ? message.trim() : undefined;
   const key = raw?.toLowerCase();
 
@@ -138,17 +169,32 @@ export function classifyFavroError(status: number, message?: string): FavroError
     };
   }
 
-  // OPEN EDGE, measured 2026-08-13 and NOT fixed here. A 2xx carrying a denial
-  // message this module does not recognise lands on `kind: 'none', isFailure:
-  // false` — reported as SUCCESS. Two live shapes, both raw-probed on the
-  // scratch board: `PUT /cards/{id} {dueDate:"not-a-date"}` answers
-  // `202 {"message":"Invalid date"}`, and a `customFields` write of the wrong
-  // type answers `202 {"message":"Match failed"}`. Neither message is in a set
-  // above. Widening the sets is the obvious move and is not taken blind: it
-  // needs its own probe of what else Favro says on a 2xx, and the read-back
-  // checks in `TxCards` are what currently catch the write half.
+  // A 2xx carrying a top-level message is a REFUSAL, whether or not the sets
+  // above name it (#165). Measured 2026-08-14, 110 logged probes against the
+  // live API: 28 of 28 responses that carried a `message` were 202s, every one
+  // of them a denial; and across 47 successful 2xx — card writes, dependencies,
+  // tasklists, comments, deletes, and every single-entity and paginated GET in
+  // remit — not one carried a `message` at all. So the fail-closed rule costs
+  // nothing measured.
+  //
+  // Keyed on the MESSAGE and not on 202: 202 legitimately means "async
+  // accepted" in HTTP, and a message rule survives Favro moving a denial onto a
+  // 200. Ten distinct denial messages were seen, seven of which none of the
+  // closed sets above name, and every new KIND of probe produced a message no
+  // earlier probe had seen — the vocabulary is not enumerable, which is why
+  // this is a default rather than more entries in those sets. An ELEVENTH,
+  // `Unsupported custom field type`, turned up on the first live drive of this
+  // rule (`custom-fields set` at a `Relations` field, 2026-08-14) and was caught
+  // with nothing taught to catch it. That is the argument in its shortest form.
   if (status >= 200 && status < 300) {
-    return { kind: 'none', isFailure: false, message: '', raw, escalatableOnRead: false };
+    if (!raw) return { kind: 'none', isFailure: false, message: '', raw, escalatableOnRead: false };
+    return {
+      kind: 'unknown',
+      isFailure: true,
+      message: `Favro answered ${status} — a SUCCESS status — and said "${raw}". The request was refused.`,
+      raw,
+      escalatableOnRead: false,
+    };
   }
 
   return {
@@ -160,6 +206,51 @@ export function classifyFavroError(status: number, message?: string): FavroError
     raw,
     escalatableOnRead: false,
   };
+}
+
+/**
+ * The 2xx-denial boundary throw (#165) — a refusal Favro dressed as a success.
+ *
+ * `classifyThrownError` is reachable only from a `catch`, and axios does not
+ * throw on a 2xx. So the whole 202-denial family — ten measured messages, seven
+ * of them unnamed by any closed set — bypassed every error path this codebase
+ * has and was handed back to callers as a `Card` on which every field is
+ * `undefined`. Both of this release's CRITICALs are that shape. This type is
+ * what converts the family into an error, thrown from `http-client`'s SUCCESS
+ * interceptor — which is where it has to be, because the verb wrappers return
+ * `.data` and the status is gone before any caller sees it.
+ *
+ * A `RefusalError`, so the dispatch table's `isRetryable` lands `retryable:
+ * false` without being taught anything new: the denial is deterministic, and
+ * repeating the same request repeats it.
+ *
+ * `.response` and `isAxiosError` are the two structural properties the rest of
+ * the codebase reads a wire failure by — `classifyThrownError`, `isWireFailure`,
+ * `alreadyGone`, `logError` — so the ~15 existing call sites classify this the
+ * same way they classify a 403, and the message they render comes from the same
+ * classifier rather than from a second wording here.
+ *
+ * **It satisfies only HALF of `RefusalError`'s contract, deliberately.** That
+ * contract is "deterministic AND we did not write"; a 202 is measured to refuse
+ * at least one field while applying others, so only the first half holds. The
+ * one place that reads the second half — `dispatch`'s pre-write fast path —
+ * excludes wire failures for exactly that reason.
+ */
+export class WireRefusalError extends RefusalError {
+  /** Structural, matching what axios stamps: this describes a wire answer. */
+  readonly isAxiosError = true;
+  readonly response: { status: number; data: unknown };
+
+  constructor(method: string, url: string, status: number, data: unknown) {
+    const said = (data as { message?: unknown } | null | undefined)?.message;
+    super(
+      `${classifyFavroError(status, typeof said === 'string' ? said : undefined).message}\n` +
+        `The request was ${method} ${url}. Nothing this request DID apply is logged for ` +
+        `compensation, so a transaction unwinding around this cannot undo it.`,
+    );
+    this.name = 'WireRefusalError';
+    this.response = { status, data };
+  }
 }
 
 /**

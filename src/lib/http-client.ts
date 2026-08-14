@@ -1,6 +1,6 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
 import { rateLimitMessage } from './error-handler';
-import { isTransientStatus } from './favro-error';
+import { isTransientStatus, WireRefusalError } from './favro-error';
 import { RefusalError } from './refusal';
 
 /**
@@ -68,6 +68,35 @@ export class FavroHttpClient {
         // Capture backend routing identifier for pagination
         const bid = response.headers?.['x-favro-backend-identifier'];
         if (bid) this.backendId = bid;
+        // THE 2xx-denial boundary (#165). Favro answers some rejected writes
+        // with a success status and the reason in the body, and axios resolves
+        // those — so before this line the whole family reached callers typed as
+        // the entity they asked for, with every field `undefined`, and was
+        // reported as success. Fail closed on any top-level `message`:
+        // measured 2026-08-14, 28 of 28 message-carrying 2xx were denials and
+        // 47 of 47 successful 2xx carried no message (see `classifyFavroError`).
+        //
+        // Here rather than at each verb wrapper because the wrappers return
+        // `.data` — by the time `put()` has a value the status is gone — and
+        // here rather than at each resource module because that is the guard
+        // per call site this client exists to stop; the narrow `customFields`
+        // version of exactly this check lived in `cards-api` and covered one
+        // field of one endpoint.
+        //
+        // Throwing from the FULFILLED half is what keeps it out of the retry
+        // interceptor below: axios chains each interceptor as one
+        // `.then(fulfilled, rejected)`, and a throw in `fulfilled` skips its own
+        // pair's `rejected`. So a denial is not retried, which is right — it is
+        // deterministic.
+        const said = (response.data as { message?: unknown } | null | undefined)?.message;
+        if (typeof said === 'string' && said.trim()) {
+          throw new WireRefusalError(
+            String(response.config?.method ?? '').toUpperCase(),
+            String(response.config?.url ?? ''),
+            response.status,
+            response.data,
+          );
+        }
         return response;
       },
       async (error: AxiosError) => {

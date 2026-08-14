@@ -2,7 +2,15 @@
  * Tests for favro-error.ts — classification is on message, never on status.
  */
 import { join } from 'node:path';
-import { classifyFavroError, classifyThrownError, MISSING_WORDING } from '../lib/favro-error';
+import {
+  classifyFavroError,
+  classifyThrownError,
+  isTransientStatus,
+  isWireFailure,
+  MISSING_WORDING,
+  WireRefusalError,
+} from '../lib/favro-error';
+import { RefusalError } from '../lib/refusal';
 import { logError } from '../lib/error-handler';
 import { stripAnsi } from '../lib/theme';
 import { tempConfigDir } from '../test-support/config-dir';
@@ -161,8 +169,78 @@ describe('classifyFavroError — 2xx carrying a denial', () => {
     expect(result.isFailure).toBe(false);
   });
 
-  test('200 with an unrelated message is not a failure', () => {
-    expect(classifyFavroError(200, 'Card updated').isFailure).toBe(false);
+  // The fail-closed rule (#165). A 2xx carrying a top-level message is a
+  // refusal whether or not the closed sets above name it — measured, 28 of 28
+  // message-carrying 2xx were denials, and 47 of 47 successful 2xx carried no
+  // message at all. Seven of the ten measured denial messages are unnamed, so
+  // the arm below is the majority of the family and not an edge.
+  test.each([
+    ['Lanes are not enabled on this widget'],
+    ['Cannot unset main status field value'],
+    ['Start date cannot be later than due date'],
+    ['Invalid custom field item'],
+    ['Invalid status value'],
+    ['Match failed'],
+    ['Invalid date'],
+    // The eleventh, found by DRIVING this rule rather than by probing for it:
+    // `favro custom-fields set <card> <Relations field> nonsense`, live
+    // 2026-08-14. It needed nothing added here to be caught, which is the
+    // property the default exists for.
+    ['Unsupported custom field type'],
+    // Not a denial anybody has measured — the point is that an unrecognised
+    // message on a 2xx refuses by DEFAULT, so no future denial has to be
+    // enumerated here before it is caught.
+    ['Card updated'],
+  ])('202 {"message":"%s"} is a failure even though no closed set names it', (said) => {
+    const result = classifyFavroError(202, said);
+    expect(result.isFailure).toBe(true);
+    expect(result.kind).toBe('unknown');
+    expect(result.raw).toBe(said);
+    // Quoted verbatim rather than paraphrased: the vocabulary is open, so the
+    // only honest thing to report is what Favro actually said.
+    expect(result.message).toContain(`"${said}"`);
+  });
+
+  test('the 2xx wording says a 202 may have applied part of the write', () => {
+    // Measured 2026-08-14: `PUT {name, columnId:<bogus>}` answers
+    // `202 {"message":"Invalid column"}` and the name changes anyway. A reader
+    // told only "refused" would not re-read the card.
+    expect(classifyFavroError(202, 'Lanes are not enabled on this widget').message).toContain(
+      'refuses at least ONE field of the request, not necessarily all of them',
+    );
+  });
+
+  test('a 2xx denial is never retryable, by status as well as by marker', () => {
+    // Two independent gates land `retryable: false`, and this is the second:
+    // `isRetryable` reads `kind: 'unknown'` and then asks the status, which for
+    // a 202 is not transient. So the advice holds even for a caller that never
+    // sees the `WireRefusalError` wrapper.
+    expect(isTransientStatus(202)).toBe(false);
+  });
+});
+
+describe('WireRefusalError — the 2xx-denial boundary throw (#165)', () => {
+  const thrown = () => new WireRefusalError('PUT', '/cards/abc', 202, { message: 'Invalid column' });
+
+  test('is a RefusalError, so the dispatch table lands retryable: false', () => {
+    expect(thrown()).toBeInstanceOf(RefusalError);
+  });
+
+  test('carries the response the ~15 classifyThrownError call sites read', () => {
+    const classified = classifyThrownError(thrown());
+    expect(classified?.isFailure).toBe(true);
+    expect(classified?.raw).toBe('Invalid column');
+  });
+
+  test('is a wire failure structurally, not by its wording', () => {
+    expect(isWireFailure(thrown())).toBe(true);
+  });
+
+  test('its own message is the classifier’s, plus the request and the partial-write warning', () => {
+    const message = thrown().message;
+    expect(message).toContain(classifyFavroError(202, 'Invalid column').message);
+    expect(message).toContain('PUT /cards/abc');
+    expect(message).toContain('is logged for compensation');
   });
 });
 

@@ -32,6 +32,7 @@ import FavroHttpClient from '../lib/http-client';
 import CardsAPI from '../lib/cards-api';
 import { ColumnResolutionError } from '../lib/column-directory';
 import { AssigneeError } from '../lib/assignee';
+import { RefusalError } from '../lib/refusal';
 import { tempConfigDir } from '../test-support/config-dir';
 
 // The name cache resolves its file per call, so a tmpdir here keeps the suite
@@ -362,12 +363,15 @@ describe('updateCard status writes are a column move (no client mock)', () => {
  * rights check. All three branches are modelled below, so this stand can express
  * a 2xx denial that the rest of the suite has no vocabulary for.
  */
-function favroResolvingColumns(): { handler: (req: Received) => { status: number; body?: unknown }; state: { columnId: string } } {
-  const state = { columnId: TODO };
+function favroResolvingColumns(): {
+  handler: (req: Received) => { status: number; body?: unknown };
+  state: { columnId: string; name: string };
+} {
+  const state = { columnId: TODO, name: 'probe' };
   const routes = favro();
   const row = () => ({
     cardId: CARD,
-    name: 'probe',
+    name: state.name,
     widgetCommonId: BOARD,
     columnId: state.columnId,
     assignments: [{ userId: ALICE }],
@@ -377,6 +381,10 @@ function favroResolvingColumns(): { handler: (req: Received) => { status: number
     handler: (req: Received) => {
       if (req.method === 'PUT') {
         const body = JSON.parse(req.body || '{}') as Record<string, unknown>;
+        // Applied BEFORE the column is judged, which is the measured 202 partial
+        // (#165): `PUT {name, columnId:<bogus>}` answered
+        // `202 {"message":"Invalid column"}` and the name changed anyway.
+        if (typeof body.name === 'string') state.name = body.name;
         if (body.columnId !== undefined) {
           if (body.widgetCommonId === undefined) return { status: 202, body: { message: 'Access denied' } };
           if (body.widgetCommonId !== BOARD) return { status: 202, body: { message: 'Invalid column' } };
@@ -424,22 +432,74 @@ describe('a column move carries the board the column is resolved against (#162)'
     }
   });
 
-  test('a 202 denial is handed back as a Card with no cardId — nothing throws at this seam', async () => {
+  test('a 202 denial REFUSES at the seam — it is not handed back as a Card (#165)', async () => {
     // The wrong-board branch, which is the one that still reaches the live API:
-    // a board we resolved but whose columns do not include this one. It is the
-    // same 2xx-denial family, and the point of the arm is what the seam does with
-    // it — returns it. `updateCard` refuses a 202 only for `customFields`
-    // (`cards-api.ts`), so a caller here sees a row on which every field is
-    // undefined, and `TxCards.moveColumn`'s re-read is what catches it.
+    // a board we resolved but whose columns do not include this one.
+    //
+    // This arm used to pin the opposite — "nothing throws at this seam", the
+    // caller sees a row on which every field is undefined, and only
+    // `TxCards.moveColumn`'s re-read catches it. That silence is what shipped
+    // both of this release's CRITICALs, so the arm is inverted rather than
+    // deleted: the same request, the same stand, the opposite expectation.
     const { handler, state } = favroResolvingColumns();
     const { api, close } = await startServer(handler);
     try {
-      const answer = await api.updateCard(CARD, { columnId: DONE, boardId: OTHER_BOARD });
-      expect((answer as { cardId?: string }).cardId).toBeUndefined();
-      expect((answer as unknown as { message?: string }).message).toBe('Invalid column');
-      // And the card did not move, which is what makes the silence a defect
-      // rather than a cosmetic one.
+      await expect(api.updateCard(CARD, { columnId: DONE, boardId: OTHER_BOARD })).rejects.toThrow(
+        /Invalid column/,
+      );
+      // The refusal is deterministic, so an agent must not be told to retry it.
+      await expect(api.updateCard(CARD, { columnId: DONE, boardId: OTHER_BOARD })).rejects.toBeInstanceOf(
+        RefusalError,
+      );
+      // And the card did not move — the refusal describes a real non-write.
       expect(state.columnId).toBe(TODO);
+    } finally {
+      await close();
+    }
+  });
+
+  test('the refusal carries the status and the request, not just Favro’s words', async () => {
+    const { handler } = favroResolvingColumns();
+    const { api, close } = await startServer(handler);
+    try {
+      const error = await api
+        .updateCard(CARD, { columnId: DONE, boardId: OTHER_BOARD })
+        .then(() => undefined, (e: unknown) => e);
+      expect((error as { response?: { status?: number } }).response?.status).toBe(202);
+      expect((error as Error).message).toContain(`PUT /cards/${CARD}`);
+    } finally {
+      await close();
+    }
+  });
+
+  test('a 202 refuses even though the SAME PUT applied another field of it (#165)', async () => {
+    // 202 means "at least one field was refused", not "nothing happened" —
+    // measured live 2026-08-14. The refusal has to fire anyway: a partial write
+    // reported as a success is strictly worse than a whole one.
+    const { handler, state } = favroResolvingColumns();
+    const { api, close } = await startServer(handler);
+    try {
+      await expect(
+        api.updateCard(CARD, { name: 'renamed', columnId: DONE, boardId: OTHER_BOARD }),
+      ).rejects.toThrow(/Invalid column/);
+      // One PUT, two fields, two different fates.
+      expect(state.name).toBe('renamed');
+      expect(state.columnId).toBe(TODO);
+    } finally {
+      await close();
+    }
+  });
+
+  test('the honoured branch still answers a Card — a 2xx with no message does not throw', async () => {
+    // The other side of the fail-closed rule, and the reason it is safe: a
+    // successful 2xx carries no top-level `message` (47 of 47 measured), so
+    // nothing legitimate is caught by the boundary above.
+    const { handler, state } = favroResolvingColumns();
+    const { api, close } = await startServer(handler);
+    try {
+      const answer = await api.updateCard(CARD, { columnId: DONE });
+      expect(answer.cardId).toBe(CARD);
+      expect(state.columnId).toBe(DONE);
     } finally {
       await close();
     }
