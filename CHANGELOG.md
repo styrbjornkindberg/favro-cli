@@ -161,6 +161,29 @@ for the same guard — that is the reason to keep it, not a hole it closes.
 Not attempted: a per-field echo comparison, and probing for a shared precondition. Both
 are unmeasured, and the ticket asks for neither.
 
+### Added
+
+#### `favro-mcp-http` answers `GET /health` with its version
+
+The server served one route, `POST /mcp`, so a deployed instance could not say what it
+was. Asking cost a full transport handshake plus valid Favro credentials plus the
+`Accept: application/json, text/event-stream` header, and returned `serverInfo.version`
+buried in an `initialize` response — impossible from a platform probe. `GET /health` now
+returns `200` with `{"status":"ok","version":"<package version>"}`, unauthenticated, from
+the same `require('../package.json')` that `mcp-server.ts` already reads for
+`serverInfo.version`. Nothing else is in the body — no org, no user, no config.
+
+This matters at this release specifically: a client that composes command strings through
+`favro_run` behaves differently against `4.0.0` and `5.0.0`, and until now the wire could
+not say which one it was talking to.
+
+**Measured limit, recorded rather than papered over:** `/health` returns before the
+transport's `Host` allowlist runs, so a `200` proves the process is up and NOT that
+`FAVRO_MCP_ALLOWED_HOSTS` is correct. A wrong allowlist surfaces as `403 Invalid Host
+header` on `/mcp` and nowhere else.
+
+`GET` only — any other method on `/health` still gets `405`, and unknown paths still `404`.
+
 ## 4.0.0 — 2026-08-14
 
 **This section was headed `3.1.0` until #110 landed in it.** The map (#80) planned the

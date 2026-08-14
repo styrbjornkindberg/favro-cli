@@ -35,7 +35,8 @@ credentials in the environment or unit file.
 ## Run target
 
 - Binds **HTTP only** to `FAVRO_MCP_HOST` (keep it `127.0.0.1`). TLS is terminated in front.
-- Single endpoint: **`POST /mcp`**. Everything else returns 404/405.
+- Two endpoints: **`POST /mcp`** (everything) and **`GET /health`** (unauthenticated,
+  returns `{"status":"ok","version":"<running version>"}`). Everything else returns 404/405.
 - Stateless apart from a short in-memory cache of resolved org IDs → restart any time, safe.
 
 Environment variables (all optional):
@@ -78,7 +79,8 @@ the credentials.
 3. **Don't buffer the response.** Responses can stream (SSE). Disable proxy response
    buffering and use a generous read timeout (nginx: `proxy_buffering off;`,
    `proxy_read_timeout 300s;`). Caddy's `reverse_proxy` is fine as-is.
-4. Proxy only `POST /mcp` through; no other paths are used.
+4. Proxy `POST /mcp` through, plus `GET /health` if something upstream probes it; no
+   other paths are used.
 
 ## Verify
 
