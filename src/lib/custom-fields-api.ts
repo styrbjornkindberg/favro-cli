@@ -158,6 +158,19 @@ export class CustomFieldsAPI {
    * `customFields` facet of `favro context <board>` both reported the whole
    * organisation as the board's, with no marker saying so.
    *
+   * Re-measured later the same day, and this is the reconciliation for the two
+   * row counts in this repo: the page-through returned **3799** rows, and the
+   * request WITH `widgetCommonId` returned the identical 3799-row set — same ids
+   * in both directions, same 270 carrying no `widgetCommonId`, the same 2 naming
+   * the board. So the client-side claim above is confirmed twice over, on
+   * separate reads, and the ignored param is not what moves the count. The
+   * two-row gap between 3797 and 3799 is **unexplained**: the 270-unattributed
+   * and 2-naming-this-board counts are identical across all three reads, which
+   * rules the filter out and leaves "two fields were created in the org between
+   * the reads" as the untested remainder. `id-shapes.ts` and `custom-field-map.ts`
+   * carry the 3799 figure and point here; `query-parser.ts:575`, `context.ts:180`
+   * and ADR-0006 record the earlier 3797 read.
+   *
    * `widgetCommonId` is the only board attribution the wire offers, and only on
    * THIS endpoint: `GET /customfields/<id>` omits the key entirely (measured the
    * same day, on a field whose list row carries it), so a single-field read

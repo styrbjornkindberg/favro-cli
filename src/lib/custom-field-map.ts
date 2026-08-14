@@ -49,7 +49,9 @@ export function customFieldMap(fields: readonly CustomField[]): Record<string, u
  * Shape DECIDES, through the declared table (`ID_SHAPES.customFieldId`, ADR-0003)
  * — the keys of this map are `customFieldId`s, and both shapes the row declares
  * were counted on the wire: 3769 base62-17 and 30 hex-24 over the 3799 rows
- * `GET /customfields` serves for org `b0b311ac…`, 2026-08-14. A field NAME that
+ * `GET /customfields` serves for org `b0b311ac…`, 2026-08-14 — the two-row gap
+ * from the 3797 recorded elsewhere is reconciled in `custom-fields-api.ts`, and
+ * is not the ignored board filter. A field NAME that
  * happened to be id-shaped would read as unavailable too, which is the safe
  * direction: this predicate only ever withholds a claim.
  */
