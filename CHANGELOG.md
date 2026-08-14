@@ -512,6 +512,38 @@ column move on an archived card silently un-archiving it.
 
 ### Fixed
 
+- **`workload` and `team` reported `Effort: 0` for everyone, structurally (#169).**
+  `extractEffort` matches a custom field by NAME (`/effort|story.?points?|points?|estimate/i`)
+  and the card payload carries no name: `GET /cards` and the create echo both inline
+  `[{"customFieldId":"zxMLxD4zx4tSwJr75","value":["YLanLiuXKA8JpvEsX"]}]`, so the regex
+  was matched against a base62 id and could never hit. Both commands then summed the miss
+  as `?? 0` and printed a confident zero for estimates nothing had looked at.
+
+  Effort now fails **closed**: `totalEffort` / `effortSum` are `null`, printed
+  `Effort: unavailable`, as soon as a counted card carries a custom field the payload
+  identifies only by id. A card carrying no custom fields at all still contributes an
+  honest `0`, so a measured zero and an unmeasurable one are different values for the
+  first time. Measured live on board `5dd75f0d5116020817ebe70a`, same card both runs:
+
+  | | before | after |
+  |---|---|---|
+  | `workload --board` (JSON) | `"totalEffort":0` | `"totalEffort":null` |
+  | `workload --board` (human) | `Effort: 0` | `Effort: unavailable` + the reason |
+
+  `next` loses two of its three weighted terms on the same payload — priority and effort
+  both read those fields — so a card whose priority could not be read now says
+  `priority and effort unreadable — ranked on due date and stage only` in `reasons`, and
+  reports `priority: "unavailable"` rather than `"unset"`. `"unset"` still means the
+  fields were read and held no priority.
+
+  **Not fixed: the name is still not resolved.** The id→name map exists — `getSnapshot`
+  already fetches `listFields(boardId)` for the snapshot's own field list, and the
+  aggregate path could buy the same thing with one org-scoped `/customfields`
+  page-through per report — and that is the upgrade path recorded on `addEffort`. It was
+  not taken here for the reason #167 refused the `customField:` filter: a lookup that can
+  fail still needs this answer for the case where it does. `sprint-plan` is untouched —
+  it renders an unknown effort as `—` and never fabricated a number.
+
 - **`blocked-by:` and `blocks:` returned zero rows for a live dependency edge (#162).**
   `normalizeCard` mapped each inlined edge through a normaliser that enumerated three
   keys and dropped the `cardId` Favro puts on every one of them; `linksOf` reads

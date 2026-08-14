@@ -13,6 +13,7 @@ import { Command } from 'commander';
 import { resolveUserId } from '../lib/config';
 import { AggregateCard, workItemKey } from '../api/aggregate';
 import { extractEffort } from '../api/context';
+import { fieldNamesUnavailable } from '../lib/custom-field-map';
 import { Unreachable } from '../lib/read-shape';
 import { Ctx, run } from '../lib/run';
 
@@ -45,9 +46,14 @@ interface NextResult {
   generatedAt: string;
 }
 
+/**
+ * `label` is `'unset'` only where the fields were READ and held no priority.
+ * Where the payload names a field by id alone, nothing could be matched against
+ * `/priority|urgency|severity/` and the answer is `'unavailable'` (#169) — the
+ * same split `addEffort` makes between a measured 0 and no measurement.
+ */
 export function extractPriority(card: AggregateCard): { label: string; score: number } {
-  if (!card.customFields) return { label: 'unset', score: 0 };
-  for (const [key, val] of Object.entries(card.customFields)) {
+  for (const [key, val] of Object.entries(card.customFields ?? {})) {
     if (/priority|urgency|severity/i.test(key)) {
       const v = String(val).toLowerCase();
       if (/critical|blocker/i.test(v)) return { label: v, score: 4 };
@@ -56,7 +62,7 @@ export function extractPriority(card: AggregateCard): { label: string; score: nu
       if (/low/i.test(v)) return { label: v, score: 1 };
     }
   }
-  return { label: 'unset', score: 0 };
+  return { label: fieldNamesUnavailable(card.customFields) ? 'unavailable' : 'unset', score: 0 };
 }
 
 export function scoreCard(card: AggregateCard): { score: number; reasons: string[] } {
@@ -67,6 +73,12 @@ export function scoreCard(card: AggregateCard): { score: number; reasons: string
   const priority = extractPriority(card);
   score += priority.score * 4;
   if (priority.score > 0) reasons.push(`priority: ${priority.label}`);
+  // Two of the three weighted terms read the same custom fields, so when the
+  // payload names them by id alone BOTH are silently absent from the score.
+  // Said out loud rather than left to look like a card nothing weighed (#169).
+  else if (priority.label === 'unavailable') {
+    reasons.push('priority and effort unreadable — ranked on due date and stage only');
+  }
 
   // Due urgency (3x weight)
   if (card.due) {

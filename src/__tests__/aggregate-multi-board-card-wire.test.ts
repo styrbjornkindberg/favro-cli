@@ -73,6 +73,18 @@ interface Wire {
    * here would freeze an arbitrary choice as a contract.
    */
   assigned?: boolean;
+  /**
+   * Serve the custom field the way the wire actually serves it (#169):
+   * `{customFieldId, value}` and NO `name` — measured on a live create echo and
+   * on `GET /cards`, `[{"customFieldId":"zxMLxD4zx4tSwJr75","value":[…]}]`.
+   *
+   * `assigned` alone serves `{name: 'Effort', value: 5}`, which is the
+   * NORMALISED spelling — honest as a stand-in for a caller that hands names in,
+   * but a shape Favro has never been measured to send, so it cannot fail on the
+   * defect where the name is missing. Set with `assigned`; the two are the
+   * polarity pair.
+   */
+  idKeyedFields?: boolean;
 }
 
 /**
@@ -93,8 +105,11 @@ function startServer(wire: Wire = {}): Promise<FavroHttpClient> {
     ? [{ cardId: 'blocker-on-one', cardCommonId: 'cc-blocker', isBefore: true }]
     : undefined;
 
+  const customFields = wire.idKeyedFields
+    ? [{ customFieldId: 'zxMLxD4zx4tSwJr75', value: ['YLanLiuXKA8JpvEsX'] }]
+    : [{ name: 'Effort', value: 5 }];
   const mine = wire.assigned
-    ? { assignments: [{ userId: USER }], customFields: [{ name: 'Effort', value: 5 }] }
+    ? { assignments: [{ userId: USER }], customFields }
     : {};
   const sharedColumn = (boardId: string) =>
     wire.assigned ? `${boardId}-doing` : `${boardId}-${boardId === ONE ? 'todo' : 'doing'}`;
@@ -341,6 +356,51 @@ describe('a card on two boards is counted on both (#167 item 3)', () => {
     expect(result.item.total).toBe(2);
     // The surviving instance keeps a board, so the pick still says where to go.
     expect(result.item.suggestions[0].board).toBe(ONE);
+  });
+
+  it('an id-keyed custom field makes effort UNAVAILABLE, not zero (#169)', async () => {
+    // The same fixture as the two arms above, with the one difference that
+    // matters: the card carries `{customFieldId, value}` — no `name` — which is
+    // what `GET /cards` serves. `EFFORT_FIELD` is then matched against
+    // `zxMLxD4zx4tSwJr75` and cannot hit, so the old `?? 0` reported `Effort: 0`
+    // for a member whose estimates were simply never looked at.
+    //
+    // Paired with the `assigned`-only arms above, which still sum to 10 through
+    // the normalised `{name: 'Effort'}` spelling: a fix that answered `null`
+    // whatever the payload said reddens there, and this one reddens if the
+    // fabricated zero comes back.
+    const client = await startServer({ assigned: true, idKeyedFields: true });
+    const ctx = ctxFor(client);
+
+    const workload = await workloadHandler(ctx, {});
+    const ada = workload.item.members.find(m => m.name === 'Ada')!;
+    expect(ada.totalEffort).toBeNull();
+    // Everything the read COULD see is still counted — this withholds one
+    // number, it does not drop the member.
+    expect(ada.totalCards).toBe(2);
+    expect(ada.activeCards).toBe(1);
+
+    const team = await teamHandler(ctx, {});
+    expect(team.item.members.find(m => m.name === 'Ada')!.effortSum).toBeNull();
+
+    // `next` loses two of its three weighted terms on this payload, and says so
+    // rather than presenting a due-date-only ranking as a weighted one.
+    const next = await nextHandler(ctx, { count: '5' });
+    const top = next.item.suggestions[0];
+    expect(top.priority).toBe('unavailable');
+    expect(top.effort).toBeUndefined();
+    expect(top.reasons).toContain('priority and effort unreadable — ranked on due date and stage only');
+  });
+
+  it('a card carrying no custom fields at all keeps a measured zero (#169)', async () => {
+    // The other polarity, and the reason `null` is not simply "no effort found":
+    // nothing was unreadable here, so `0` is an answer rather than a fabrication.
+    const client = await startServer();
+    const ctx = ctxFor(client);
+
+    const workload = await workloadHandler(ctx, {});
+    expect(workload.item.members.map(m => m.totalEffort)).toEqual([0]);
+    expect(await nextHandler(ctx, { count: '5' }).then(r => r.item.suggestions)).toEqual([]);
   });
 
   it('a blocker of a two-board card blocks ONE card, not two', async () => {

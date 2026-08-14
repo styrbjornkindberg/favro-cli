@@ -4,7 +4,8 @@
  */
 import { Command } from 'commander';
 import { workItemKey } from '../api/aggregate';
-import { extractEffort } from '../api/context';
+import { addEffort } from '../api/context';
+import { EFFORT_UNAVAILABLE_NOTE } from '../lib/custom-field-map';
 import { excludeUnreadableBoards, Unreachable } from '../lib/read-shape';
 import { Ctx, run } from '../lib/run';
 import { isDoneStage } from '../lib/workflow-stage';
@@ -25,7 +26,11 @@ interface TeamMember {
    */
   dependencyCount: number;
   completionRate: number;
-  effortSum: number;
+  /**
+   * Summed estimate, or `null` where effort could not be READ (#169) — see
+   * `addEffort`. `0` is a measured zero; `null` is the absence of a measurement.
+   */
+  effortSum: number | null;
 }
 
 interface TeamResult {
@@ -50,8 +55,13 @@ function formatHuman(data: TeamResult): string {
   for (const m of data.members) {
     const rate = `${Math.round(m.completionRate * 100)}%`;
     lines.push(`  ${m.name} (${m.email})`);
-    lines.push(`    WIP: ${m.wipCount}  Done: ${m.doneCount}  Deps: ${m.dependencyCount}  Rate: ${rate}  Effort: ${m.effortSum}`);
+    lines.push(`    WIP: ${m.wipCount}  Done: ${m.doneCount}  Deps: ${m.dependencyCount}  Rate: ${rate}  Effort: ${m.effortSum ?? 'unavailable'}`);
     lines.push(`    Boards: ${m.activeBoards.join(', ')}`);
+  }
+
+  // Printed once, and only where it applies — see `workload.ts` (#169).
+  if (data.members.some(m => m.effortSum === null)) {
+    lines.push(`\n  ${EFFORT_UNAVAILABLE_NOTE}`);
   }
 
   if (data.bottleneck) {
@@ -145,7 +155,7 @@ export async function teamHandler(ctx: Ctx, options: TeamOptions) {
       seen.add(key);
 
       tm.totalCards++;
-      tm.effortSum += extractEffort(card) ?? 0;
+      tm.effortSum = addEffort(tm.effortSum, card);
       if (ACTIVE_STAGES.includes(card.stage ?? '')) tm.wipCount++;
       if (isDoneStage(card.stage)) tm.doneCount++;
       if ((card.blockedBy && card.blockedBy.length > 0)) tm.dependencyCount++;

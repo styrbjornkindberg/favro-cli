@@ -8,7 +8,7 @@
 import FavroHttpClient from '../lib/http-client';
 import BoardsAPI, { Board, BoardMember, BoardColumn, CustomField as BoardCustomField } from '../lib/boards-api';
 import CardsAPI, { Card } from '../lib/cards-api';
-import { customFieldMap } from '../lib/custom-field-map';
+import { customFieldMap, fieldNamesUnavailable } from '../lib/custom-field-map';
 import { FavroApiClient } from './members';
 import { CustomFieldsAPI, CustomFieldDefinition } from '../lib/custom-fields-api';
 import { ColumnsAPI } from '../lib/columns-api';
@@ -151,6 +151,34 @@ export function extractEffort(card: ContextCard): number | undefined {
     if (!isNaN(n)) return n;
   }
   return undefined;
+}
+
+/**
+ * Add one card's effort to a running total, or fail the total closed (#169).
+ *
+ * `null` is "this scope could not read effort", and it is STICKY: once a card
+ * has arrived with a custom field the payload names only by id, every later
+ * addition would be building a floor and presenting it as a total. `0` survives
+ * only where every card was actually LOOKED at — a card carrying no custom
+ * fields at all contributes an honest nothing.
+ *
+ * The reason it fires at all: `GET /cards` inlines `{customFieldId, value}` and
+ * no `name` (measured, `custom-field-map.ts`), so `EFFORT_FIELD` is matched
+ * against a hex/base62 id and can never hit. `workload` and `team` summed that
+ * miss as `?? 0` and printed `Effort: 0` for everyone.
+ *
+ * ponytail: this reports the hole rather than filling it. The upgrade path is
+ * the id→name map — `getSnapshot` ALREADY holds it (`listFields(boardId)`,
+ * fetched at line 297 and used only for the snapshot's own field list), and the
+ * aggregate path would pay one org-scoped `/customfields` page-through per
+ * report to build the same thing. Both would still need this fail-closed answer
+ * for the case where that read is the one that fails.
+ */
+export function addEffort(total: number | null, card: ContextCard): number | null {
+  if (total === null) return null;
+  const effort = extractEffort(card);
+  if (effort !== undefined) return total + effort;
+  return fieldNamesUnavailable(card.customFields) ? null : total;
 }
 
 /**

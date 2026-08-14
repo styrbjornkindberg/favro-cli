@@ -4,7 +4,8 @@
  */
 import { Command } from 'commander';
 import { AggregateCard, workItemKey } from '../api/aggregate';
-import { extractEffort } from '../api/context';
+import { addEffort } from '../api/context';
+import { EFFORT_UNAVAILABLE_NOTE } from '../lib/custom-field-map';
 import { excludeUnreadableBoards, Unreachable } from '../lib/read-shape';
 import { Ctx, run } from '../lib/run';
 
@@ -16,7 +17,12 @@ export interface MemberWorkload {
   email: string;
   activeCards: number;
   totalCards: number;
-  totalEffort: number;
+  /**
+   * Summed estimate, or `null` where effort could not be READ (#169) — see
+   * `addEffort`. `0` is a measured zero; `null` is the absence of a measurement,
+   * and the two used to print the same digit.
+   */
+  totalEffort: number | null;
   /**
    * Cards carrying at least one dependency edge. An edge count, not a blocked
    * count — nothing clears a Favro edge when the blocker finishes, and this
@@ -94,7 +100,7 @@ export function buildWorkloads(
       if (!seen.has(key)) {
         seen.add(key);
         mw.totalCards++;
-        mw.totalEffort += extractEffort(card) ?? 0;
+        mw.totalEffort = addEffort(mw.totalEffort, card);
         if (ACTIVE_STAGES.includes(card.stage ?? '')) mw.activeCards++;
         if ((card.blockedBy && card.blockedBy.length > 0)) mw.dependencyCards++;
       }
@@ -134,7 +140,13 @@ function formatHuman(data: WorkloadResult): string {
   for (const m of data.members) {
     const flag = m.overloaded ? ' ⚠ OVERLOADED' : '';
     lines.push(`  ${m.name} (${m.email})${flag}`);
-    lines.push(`    Active: ${m.activeCards}  Total: ${m.totalCards}  Effort: ${m.totalEffort}  Deps: ${m.dependencyCards}`);
+    lines.push(`    Active: ${m.activeCards}  Total: ${m.totalCards}  Effort: ${m.totalEffort ?? 'unavailable'}  Deps: ${m.dependencyCards}`);
+  }
+
+  // Printed once, and only where it applies — human mode must not show a word
+  // the JSON's `null` explains nowhere (#169).
+  if (data.members.some(m => m.totalEffort === null)) {
+    lines.push(`\n  ${EFFORT_UNAVAILABLE_NOTE}`);
   }
 
   if (data.alerts.length > 0) {
