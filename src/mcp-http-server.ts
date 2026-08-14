@@ -239,7 +239,7 @@ export function createHttpServer() {
       return;
     }
     if (req.url !== MCP_PATH || req.method !== 'POST') {
-      sendError(res, req.url === MCP_PATH ? 405 : 404, `Only POST ${MCP_PATH} is supported.`);
+      sendError(res, req.url === MCP_PATH ? 405 : 404, `Only POST ${MCP_PATH} or GET ${HEALTH_PATH} is supported.`);
       return;
     }
     handleMcpRequest(req, res).catch((err: unknown) => {

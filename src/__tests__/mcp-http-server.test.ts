@@ -145,10 +145,13 @@ describe('GET /health', () => {
     expect(res.body).toContain('Only GET /health');
   });
 
-  test('an unknown path still 404s', () => {
+  test('an unknown path still 404s, and the body names both routes', () => {
     const res = route('GET', '/healthz');
 
     expect(res.statusCode).toBe(404);
+    // The only place the WIRE states the route set. It went stale the moment
+    // /health landed and nothing caught it — this pins it.
+    expect(res.body).toContain('Only POST /mcp or GET /health is supported.');
   });
 });
 
