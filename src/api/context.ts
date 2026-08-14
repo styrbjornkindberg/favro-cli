@@ -126,6 +126,12 @@ export function buildWorkflow(columns: Array<{ id: string; name: string }>): Wor
  * The field is matched by NAME, on the card's own field order — Favro has no
  * effort concept, so this is a guess at a custom field and stays one.
  *
+ * **And the name never arrives on the measured wire.** `GET /cards` inlines
+ * `{customFieldId, value}` only (`custom-field-map.ts`), so on cards read off
+ * Favro this returns `undefined` for every card — every hit measured here came
+ * from a caller that handed names in. `addEffort` below is what a summing caller
+ * should use; this alone cannot tell "no effort" from "no name to match".
+ *
  * Reconciling the four changed behaviour for two callers, deliberately:
  *
  *   - `favro next` — an empty effort field (`{Effort: null}`) used to reach
@@ -168,11 +174,15 @@ export function extractEffort(card: ContextCard): number | undefined {
  * miss as `?? 0` and printed `Effort: 0` for everyone.
  *
  * ponytail: this reports the hole rather than filling it. The upgrade path is
- * the id→name map — `getSnapshot` ALREADY holds it (`listFields(boardId)`,
- * fetched for the snapshot's own field list and read for nothing else), and the
- * aggregate path would pay one org-scoped `/customfields` page-through per
- * report to build the same thing. Both would still need this fail-closed answer
- * for the case where that read is the one that fails.
+ * the id→name map, and the board path already pays for most of one:
+ * `getSnapshot` holds `listFields(boardId)` — fetched for the snapshot's own
+ * field list and read for nothing else — but that list is CLIENT-side filtered
+ * and its own two measured gaps carry over, 270 of 3797 rows attributed to no
+ * board and a card able to carry a field whose definition names another
+ * (`custom-fields-api.ts`), so it resolves most names on that path and not all.
+ * The aggregate path would pay one org-scoped `/customfields` page-through per
+ * report for the whole map. Both would still need this fail-closed answer for
+ * the case where that read is the one that fails.
  */
 export function addEffort(total: number | null, card: ContextCard): number | null {
   if (total === null) return null;

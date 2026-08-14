@@ -545,9 +545,21 @@ column move on an archived card silently un-archiving it.
   `Would create tag "release"`, `Would delete task list "…"`, `Would upload attachment
   "…"`. Three call sites also embedded their own quotes inside the name and printed
   `Would creating column ""probe" on board 5dd7…"`; they pass the bare name, and the board
-  or card id they wrapped is the positional argument the caller typed.
+  or card id they wrapped is the positional argument the caller typed —
+  `attachments upload` now does the same, so the target is as consistent as the verb.
   `dry-run-verb-grammar.test.ts` scans the call sites, because this string was pinned
   verbatim by a green test and one arm on one command would leave the other eighteen free.
+
+  **The same item's `answered 200` claim was real.** `TxCards`' three echo read-backs
+  (`setArchived`, `setText`, `setDueDate`) hardcoded the status into user-facing prose —
+  `Archive write on card X answered 200 but did not take` — and the one write status this
+  repo has measured is a **`202`** (`custom-fields set`, live on the #105 board, #165).
+  That one was a refusal, and a message-carrying 2xx is classified as one before it
+  reaches these checks — so what arrives here is a clean 2xx whose code nothing observed,
+  and `200` was a number the message invented, in the one line an agent reads while
+  deciding whether a write landed. All three now say `answered a SUCCESS status`, the
+  wording `favro-error.ts` already uses. The observed code is not threaded out of the
+  write seam; that is the upgrade if anything ever needs to tell 200 from 202 here.
 
   Two other item-10 claims **do not reproduce** on this release, measured on the built
   CLI: passing `--json` to `boards delete` or to `columns create` answers
@@ -577,15 +589,38 @@ column move on an archived card silently un-archiving it.
   both read those fields — so a card whose priority could not be read now says
   `priority and effort unreadable — ranked on due date and stage only` in `reasons`, and
   reports `priority: "unavailable"` rather than `"unset"`. `"unset"` still means the
-  fields were read and held no priority.
+  fields were read and held no priority. The joint sentence is gated on effort having
+  actually missed: the predicate under it answers about ANY id-shaped key, so a card
+  carrying a named `Effort` beside one id-keyed field claimed effort was unreadable in the
+  same `reasons` array that said `quick win (effort: 1)`. Such a card now says
+  `priority unreadable — not weighted in this ranking`. Not reachable where cards come off
+  `GET /cards` — nothing there carries a name at all — but reachable through any caller
+  that hands names in.
 
-  **Not fixed: the name is still not resolved.** The id→name map exists — `getSnapshot`
-  already fetches `listFields(boardId)` for the snapshot's own field list, and the
-  aggregate path could buy the same thing with one org-scoped `/customfields`
+  The shape test that decides all of this went through the declared table (ADR-0003)
+  instead of importing the two regexes raw, which needed a `customFieldId` row and so a
+  measurement: `GET /customfields` for org `b0b311ac…` serves **3799** rows, **3769**
+  base62-17 and **30** hex-24 (2026-08-14). Both shapes are real for this resource, which
+  the previous docblock had asserted off option ids rather than field ids.
+
+  `sprint-plan` fabricated the same miss into its central judgement, and that is fixed
+  here too. Its per-card cell really did render `—`, but `cumulative`, `totalSuggested`
+  and `withinBudget` were all built from `?? 0` — so on the payload above every card was
+  free, `running <= budget` was `0 <= 40` for all of them, and the command reported the
+  entire backlog as fitting a 40-point sprint with `totalSuggested: 0` and `overflow: []`.
+  All three are now `number | null` / `boolean | null`: a card whose cost could not be
+  read is neither claimed to fit a budget nor excluded as over it, human mode prints
+  `budget not applied — effort unavailable` in place of the count, and `overflow` holds
+  only cards MEASURED not to fit.
+
+  **Not fixed: the name is still not resolved.** The id→name map half-exists —
+  `getSnapshot` already holds a board-filtered one (`listFields(boardId)`, filtered
+  CLIENT-side, and its own two measured gaps carry over: 270 of 3797 rows are attributed
+  to no board, and a card can carry a field whose definition names another), and the
+  aggregate path could buy the whole thing with one org-scoped `/customfields`
   page-through per report — and that is the upgrade path recorded on `addEffort`. It was
   not taken here for the reason #167 refused the `customField:` filter: a lookup that can
-  fail still needs this answer for the case where it does. `sprint-plan` is untouched —
-  it renders an unknown effort as `—` and never fabricated a number.
+  fail still needs this answer for the case where it does.
 
 - **`blocked-by:` and `blocks:` returned zero rows for a live dependency edge (#162).**
   `normalizeCard` mapped each inlined edge through a normaliser that enumerated three
