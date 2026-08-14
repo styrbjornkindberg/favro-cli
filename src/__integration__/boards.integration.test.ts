@@ -21,9 +21,9 @@ describeOrSkip('Boards — real API', () => {
   }, 30000);
 
   it('lists boards as JSON', async () => {
-    const result = await runCLI(['boards', 'list', '--json']);
+    const result = await runCLI(['boards', 'list']);
     expect(result.exitCode).toBe(0);
-    const boards = JSON.parse(result.stdout);
+    const boards = JSON.parse(result.stdout).rows;
     expect(Array.isArray(boards)).toBe(true);
     // The test board should be present
     if (TEST_BOARD_ID) {

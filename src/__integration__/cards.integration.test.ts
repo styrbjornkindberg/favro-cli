@@ -53,7 +53,7 @@ describeOrSkip('Cards — real Favro board', () => {
   describe('cards create (single)', () => {
     it('creates a card and returns the card ID', async () => {
       const title = `${PREFIX} Single card ${Date.now()}`;
-      const args = ['cards', 'create', title, '--board', TEST_BOARD_ID, '--json'];
+      const args = ['cards', 'create', title, '--board', TEST_BOARD_ID];
       const result = await runCLI(args);
 
       expect(result.exitCode).toBe(0);
@@ -74,7 +74,6 @@ describeOrSkip('Cards — real Favro board', () => {
         '--board', TEST_BOARD_ID,
         '--description', 'Integration test card',
         '--status', 'In Progress',
-        '--json',
       ]);
 
       expect(result.exitCode).toBe(0);
@@ -134,10 +133,9 @@ describeOrSkip('Cards — real Favro board', () => {
       const result = await runCLI([
         'cards', 'update', cardId,
         '--status', 'Done',
-        '--json',
       ]);
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain('✓ Card updated:');
+      expect(JSON.parse(result.stdout).wrote).toContain('status');
 
       // Verify the change via API
       const api = makeAPI();
@@ -150,10 +148,9 @@ describeOrSkip('Cards — real Favro board', () => {
       const result = await runCLI([
         'cards', 'update', cardId,
         '--name', newName,
-        '--json',
       ]);
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain('✓ Card updated:');
+      expect(JSON.parse(result.stdout).wrote).toContain('name');
 
       const api = makeAPI();
       const updated = await api.getCard(cardId);
@@ -172,10 +169,10 @@ describeOrSkip('Cards — real Favro board', () => {
     }, 30000);
 
     it('lists cards as JSON matching direct API call', async () => {
-      const result = await runCLI(['cards', 'list', '--board', TEST_BOARD_ID, '--json', '--limit', '20']);
+      const result = await runCLI(['cards', 'list', '--board', TEST_BOARD_ID, '--limit', '20']);
       expect(result.exitCode).toBe(0);
 
-      const cliCards = JSON.parse(result.stdout);
+      const cliCards = JSON.parse(result.stdout).rows;
       expect(Array.isArray(cliCards)).toBe(true);
 
       // Cross-check count via API
@@ -201,10 +198,9 @@ describeOrSkip('Cards — real Favro board', () => {
         'cards', 'list',
         '--board', TEST_BOARD_ID,
         '--status', 'In Progress',
-        '--json',
       ]);
       expect(result.exitCode).toBe(0);
-      const filtered = JSON.parse(result.stdout);
+      const filtered = JSON.parse(result.stdout).rows;
       expect(Array.isArray(filtered)).toBe(true);
       filtered.forEach((c: any) => {
         expect(c.status?.toLowerCase()).toBe('in progress');

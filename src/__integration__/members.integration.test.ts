@@ -28,9 +28,9 @@ describeOrSkip('Members — real API', () => {
   }, 30000);
 
   it('lists members as JSON (array)', async () => {
-    const result = await runCLI(['members', 'list', '--json']);
+    const result = await runCLI(['members', 'list']);
     expect(result.exitCode).toBe(0);
-    const members = JSON.parse(result.stdout);
+    const members = JSON.parse(result.stdout).rows;
     expect(Array.isArray(members)).toBe(true);
     for (const m of members) {
       expect(m).toHaveProperty('id');

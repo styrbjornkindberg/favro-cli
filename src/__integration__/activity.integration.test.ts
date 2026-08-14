@@ -50,10 +50,10 @@ describeOrSkip('Activity log — real API', () => {
     }
   }, 60000);
 
-  it('shows activity with --json shorthand', async () => {
-    const result = await runCLI(['activity', cardId, '--json']);
+  it('shows activity as JSON by default', async () => {
+    const result = await runCLI(['activity', cardId]);
     expect(result.exitCode).toBe(0);
-    expect(Array.isArray(JSON.parse(result.stdout))).toBe(true);
+    expect(Array.isArray(JSON.parse(result.stdout).rows)).toBe(true);
   }, 60000);
 
   it('supports --since filter (1w)', async () => {

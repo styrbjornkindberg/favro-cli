@@ -36,9 +36,9 @@ describeCardOrSkip('Comments list — real API', () => {
   }, 30000);
 
   it('lists comments as JSON (array)', async () => {
-    const result = await runCLI(['comments', 'list', TEST_CARD_ID, '--json']);
+    const result = await runCLI(['comments', 'list', TEST_CARD_ID]);
     expect(result.exitCode).toBe(0);
-    const comments = JSON.parse(result.stdout);
+    const comments = JSON.parse(result.stdout).rows;
     expect(Array.isArray(comments)).toBe(true);
     for (const c of comments) {
       expect(c).toHaveProperty('commentId');
@@ -47,9 +47,9 @@ describeCardOrSkip('Comments list — real API', () => {
   }, 30000);
 
   it('respects --limit flag', async () => {
-    const result = await runCLI(['comments', 'list', TEST_CARD_ID, '--limit', '1', '--json']);
+    const result = await runCLI(['comments', 'list', TEST_CARD_ID, '--limit', '1']);
     expect(result.exitCode).toBe(0);
-    const comments = JSON.parse(result.stdout);
+    const comments = JSON.parse(result.stdout).rows;
     expect(Array.isArray(comments)).toBe(true);
     expect(comments.length).toBeLessThanOrEqual(1);
   }, 30000);
