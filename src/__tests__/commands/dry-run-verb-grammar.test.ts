@@ -22,7 +22,15 @@ import { dryRunLog } from '../../lib/safety';
 const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
 const COMMANDS = path.join(REPO_ROOT, 'src', 'commands');
 
-/** `dryRunLog('creating', …` — the verb is the first argument, always a literal. */
+/**
+ * `dryRunLog('creating', …` — the verb is the first argument, always a literal.
+ *
+ * Two things this scan cannot see, both true of `src/commands` today and neither
+ * asserted: `readdirSync` is NOT recursive, so a call site in a future
+ * subdirectory is invisible, and the pattern matches single-quoted literals only,
+ * so a template literal or a double-quoted verb passes unread. The floor below is
+ * the only thing that notices a scan that stopped resolving anything.
+ */
 const CALL = /dryRunLog\(\s*'([^']+)'/g;
 
 function callSites(): Array<{ file: string; verb: string }> {
@@ -46,6 +54,10 @@ describe('every dry-run preview reads as English (#162 item 10)', () => {
   });
 
   it('no call site passes a participle', () => {
+    // A SPELLING heuristic, not a parser: `/ing$/` would also flag a legitimate
+    // infinitive ending in those letters (`ping`, `bring`, `string`). None of the
+    // 19 verbs is one, and a `dryRunLog('ping', …)` would have to be spelled
+    // around this rather than reasoned with.
     const participles = sites.filter((s) => /ing$/.test(s.verb));
     expect(participles).toEqual([]);
   });

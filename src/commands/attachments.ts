@@ -32,7 +32,10 @@ export function registerAttachmentsCommands(program: Command): void {
       await checkResolvedScope(ctx.client, () => boardOfCard(ctx.client, cardCommonId), options.force);
 
       if (options.dryRun) {
-        dryRunLog('upload', 'attachment', `${options.file} to card ${cardCommonId}`);
+        // The bare name, like `columns create` and `tasks add` since #162 item 10:
+        // the card id is the positional argument the caller typed, and `run.ts`
+        // already calls a dry-run preview an echo of argv.
+        dryRunLog('upload', 'attachment', options.file);
         return;
       }
 
@@ -61,7 +64,8 @@ export function registerAttachmentsCommands(program: Command): void {
       await checkResolvedScope(ctx.client, () => boardOfComment(ctx.client, commentId), options.force);
 
       if (options.dryRun) {
-        dryRunLog('upload', 'attachment', `${options.file} to comment ${commentId}`);
+        // Bare name — see the card arm above.
+        dryRunLog('upload', 'attachment', options.file);
         return;
       }
 
