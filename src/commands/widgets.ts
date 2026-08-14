@@ -18,8 +18,9 @@ export function registerWidgetsCommands(program: Command): void {
     .command('list')
     .description('List every board instance of a card — one row per board the card lives on')
     .requiredOption('--card <card>', 'Card to trace — sequentialId, cardId or cardCommonId')
+    .option('--board <board>', 'Board that disambiguates a colliding sequentialId')
     .option('--limit <n>', 'Cap how many rows are printed; sets "truncated"')
-    .action(run(async (ctx: Ctx, options: { card: string; limit?: string }) => ({
+    .action(run(async (ctx: Ctx, options: { card: string; board?: string; limit?: string }) => ({
       // The reference is SETTLED to a `cardCommonId` first. The two keyspaces
       // share a syntax and this read takes only one of them: measured
       // 2026-08-14, `GET /cards?cardCommonId=<a cardId>` answers **403 Access
@@ -27,11 +28,16 @@ export function registerWidgetsCommands(program: Command): void {
       // than the shape. `resolveCardCommonId` is the CLI's one settler for that
       // (`card-reference.ts`), and it costs one read.
       //
+      // `--board` exists for one reason: a sequentialId that collides refuses
+      // through `pickOneInstance`, whose message says "pass --board <board> to
+      // say which". Without the flag that is a remedy the command cannot run —
+      // `standup.ts:59`'s `favro unblocked` all over again.
+      //
       // The fetch runs to completion; `--limit` cuts the PRINT (#99). `capRows`
       // and the truncation note are the runner's now, so both modes read one
       // envelope and cannot disagree.
       rows: await ctx.api.widgets.listInstancesOfCard(
-        await ctx.api.cards.resolveCardCommonId(options.card),
+        await ctx.api.cards.resolveCardCommonId(options.card, { widgetCommonId: options.board }),
       ),
       limit: options.limit,
       human: (instances: CardInstance[]) => {

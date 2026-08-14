@@ -762,9 +762,11 @@ refused. None of them answers zero rows.
 Query patterns: `status:done`, `assignee:alice`, `tag:bug`, `due_date:overdue`,
 `title~"login"`, `blocks:<ref>`, `blocked-by:<ref>`, and `AND`/`OR`/parentheses.
 
-`customField:` is **refused** (#167). A card stores `{customFieldId, value}` —
-field ids and, for a select, option ids — so a filter naming the field and the
-option by NAME matched nothing while reporting a search. Read the values with
+`customField:` and `customFields:` are **refused** (#167). A card stores
+`{customFieldId, value}` — field ids and, for a select, option ids — so a filter
+naming the field and the option by NAME matched nothing while reporting a
+search, and `customFields~…`
+matched the stringified array (`[object Object]`) instead. Read the values with
 `favro custom-fields list <board>` and `favro cards list <board> --include
 custom-fields`.
 

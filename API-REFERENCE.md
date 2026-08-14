@@ -1898,8 +1898,8 @@ favro cards list --board board-001 --limit 500
 favro cards update --from-csv reassign.csv --yes
 
 # Slow: N individual calls
-favro cards list --board board-001 --status Backlog --human \
-  | jq -r '.[].cardId' \
+favro cards list board-001 --status Backlog \
+  | jq -r '.rows[].cardId' \
   | while read id; do favro cards update "$id" --assignees alice; done
 ```
 
@@ -2063,20 +2063,34 @@ favro webhooks delete hook-old-001
 
 Extract custom field values for reporting:
 
+A card inlines its custom fields as `{customFieldId, value}` — **no field name**, and
+for a select the value is a list of **option ids**, not labels. So reporting is a join:
+the definitions carry the names, the cards carry the ids. `custom-fields list <board>`
+supplies one side and `cards list <board> --include custom-fields` the other; there is
+no per-card loop, because the board read already carries every value.
+
+(`--filter "customField:…"` does not exist — it is refused, for exactly this reason.)
+
 ```bash
 BOARD_ID="board-001"
 PRIORITY_FIELD="cf-priority-id"
 
-# List all priority options
-favro custom-fields values $PRIORITY_FIELD
+# One side of the join: the field's options, each id with its label
+favro custom-fields list $BOARD_ID > fields.json
+jq -r --arg f "$PRIORITY_FIELD" '.rows[] | select(.fieldId == $f) | .options' fields.json
 
-# Get all cards with their priority custom field
-favro cards list --board $BOARD_ID \
-  | jq -r '.[].cardId' \
-  | while read id; do
-    favro cards get $id --include custom-fields \
-      | jq -r ". | {id: .cardId, name: .name, priority: (.customFields[]? | select(.fieldId == \"$PRIORITY_FIELD\") | .displayValue)}"
-  done
+# The other side: what each card stores for that field, by option id
+favro cards list $BOARD_ID --include custom-fields \
+  | jq -c --arg f "$PRIORITY_FIELD" \
+      '.rows[] | {id: .cardId, name, optionIds: [(.customFields // [])[] | select(.customFieldId == $f) | .value] | flatten}'
+
+# Joined — cardId, title, label
+favro cards list $BOARD_ID --include custom-fields \
+  | jq -r --arg f "$PRIORITY_FIELD" --slurpfile defs fields.json '
+      ($defs[0].rows[] | select(.fieldId == $f) | .options | map({(.optionId): .name}) | add) as $names
+      | .rows[]
+      | [.cardId, .name, ([(.customFields // [])[] | select(.customFieldId == $f) | .value] | flatten | map($names[.]) | join(","))]
+      | @tsv'
 ```
 
 ---

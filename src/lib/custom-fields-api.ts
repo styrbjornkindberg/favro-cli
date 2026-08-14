@@ -208,24 +208,6 @@ export class CustomFieldsAPI {
   }
 
   /**
-   * Pre-warm the field cache for a board.
-   * Call this before processing a batch of cards that use custom fields.
-   * Reduces N+1 API calls to a single bulk fetch.
-   *
-   * @param boardId - Board ID to pre-warm field definitions for
-   */
-  async preWarmCache(boardId: string): Promise<CustomFieldDefinition[]> {
-    const fields = await this.listFields(boardId);
-    for (const field of fields) {
-      const cacheKey = `${field.fieldId}:${boardId}`;
-      this.cache.set(cacheKey, field);
-      // Also cache without boardId for cross-board lookups
-      this.cache.set(field.fieldId, field);
-    }
-    return fields;
-  }
-
-  /**
    * Return cache statistics (useful for profiling/debugging N+1 issues).
    */
   cacheStats(): ReturnType<CustomFieldCache['stats']> {

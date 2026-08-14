@@ -582,8 +582,8 @@ favro cards list --board board-001 --filter "status:Backlog" \
 favro cards update --from-csv assign.csv --yes
 
 # Slow: N individual API calls, and no way back from a failure at card 7
-favro cards list --board board-001 --status Backlog --human \
-  | jq -r '.[].cardId' \
+favro cards list board-001 --status Backlog \
+  | jq -r '.rows[].cardId' \
   | while read id; do favro cards update "$id" --assignees alice; done
 ```
 

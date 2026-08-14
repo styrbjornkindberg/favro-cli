@@ -499,10 +499,16 @@ describe('parseQuery — customField: is refused, not parsed', () => {
     'customField:noOperator',
     'customField in(High,Low)',
     'CUSTOMFIELD:Priority=High',
+    // The PLURAL is the card's own key, and it was the refusal's one-letter
+    // escape: it parsed, and `customFields~object` matched every card.
+    'customFields:Status',
+    'customFields~Todo',
+    'customFields~object',
+    'customFields in(a,b)',
     'status:todo AND customField:Priority=High',
   ])('refuses %s', (filter) => {
     expect(() => parseQuery(filter)).toThrow(ParseError);
-    expect(() => parseQuery(filter)).toThrow(/'customField' filters are refused/);
+    expect(() => parseQuery(filter)).toThrow(/'customField' \/ 'customFields' filters are refused/);
   });
 
   test('the refusal points at two commands that exist', () => {
@@ -514,10 +520,12 @@ describe('parseQuery — customField: is refused, not parsed', () => {
       .toThrow(/favro cards list <board> --include custom-fields/);
   });
 
-  test('`customFields`, the card key itself, is still a field the grammar accepts', () => {
-    // The refusal is the exact token `customField`, not a prefix: the plural is
-    // a real key on every card and `knownFields` derives it from `CARD_FIELDS`.
-    expect(parseQuery('customFields:x').ast).toMatchObject({ kind: 'field', field: 'customfields' });
+  test('the refused spellings are struck from the "Known fields" list a typo prints', () => {
+    // Otherwise the refusal for some other typo advertises a field that refuses.
+    // `customfields` is in `CARD_FIELDS` and is a key on every card, so it
+    // reaches the list from two directions.
+    expect(() => parseQuery('statuz:done')).toThrow(/Known fields:/);
+    expect(() => parseQuery('statuz:done')).not.toThrow(/customfield/);
   });
 });
 

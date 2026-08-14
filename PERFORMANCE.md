@@ -156,9 +156,10 @@ They have not been verified against a live Favro API.
 - Every lookup is a cache miss
 - **Hit rate: 0%** | **Total field-lookup API calls: 1000** (no N+1 benefit)
 
-> In this degenerate case, the cache provides no benefit. `preWarmCache(boardId)` can
-> mitigate this by fetching all field definitions in a single paginated call before processing,
-> converting 1000 individual lookups into 1 bulk fetch (or ~10 pages × 100 fields).
+> In this degenerate case, the cache provides no benefit. There was a `preWarmCache(boardId)`
+> here for exactly this; it had no caller anywhere in `src/` and was deleted (#167 review).
+> The bulk fetch it did is `listFields(boardId)` — one paginated call — and a caller that
+> needs the cache warmed can feed those definitions to it.
 
 ### Cache Hit Rate Summary
 
@@ -167,10 +168,9 @@ They have not been verified against a live Favro API.
 | 100 cards, 1 field | 1 | 1 | 99% |
 | 1000 cards, 1 field | 1 | 1 | 99.9% |
 | 1000 cards, 10 fields | 10 | 10 | 99% |
-| 1000 cards, 1000 fields (no pre-warm) | 1000 | 1000 | 0% |
-| 1000 cards, 1000 fields (with pre-warm) | 1000 | ~10 (paginated bulk) | ~99%* |
+| 1000 cards, 1000 fields | 1000 | 1000 | 0% |
 
-*`preWarmCache` fetches all fields in paginated batches, not individually.
+There is no pre-warm row any more: the method that filled it had no caller and is gone.
 
 ---
 
@@ -203,13 +203,6 @@ async getField(fieldId: string, boardId?: string): Promise<CustomFieldDefinition
   this.cache.set(cacheKey, field);  // Store for reuse
   return field;
 }
-```
-
-**Pre-warming for batch operations:**
-
-```typescript
-await customFieldsApi.preWarmCache(boardId);
-// Now all subsequent getField() calls are cache hits (0ms)
 ```
 
 ---
@@ -306,7 +299,6 @@ skips itself into silence.
 
 - `CustomFieldsAPI` carries a `CustomFieldCache` instance
 - `getField()` checks cache before making an API call (TTL: 5 minutes, configurable)
-- `preWarmCache(boardId)` fetches all fields for a board in paginated batches and populates the cache
 - `cacheStats()` returns hit/miss/hitRate for profiling/debugging
 - Per-instance cache by default (test isolation); opt-in to global cache via `useGlobalCache: true`
 

@@ -53,6 +53,9 @@ const accessDenied = () =>
 const BOARD_NAME = 'Backlog - Web Hub';
 const BOARD_ID = 'board-b';
 
+/** Every `GET /cards?…` the run issued, by params — see the client stub. */
+let cardsQueries: Array<Record<string, unknown>>;
+
 let logSpy: jest.SpyInstance;
 let errorSpy: jest.SpyInstance;
 let tableSpy: jest.SpyInstance;
@@ -83,6 +86,7 @@ const errors = () => errorSpy.mock.calls.map((c) => String(c[0])).join('\n');
 
 beforeEach(() => {
   jest.clearAllMocks();
+  cardsQueries = [];
   logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
   errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
   tableSpy = jest.spyOn(console, 'table').mockImplementation(() => {});
@@ -109,7 +113,13 @@ beforeEach(() => {
     console.log(`[dry-run] ${verb} ${noun}: ${detail}`),
   );
 
-  MockClient.prototype.get = jest.fn(async (url: string) => {
+  MockClient.prototype.get = jest.fn(async (url: string, config?: { params?: Record<string, unknown> }) => {
+    // The filter form, which is how a sequentialId reference resolves. It
+    // records the params so the `--board` arm can assert what was sent.
+    if (url === '/cards') {
+      cardsQueries.push(config?.params ?? {});
+      return { entities: [{ cardId: 'card-1', cardCommonId: 'ccid-1', widgetCommonId: BOARD_ID }] };
+    }
     const ref = /\/cards\/(.+)$/.exec(url)?.[1];
     const card = ref ? CARD_GET[ref] : undefined;
     if (!card) throw accessDenied();
@@ -145,6 +155,18 @@ describe('widgets list', () => {
     // — `GET /cards?cardCommonId=<a cardId>` was measured answering 403.
     await runCli(['widgets', 'list', '--card', 'card-1']);
 
+    expect(MockWidgets.prototype.listInstancesOfCard).toHaveBeenCalledWith('ccid-1');
+  });
+
+  test('--board rides along to the resolver, which is where a colliding sequentialId is refused', async () => {
+    // The flag exists because `pickOneInstance` refuses a collision with "pass
+    // --board <board> to say which" — a remedy this command could not run
+    // before. A sequentialId is the one reference shape that reads the board.
+    await runCli(['widgets', 'list', '--card', 'CLA-1804', '--board', BOARD_NAME]);
+
+    expect(cardsQueries).toContainEqual(
+      expect.objectContaining({ cardSequentialId: 1804, widgetCommonId: BOARD_ID }),
+    );
     expect(MockWidgets.prototype.listInstancesOfCard).toHaveBeenCalledWith('ccid-1');
   });
 

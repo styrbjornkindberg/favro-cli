@@ -107,7 +107,7 @@ Every input that parser invented now refuses, naming the token:
 | Was | Say |
 |-----|-----|
 | `assigned:@alice`, `owner:bob` | `assignee:alice` |
-| `priority:high`, `high priority` | the column, tag or field that carries it — `customField:` is refused too (#167) |
+| `priority:high`, `high priority` | the column, tag or field that carries it — `customField:`/`customFields:` are refused too (#167) |
 | `due:overdue` | `due_date:overdue` |
 | `pricing page` (free text) | `title~"pricing page"` |
 | `done`, `overdue`, `assigned to bob` | name the field |

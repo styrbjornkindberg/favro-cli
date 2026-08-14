@@ -115,6 +115,16 @@ export const DECLARED_FIELDS: readonly string[] = [
 ];
 
 /**
+ * Both spellings, lowercased. The PLURAL is the card's own key, and leaving it
+ * open left the refused filter reachable by one letter: `customFields:Status`
+ * and `customFields in(a,b)` parsed and evaluated `false` over a card carrying
+ * the field, and `customFields~object` evaluated **true** on every card, because
+ * `compareValues` stringifies the array to `[object Object]`. A confident
+ * populated wrong answer is worse than the empty one this refusal exists for.
+ */
+export const CUSTOM_FIELD_TOKENS = ['customfield', 'customfields'];
+
+/**
  * Every field a filter may name, lowercased.
  *
  * Pass the cards in hand to widen it by what Favro actually sent; with none,
@@ -127,6 +137,11 @@ export function knownFields(cards: ReadonlyArray<Record<string, unknown>> = []):
   for (const card of cards) {
     for (const key of Object.keys(card)) fields.add(key.toLowerCase());
   }
+  // Struck at the end, because they arrive from three directions: `customFields`
+  // is in `CARD_FIELDS`, it is a key on every card, and `customfield` used to be
+  // in `DECLARED_FIELDS`. A filter may not name either, so neither belongs in
+  // the list a refusal offers as candidates.
+  for (const token of CUSTOM_FIELD_TOKENS) fields.delete(token);
   return fields;
 }
 
@@ -438,7 +453,7 @@ class Parser {
   }
 
   private validateField(field: string, pos: number): void {
-    if (field === 'customfield') throw customFieldRefusal(pos);
+    if (CUSTOM_FIELD_TOKENS.includes(field)) throw customFieldRefusal(pos);
     if (this.fields.has(field)) return;
     const known = [...this.fields].sort().join(', ');
     throw new ParseError(
@@ -568,8 +583,8 @@ export class ParseError extends Error {
  */
 function customFieldRefusal(pos: number): ParseError {
   return new ParseError(
-    `'customField' filters are refused at position ${pos} — a card cannot answer them, and this ` +
-      `filter used to answer zero rows as if it had.\n` +
+    `'customField' / 'customFields' filters are refused at position ${pos} — a card cannot answer ` +
+      `them, and these filters used to answer as if they had.\n` +
       `A card inlines its custom fields as {customFieldId, value} — no field NAME, and the value of ` +
       `a select is the option's ID, not its label. So a name and a label both fail to match, ` +
       `silently.\n` +

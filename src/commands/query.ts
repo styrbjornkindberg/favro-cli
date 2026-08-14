@@ -69,11 +69,12 @@ export function registerQueryCommand(program: Command): void {
       '  tag:bug                      By exact tag name\n' +
       '  due_date:overdue             Past their due date\n' +
       '  title~"login"                Free text — this is the ONLY spelling of it\n' +
-      '  customField:…                REFUSED — a card stores field ids and option\n' +
-      '                               ids, no names, so this could only ever answer\n' +
-      '                               zero rows. Read them with `favro custom-fields\n' +
-      '                               list <board>`.\n' +
       '  status:done AND tag:bug      AND / OR / parentheses\n\n' +
+      '`customField:` and `customFields:` are REFUSED (#167). A card stores field\n' +
+      'ids and, for a select, option ids — never names — so the filter could only\n' +
+      'answer zero rows while reporting a search. Read the values with\n' +
+      '`favro custom-fields list <board>` and `favro cards list <board> --include\n' +
+      'custom-fields`.\n\n' +
       'Free text is `title~"…"` and nothing else (#95). This command used to sweep\n' +
       'anything it could not parse into a title search, so `"statuz:done"` answered\n' +
       'a confident zero rows; it now refuses. `assigned:`, `owner:`, `priority:`,\n' +

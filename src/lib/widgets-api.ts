@@ -84,6 +84,12 @@ export class WidgetsAPI {
    *
    * `unique` is not sent. It collapses the multi-instance result to one row,
    * which is the one thing this read must not do.
+   *
+   * `archived` is not sent either, and unlike `listCards` that is not a default
+   * being taken — it is the answer. Measured 2026-08-14: a card archived on the
+   * scratch board still comes back here, carrying `archived: true`. An archived
+   * instance IS an instance of that card on that board, and the row says which,
+   * so filtering it out would be this command answering "no instances" again.
    */
   async listInstancesOfCard(cardCommonId: string): Promise<CardInstance[]> {
     const entities = await getAllPages<CardInstance & { widgetCommonId?: string }>(

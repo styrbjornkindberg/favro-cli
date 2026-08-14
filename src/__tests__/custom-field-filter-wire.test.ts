@@ -120,8 +120,14 @@ describe('customField: over cards that came through normalizeCard (#167)', () =>
     `customField:${STATUS_FIELD}=${TODO_OPTION}`,
     'customField:Score>50',
     'name~probe AND customField:Status=Todo',
+    // The plural — the card's own key — one letter from the refused spelling.
+    'customFields:Status',
+    'customFields in(Todo,Doing)',
+    // This one evaluated TRUE for every card: `compareValues` stringifies the
+    // array, and `String([{…}])` is `[object Object]`. A populated wrong answer.
+    'customFields~object',
   ])('%s is refused, not answered with an empty result', async (filter) => {
     await expect(listAndFilter(filter)).rejects.toThrow(ParseError);
-    await expect(listAndFilter(filter)).rejects.toThrow(/'customField' filters are refused/);
+    await expect(listAndFilter(filter)).rejects.toThrow(/'customField' \/ 'customFields' filters are refused/);
   });
 });
