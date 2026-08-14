@@ -70,8 +70,9 @@ field, they print `✓` naming the **observed** value and exit 0. When it does n
 print `UNCONFIRMED`, name what was sent, point at a command that can check, and **exit
 1** — the write was accepted with a 200, and nothing observed its effect.
 
-Exit 1 here reports a finding, not a failure: the report (including `--json`) is still
-on stdout, and the API error path is what raises an actual error. So
+Exit 1 here reports a finding, not a failure: the report is still on stdout — JSON by
+default, since none of these four takes a `--json` flag — and the API error path is what
+raises an actual error. So
 `favro custom-fields set … && next-step` will correctly **not** proceed on a write
 nothing confirmed. Re-run or verify with the named command; do not treat an
 `UNCONFIRMED` line plus a non-zero code as a crash.

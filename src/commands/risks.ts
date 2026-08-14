@@ -311,7 +311,8 @@ export function registerRisksCommand(program: Command): void {
       '  - Unassigned: No assignees\n' +
       '  - Missing Fields: Missing name, status, assignees, or due date\n\n' +
       'Staleness is reported as unreachable: Favro sends no last-modified field on a card.\n\n' +
-      'Exit code IS the answer: 0 when riskLevel is "healthy", 1 otherwise. A\n' +
+      'Exit code IS the answer: 1 when riskLevel is "critical", 0 otherwise —\n' +
+      'including "warning", which is a finding to read, not a gate to fail on. A\n' +
       'wire failure also exits 1 but writes {"error": …} instead of a report.'
     )
     // No `--json`: JSON is the default and `--human` / `--pretty` are root flags
