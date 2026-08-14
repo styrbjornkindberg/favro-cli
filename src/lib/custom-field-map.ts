@@ -26,7 +26,7 @@
  * the mapping with it.
  */
 import type { CustomField } from './cards-api';
-import { BASE62_17, HEX_24 } from './id-shapes';
+import { hasIdShape } from './id-shapes';
 
 export function customFieldMap(fields: readonly CustomField[]): Record<string, unknown> {
   const map: Record<string, unknown> = {};
@@ -46,15 +46,15 @@ export function customFieldMap(fields: readonly CustomField[]): Record<string, u
  * also holds a named field, so one id is enough to make "no effort here"
  * unsupportable. Fail closed.
  *
- * Shape decides, off the two ids the table declares (`id-shapes.ts`). Measured
- * custom field ids are base62-17 (`zxMLxD4zx4tSwJr75`, `5XdsToqDtXLn2rtL9`) and
- * option ids come in both shapes (`YLanLiuXKA8JpvEsX`, `07ef4afba3a3d76994f5dd74`)
- * — live, board `5dd75f0d5116020817ebe70a`, 2026-08-14. A field NAME that
+ * Shape DECIDES, through the declared table (`ID_SHAPES.customFieldId`, ADR-0003)
+ * — the keys of this map are `customFieldId`s, and both shapes the row declares
+ * were counted on the wire: 3769 base62-17 and 30 hex-24 over the 3799 rows
+ * `GET /customfields` serves for org `b0b311ac…`, 2026-08-14. A field NAME that
  * happened to be id-shaped would read as unavailable too, which is the safe
  * direction: this predicate only ever withholds a claim.
  */
 export function fieldNamesUnavailable(fields: Record<string, unknown> | undefined): boolean {
-  return Object.keys(fields ?? {}).some((k) => BASE62_17.test(k) || HEX_24.test(k));
+  return Object.keys(fields ?? {}).some((k) => hasIdShape('customFieldId', k));
 }
 
 /**

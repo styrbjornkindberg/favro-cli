@@ -18,9 +18,9 @@
  * gets no home here.
  */
 
-/** 24-char hex. `tagId`, and the shared `cardId`/`cardCommonId` keyspace. */
+/** 24-char hex. `tagId`, 30/3799 `customFieldId`s, and the shared `cardId`/`cardCommonId` keyspace. */
 export const HEX_24 = /^[0-9a-f]{24}$/i;
-/** 17-char base62. `userId`, and the majority of `tagId`s. */
+/** 17-char base62. `userId`, and the majority of `tagId`s and `customFieldId`s. */
 export const BASE62_17 = /^[0-9A-Za-z]{17}$/;
 
 export type IdShape = 'hex-24' | 'base62-17';
@@ -75,6 +75,17 @@ export const ID_SHAPES = {
     shapes: ['hex-24'],
     mode: 'hints',
     measurement: 'The other half of the shared cardId keyspace — see cardId.',
+  },
+  customFieldId: {
+    shapes: ['base62-17', 'hex-24'],
+    mode: 'decides',
+    measurement:
+      'TWO measured shapes, like tagId — 3769 base62-17 and 30 hex-24 across the ' +
+      '3799 rows `GET /customfields` serves for org b0b311ac…, 2026-08-14. A ' +
+      'base62-17-only classifier misses those 30. Read against MAP KEYS by ' +
+      '`fieldNamesUnavailable`, to tell an id-keyed custom field from a named one; ' +
+      'a field NAME that happened to be id-shaped reads as an id, which only ever ' +
+      'withholds a claim.',
   },
   boardId: {
     shapes: [],

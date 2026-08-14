@@ -9,7 +9,9 @@
  * The samples are the ones already carried by the wire suites, each taken from
  * a suite that uses it IN THAT ROLE — `tags-users-assignee-wire.test.ts` and
  * `api/activity-wire.test.ts` for users and tags, `cards-api-reference-wire.
- * test.ts` for the two card keyspaces. A sample lifted from some other role
+ * test.ts` for the two card keyspaces, and for `customFieldId` the id
+ * `aggregate-multi-board-card-wire.test.ts` serves as a map key plus one of each
+ * shape off the live page-through that earned the row. A sample lifted from some other role
  * would only assert a hand-picked hex string against a hex regex, which is
  * circular and catches nothing.
  */
@@ -35,6 +37,12 @@ const SAMPLES: Record<ShapedResource, string[]> = {
   // halves of the shared keyspace, in the roles the resolver translates between.
   cardId: ['713db3018af39956227d4279', '5a5a5a5a5a5a5a5a5a5a5a5a'],
   cardCommonId: ['9f1c2d3e4a5b6c7d8e9f0a1b'],
+  // Live `GET /customfields` on the #105 org, 2026-08-14 — the first sample of
+  // each measured shape out of a 3799-row page-through (3769 base62-17, 30
+  // hex-24). `zxMLxD4zx4tSwJr75` is the one already carried by
+  // `aggregate-multi-board-card-wire.test.ts` in exactly this role: a map key
+  // `fieldNamesUnavailable` must read as an id.
+  customFieldId: ['zxMLxD4zx4tSwJr75', '2aagmZfrbvnnMzYga', '01918226b5c12bc1883825a5', '1063912b22a06189d9ef81f6'],
   boardId: [],
   collectionId: [],
 };
@@ -91,6 +99,7 @@ describe('the declared shape table', () => {
       tagId: 'decides',
       cardId: 'hints',
       cardCommonId: 'hints',
+      customFieldId: 'decides',
       boardId: 'hints',
       collectionId: 'hints',
     });
@@ -125,6 +134,12 @@ describe('the declared shape table', () => {
     for (const name of ['Bug', 'documentation', 'wayfinder:map', 'Jan Book', 'Backlog', '']) {
       expect(isTagId(name)).toBe(false);
       expect(isUserId(name)).toBe(false);
+    }
+    // The `customFieldId` row is read against MAP KEYS, where a field's own name
+    // is the other population — `Effort`, `Story Points`, `Estimate (hours)` must
+    // not read as ids or `fieldNamesUnavailable` withholds every total there is.
+    for (const name of ['Effort', 'Story Points', 'Estimate (hours)', 'Priority', '']) {
+      expect(hasIdShape('customFieldId', name)).toBe(false);
     }
   });
 
