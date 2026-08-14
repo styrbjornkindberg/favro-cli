@@ -46,8 +46,18 @@ export async function resolveAssignee(
   if (raw === '@me') {
     const me = await resolveUserId();
     if (!me) {
+      // An OUTCOME, not a mechanism: `resolveUserId` returns `undefined` for a
+      // missing cache, an email in no user's row, and a `/users` read that
+      // failed alike, so naming any one of them would be a guess. Since #162
+      // item 7 it does read the whole directory, which is why "no userId is
+      // cached" is no longer the whole story.
+      //
+      // Both remedies were driven live, 2026-08-14: `favro users list` answers
+      // 135 rows, and `--assignee "<name>"` reaches the wire and assigns.
       throw new AssigneeError(
-        `Cannot resolve "@me" — no userId is cached for your credentials. Run 'favro auth login' first.`,
+        `Cannot resolve "@me" — no userId is cached for you, and resolving one from your credentials produced no match. ` +
+          `Run 'favro auth login' to store your identity, or pass a name, email or userId instead of "@me" ` +
+          `('favro users list' shows them).`,
         'unknown',
         raw
       );

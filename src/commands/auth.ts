@@ -20,6 +20,7 @@ import { Command } from 'commander';
 import FavroHttpClient from '../lib/http-client';
 import * as readline from 'readline';
 import { readConfig, writeConfig, configFile } from '../lib/config';
+import { getAllPages } from '../lib/paginate';
 import { foldName } from '../lib/fold-name';
 import { RefusalError } from '../lib/refusal';
 // `AnonymousCtx` is spelled out even where the handler ignores it: the scope-lock
@@ -234,8 +235,16 @@ export function registerAuthCommand(program: Command): void {
           const userClient = new FavroHttpClient({
             auth: { token: apiKey, email, organizationId },
           });
-          const usersResponse = await userClient.get<{ entities: Array<{ userId: string; email: string; name: string }> }>('/users');
-          const users = usersResponse.entities ?? [];
+          // `getAllPages`, not a bare `/users` — that read one page of a
+          // two-page organization and left this printing "not found in org
+          // users" for the caller's own account (#162 item 7), which made the
+          // remedy every `@me` refusal names not work either. The pager
+          // directly rather than `UsersAPI.listUsers` (which is this same call):
+          // `login` has no `ctx.api` to reach for — it builds a client from
+          // credentials that are not saved yet — and `new …API(` is banned in
+          // `src/commands/` by the runner ratchet.
+          const users = await getAllPages<{ userId: string; email: string; name: string }>(
+            userClient, '/users');
           // `foldName`, the same fold `config.ts`'s `resolveUserId` uses on
           // this exact comparison: the address was typed at the prompt above
           // and the wire's was not, so an accented local part reaches the two

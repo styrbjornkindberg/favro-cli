@@ -166,6 +166,43 @@ describe('auth login command', () => {
     expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('Credentials saved to'));
   });
 
+  test('caches the userId of a caller who is not on the first page of /users (#162 item 7)', async () => {
+    // This command held the SECOND copy of the one-page lookup, so the remedy
+    // every `@me` refusal prints — "run 'favro auth login'" — did not work for
+    // the caller it was printed to. Measured live: 135 users, `pages: 2`, the
+    // caller at index 112. `getAllPages` is real here; only the socket is not.
+    const directory = Array.from({ length: 135 }, (_, i) => ({
+      userId: i === 112 ? 'pk3qK36WHjnJt5jwr' : `u${i}`,
+      name: i === 112 ? 'Me' : `User ${i}`,
+      email: i === 112 ? 'test@example.com' : `user${i}@example.com`,
+    }));
+    MockedFavroHttpClient.prototype.get = jest.fn().mockImplementation((url: string, cfg?: any) => {
+      if (url === '/organizations') {
+        return Promise.resolve({ entities: [{ organizationId: 'org-1', name: 'Test Org' }] });
+      }
+      if (url === '/users') {
+        const page = Number(cfg?.params?.page ?? 0);
+        return Promise.resolve({
+          entities: directory.slice(page * 100, page * 100 + 100),
+          requestId: 'req-1', page, pages: 2, limit: 100,
+        });
+      }
+      return Promise.resolve({});
+    });
+
+    const program = buildRoot();
+    registerAuthCommand(program);
+
+    await program.parseAsync(['node', 'test', 'auth', 'login', '--email', 'test@example.com', '--api-key', 'k']);
+
+    const parsed = JSON.parse((mockFs.writeFile as jest.Mock).mock.calls[0][1]);
+    expect(parsed.userId).toBe('pk3qK36WHjnJt5jwr');
+    // …and it said whose identity it stored, rather than "not found in org users".
+    const pages = (MockedFavroHttpClient.prototype.get as jest.Mock).mock.calls
+      .filter(([url]) => url === '/users').length;
+    expect(pages).toBe(2);
+  });
+
   test('confirms with ✓ API key saved message', async () => {
     const program = buildRoot();
     registerAuthCommand(program);

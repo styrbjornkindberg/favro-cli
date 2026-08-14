@@ -512,6 +512,32 @@ column move on an archived card silently un-archiving it.
 
 ### Fixed
 
+- **`cards claim`, `next`, `my-cards` and `my-standup` were unreachable for anyone past
+  the first page of `/users` (#162 item 7).** `resolveUserId` issued one
+  `GET /users?limit=100` and matched the caller's email against that page alone. Favro
+  answered `{page: 0, pages: 2, limit: 100}` for the 135-user organization this CLI is
+  developed against, with the caller's own account at index 112 — so the match failed,
+  `undefined` came back, and `cards claim`'s `@me` default refused
+  `Cannot resolve "@me" — no userId is cached for your credentials`. `--assignee "<name>"`
+  worked throughout, because `UsersAPI` has always paged; only the default was broken.
+
+  Both copies of that lookup now go through `UsersAPI.listUsers()` and its `getAllPages`.
+  The second copy was **inside `favro auth login`** — the remedy the refusal printed — so
+  the advice did not work either: it stored no `userId` and printed
+  `⚠ (not found in org users)` for the caller's own account. Driven live against the
+  scratch board with the cached `userId` deleted first:
+
+  ```
+  $ favro cards claim 67aeaf77a49d4618a6f16c19 -y
+  {"cardId":"67aeaf77a49d4618a6f16c19","columnId":"635d44b1e9de8d4de07ba795","assignee":"pk3qK36WHjnJt5jwr"}
+  ```
+
+  `my-cards` and `next` answer for the same identity and cache it, so the next call costs
+  no lookup. The `@me` refusal that remains states an outcome rather than a mechanism —
+  `resolveUserId` returns `undefined` for a missing cache, an unmatched email and a failed
+  read alike — and names two remedies that exist: `favro auth login`, and passing a name,
+  email or userId with `favro users list` to find one.
+
 - **`workload` and `team` reported `Effort: 0` for everyone, structurally (#169).**
   `extractEffort` matches a custom field by NAME (`/effort|story.?points?|points?|estimate/i`)
   and the card payload carries no name: `GET /cards` and the create echo both inline

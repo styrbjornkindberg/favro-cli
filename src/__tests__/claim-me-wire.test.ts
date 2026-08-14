@@ -290,6 +290,13 @@ describe('claim with no --assignee resolves @me through the config', () => {
     await expect(dispatch('claim', { card: CARD }, ctx(stand))).rejects.toThrow(
       /Cannot resolve "@me"/,
     );
+    // The remedies are part of the refusal, and both exist: `auth login` is a
+    // registered command and `users list` was driven against a live org (#162
+    // item 7 — the defect this repo remembers is a printed remedy that is not a
+    // command).
+    await expect(dispatch('claim', { card: CARD }, ctx(stand))).rejects.toThrow(
+      /favro auth login[\s\S]*favro users list/,
+    );
     expect(puts(stand.received)).toHaveLength(0);
     expect(stand.cards.get(CARD)!.assignments).toEqual([]);
     expect(stand.cards.get(CARD)!.columnId).toBe(TODO);

@@ -154,6 +154,13 @@ export async function loadConfig(overrides: Partial<FavroConfig> = {}): Promise<
  * Resolve the current user's Favro userId.
  * Returns cached userId from config. If not cached, auto-resolves by
  * fetching /users, matching by email, and persisting to config.
+ *
+ * `listUsers`, not one hand-rolled page (#162 item 7). `/users` answered
+ * `{page: 0, pages: 2, limit: 100}` for a 135-user organization — measured
+ * 2026-08-14 — and the caller's own account sat at index 112, so the match
+ * failed for anyone past the first page and `@me`, `next`, `my-cards` and
+ * `my-standup` all refused with "no userId is cached". `getAllPages` is what
+ * every other user read already uses.
  */
 export async function resolveUserId(): Promise<string | undefined> {
   const config = await readConfig();
@@ -165,9 +172,9 @@ export async function resolveUserId(): Promise<string | undefined> {
 
   try {
     const FavroHttpClient = (await import('./http-client')).default;
+    const UsersAPI = (await import('./users-api')).default;
     const client = new FavroHttpClient({ auth: { token: auth.token, email: auth.email, organizationId: auth.organizationId } });
-    const resp = await client.get<{ entities?: Array<{ userId: string; email: string }> }>('/users', { params: { limit: 100 } });
-    const users = resp.entities ?? [];
+    const users = await new UsersAPI(client).listUsers();
     // `foldName`: the configured address was typed, the wire's was not, and an
     // accented local part can reach the two in different forms (#141).
     const me = users.find(u => foldName(u.email) === foldName(auth.email));

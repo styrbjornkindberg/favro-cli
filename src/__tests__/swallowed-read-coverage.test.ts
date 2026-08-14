@@ -264,7 +264,7 @@ const CATCH_DECIDED: Record<string, string> = {
   'src/commands/browse.ts browseHandler() catch → undefined':
     'the empty body leaves `boardName` as the board ID the user typed, which is a TRUTHFUL label; and the very next statement `browseCards(…, options.board, …)` reads the same board unguarded, so an unreachable board still fails loudly',
   'src/lib/config.ts resolveUserId() catch → undefined':
-    'measured all five callers (`assignee.ts:48`, `my-cards.ts:152`, `my-standup.ts:156`, `next.ts:142`, `main-menu.ts:276`) — every one tests `!userId` and REFUSES with a remedy rather than proceeding on an empty identity; the refusal does misattribute a transient read failure to "not configured", which is wording, not a fabricated answer',
+    'measured all five call sites (`assignee.ts:47`, `my-cards.ts:151`, `my-standup.ts:158`, `next.ts:153`, `main-menu.ts:276`) — every one tests `!userId` on the next line and REFUSES with a remedy rather than proceeding on an empty identity; the refusal still misattributes a transient read failure to a caller who has no identity, which is wording, not a fabricated answer',
   'src/lib/git-integration.ts isGitRepo() catch → false':
     'a PROBE — `git rev-parse --git-dir` exiting non-zero is precisely how one asks "is this a git repo", so the throw is the answer',
   "src/lib/http-client.ts wirePath() catch → ''":
