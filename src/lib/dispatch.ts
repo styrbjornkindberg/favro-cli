@@ -444,7 +444,21 @@ export async function dispatch<T = unknown>(
     // round the same loop forever: re-create, refuse identically, unwind.
     // Earlier steps of a threaded transaction are still unwound, by the caller
     // that owns the log (see `runSkill`'s end-of-run unwind).
-    if (error instanceof RefusalError && log.depth === depthAtEntry) throw error;
+    //
+    // `isWireFailure` is what keeps a 2xx denial OUT of that fast path (#165).
+    // `RefusalError` carries two claims — deterministic, and nothing was written —
+    // and this line reads the second. A `WireRefusalError` only satisfies the
+    // first: measured 2026-08-14, `PUT {name, columnId:<bogus>}` answers
+    // `202 {"message":"Invalid column"}` and the name changes anyway, so a 202 means
+    // "at least one field was refused", never "nothing happened". Taking the fast
+    // path on one would propagate a partial write with the transaction's earlier
+    // steps left standing, which is this ticket's own defect class wearing the
+    // repair's clothes. Unwinding cannot recover the applied half either — it was
+    // never logged — and `WireRefusalError`'s message says so; what it does recover
+    // is everything the transaction wrote before the denial.
+    if (error instanceof RefusalError && !isWireFailure(error) && log.depth === depthAtEntry) {
+      throw error;
+    }
     // Unwind the WHOLE log, not just this invocation's entries: when a caller
     // threads one log through several dispatches, a late failure has to undo the
     // early writes too, or "rolled-back" would be a lie about the run.

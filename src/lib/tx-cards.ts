@@ -760,10 +760,20 @@ export class TxCards implements ReadTx {
     // "deterministic, wrote nothing, repair the call", and the call is not what
     // is wrong — the column resolved and the write was accepted. What failed is
     // the card agreeing, so the next attempt is allowed to behave differently.
+    //
+    // That reading used to cover a fourth cause it had no right to: a DENIED
+    // write. `PUT {columnId:<not on this board>}` answers `202 {"message":"Invalid
+    // column"}`, which is deterministic and will refuse identically forever, and
+    // this throw told an agent it was worth retrying. It no longer arrives —
+    // `http-client` refuses a 2xx carrying a message before the PUT returns
+    // (#165), `retryable: false` — so the three causes above are what is left,
+    // and two of the three genuinely are transient. The check STAYS: it is the
+    // only cover for the family that fix does not close, a rejected write that
+    // answers a clean 200 with a full entity and no effect (14 measured).
     if (after.columnId !== columnId) {
       throw new TransientError(
-        `Column move on card ${cardId} answered 200 but the card did not land there: sent ` +
-          `{columnId: ${columnId}}, and a re-read of the card reads ` +
+        `Column move on card ${cardId} was accepted with no denial message but the card did not land ` +
+          `there: sent {columnId: ${columnId}}, and a re-read of the card reads ` +
           `columnId=${JSON.stringify(after.columnId)}.\n` +
           `Either the write did nothing, or another editor moved the card between the write and this ` +
           `read, or the read answered from behind the write — there is no version carrier on this wire ` +
@@ -1316,7 +1326,9 @@ export class TxCards implements ReadTx {
     // would send an inverse nobody can predict.
     //
     // The measured failure family — 202, a message, no card row — never reaches
-    // here; `CardsAPI.updateCard` refuses it at the seam. So this arm is the
+    // here; `http-client`'s success interceptor refuses it at the wire (#165 —
+    // it was `CardsAPI.updateCard`'s own `customFields` guard until then, and the
+    // move is why that guard is gone). So this arm is the
     // UNMEASURED one, and it must not borrow the other's certainty: the response
     // was a card row, the field does not read what we sent, and nine of the ten
     // field types are unprobed on this path. `TransientError`, because a

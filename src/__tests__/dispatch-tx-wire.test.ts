@@ -159,6 +159,20 @@ function startServer(
      */
     ignoreColumnWrites?: true;
     /**
+     * The measured 202 partial (#165): the PUT applies every other field, does
+     * NOT apply the column, and answers `202 {"message":"Invalid column"}` — a
+     * SUCCESS status carrying a refusal. Measured live 2026-08-14 with
+     * `PUT {name, columnId:<bogus>}`, where the name changed anyway, which is
+     * what makes 202 mean "at least one field was refused" rather than "nothing
+     * happened".
+     *
+     * Distinct from `ignoreColumnWrites` on purpose: that one is the silent
+     * family the read-backs exist for, this one is the loud family the wire
+     * boundary exists for, and a stand that could only express the first is why
+     * a green suite contained both of this release's CRITICALs.
+     */
+    refuseColumnWith202?: true;
+    /**
      * A PUT response that says nothing about `columnId`, on a write that DID
      * land. This is the arm with teeth (#101): `columnId` on a PUT response has
      * never been probed, so a check reading the echo cannot pass here, while a
@@ -282,7 +296,9 @@ function startServer(
           const next: StoredCard = { ...stored, tags: [...stored.tags], assignments: [...stored.assignments] };
           if (b.name !== undefined) next.name = b.name;
           if (b.detailedDescription !== undefined) next.detailedDescription = b.detailedDescription;
-          if (b.columnId !== undefined && !opts.ignoreColumnWrites) next.columnId = b.columnId;
+          if (b.columnId !== undefined && !opts.ignoreColumnWrites && !opts.refuseColumnWith202) {
+            next.columnId = b.columnId;
+          }
           // The measured asymmetry (#75), modelled where it actually lives: the
           // wire honours the WRITE field `archive` and answers 200-and-nothing to
           // the READ field `archived`. Modelling only the honoured half would let
@@ -298,6 +314,12 @@ function startServer(
             next.assignments = next.assignments.filter((a) => a.userId !== u);
           }
           cards.set(id, next);
+          // Everything else this PUT carried is already applied above; only the
+          // column was refused. That asymmetry IS the measurement.
+          if (b.columnId !== undefined && opts.refuseColumnWith202) {
+            concurrently();
+            return send(202, { message: 'Invalid column' });
+          }
           // The echo is snapshotted BEFORE the concurrent editor runs. A real
           // server serialises the response from its own write's state, not from a
           // re-read, so an edit that `afterWrite` places "between our write and
@@ -1253,7 +1275,7 @@ describe('a column move is confirmed by RE-READING the card, never by the PUT ec
     const result = await dispatch('resolve', { card: CARD }, ctx(stand));
 
     expect(result.outcome).toBe('rolled-back');
-    expect(result.error).toMatch(/answered 200 but the card did not land there/);
+    expect(result.error).toMatch(/was accepted with no denial message but the card did not land there/);
     // The message names the OBSERVED column, not just the requested one — an
     // assertion on the throw alone would pass on the wrong throw.
     expect(result.error).toContain(`a re-read of the card reads columnId="${TODO}"`);
@@ -1328,7 +1350,7 @@ describe('a column move is confirmed by RE-READING the card, never by the PUT ec
     const result = await dispatch('probe-move', { card: CARD, to: 'Doing' }, ctx(stand));
 
     expect(result.outcome).toBe('rolled-back');
-    expect(result.error).toMatch(/answered 200 but the card did not land there/);
+    expect(result.error).toMatch(/was accepted with no denial message but the card did not land there/);
     // The message reports the absence as an absence, not as an empty string.
     expect(result.error).toContain('a re-read of the card reads columnId=undefined');
     // Nothing logged, so no compensating write went out at a card with no column.
@@ -1383,6 +1405,78 @@ describe('a column move is confirmed by RE-READING the card, never by the PUT ec
     expect(stand.cards.get(CARD)!.columnId).toBe(TODO);
     expect(stand.cards.get(CARD)!.assignments).toEqual([]);
     expect(result.orphans).toBeUndefined();
+  });
+});
+
+/**
+ * The 2xx-denial boundary, driven through the table (#165).
+ *
+ * Favro refuses some writes with a SUCCESS status and the reason in the body.
+ * Every stand above answers 200-or-4xx, which is the structural reason a green
+ * suite could contain both of this release's CRITICALs, so `refuseColumnWith202`
+ * models the measured shape instead: the PUT applies what it accepted, refuses
+ * the column, and answers `202 {"message":"Invalid column"}`.
+ *
+ * The read-back arms above are NOT replaced by this — they are the only cover
+ * for the family that answers a clean 200 with a full entity and no effect, and
+ * `ignoreColumnWrites` is what still drives them.
+ */
+describe('a 2xx carrying a denial refuses, and takes the transaction with it (#165)', () => {
+  it('the denial is a REFUSAL, not a success — and never advertised as retryable', async () => {
+    const stand = await startServer({ refuseColumnWith202: true });
+    await useTracker();
+
+    const result = await dispatch('resolve', { card: CARD }, ctx(stand));
+
+    expect(result.outcome).toBe('rolled-back');
+    // Favro's own words, quoted rather than paraphrased: the vocabulary is open.
+    expect(result.error).toContain('Invalid column');
+    // The whole point. `moveColumn`'s read-back called this same wire answer
+    // transient and told an agent to retry a write that refuses identically
+    // forever; the boundary throw is a `RefusalError`, so it cannot.
+    expect(result.retryable).toBe(false);
+    expect(stand.cards.get(CARD)!.columnId).toBe(TODO);
+  });
+
+  it('a threaded transaction UNWINDS around it, rather than propagating untouched', async () => {
+    // The collision this ticket had to handle. `dispatch`'s fast path propagates
+    // a `RefusalError` raised before this invocation wrote anything, on the
+    // reading that a refusal means nothing was written — and a 202 means "at
+    // least one field was refused", never "nothing happened". So the earlier
+    // steps of the transaction would have been left standing while the refusal
+    // sailed past, which is this ticket's own defect class in the repair.
+    const stand = await startServer({ refuseColumnWith202: true });
+    await useTracker();
+    const log = new CompensationLog();
+
+    const renamed = await dispatch('update', { card: CARD, name: 'renamed' }, ctx(stand, { log }));
+    expect(renamed.outcome).toBe('ok');
+    expect(stand.cards.get(CARD)!.name).toBe('renamed');
+
+    // A SECOND invocation over the same log, whose first write is the denied
+    // one — so this invocation's own log depth never moves, which is exactly the
+    // condition the fast path keys on.
+    const refused = await dispatch('update', { card: CARD, status: 'Done' }, ctx(stand, { log }));
+
+    expect(refused.outcome).toBe('rolled-back');
+    expect(refused.retryable).toBe(false);
+    // **THE assertion**: the earlier write is gone. Under the fast path this
+    // dispatch threw and the rename survived.
+    expect(stand.cards.get(CARD)!.name).toBe('A card');
+  });
+
+  it('the report says the applied half is not compensated, rather than claiming a clean rollback', async () => {
+    // `rolled-back` is the outcome vocabulary's closest word and it overstates
+    // what happened, because a field the 202 DID apply was never logged. The
+    // message is where that is said, and it is said on every path that renders a
+    // failure because it comes from the classifier, not from a wording here.
+    const stand = await startServer({ refuseColumnWith202: true });
+    await useTracker();
+
+    const result = await dispatch('resolve', { card: CARD }, ctx(stand));
+
+    expect(result.error).toContain('refuses at least ONE field of the request');
+    expect(result.error).toContain('Read the card back before retrying');
   });
 });
 
