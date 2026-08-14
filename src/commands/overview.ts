@@ -106,8 +106,9 @@ export function findTopBlockers(
     }
   }
 
-  // `blockedBy` holds `cardCommonId`s — that is all an inlined edge carries —
-  // while `id` is the `cardId`. Matching on `id` never hit.
+  // `blockedBy` holds `cardCommonId`s — `blockingEdges` reports the
+  // board-independent id, and since #162 that is a CHOICE: an inlined edge
+  // carries `cardId` too. `id` here is the `cardId`, so matching on it misses.
   const byCommonId = new Map(cards.filter(c => c.commonId).map(c => [c.commonId!, c]));
 
   const ranked = [...edgeCount].sort((a, b) => b[1] - a[1]);

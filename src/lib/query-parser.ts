@@ -733,14 +733,21 @@ function isUnblocked(card: Record<string, any>, ctx: EvalContext): boolean {
   });
 }
 
-/** Match a dependency edge against a card reference, in any identifier shape. */
+/**
+ * Match a dependency edge against a card reference.
+ *
+ * The two identifiers an edge actually carries, and no third: Favro has never
+ * been measured sending `cardSequentialId` on either dependency shape, and a
+ * sequentialId reference is resolved to a `cardCommonId` upstream by
+ * `query-values.ts` before it ever reaches here (#162).
+ */
 function linkMatches(link: Record<string, any>, ref: string): boolean {
   // `blocked-by:true` — any blocker. NOT the bare spelling: `unblocked` is the
   // only member of `BARE_KEYWORDS`, so a bare `blocked-by` refuses as an
   // unrecognised token rather than arriving here (measured, #162).
-  if (ref === 'true' || ref === '') return true;
+  if (ref === 'true') return true;
   const wanted = ref.trim().toLowerCase();
-  return [link.cardId, link.cardCommonId, link.cardSequentialId]
+  return [link.cardId, link.cardCommonId]
     .some(id => id !== undefined && String(id).toLowerCase() === wanted);
 }
 

@@ -156,21 +156,31 @@ async function designateTracker(): Promise<void> {
 }
 
 describe('the unblocked frontier, on the wire', () => {
-  it('reads the inlined dependencies Favro sends, keyed by the far cardCommonId', async () => {
+  /**
+   * The fixture is the MEASURED inlined edge (live, 2026-08-13, #162):
+   * `{cardId, isBefore, cardCommonId, reverseCardId}`, identical to what
+   * `/cards/:id/dependencies` returns, and carrying no `cardSequentialId` —
+   * a key Favro has never been measured sending.
+   *
+   * It used to carry `cardSequentialId` and no `cardId`, which made this arm
+   * stay GREEN while the normaliser was dropping the `cardId` it now asserts.
+   * An arm named for what Favro sends must fail when the normaliser stops
+   * passing it on.
+   */
+  it('reads the inlined dependencies Favro sends, whole', async () => {
+    const edge = {
+      cardId: 'far-card-id',
+      isBefore: true,
+      cardCommonId: 'common-blocker',
+      reverseCardId: 'near-card-id',
+    };
     const { client } = await startServer({
-      board: [
-        card({
-          cardCommonId: 'common-blocked',
-          dependencies: [{ cardCommonId: 'common-blocker', isBefore: true, cardSequentialId: 'CLA-1' }],
-        }),
-      ],
+      board: [card({ cardCommonId: 'common-blocked', dependencies: [edge] })],
       byCommonId: {},
     });
 
     const [read] = await new CardsAPI(client).listCards({ boardId: TRACKER_BOARD });
-    expect(read.links).toEqual([
-      { cardCommonId: 'common-blocker', isBefore: true, cardSequentialId: 'CLA-1' },
-    ]);
+    expect(read.links).toEqual([edge]);
   });
 
   it('a blocker in the same fetch costs no extra call, and its done column clears it', async () => {
