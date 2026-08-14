@@ -154,6 +154,11 @@ export async function staleHandler(ctx: Ctx, options: StaleOptions) {
   const unassignedStale: StaleCard[] = [];
   const undated: UndatedCard[] = [];
 
+  // NOT collapsed per work item, unlike `workload`, `team` and `next` (#167
+  // item 3). Deliberate: this is a list of things to go and chase, and a card
+  // rotting on two boards is two places somebody has to go — each row names its
+  // own board and column. Nothing here divides by a total or gates a threshold,
+  // which is what forced the collapse in the other three.
   for (const card of cards) {
     // Skip done/archived cards. Before the date check: this command has no
     // opinion about finished work, datable or not.

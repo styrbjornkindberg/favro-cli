@@ -3,7 +3,7 @@
  * v2.0 LLM-first command: outputs JSON by default.
  */
 import { Command } from 'commander';
-import { AggregateCard } from '../api/aggregate';
+import { AggregateCard, workItemKey } from '../api/aggregate';
 import { Unreachable } from '../lib/read-shape';
 import { Ctx, run } from '../lib/run';
 
@@ -107,14 +107,14 @@ export function findTopBlockers(
   // and counts instances on purpose; `blockingCount` is a statement about work
   // items, so it is the one that has to collapse them.
   //
-  // `commonId` is the card across its instances (`AggregateCard.commonId`); `id`
-  // is a `cardId` and stands in only for a row that arrived without one, where
-  // one-row-one-card is the best available reading.
+  // `workItemKey` is the shared expression — `workload`, `team` and `next`
+  // collapse on the same one, and they have to agree or the report contradicts
+  // its siblings.
   const blockedCards = new Map<string, Set<string>>();
   for (const card of cards) {
     for (const blockerId of card.blockedBy ?? []) {
       const blocked = blockedCards.get(blockerId) ?? new Set<string>();
-      blocked.add(card.commonId ?? card.id);
+      blocked.add(workItemKey(card));
       blockedCards.set(blockerId, blocked);
     }
   }

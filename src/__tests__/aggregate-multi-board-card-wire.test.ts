@@ -25,14 +25,20 @@ import { AddressInfo } from 'net';
 import FavroHttpClient from '../lib/http-client';
 import { apiNamespace, Ctx } from '../lib/run';
 import { overviewHandler } from '../commands/overview';
+import { workloadHandler } from '../commands/workload';
+import { teamHandler } from '../commands/team';
+import { nextHandler } from '../commands/next';
 import { tempConfigDir } from '../test-support/config-dir';
 
-tempConfigDir('favro-aggregate-multi-board-test-');
-
 const ORG = 'org-1';
+const USER = 'user-1';
+
 const COLL = 'coll-1';
 const ONE = 'board-one';
 const TWO = 'board-two';
+
+// `next` resolves the caller through `resolveUserId()`, which reads this file.
+tempConfigDir('favro-aggregate-multi-board-test-', { userId: USER });
 
 /** Every server this file started, so a failed assertion cannot leak one. */
 const running: http.Server[] = [];
@@ -57,6 +63,16 @@ interface Wire {
    * instance of a blocked card inlines the same one.
    */
   blocker?: boolean;
+  /**
+   * Assign every card to one member and give each a card-level `Effort` of 5 —
+   * the per-member rollups' polarity fixture.
+   *
+   * It also moves the SHARED card into the active column on BOTH boards, so
+   * `activeCards` / `wipCount` do not depend on which instance the rollup meets
+   * first. That ordering is a real ceiling (see `workload.ts`) and pinning it
+   * here would freeze an arbitrary choice as a contract.
+   */
+  assigned?: boolean;
 }
 
 /**
@@ -77,6 +93,12 @@ function startServer(wire: Wire = {}): Promise<FavroHttpClient> {
     ? [{ cardId: 'blocker-on-one', cardCommonId: 'cc-blocker', isBefore: true }]
     : undefined;
 
+  const mine = wire.assigned
+    ? { assignments: [{ userId: USER }], customFields: [{ name: 'Effort', value: 5 }] }
+    : {};
+  const sharedColumn = (boardId: string) =>
+    wire.assigned ? `${boardId}-doing` : `${boardId}-${boardId === ONE ? 'todo' : 'doing'}`;
+
   const allCards = () => {
     const entities: Array<Record<string, unknown>> = [];
     if (wire.fork) {
@@ -88,16 +110,18 @@ function startServer(wire: Wire = {}): Promise<FavroHttpClient> {
         cardCommonId: 'cc-shared',
         name: 'Shared',
         widgetCommonId: ONE,
-        columnId: `${ONE}-todo`,
+        columnId: sharedColumn(ONE),
         links,
+        ...mine,
       },
       {
         cardId: 'shared-on-two',
         cardCommonId: 'cc-shared',
         name: 'Shared',
         widgetCommonId: TWO,
-        columnId: `${TWO}-doing`,
+        columnId: sharedColumn(TWO),
         links,
+        ...mine,
       },
       {
         cardId: 'solo-on-one',
@@ -105,6 +129,7 @@ function startServer(wire: Wire = {}): Promise<FavroHttpClient> {
         name: 'Solo',
         widgetCommonId: ONE,
         columnId: `${ONE}-todo`,
+        ...mine,
       },
     );
     if (wire.blocker) {
@@ -170,7 +195,7 @@ function startServer(wire: Wire = {}): Promise<FavroHttpClient> {
       return ok(res, served(url));
     }
     if (p === '/api/v1/users') {
-      return ok(res, [{ userId: 'user-1', name: 'Ada', email: 'ada@example.com' }]);
+      return ok(res, [{ userId: USER, name: 'Ada', email: 'ada@example.com' }]);
     }
     return ok(res, []);
   });
@@ -267,6 +292,55 @@ describe('a card on two boards is counted on both (#167 item 3)', () => {
     // Not bucketed under `Unknown` either: a row matching no board never reaches
     // `allCards`, and that bucket keys on a missing board NAME.
     expect(result.item.boards.some(b => b.name === 'Unknown')).toBe(false);
+  });
+
+  it('a card on two boards is ONE work item in the per-member rollups', async () => {
+    // The other side of the partition, and the one the census reasoning does not
+    // reach. Ada holds two work items — `Shared` on both boards, `Solo` on one —
+    // each estimated at 5. Effort is the unarguable number: one card-level custom
+    // field holding one number, so 15 would be reporting half again the work that
+    // exists. `activeCards` is the other half of the pair, because it gates
+    // `OVERLOAD_THRESHOLD` and an inflated one raises `⚠ OVERLOADED` on somebody
+    // who is not.
+    const client = await startServer({ assigned: true });
+    const ctx = ctxFor(client);
+
+    const workload = await workloadHandler(ctx, {});
+    const ada = workload.item.members.find(m => m.name === 'Ada')!;
+    expect(ada.totalEffort).toBe(10);
+    expect(ada.totalCards).toBe(2);
+    expect(ada.activeCards).toBe(1);
+    expect(workload.item.alerts).toEqual([]);
+    // …while `cards[]` stays per-INSTANCE: it names the board, and the shared
+    // card really is two places she can go.
+    expect(ada.cards.map(c => [c.id, c.board])).toEqual([
+      ['shared-on-one', ONE], ['solo-on-one', ONE], ['shared-on-two', TWO],
+    ]);
+
+    const team = await teamHandler(ctx, {});
+    const member = team.item.members.find(m => m.name === 'Ada')!;
+    expect(member.effortSum).toBe(10);
+    expect(member.totalCards).toBe(2);
+    expect(member.wipCount).toBe(1);
+    expect(member.doneCount).toBe(0);
+    // `activeBoards` is the one field the un-collapsed read IMPROVED — before the
+    // fix the shared card put her on one board; she is on two.
+    expect(member.activeBoards).toEqual([ONE, TWO]);
+    // wip + done stay a partition of `totalCards`, which this divides by.
+    expect(member.completionRate).toBe(0);
+  });
+
+  it('next spends one slot per work item, not one per board', async () => {
+    // Both instances carry the same title, due, priority and effort, so they
+    // score identically and sort adjacently — two of five slots on one thing an
+    // agent reads as its five most important.
+    const client = await startServer({ assigned: true });
+    const result = await nextHandler(ctxFor(client), { count: '5' });
+
+    expect(result.item.suggestions.map(s => s.title)).toEqual(['Shared', 'Solo']);
+    expect(result.item.total).toBe(2);
+    // The surviving instance keeps a board, so the pick still says where to go.
+    expect(result.item.suggestions[0].board).toBe(ONE);
   });
 
   it('a blocker of a two-board card blocks ONE card, not two', async () => {

@@ -51,6 +51,22 @@ export interface AggregateCard extends ContextCard {
   collectionName?: string;
 }
 
+/**
+ * The WORK ITEM one snapshot row is an instance of (#167 item 3).
+ *
+ * Since the collection sweep stopped sending `unique`, `allCards` carries one
+ * row per board instance — right for a census, wrong for any number that is a
+ * statement about a piece of work: an estimate is one number on one card, not
+ * one per board it was committed to.
+ *
+ * Exported so the four places that have to agree cannot drift apart:
+ * `findTopBlockers` (`overview.ts`), `buildWorkloads` (`workload.ts`), `team`'s
+ * member rollup and `next`'s ranking. `commonId` is the card across its
+ * instances; `id` is a `cardId` and stands in only for a row that arrived
+ * without one, where one-row-one-item is the best available reading.
+ */
+export const workItemKey = (card: AggregateCard): string => card.commonId ?? card.id;
+
 export interface AggregateCollection {
   id: string;
   name: string;
@@ -261,10 +277,15 @@ export class AggregateAPI {
       // without a `widgetCommonId`, on a collection that holds a card with a
       // fork. So on this read the collapse loses instances, not attribution.
       //
-      // What this snapshot counts is therefore a BOARD INSTANCE — CONTEXT.md's
-      // own reading of `card` ("a card exists once per board it sits on"), what
-      // `cards list <board>` answers, and what the `__boards__` branch below
-      // already does. The price is that a card on two boards is two rows in
+      // What this snapshot counts is therefore a BOARD INSTANCE — the second
+      // half of CONTEXT.md's `card` ("a card exists once per board it sits on"),
+      // what `cards list <board>` answers, and what the `__boards__` branch
+      // below already does. The FIRST half of that same sentence is "one work
+      // item", and it is not decoration: `workload`, `team`, `next` and
+      // `overview`'s `blockingCount` all state something about the work rather
+      // than about the boards, and each collapses these rows back through
+      // `workItemKey`. A number here is instances; a number about a person or a
+      // piece of work is items. The price is that a card on two boards is two rows in
       // `allCards`, so `stats.total`, `by_status`, `by_owner` and `overview`'s
       // `totalCards` / `stageDistribution` / `dueSummary` all count it twice.
       // That is one partition of one instance set — `stageDistribution` is a

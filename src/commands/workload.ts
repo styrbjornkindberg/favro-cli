@@ -3,7 +3,7 @@
  * v2.0 LLM-first command: outputs JSON by default.
  */
 import { Command } from 'commander';
-import { AggregateCard } from '../api/aggregate';
+import { AggregateCard, workItemKey } from '../api/aggregate';
 import { extractEffort } from '../api/context';
 import { excludeUnreadableBoards, Unreachable } from '../lib/read-shape';
 import { Ctx, run } from '../lib/run';
@@ -53,12 +53,26 @@ export function buildWorkloads(
   members: Array<{ id: string; name: string; email: string; role?: string }>,
 ): { members: MemberWorkload[]; alerts: string[] } {
   const memberMap = new Map<string, MemberWorkload>();
+  /**
+   * Work items already counted for each member (#167 item 3).
+   *
+   * `cards` carries one row per BOARD INSTANCE, which is what makes `overview`'s
+   * census right — and what makes every scalar here wrong if it follows the
+   * rows. `totalEffort` is the unarguable one: an estimate is a single
+   * card-level custom field holding a single number, so a card committed to two
+   * boards was reported as twice the work. `activeCards` gates
+   * `OVERLOAD_THRESHOLD`, so it would have raised `⚠ OVERLOADED` on someone
+   * carrying eight items across two boards.
+   */
+  const counted = new Map<string, Set<string>>();
 
   for (const card of cards) {
+    const key = workItemKey(card);
     const assignees = card.assignees?.length ? card.assignees : ['unassigned'];
     for (const uid of assignees) {
       if (!memberMap.has(uid)) {
         const member = members.find(m => m.id === uid);
+        counted.set(uid, new Set());
         memberMap.set(uid, {
           name: member?.name ?? uid,
           email: member?.email ?? '',
@@ -71,10 +85,21 @@ export function buildWorkloads(
         });
       }
       const mw = memberMap.get(uid)!;
-      mw.totalCards++;
-      mw.totalEffort += extractEffort(card) ?? 0;
-      if (ACTIVE_STAGES.includes(card.stage ?? '')) mw.activeCards++;
-      if ((card.blockedBy && card.blockedBy.length > 0)) mw.dependencyCards++;
+      const seen = counted.get(uid)!;
+      // ponytail: the FIRST instance seen decides the item's stage, so a card
+      // active on one board and done on another is scored by whichever board the
+      // sweep read first — deterministic per run, arbitrary between boards, and
+      // exactly what `unique: true` decided before. Upgrade path if that ever
+      // bites: pick the least-done instance per key before counting.
+      if (!seen.has(key)) {
+        seen.add(key);
+        mw.totalCards++;
+        mw.totalEffort += extractEffort(card) ?? 0;
+        if (ACTIVE_STAGES.includes(card.stage ?? '')) mw.activeCards++;
+        if ((card.blockedBy && card.blockedBy.length > 0)) mw.dependencyCards++;
+      }
+      // `cards[]` stays per-INSTANCE, deliberately: it names the board, and
+      // "this card, on that board" is where the person actually has to go.
       mw.cards.push({
         id: card.id,
         title: card.title,

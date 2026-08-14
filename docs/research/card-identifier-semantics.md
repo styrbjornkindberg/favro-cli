@@ -274,12 +274,16 @@ translation must happen, and `GET /cards?cardCommonId=…` is the only documente
 **Is it necessary? Yes, given the input.** There is no cheaper documented route. It costs exactly one
 extra GET.
 
-**Is it correct?** Mostly, with one soft spot. `unique: true` collapses the multi-instance result to
+**Is it correct?** Mostly, with one soft spot — and §5 gap 4 has since measured that spot to be
+sharper than this paragraph assumed. `unique: true` collapses the multi-instance result to
 one row, and `entities[0]` then picks an **arbitrary** instance — the docs do not specify an ordering,
 so which board's instance you get is undefined. For this specific call that is tolerable, because
 `dragMode: 'commit'` *adds* the card to the target board without removing it from the source
-(as the comment at `:57-58` states). The identity of the source instance therefore does not change
-the outcome. If the same resolve-then-PUT pattern were reused for an operation that *moves* rather
+(as the comment at `:57-58` states). The identity of the source *instance* therefore does not change
+the outcome — **but the row it picks is not necessarily an instance at all**: measured 2026-08-14,
+the survivor was the boardless **fork** on 10 of 10 calls for one card (§5 gap 4), and CONTEXT.md
+calls a fork "unactionable by construction". Whether the commit `PUT` lands against a fork's `cardId`
+is unmeasured. If the same resolve-then-PUT pattern were reused for an operation that *moves* rather
 than commits — e.g. `moveCard` at `src/lib/cards-api.ts:468-474`, which sends `widgetCommonId`
 without `dragMode` — picking an arbitrary source instance would move a card off a board the caller
 never named. *Docs silent on `unique`'s ordering; inferred from the absence of any documented sort
@@ -419,7 +423,7 @@ Costs are in additional HTTP round trips, assuming you already hold whatever you
 | **`cardId` → `cardCommonId`** | **0 calls** if you already have the Card object; **1 call** otherwise | `cardCommonId` is a field on every Card response — `GET /cards/:cardId` and read it (`src/lib/cards-api.ts:37`) | **Exact.** One instance has exactly one common id |
 | **`cardId` → `sequentialId`** | **0 calls** if you hold the Card object; **1 call** otherwise | `sequentialId` is a Card field (`src/lib/cards-api.ts:51`) | Exact |
 | **`sequentialId` → `cardId` / `cardCommonId`** | **1 call** | `GET /cards?cardSequentialId=N&unique=true` | Ambiguous if prefixes collide (§3.4). Scope with `widgetCommonId` |
-| **`cardCommonId` → `cardId`** | **1 call** | `GET /cards?cardCommonId=X&unique=true`, take `entities[0]` (`src/lib/widgets-api.ts:62-71`) | **Inherently ambiguous** — a common card has *N* instances, so "the" cardId does not exist. `unique=true` picks one with no documented ordering |
+| **`cardCommonId` → `cardId`** | **1 call** | `GET /cards?cardCommonId=X&unique=true`, take `entities[0]` (`src/lib/widgets-api.ts:62-71`) | **Inherently ambiguous** — a common card has *N* instances, so "the" cardId does not exist. `unique=true` picks one with no documented ordering, and it was measured picking a boardless **fork** rather than any instance (§5 gap 4) |
 | **`cardCommonId` → *all* `cardId`s** | **1 call** (+ pagination) | `GET /cards?cardCommonId=X` **without** `unique` — each entity is one instance with its own `cardId` and `widgetCommonId` | Exact and complete. This is what `listWidgetsForCard` should be doing (§3.3) |
 
 **The headline:** `cardId → cardCommonId` is the cheap, exact direction — usually free, because the
@@ -471,7 +475,7 @@ other way round. This is the opposite of what `src/commands/widgets.ts:21,49` ch
    codebase.
 3. **Does `GET /widgets` silently ignore an undocumented `cardCommonId` param, or error?** Determines
    whether §3.3's bug is "returns everything" or "returns nothing". Needs a live call.
-4. ~~**Does `unique=true` have a deterministic ordering?**~~ **Partly measured 2026-08-14** (#167
+4. **Does `unique=true` have a deterministic ordering?** — **still open, but partly measured 2026-08-14** (#167
    item 3), against the #105 scratch org. Stability: `GET /cards?cardCommonId=<x>&unique=true`
    returned the same single entity on 10 consecutive calls for card `74480953b9749f43bf515b6b`, and
    on 8 for a freshly-made two-board card — so `entities[0]` did not flap within a session. What it

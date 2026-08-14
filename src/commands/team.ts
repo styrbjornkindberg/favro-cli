@@ -3,6 +3,7 @@
  * v2.0 LLM-first command: outputs JSON by default.
  */
 import { Command } from 'commander';
+import { workItemKey } from '../api/aggregate';
 import { extractEffort } from '../api/context';
 import { excludeUnreadableBoards, Unreachable } from '../lib/read-shape';
 import { Ctx, run } from '../lib/run';
@@ -98,12 +99,26 @@ export async function teamHandler(ctx: Ctx, options: TeamOptions) {
 
   // Build per-member stats
   const memberMap = new Map<string, TeamMember>();
+  /**
+   * Work items already counted for each member — the same collapse
+   * `buildWorkloads` does, for the same reason (#167 item 3): `readableCards`
+   * carries one row per board instance, and `effortSum` adds a single
+   * card-level estimate once per board unless the rows are collapsed first.
+   *
+   * It also keeps `wipCount` and `doneCount` a PARTITION of `totalCards`, which
+   * `completionRate` divides by two lines below. Counting an item as WIP on one
+   * board and done on another would put it in both halves and let the two sum
+   * past the whole.
+   */
+  const counted = new Map<string, Set<string>>();
 
   for (const card of readableCards) {
+    const key = workItemKey(card);
     const assignees = card.assignees?.length ? card.assignees : [];
     for (const uid of assignees) {
       if (!memberMap.has(uid)) {
         const member = snapshot.members.find(m => m.id === uid);
+        counted.set(uid, new Set());
         memberMap.set(uid, {
           name: member?.name ?? uid,
           email: member?.email ?? '',
@@ -117,12 +132,20 @@ export async function teamHandler(ctx: Ctx, options: TeamOptions) {
         });
       }
       const tm = memberMap.get(uid)!;
-      tm.totalCards++;
-      tm.effortSum += extractEffort(card) ?? 0;
 
+      // `activeBoards` stays per-INSTANCE, and it is the one number the
+      // un-collapsed read improved: a card on two boards now puts the person on
+      // both, which is the question this field asks.
       const bName = card.boardName;
       if (bName && !tm.activeBoards.includes(bName)) tm.activeBoards.push(bName);
 
+      const seen = counted.get(uid)!;
+      // ponytail: first instance seen decides the stage — see `workload.ts`.
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      tm.totalCards++;
+      tm.effortSum += extractEffort(card) ?? 0;
       if (ACTIVE_STAGES.includes(card.stage ?? '')) tm.wipCount++;
       if (isDoneStage(card.stage)) tm.doneCount++;
       if ((card.blockedBy && card.blockedBy.length > 0)) tm.dependencyCount++;

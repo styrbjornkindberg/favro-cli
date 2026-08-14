@@ -11,7 +11,7 @@
  */
 import { Command } from 'commander';
 import { resolveUserId } from '../lib/config';
-import { AggregateCard } from '../api/aggregate';
+import { AggregateCard, workItemKey } from '../api/aggregate';
 import { extractEffort } from '../api/context';
 import { Unreachable } from '../lib/read-shape';
 import { Ctx, run } from '../lib/run';
@@ -183,26 +183,46 @@ export async function nextHandler(ctx: Ctx, options: NextOptions) {
   const scored = myCards.map(c => {
     const { score, reasons } = scoreCard(c);
     return {
-      id: c.id,
-      title: c.title,
-      board: c.boardName ?? 'unknown',
-      collection: c.collectionName,
-      stage: c.stage,
-      column: c.column,
-      due: c.due,
-      priority: extractPriority(c).label,
-      effort: extractEffort(c),
-      score,
-      reasons,
-    } as ScoredCard;
+      key: workItemKey(c),
+      card: {
+        id: c.id,
+        title: c.title,
+        board: c.boardName ?? 'unknown',
+        collection: c.collectionName,
+        stage: c.stage,
+        column: c.column,
+        due: c.due,
+        priority: extractPriority(c).label,
+        effort: extractEffort(c),
+        score,
+        reasons,
+      } as ScoredCard,
+    };
   });
 
-  scored.sort((a, b) => b.score - a.score);
+  scored.sort((a, b) => b.card.score - a.card.score);
+
+  // One work item is one recommendation (#167 item 3). The snapshot carries a
+  // row per board instance, and both rows of a two-board card share a title,
+  // due date, priority and effort — so they score identically, sort adjacently,
+  // and would spend two of `--count`'s five slots on one thing an agent reads as
+  // its five most important. Sorted first, so the surviving instance is the
+  // best-scoring one; its `board` is on the row, so the pick still says where to
+  // go. `total` counts what was ranked, not the rows it was ranked from.
+  //
+  // The `key` never reaches the output: `ScoredCard` is the wire shape.
+  const ranked: ScoredCard[] = [];
+  const seen = new Set<string>();
+  for (const { key, card } of scored) {
+    if (seen.has(key)) continue;
+    seen.add(key);
+    ranked.push(card);
+  }
 
   const result: NextResult = {
     userId,
-    suggestions: scored.slice(0, count),
-    total: myCards.length,
+    suggestions: ranked.slice(0, count),
+    total: ranked.length,
     ...(snapshot.unreachable?.length ? { unreachable: snapshot.unreachable } : {}),
     generatedAt: new Date().toISOString(),
   };
