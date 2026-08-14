@@ -180,9 +180,33 @@ not say which one it was talking to.
 **Measured limit, recorded rather than papered over:** `/health` returns before the
 transport's `Host` allowlist runs, so a `200` proves the process is up and NOT that
 `FAVRO_MCP_ALLOWED_HOSTS` is correct. A wrong allowlist surfaces as `403 Invalid Host
-header` on `/mcp` and nowhere else.
+header` on `/mcp` and nowhere else. `docs/DEPLOY-MCP-HTTP.md` says so at the probe step.
 
 `GET` only — any other method on `/health` still gets `405`, and unknown paths still `404`.
+
+### Docs
+
+#### `docs/DEPLOY-MCP-HTTP.md` now covers the container target its own `Dockerfile` builds
+
+The guide documented exactly one target — a Linux box with systemd behind a reverse proxy
+— while the repo ships a `Dockerfile` whose first line reads "container image for Cloud
+Run". Two of the guide's instructions were wrong for that image, and one of them fails
+closed: the image sets `FAVRO_MCP_HOST=0.0.0.0` (against the guide's "leave on localhost")
+and does **not** set `FAVRO_MCP_ALLOWED_HOSTS`, so a deploy straight from it answers every
+authenticated request with `403 Invalid Host header: <service>.a.run.app` — the fallback
+allowlist is `127.0.0.1:8080,localhost:8080` and Cloud Run passes its own hostname
+through. The unauthenticated `POST /mcp` → `401` smoke test still passes in that state, so
+it does not catch it.
+
+A new **Cloud Run / containers** section states five things: why `0.0.0.0` is right in a
+container, that `FAVRO_MCP_ALLOWED_HOSTS` is service config set with `--update-env-vars`
+(never `--set-env-vars`), that `$PORT` is already bridged to `FAVRO_MCP_PORT` by the
+image's `CMD` so operators must not set it, that `FAVRO_MCP_STATE_DIR`'s "point at a
+persistent path" mitigation has no equivalent on a container tmpfs — scope locks are lost
+per instance recycle and are per-instance across replicas — and that the liveness probe
+belongs on `GET /health`, not on the `401` smoke test, which stays green in exactly the
+failure state above. The localhost notes in **Run target** now say the rule is about
+co-tenants on a shared host, not containers.
 
 ## 4.0.0 — 2026-08-14
 

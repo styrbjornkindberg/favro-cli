@@ -34,7 +34,9 @@ credentials in the environment or unit file.
 
 ## Run target
 
-- Binds **HTTP only** to `FAVRO_MCP_HOST` (keep it `127.0.0.1`). TLS is terminated in front.
+- Binds **HTTP only** to `FAVRO_MCP_HOST` (keep it `127.0.0.1` on a shared host; in a
+  container `0.0.0.0` is correct — see [Cloud Run / containers](#cloud-run--containers)).
+  TLS is terminated in front.
 - Two endpoints: **`POST /mcp`** (everything) and **`GET /health`** (unauthenticated,
   returns `{"status":"ok","version":"<running version>"}`). Everything else returns 404/405.
 - Stateless apart from a short in-memory cache of resolved org IDs → restart any time, safe.
@@ -44,9 +46,9 @@ Environment variables (all optional):
 | Var | Default | Purpose |
 |-----|---------|---------|
 | `FAVRO_MCP_PORT` | `3000` | Listen port |
-| `FAVRO_MCP_HOST` | `127.0.0.1` | Bind host — leave on localhost |
+| `FAVRO_MCP_HOST` | `127.0.0.1` | Bind host — leave on localhost on a shared host; the rule is about co-tenants, not containers, where `0.0.0.0` is correct (the shipped image already sets it) |
 | `FAVRO_MCP_ALLOWED_HOSTS` | `127.0.0.1:<port>,localhost:<port>` | `Host`-header allowlist (DNS-rebind protection) — **must include the public subdomain**, see below |
-| `FAVRO_MCP_STATE_DIR` | OS temp dir (`$TMPDIR/favro-mcp`) | Where per-user CLI config is stored (see Per-user isolation). Point at a persistent path to keep scope locks across reboots. |
+| `FAVRO_MCP_STATE_DIR` | OS temp dir (`$TMPDIR/favro-mcp`) | Where per-user CLI config is stored (see Per-user isolation). Point at a persistent path to keep scope locks across reboots — on a container tmpfs there is no such path, see [Cloud Run / containers](#cloud-run--containers). |
 
 No CLI args. Run the bin, point a reverse proxy at it.
 
@@ -81,6 +83,65 @@ the credentials.
    `proxy_read_timeout 300s;`). Caddy's `reverse_proxy` is fine as-is.
 4. Proxy `POST /mcp` through, plus `GET /health` if something upstream probes it; no
    other paths are used.
+
+## Cloud Run / containers
+
+The repo's `Dockerfile` builds this server as a Cloud Run image. Five things differ from
+the systemd-behind-your-own-proxy target above, and the second one fails closed.
+
+**`FAVRO_MCP_HOST=0.0.0.0` is correct here, and the image already sets it** — see the
+`ENV FAVRO_MCP_HOST` line in `Dockerfile` and the comment above it. The localhost rule in
+[Run target](#run-target) guards a plain-HTTP port against everything else on a shared
+host. A container's port is reachable only through the platform's front layer, which
+terminates TLS, so binding all interfaces satisfies the same requirement. Don't override
+it.
+
+**`FAVRO_MCP_ALLOWED_HOSTS` must be set to the platform hostname, and the image does not
+set it.** DNS-rebind protection is on unconditionally; with no explicit allowlist
+`allowedHosts()` in `src/mcp-http-server.ts` falls back to
+`127.0.0.1:<port>,localhost:<port>`, and Cloud Run passes its own `*.run.app` (or mapped
+custom domain) `Host` straight through — there is no proxy of yours in the path to
+rewrite it. The comparison is exact string equality against the full `Host` header, so
+every authenticated request comes back **`403`** with `Invalid Host header: <your-host>`
+in the JSON-RPC error body, and nothing succeeds until the variable is set. It is service
+config, not image config:
+
+```bash
+gcloud run services update favro-mcp \
+  --update-env-vars FAVRO_MCP_ALLOWED_HOSTS=favro-mcp-xxxxxxxxxx.a.run.app
+```
+
+Use `--update-env-vars`, never `--set-env-vars` — the latter replaces the revision's whole
+env-var set instead of merging into it, so it will drop anything else already there.
+
+**Don't set `FAVRO_MCP_PORT` yourself.** Cloud Run injects `$PORT`; the image's `CMD`
+already bridges it (`FAVRO_MCP_PORT=${PORT:-8080}`). Setting it yourself makes the server
+listen on a port the platform is not routing to. Note that the fallback allowlist above is
+built from the bridged value, so with Cloud Run's default `$PORT` it reads
+`127.0.0.1:8080,localhost:8080` — neither of which a real request will ever carry.
+
+**`FAVRO_MCP_STATE_DIR` has no equivalent mitigation here.** The container filesystem is
+in-memory, so the per-user config dirs are charged against the instance's memory limit,
+and "point at a persistent path" has nowhere to point: scope locks are lost on every
+instance recycle, not merely on reboot, and with more than one instance they are also
+per-instance — the same user can see different scope state depending on which instance
+answers. Leave the default and treat `favro scope set` as per-instance rather than
+durable.
+
+**Liveness probe.** Point it at `GET /health`, not at the unauthenticated `POST /mcp`
+check under [Verify](#verify): that one answers `401` when healthy, so a probe would have
+to score `401` as up — and then it cannot tell "enforcing auth" from "auth rejecting
+everyone".
+
+```bash
+curl -s https://favro-mcp-xxxxxxxxxx.a.run.app/health
+# {"status":"ok","version":"<the running version>"}
+```
+
+`/health` is answered before the `Host` allowlist runs, so a `200` proves the process is
+up and says which version is live — it does **not** prove `FAVRO_MCP_ALLOWED_HOSTS` is
+right. Only the authenticated `initialize` call under [Verify](#verify), sent to the real
+public hostname, does that.
 
 ## Verify
 
