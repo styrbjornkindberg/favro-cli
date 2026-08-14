@@ -78,9 +78,9 @@ export class WidgetsAPI {
    * It used to read `GET /widgets?cardCommonId=<x>` and keep the rows with
    * `type === 'card'`, which answered `{"rows":[]}` for every card that has ever
    * been passed to it. Both halves were wrong and each alone was fatal: the same
-   * probe measured `/widgets` returning **500 rows over 5 pages — every board in
-   * the organisation, `cardCommonId` ignored** — whose types are `backlog` and
-   * `board`. No row Favro sends on that endpoint has ever carried `type: 'card'`.
+   * probe measured `/widgets` returning **421 rows — every board in the
+   * organisation, `cardCommonId` ignored** (`favro boards list` counts the same
+   * 421) — whose types are `backlog` and `board`, and not one `card`.
    *
    * `unique` is not sent. It collapses the multi-instance result to one row,
    * which is the one thing this read must not do.

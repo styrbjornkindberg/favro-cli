@@ -60,7 +60,7 @@ answering 404, so the change costs nothing today and stops being free the day th
 > ["YLanLiuXKA8JpvEsX"]}]` — so there is no field NAME to match and a select's value is the
 > option's id, not its label. Resolving either needs the board's field definitions, and
 > `GET /customfields` is org-scoped and ignores its board filter (3797 rows on the measured
-> org for a board that defines 2), which is a read this grammar will not make on every
+> org, 100 to a page, for a board that defines 2), which is a read this grammar will not make on every
 > query. Matching the id only would turn a wrong-empty into a wrong-populated, which is
 > worse. So the token refuses and names the two commands that DO read the values.
 

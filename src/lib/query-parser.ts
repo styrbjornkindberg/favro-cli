@@ -558,7 +558,7 @@ export class ParseError extends Error {
  * Refusing rather than fixing, deliberately: resolving a field NAME and an
  * option LABEL needs the board's definitions, and the only route to them is
  * `GET /customfields`, which is org-scoped and ignores its board filter — 3797
- * rows over 38 pages on the measured org, for a board that defines 2. That is a
+ * rows on the measured org, 100 to a page, for a board that defines 2. That is a
  * read on every filtered query, and a partial fix (match the id, not the label)
  * would turn a wrong-empty into a wrong-populated, which is worse than both.
  *

@@ -3,9 +3,9 @@
  *
  * No client mock: a real `node:http` server stands in for Favro, because the
  * bug was in the REQUEST. `GET /widgets?cardCommonId=<x>` was measured
- * (2026-08-14, #105 scratch board) to ignore `cardCommonId` and answer 500 rows
- * over 5 pages — every board in the organisation, types `backlog` and `board` —
- * which the caller then filtered for `type === 'card'`, a type no row carries.
+ * (2026-08-14, #105 scratch board) to ignore `cardCommonId` and answer 421 rows
+ * — every board in the organisation, types `backlog` and `board` — which the
+ * caller then filtered for `type === 'card'`, a type no row carries.
  * The command answered `{"rows":[]}` for every card since the filter was
  * written. A mock of `listInstancesOfCard` cannot see any of that; the path and
  * query string are the assertion.

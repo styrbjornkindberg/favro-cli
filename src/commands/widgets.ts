@@ -20,11 +20,12 @@ export function registerWidgetsCommands(program: Command): void {
     .requiredOption('--card <card>', 'Card to trace — sequentialId, cardId or cardCommonId')
     .option('--limit <n>', 'Cap how many rows are printed; sets "truncated"')
     .action(run(async (ctx: Ctx, options: { card: string; limit?: string }) => ({
-      // The reference is SETTLED to a `cardCommonId` first. `/cards` takes it as
-      // a query value, never a path segment, so a `cardId` in that slot is a
-      // well-formed request for a card that does not exist — 200, zero rows,
-      // which is this command's own defect under a second spelling
-      // (`card-reference.ts:92`).
+      // The reference is SETTLED to a `cardCommonId` first. The two keyspaces
+      // share a syntax and this read takes only one of them: measured
+      // 2026-08-14, `GET /cards?cardCommonId=<a cardId>` answers **403 Access
+      // denied**, so an unsettled `cardId` would fail naming permissions rather
+      // than the shape. `resolveCardCommonId` is the CLI's one settler for that
+      // (`card-reference.ts`), and it costs one read.
       //
       // The fetch runs to completion; `--limit` cuts the PRINT (#99). `capRows`
       // and the truncation note are the runner's now, so both modes read one

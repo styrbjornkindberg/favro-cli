@@ -141,8 +141,8 @@ describe('widgets list', () => {
   });
 
   test('a cardId is settled to its cardCommonId before the read, not passed through', async () => {
-    // `/cards` takes `cardCommonId` as a query value: a `cardId` in that slot is
-    // 200 with zero rows, which is exactly the silent empty this command shipped.
+    // The two keyspaces share a syntax, and this read takes only `cardCommonId`
+    // — `GET /cards?cardCommonId=<a cardId>` was measured answering 403.
     await runCli(['widgets', 'list', '--card', 'card-1']);
 
     expect(MockWidgets.prototype.listInstancesOfCard).toHaveBeenCalledWith('ccid-1');

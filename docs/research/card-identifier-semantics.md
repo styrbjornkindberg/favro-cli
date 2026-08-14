@@ -453,8 +453,8 @@ other way round. This is the opposite of what `src/commands/widgets.ts:21,49` ch
   the card"; the instance reading is inferred from the `unique` parameter and the `cardCommonId`
   definition. The repo's own comments (`src/commands/init.ts:245`) agree, but they are secondary.
 - ~~That `listWidgetsForCard` always returns `[]`.~~ **Measured 2026-08-14** (#167 item 1) against the
-  #105 scratch org: `GET /widgets?cardCommonId=<x>` answered 500 rows over 5 pages — every board in
-  the organisation, `cardCommonId` ignored — with types `backlog` and `board` and no `card`, and
+  #105 scratch org: `GET /widgets?cardCommonId=<x>` answered 421 rows — every board in the
+  organisation, `cardCommonId` ignored — with types `backlog` and `board` and no `card`, and
   `favro widgets list --card` printed `{"rows":[]}`. Both halves of §3.3 confirmed. The method is now
   `WidgetsAPI.listInstancesOfCard` and reads `GET /cards?cardCommonId=<x>` without `unique`, as §3.3
   prescribed.
