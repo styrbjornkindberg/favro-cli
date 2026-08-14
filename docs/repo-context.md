@@ -49,7 +49,8 @@ slug, custom-field name and userId respectively.
     }
   },
   "customFields": {
-    "Priority": {                               // keyed by field NAME
+    "Priority": {                               // keyed by field NAME;
+                                                // `-2`, `-3`, … if two boards share a field name
       "fieldId": "cf-1",
       "type": "<Favro's own type string, passed through verbatim>",
       "options": { "Critical": "opt-1", "High": "opt-2" }   // name → optionId
@@ -108,6 +109,7 @@ nothing. They are listed in the table below with the rest, and settled in
 | `workflow[].stage` | **derived, never read.** It is `detectStage`'s keyword guess at what the column's NAME means — see *Workflow Stage Detection*. Favro has no stage field to read, so there is no measurement this could be. Display only: it is not the open/closed axis, and nothing in the CLI consults it. |
 | `workflow[].next` | **derived, never read.** The next column's `name` in board order. `null` means either "this is the last column" or "the next column has no name" — the two are not distinguishable, so walk `workflow` by position and key off `columnId`, not off `next`. |
 | a `boards` key ending `-2`, `-3`, … | **the key is derived too** — `slugify` folds the board's name, collapses every non-`[a-z0-9]` run and truncates to 30 chars, so two different board names can produce one key. The first board to claim a slug keeps the bare one; a later collider takes the next free numeric suffix. Every board is still present, and `boardId` inside the entry is always the real one. |
+| a `customFields` key ending `-2`, `-3`, … | **the same collision, one map over.** A field's key is its name verbatim, and a name is unique to a BOARD, not to the collection — two of your boards can each own a `Priority`. Same rule: the first keeps the bare key, a later collider takes the next free suffix, both entries are present, and `fieldId` inside the entry is always the real one. The suffix does NOT mean the two fields are related — they are two independent fields that happen to share a name, and they may differ in `type` and `options`. |
 
 The one thing this costs: a partially-readable workspace produces no file until
 the key can read every facet. `favro init --refresh` is the retry.

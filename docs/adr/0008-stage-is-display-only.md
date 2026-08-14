@@ -138,6 +138,32 @@ defect was never the field; it was a rule list that told agents to act on it.
 - `src/__tests__/commands/init.test.ts` gains two tests: one holding the trust rule to this ADR
   so the sentence cannot quietly revert, and one that fails on the pre-fix `boards[slug]` write.
 
+## Amendment (2026-08-14): the `customFields` key row was wrong the same way
+
+The table above classifies **`customFields.*`, key included** as `wire | measurement`. The
+"key included" is false, and it is false for the exact reason the `boards` key row was — the
+lesson this ADR wrote down and then did not apply one row further: *a slot is not a measurement
+just because its input was one.*
+
+A custom field's key is `field.name`, taken verbatim off the wire, so the walk read it as a
+measurement. But the map is keyed per **collection** and a field name is unique per **board**:
+`init` keeps every board-local field of every board in `boards`, so two boards each owning a
+`Priority` produced two writes to one key. `customFields[field.name] = entry` was a bare
+assignment, so the second dropped the first field's `fieldId` and its whole `options` map — the
+option ids being the only reason an agent reads this map at all. The lost field then read as a
+field the collection does not have, which is the #154 lie the rest of this file is about.
+
+Fixed the same way, and now literally the same code: the probe that was inlined at the board
+site is a `freeKey` helper both maps call, so the first holder keeps the bare key and a later
+collider takes the next free numeric suffix. The row should read **derived on collision** for
+the key and `wire | measurement` for the entry. `docs/repo-context.md`'s table gained a
+`customFields` row beside the `boards` one, and
+`src/__tests__/commands/init.test.ts` gained an arm that fails on the pre-fix write.
+
+Nothing about `stage` changes. This is recorded here because the walk that produced the table
+is what missed it, and a reader checking the table against the code would otherwise find one
+row that no longer matches.
+
 ## Revisit when
 
 Favro grows a real column-state field, or `context.json` gains its first code reader. Either
