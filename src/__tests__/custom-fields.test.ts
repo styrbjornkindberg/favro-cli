@@ -23,6 +23,7 @@ const sampleTextField: CustomFieldDefinition = {
   fieldId: 'field-text-1',
   name: 'Notes',
   type: 'text',
+  widgetCommonId: 'board-1',
   boardId: 'board-1',
   required: false,
 };
@@ -31,6 +32,7 @@ const sampleSelectField: CustomFieldDefinition = {
   fieldId: 'field-select-1',
   name: 'Priority',
   type: 'select',
+  widgetCommonId: 'board-1',
   boardId: 'board-1',
   required: true,
   options: [
@@ -44,6 +46,7 @@ const sampleDateField: CustomFieldDefinition = {
   fieldId: 'field-date-1',
   name: 'Due Date',
   type: 'date',
+  widgetCommonId: 'board-1',
   boardId: 'board-1',
   required: false,
 };
@@ -52,6 +55,7 @@ const sampleUserField: CustomFieldDefinition = {
   fieldId: 'field-user-1',
   name: 'Reviewer',
   type: 'user',
+  widgetCommonId: 'board-1',
   boardId: 'board-1',
   required: false,
 };
@@ -60,6 +64,7 @@ const sampleLinkField: CustomFieldDefinition = {
   fieldId: 'field-link-1',
   name: 'Related Card',
   type: 'link',
+  widgetCommonId: 'board-1',
   boardId: 'board-1',
   required: false,
 };
@@ -180,6 +185,48 @@ describe('CustomFieldsAPI', () => {
       mockClient.get.mockResolvedValue({ entities: [] });
       const result = await api.listFields('board-1');
       expect(result).toEqual([]);
+    });
+
+    /**
+     * The board filter is client-side because Favro ignores `widgetCommonId`
+     * here — measured 2026-08-14: 3797 rows came back for a board that defines
+     * 2. So the wire below answers the SAME page whatever board is asked for,
+     * which is the shape the defect had.
+     *
+     * Paired polarity, over the wire's own key: `widgetCommonId` is what a
+     * `/customfields` row carries and `boardId` is not (measured — the raw row
+     * is `{customFieldId, name, organizationId, enabled, type, widgetCommonId}`).
+     * A single "board-1 returns one row" arm would pass just as well if the
+     * filter matched everything, so the unrelated board is asserted too.
+     */
+    describe('the board filter Favro ignores', () => {
+      const ORG_WIDE = [
+        { customFieldId: 'f-1', name: 'Status', type: 'Single select', widgetCommonId: 'board-1' },
+        { customFieldId: 'f-2', name: 'Sprint', type: 'Text', widgetCommonId: 'board-2' },
+        // 270 of the 3797 live rows carry no board at all. They belong to no
+        // board this endpoint can name, so they are listed for none.
+        { customFieldId: 'f-3', name: 'Delsystem', type: 'Text' },
+      ];
+
+      beforeEach(() => {
+        mockClient.get.mockResolvedValue({ entities: ORG_WIDE });
+      });
+
+      test('keeps only the rows whose definition names the board asked for', async () => {
+        expect((await api.listFields('board-1')).map(f => f.fieldId)).toEqual(['f-1']);
+      });
+
+      test('another board gets its own row from the same org-wide page', async () => {
+        expect((await api.listFields('board-2')).map(f => f.fieldId)).toEqual(['f-2']);
+      });
+
+      test('a board that defines nothing gets nothing, not the organisation', async () => {
+        expect(await api.listFields('board-3')).toEqual([]);
+      });
+
+      test('no board asked for is the whole organisation, unfiltered', async () => {
+        expect((await api.listFields()).map(f => f.fieldId)).toEqual(['f-1', 'f-2', 'f-3']);
+      });
     });
 
     test('handles pagination correctly', async () => {

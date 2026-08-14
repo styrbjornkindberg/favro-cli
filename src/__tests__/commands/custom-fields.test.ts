@@ -3,7 +3,7 @@
  * CLA-1792 FAVRO-030: Integration Test Suite (coverage gap fix)
  *
  * Tests the command action handlers for:
- *   favro custom-fields list <board-id>
+ *   favro custom-fields list <board>
  *   favro custom-fields get <field-id>
  *   favro custom-fields set <card-id> <field-id> <value>
  *   favro custom-fields values <field-id>
@@ -15,9 +15,12 @@ import * as config from '../../lib/config';
 jest.mock('../../lib/http-client');
 jest.mock('../../lib/config');
 jest.mock('../../lib/custom-fields-api');
+jest.mock('../../lib/boards-api');
 
 import CustomFieldsAPI from '../../lib/custom-fields-api';
+import BoardsAPI from '../../lib/boards-api';
 const MockCustomFieldsAPI = CustomFieldsAPI as jest.MockedClass<typeof CustomFieldsAPI>;
+const MockBoardsAPI = BoardsAPI as jest.MockedClass<typeof BoardsAPI>;
 
 // `custom-fields set` is routed through the `update` intent (#109), so the write
 // leaves through `TxCards` → `CardsAPI.updateCard`, and the field VALUE is
@@ -112,10 +115,16 @@ beforeEach(() => {
     key: 'value' as const,
     value,
   }));
+  // `custom-fields list` settles its board argument before the read, because
+  // the field filter is client-side and a raw NAME would match no row (#167).
+  // The stand answers a name and passes an id through, as `resolveBoardId` does.
+  MockBoardsAPI.prototype.resolveBoardId = jest.fn(async (board: string) =>
+    board === 'Kanban' ? 'board-1' : board,
+  );
 });
 
 // =============================================================================
-// custom-fields list <board-id>
+// custom-fields list <board>
 // =============================================================================
 
 /**
@@ -155,6 +164,15 @@ describe('favro custom-fields list', () => {
     await runCli(['custom-fields', 'list', 'board-1']);
     expect(MockCustomFieldsAPI.prototype.listFields).toHaveBeenCalledWith('board-1');
     expect(consoleTableSpy).toHaveBeenCalled();
+  });
+
+  it('settles a board NAME to its id before the read', async () => {
+    // The field filter is client-side (Favro ignores `widgetCommonId` on
+    // `/customfields`), so a name forwarded raw matches no row and answers zero
+    // fields — the same silent empty the org-wide list replaced.
+    MockCustomFieldsAPI.prototype.listFields = jest.fn().mockResolvedValue([SAMPLE_TEXT_FIELD]);
+    await runCli(['custom-fields', 'list', 'Kanban']);
+    expect(MockCustomFieldsAPI.prototype.listFields).toHaveBeenCalledWith('board-1');
   });
 
   it('lists fields as JSON with --json flag', async () => {

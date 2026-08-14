@@ -308,8 +308,8 @@ Delete a comment.
 
 ## Custom Fields
 
-### `custom-fields list <boardId>` 📖 READ
-List all custom fields for a board.
+### `custom-fields list <board>` 📖 READ
+The custom fields whose definition names this board (name or boardId). Favro ignores the board filter on the wire, so it is applied client-side — a field naming no board is listed for none.
 
 ### `custom-fields get <fieldId>` 📖 READ
 Get field definition and options.

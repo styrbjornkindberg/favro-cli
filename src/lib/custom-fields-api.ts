@@ -146,19 +146,43 @@ export class CustomFieldsAPI {
   }
 
   /**
-   * List all custom field definitions for a board.
-   * Handles pagination automatically.
+   * The custom field definitions that name this board, or every one in the
+   * organisation when no board is given. Handles pagination automatically.
+   *
+   * **The board filter is CLIENT-SIDE, because Favro ignores it on the wire.**
+   * Measured 2026-08-14 against board `5dd75f0d…` on the #105 org: the request
+   * below, `widgetCommonId` and all, came back with **3797 rows, of which 2 name
+   * that board**. The param is still sent — it is the documented spelling and
+   * costs nothing — but nothing may depend on it; the filter under it is what
+   * makes the answer true. Unfiltered, `custom-fields list <board>` and the
+   * `customFields` facet of `favro context <board>` both reported the whole
+   * organisation as the board's, with no marker saying so.
+   *
+   * `widgetCommonId` is the only board attribution the wire offers, and only on
+   * THIS endpoint: `GET /customfields/<id>` omits the key entirely (measured the
+   * same day, on a field whose list row carries it), so a single-field read
+   * cannot be filtered this way.
+   *
+   * Two open edges, both measured, neither asserted about:
+   *   - 270 of those 3797 rows carry NO `widgetCommonId` at all. What board they
+   *     belong to is not readable from any endpoint probed, so they are not
+   *     listed for any board. A field that exists only in that form would be
+   *     missing here.
+   *   - a card can carry a field whose definition names a DIFFERENT board:
+   *     writing field `9G8jeC2LaMas7DHFi` (definition names board `28865e9b…`)
+   *     onto a card on board `5dd75f0d…` was accepted and echoed back. So this
+   *     is what the board DEFINES, not everything its cards can carry.
    */
   async listFields(boardId?: string): Promise<CustomFieldDefinition[]> {
     const params: Record<string, unknown> = { limit: 100 };
-    // Favro /customfields is org-scoped; widgetCommonId filters to a specific board
     if (boardId) {
       params.widgetCommonId = boardId;
     }
 
     // Favro endpoint: /customfields (no hyphen, org-scoped)
     const raw = await getAllPages<RawCustomField>(this.client, '/customfields', params);
-    return raw.map(normalizeCustomField);
+    const fields = raw.map(normalizeCustomField);
+    return boardId ? fields.filter(f => f.widgetCommonId === boardId) : fields;
   }
 
   /**

@@ -3,7 +3,7 @@
  * CLA-1787 FAVRO-025: Implement Custom Fields API
  *
  * Commands:
- *   favro custom-fields list <board-id>              — List all custom fields for a board
+ *   favro custom-fields list <board>                 — Custom fields defined on a board
  *   favro custom-fields get <field-id>               — Get custom field details
  *   favro custom-fields set <card> <field-id> <value> — Set custom field value on card
  *   favro custom-fields values <field-id>            — List all possible values for a field
@@ -90,31 +90,41 @@ export function registerCustomFieldsCommands(program: Command): void {
     .description(
       'Custom field operations — list, get, set, and inspect field values.\n\n' +
       'Subcommands:\n' +
-      '  list <board-id>                  List all custom fields for a board\n' +
+      '  list <board>                     Custom fields whose definition names a board\n' +
       '  get <field-id>                   Get custom field definition and options\n' +
       '  set <card> <field-id> <value> Set a custom field value on a card\n' +
       '  values <field-id>                List all allowed values for a select field\n\n' +
       'Examples:\n' +
-      '  favro custom-fields list <board-id>\n' +
+      '  favro custom-fields list <board>\n' +
       '  favro custom-fields get <field-id>\n' +
       '  favro custom-fields set <card> <field-id> "In Progress"\n' +
       '  favro custom-fields values <field-id>'
     );
 
-  // ─── custom-fields list <board-id> ─────────────────────────────────────────
+  // ─── custom-fields list <board> ────────────────────────────────────────────
   cfCmd
-    .command('list <board-id>')
-    .description('List all custom fields defined for a board')
+    .command('list <board>')
+    .description('List the custom fields whose definition names a board')
     .option('--limit <n>', 'Cap how many rows are printed; sets "truncated"')
-    .action(run(async (ctx: Ctx, boardId: string, options: { limit?: string }) => ({
-      // The fetch runs to completion; `--limit` cuts the PRINT (#99).
-      rows: await ctx.api.customFields.listFields(boardId),
-      limit: options.limit,
-      human: (fields: CustomFieldDefinition[]) => {
-        console.log(`Found ${fields.length} custom field(s) for board ${boardId}:`);
-        formatFieldsTable(fields);
-      },
-    })));
+    .action(run(async (ctx: Ctx, board: string, options: { limit?: string }) => {
+      // The board is SETTLED first. `listFields` filters client-side on
+      // `widgetCommonId` — Favro ignores the wire param (measured, see there) —
+      // and an unresolved NAME matches no row, so a name forwarded raw would
+      // answer zero fields as confidently as the org-wide list it replaced.
+      // `resolveBoardId` passes an exact id straight through and refuses an
+      // unknown name in the one wording (#82).
+      const boardId = await ctx.api.boards.resolveBoardId(board);
+
+      return {
+        // The fetch runs to completion; `--limit` cuts the PRINT (#99).
+        rows: await ctx.api.customFields.listFields(boardId),
+        limit: options.limit,
+        human: (fields: CustomFieldDefinition[]) => {
+          console.log(`Found ${fields.length} custom field(s) defined on board ${boardId}:`);
+          formatFieldsTable(fields);
+        },
+      };
+    }));
 
   // ─── custom-fields get <field-id> ──────────────────────────────────────────
   cfCmd

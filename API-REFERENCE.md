@@ -946,18 +946,18 @@ favro cards export abc123 --filter "assignee:alice" --filter "tag:bug" --format 
 
 ### `custom-fields list`
 
-List all custom field definitions for a board.
+The custom field definitions whose `widgetCommonId` names this board. Favro's `/customfields` is org-scoped and ignores the board filter on the wire, so the narrowing is client-side: fields that name no board are listed for none, and a card can still carry a field another board defines.
 
 **Syntax:**
 ```
-favro custom-fields list <board-id> [--limit <n>] [--human]
+favro custom-fields list <board> [--limit <n>] [--human]
 ```
 
 **Arguments:**
 
 | Argument | Required | Description |
 |---|---|---|
-| `<board-id>` | ✓ | Board ID to list custom fields for |
+| `<board>` | ✓ | Board name or boardId to list custom fields for |
 
 **Options:**
 
@@ -966,7 +966,7 @@ favro custom-fields list <board-id> [--limit <n>] [--human]
 
 **Output:**
 ```
-Found 3 custom field(s) for board board-001:
+Found 3 custom field(s) defined on board board-001:
 ┌───┬──────────┬────────────────┬────────────┬──────────┐
 │   │ ID       │ Name           │ Type       │ Required │
 ├───┼──────────┼────────────────┼────────────┼──────────┤
@@ -2168,7 +2168,7 @@ jobs:
 
 | Error | Cause | Solution |
 |-------|-------|----------|
-| `Field '<name>' not found` | Field ID or name is invalid | List fields: `favro custom-fields list <board-id>` |
+| `Field '<name>' not found` | Field ID or name is invalid | List fields: `favro custom-fields list <board>` |
 | `Invalid value for select field` | Value not in field's options | List options: `favro custom-fields values <field-id>` |
 | `Cannot set field without permissions` | Insufficient permissions on field | Ask board admin for write access |
 

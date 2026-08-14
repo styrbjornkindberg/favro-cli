@@ -473,7 +473,7 @@ bodies, whole. It has no `--limit` — the board is fetched to completion.
 
 | Command | Description |
 |---------|-------------|
-| `custom-fields list <boardId>` | List fields for a board |
+| `custom-fields list <board>` | Fields whose definition names the board |
 | `custom-fields get <fieldId>` | Get field definition |
 | `custom-fields values <fieldId>` | List allowed select values |
 | `custom-fields set <cardId> <fieldId> <value>` | Set a field value ⚠️ |
