@@ -32,7 +32,9 @@ function formatSprintCard(card: SprintCard, index: number): string {
     ? card.title.slice(0, 42) + '...'
     : card.title.padEnd(45);
   const effort = card.effort !== undefined ? String(card.effort).padStart(3) + 'pt' : '  —  ';
-  const priority = card.priority ? card.priority.slice(0, PRIORITY_COL).padEnd(PRIORITY_COL) : '  —' + ' '.repeat(PRIORITY_COL - 3);
+  // No `—` fallback: since the `readPriority` merge the label is always a non-empty
+  // string (`unset` / `unavailable` / the value), so the old branch was dead.
+  const priority = (card.priority ?? 'unset').slice(0, PRIORITY_COL).padEnd(PRIORITY_COL);
   return `  ${num}. ${id}  ${title}  ${priority}  ${effort}`;
 }
 

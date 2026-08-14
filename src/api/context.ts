@@ -173,7 +173,7 @@ const PRIORITY_FIELD = /priority|urgency|severity/i;
  * fabricated-zero species as the rest of #169, one vocabulary over. This is the
  * fuller list and the one kept.
  */
-const PRIORITY_BANDS: ReadonlyArray<readonly [RegExp, number]> = [
+export const PRIORITY_BANDS: ReadonlyArray<readonly [RegExp, number]> = [
   [/critical|blocker/i, 4],
   [/urgent/i, 4],
   [/high/i, 3],
@@ -219,7 +219,17 @@ export function readPriority(card: ContextCard): { label: string; score: number 
     : { label: 'unset', score: 0 };
 }
 
-/** The vocabulary `readPriority` scores, for the two `--help` texts to quote. */
+/**
+ * The vocabulary `readPriority` scores, for the two `--help` texts and the
+ * `sprint-plan` warning to quote rather than restate.
+ *
+ * Hand-written prose, so quoting it stops the three copies drifting from EACH
+ * OTHER but cannot stop this string drifting from `PRIORITY_BANDS` above. That
+ * gap is closed by a test, not by construction: `sprint-plan-api.test.ts` splits
+ * this string and asserts every token scores through `readPriority`, and pins the
+ * band count, so a sixth band or a renamed one reddens instead of leaving all
+ * three copies quietly lying.
+ */
 export const PRIORITY_VOCABULARY = 'critical/blocker, urgent > high > medium/normal > low';
 
 /**

@@ -30,12 +30,19 @@ export interface SprintCard {
   title: string;
   status?: string;
   assignees?: string[];
+  /**
+   * Always populated since the `readPriority` merge — the label, `'unset'` or
+   * `'unavailable'`, never absent. Optional only because older payloads omitted it.
+   */
   priority?: string;
   effort?: number;
   /**
-   * 0–4 numeric (higher = more important), or `null` where no priority field
-   * could have been matched by name at all (#169) — NOT the same as a card that
-   * was read and holds no priority, which is `0`.
+   * 0–4 numeric (higher = more important), or `null` for a priority this ranking
+   * could not place. TWO reasons, and a consumer must not read one for the other:
+   * either no priority field could be matched by name at all (`unavailable`), or
+   * one WAS matched onto a value outside the scored vocabulary (`readPriority`) —
+   * a `P1` is `{label: 'p1', score: null}`. NOT the same as a card that was read
+   * and holds no priority, which is `0` (#169).
    */
   priorityScore: number | null;
   /**

@@ -11,9 +11,12 @@ and streams are real and no request reached a live org.
 ## 5.0.0 — 2026-08-14
 
 **Section hygiene, measured, and NOT fixed here.** `v4.0.0` was tagged at 05:37 today
-(`a649bd8`); `git rev-list --count v4.0.0..HEAD` is 30 and
-`git diff v4.0.0..HEAD -- CHANGELOG.md` adds **227 lines** into the `4.0.0` section
-below — four top-level entries, one under its `Removed` and three under its `Fixed`
+(`a649bd8`), and this release's notes have been landing in its section ever since —
+measured at `db69400`, `git rev-list --count v4.0.0..HEAD` read 31 and
+`git diff v4.0.0..HEAD -- CHANGELOG.md` added **227 lines** into the `4.0.0` section
+below. Both counts move with every commit, so they are attributed to that sha rather
+than left to read as current; the sentence they support does not
+depend on them. Four top-level entries, one under its `Removed` and three under its `Fixed`
 (#160, #162, #169). So most of this release's work is currently filed under a version that has
 already shipped, which is the same defect `4.0.0`'s own opening paragraph records
 happening to `3.1.0`. This section holds only the ranking change below, because
@@ -43,13 +46,22 @@ What changes in output:
 | `next`, `Priority: urgent` | score 0, no priority reason | score **16**, `priority: urgent` |
 | `next`, `Priority: normal` | score 8 (matched `normal`) | score 8 — unchanged |
 | `next`, `Priority: P1` | `unset`, silent | `p1`, reported as outside the vocabulary |
+| `sprint-plan`, `Priority: blocker` | score **0** — no `blocker` key, and no band name is a substring of it | score **4** |
 | `sprint-plan`, `Priority: High` | displayed `High` | displayed `high` |
-| `sprint-plan`, no priority field | `priority` absent from JSON | `priority: "unset"` |
+| `sprint-plan`, no priority field | `priority` absent from JSON, cell rendered `—` | `priority: "unset"`, cell reads `unset` |
 | `sprint-plan`, `Priority Level: medium` | not read at all | scored 2 |
 
+`blocker` is the second fabricated zero the merge removes and it is worth naming
+separately: it did not merely rank low, it ranked **with the unset cards**, on the command
+whose entire product is that ranking.
+
 The scored vocabulary is `critical/blocker, urgent > high > medium/normal > low`, quoted
-into both `--help` texts from the one constant so they cannot drift from the code. Both
-also now name the field names each term matches, which neither did.
+into both `--help` texts and `sprint-plan`'s warning from one constant, so the three
+copies cannot drift from EACH OTHER. They could still drift from the code — the constant
+is hand-written prose — so a test splits it, asserts every token scores through
+`readPriority`, and pins `PRIORITY_BANDS.length`; a sixth band or a renamed one reddens
+instead of leaving all three copies lying. Both `--help` texts also now name the field
+names each term matches, which neither did.
 
 **A value that is set but outside the vocabulary is no longer reported as `unset`.**
 That was false in both copies — `unset` means "no priority field", and a card holding

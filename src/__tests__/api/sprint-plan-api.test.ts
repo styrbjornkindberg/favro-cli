@@ -12,7 +12,13 @@ import {
 // `extractEffort` moved to its one home in `api/context` (#89) and `readPriority`
 // followed it in #169's review round; `sprint-plan` is now a caller for both, and
 // their unit arms stay here — this is the file that has always held them.
-import { extractEffort, readPriority, type ContextCard } from '../../api/context';
+import {
+  PRIORITY_BANDS,
+  PRIORITY_VOCABULARY,
+  extractEffort,
+  readPriority,
+  type ContextCard,
+} from '../../api/context';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -129,6 +135,21 @@ describe('readPriority', () => {
 
   it('an id-keyed payload is "unavailable", score null — not a scored zero', () => {
     expect(read({ zxMLxD4zx4tSwJr75: ['YLanLiuXKA8JpvEsX'] })).toEqual({ label: 'unavailable', score: null });
+  });
+
+  it('PRIORITY_VOCABULARY names exactly what the bands score', () => {
+    // The two `--help` texts and `sprint-plan`'s warning all quote the constant, so
+    // they cannot drift from each OTHER — but the constant is hand-written prose and
+    // nothing in the code pins it to `PRIORITY_BANDS`. Add a sixth band, or rename
+    // one, and all three copies lie while the suite stays green. This is the pin.
+    const tokens = PRIORITY_VOCABULARY.split(/[,>/\s]+/).filter(Boolean);
+    expect(tokens).toEqual(['critical', 'blocker', 'urgent', 'high', 'medium', 'normal', 'low']);
+    for (const token of tokens) {
+      expect({ token, score: read({ Priority: token }).score }).toEqual({ token, score: expect.any(Number) });
+    }
+    // …and the other direction: a band the string does not name would pass the loop
+    // above untouched, so the count is pinned too.
+    expect(PRIORITY_BANDS).toHaveLength(5);
   });
 });
 
