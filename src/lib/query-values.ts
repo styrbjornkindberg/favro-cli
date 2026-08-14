@@ -19,7 +19,7 @@
 import FavroHttpClient from './http-client';
 import ColumnDirectory from './column-directory';
 import { cachedTags } from './tags-api';
-import CardReferenceResolver, { isSequentialReference } from './card-reference';
+import CardReferenceResolver, { sequentialNumber } from './card-reference';
 import { foldName } from './fold-name';
 import { invalidateCache } from './name-cache';
 import { resolveAssignee } from './assignee';
@@ -198,19 +198,51 @@ async function walk(node: QueryNode, ctx: ValueContext): Promise<QueryNode> {
  * rather than `cardId` — the common id is board-independent, so it still matches
  * an edge onto a card that lives on several boards.
  *
- * An unresolvable reference now REFUSES, in `CardReferenceResolver`'s own
- * wording, instead of answering zero rows.
+ * Deliberately NOT `CardReferenceResolver.toCardCommonId`, and NOT scoped to
+ * `ctx.boardId`. That route ends in `pickOneInstance`, which refuses a card
+ * living on two boards with *"pass --board"* and a card outside the listed board
+ * with *"missing or not visible to your key"* — both wrong here, and wrong in
+ * exactly the case this predicate exists for. `docs/commands.md` calls the
+ * blocking grammar board-agnostic ("a blocker is a blocker wherever it lives"),
+ * and a blocker on another board is the normal case, not an ambiguity: every
+ * instance of a card shares ONE `cardCommonId`, which is the only value needed,
+ * so there is nothing for a `--board` to disambiguate.
+ *
+ * The one honest refusal is a reference that names no card at all.
  */
 async function resolveCardReference(value: string, ctx: ValueContext): Promise<string> {
-  // `blocked-by:true` is "any blocker at all", not a reference —
-  // `isSequentialReference` already declines it, along with every hex id.
-  // (Bare `blocked-by` with no value does not reach here at all: `unblocked` is
-  // the only entry in the parser's `BARE_KEYWORDS`, so the bare spelling refuses
-  // as an unrecognised token.)
-  if (!isSequentialReference(value)) return value;
-  return new CardReferenceResolver(ctx.client).toCardCommonId(value, {
-    widgetCommonId: ctx.boardId,
-  });
+  // `blocked-by:true` is "any blocker at all", not a reference — and neither is
+  // a hex id. Both decline here and cost no call. (Bare `blocked-by` with no
+  // value does not reach this function at all: `unblocked` is the only entry in
+  // the parser's `BARE_KEYWORDS`, so the bare spelling refuses as an
+  // unrecognised token.)
+  const sequential = sequentialNumber(value);
+  if (sequential === undefined) return value;
+
+  const instances = await new CardReferenceResolver(ctx.client)
+    .query({ cardSequentialId: sequential });
+  const commonIds = [
+    ...new Set(instances.map((i) => i.cardCommonId).filter((id): id is string => Boolean(id))),
+  ];
+  if (commonIds.length === 1) return commonIds[0];
+
+  if (commonIds.length === 0) {
+    throw new ParseError(
+      `No card with sequentialId "${value}" — it is missing, or not visible to your key. ` +
+        `A sequentialId label is capitalised (CLA-1804). ` +
+        `Filter on a cardId or cardCommonId instead, or run 'favro cards list <board>' ` +
+        `to see what is there.`
+    );
+  }
+  // Every board instance and every fork of one card carries the same
+  // `cardCommonId`, so this is unreachable unless Favro answers one
+  // `cardSequentialId` with genuinely different cards. Refusing beats picking
+  // one: this predicate's whole defect was a silently wrong identifier.
+  throw new ParseError(
+    `sequentialId "${value}" came back naming ${commonIds.length} different cards ` +
+      `(${commonIds.join(', ')}), which one sequentialId cannot do — refusing to pick one. ` +
+      `Filter on a cardId or cardCommonId instead.`
+  );
 }
 
 /** Apply a per-value check across `=`/`~` and the comma list of `in(…)`. */

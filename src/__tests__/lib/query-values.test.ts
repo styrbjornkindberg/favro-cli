@@ -252,10 +252,24 @@ describe('refuseEmpty', () => {
 describe('blocked-by: / blocks: settle a sequentialId reference (#162)', () => {
   const CARD = { cardId: 'card-hex-1', cardCommonId: 'common-hex-1', widgetCommonId: 'board-1' };
 
-  function makeCardClient(entities: unknown[]) {
-    const get = jest.fn(async (url: string) => {
-      if (url === '/cards') return { entities };
-      throw new Error(`unexpected GET ${url}`);
+  /**
+   * A `/cards` stand that FILTERS by `widgetCommonId` the way Favro does.
+   *
+   * The first version of this stand ignored request params, which is precisely
+   * why it missed that the resolution was scoped to the board being listed: a
+   * fixture whose only instance sits on the listed board passes either way. A
+   * blocker on another board is the normal case for this predicate, so the
+   * stand has to be able to fail it.
+   */
+  function makeCardClient(entities: any[]) {
+    const get = jest.fn(async (url: string, config?: { params?: Record<string, unknown> }) => {
+      if (url !== '/cards') throw new Error(`unexpected GET ${url}`);
+      const board = config?.params?.widgetCommonId;
+      return {
+        entities: board === undefined
+          ? entities
+          : entities.filter((e) => e.widgetCommonId === board),
+      };
     });
     return { client: { get, organizationId: 'org-a' } as any, get };
   }
@@ -273,7 +287,40 @@ describe('blocked-by: / blocks: settle a sequentialId reference (#162)', () => {
   test('a reference that resolves to nothing REFUSES instead of matching nothing', async () => {
     const { client } = makeCardClient([]);
     await expect(validateQueryValues(parseQuery('blocked-by:CLA-9999'), { client }))
-      .rejects.toThrow(/CLA-9999/);
+      .rejects.toThrow(/No card with sequentialId "CLA-9999"/);
+  });
+
+  /**
+   * The blocking grammar is board-agnostic — `docs/commands.md`: "a blocker is a
+   * blocker wherever it lives" — so resolution must not be scoped to the board
+   * being listed. Scoping it made a blocker on another board refuse as "missing
+   * or not visible to your key", and a blocker on two boards refuse as an
+   * ambiguity that does not exist: every instance shares one `cardCommonId`,
+   * which is the only value this resolution needs.
+   */
+  test('a blocker on ANOTHER board still resolves, with --board in play', async () => {
+    const offBoard = { cardId: 'far-id', cardCommonId: 'far-common', widgetCommonId: 'board-9' };
+    const { client, get } = makeCardClient([offBoard]);
+    const q = await validateQueryValues(parseQuery('blocked-by:CLA-1804'), {
+      client,
+      boardId: 'board-1',
+    });
+    expect(pred(q.ast).value).toBe('far-common');
+    // The board must not ride along: this stand filters on it, so a scoped
+    // request would have come back empty and refused.
+    expect(get).toHaveBeenCalledWith('/cards', {
+      params: expect.not.objectContaining({ widgetCommonId: expect.anything() }),
+    });
+  });
+
+  test('a blocker on SEVERAL boards resolves rather than refusing as ambiguous', async () => {
+    const onTwo = [
+      { cardId: 'inst-a', cardCommonId: 'shared-common', widgetCommonId: 'board-1' },
+      { cardId: 'inst-b', cardCommonId: 'shared-common', widgetCommonId: 'board-2' },
+    ];
+    const { client } = makeCardClient(onTwo);
+    const q = await validateQueryValues(parseQuery('blocks:CLA-1804'), { client });
+    expect(pred(q.ast).value).toBe('shared-common');
   });
 
   test('a hex id is passed through untouched and costs no call', async () => {
