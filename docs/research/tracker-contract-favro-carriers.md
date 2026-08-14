@@ -164,10 +164,35 @@ tables can stay terse. "One call" means: present on a row of a single
 | **assignment** (`assignments[].userId`) | `PUT {addAssignmentIds}` / `{removeAssignmentIds}` (a)(d) | **Yes** — `assignments` on every row (d) | Yes — avatars on the card | No — but see §1.4-i: assigning **forks a second card instance** onto the assignee's to-do list |
 | **`assignments[].completed`** | `PUT {completeAssignments:[{userId,completed}]}` (a)(d, §1.4-iv) | **Yes** — nested in `assignments` (d) | Yes — per-assignee tick (e) inference | No |
 | **custom field** (`customFields`) | `PUT {customFields:[{customFieldId,value}]}` (a); definitions read via `GET /customfields` (`src/lib/custom-fields-api.ts`) | **Yes** — `customFields` on every row, as `{customFieldId, value}` pairs with **no name** (d) | Yes — a named field on the card face | No |
-| **dependency edge** (`dependencies[].isBefore`) | `POST /cards/:cardId/dependencies {dependencies:[{cardId,isBefore}]}` (a), verified live in #12 | **Yes — settled by §1.3** (d) | Yes, and this is *why* wayfinder wants it (capability C) — but **which way `isBefore` reads in the UI is still unconfirmed** (#1, open) (e) | No |
+| **dependency edge** (`dependencies[].isBefore`) | `POST /cards/:cardId/dependencies {dependencies:[{cardId,isBefore}]}` (a), verified live in #12 | **Yes — settled by §1.3** (d) | Yes, and this is *why* wayfinder wants it (capability C). **Direction settled 2026-08-13, both halves** — see the note below the table | No |
 | **`parentCardId`** | `POST`/`PUT /cards` `{parentCardId}` (a); **same-widget only, never cross-board** (#4) | **Yes** — `parentCardId` on every row (d) | Yes — nesting under the parent | (c) unknown — whether dragging a child out of its parent clears `parentCardId`. Plausible and untested |
 | **`archived`** | `PUT {archive:true}` (a)(d) | **Yes** — `archived` on every row; but the default list **includes** archived cards, so exclusion is client-side (d, §1.4-ii) | Yes — the card leaves the board view | (c) unknown — archiving is a menu action, not a drag; low risk |
 | **comment** | `POST /comments {cardCommonId, comment}` (a); `src/api/comments.ts:100` | **No.** Comments are a separate endpoint keyed on **`cardCommonId`**, one call per card — **derived N** across a frontier | Yes — the card's comment thread | No |
+
+### `isBefore` direction — settled 2026-08-13, both halves
+
+Open since #1 and closed by the 4.0.0 live runs. On card X's row,
+`{cardId: Y, isBefore: true}` means **Y blocks X**.
+
+- **API half — measured.** Five edges across two live runs, both directions. The edge is
+  stored on **both** cards, mirrored: the reverse row carries `isBefore: false` and a
+  `reverseCardId`. `GET /cards` inlines the edge with the same four keys the dedicated
+  endpoint returns — `{cardId, isBefore, cardCommonId, reverseCardId}` — and **neither
+  carries `cardSequentialId`**. This confirms `dependency-direction.ts:21-27` live rather
+  than by inference.
+- **UI half — confirmed visually by the repo owner**, not by a payload. On the probe board,
+  the blocked card files its blocker under waiting-on/blocked-by, matching the CLI's
+  vocabulary. Recorded as human visual confirmation, since nothing here can reproduce it
+  from a response.
+
+The refutation case was named in advance and did not occur: had the UI filed the blocker
+under *blocks/before*, `--blocked-by` would be writing edges backwards and every
+`cards link --type blocks` in the wild would be reversed.
+
+Consequence found while settling it: `normalizeInlinedDependency` had been **discarding the
+`cardId`** off every inlined edge, so `blocked-by:` / `blocks:` matched only a
+`cardCommonId` and silently returned nothing for the id `cards list` prints. Four comments
+in the tree asserted the inlined edge could not carry it. Fixed under #162.
 
 Two carriers the skills might expect that Favro does **not** have:
 
