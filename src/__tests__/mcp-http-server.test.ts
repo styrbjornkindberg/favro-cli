@@ -12,8 +12,10 @@ import { IncomingMessage, ServerResponse } from 'http';
 jest.mock('../lib/http-client');
 
 import FavroHttpClient from '../lib/http-client';
-import { resolveOrg, handleMcpRequest, parseCreds, configDirFor } from '../mcp-http-server';
+import { resolveOrg, handleMcpRequest, parseCreds, configDirFor, createHttpServer } from '../mcp-http-server';
 import * as os from 'os';
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { version: pkgVersion } = require('../../package.json') as { version: string };
 
 const MockClient = FavroHttpClient as unknown as jest.Mock;
 
@@ -60,8 +62,19 @@ function fakeRes(): FakeRes {
   return res;
 }
 
-function fakeReq(headers: Record<string, string>): IncomingMessage {
-  return { headers, method: 'POST', url: '/mcp', on: jest.fn() } as unknown as IncomingMessage;
+function fakeReq(headers: Record<string, string>, method = 'POST', url = '/mcp'): IncomingMessage {
+  return { headers, method, url, on: jest.fn() } as unknown as IncomingMessage;
+}
+
+/**
+ * Drive the route gate without binding a port: createServer's callback is
+ * registered as the server's 'request' listener, so emitting it runs the real
+ * routing with our fakes.
+ */
+function route(method: string, url: string, headers: Record<string, string> = {}): FakeRes {
+  const res = fakeRes();
+  createHttpServer().emit('request', fakeReq(headers, method, url), res);
+  return res;
 }
 
 function basic(email: string, token: string): string {
@@ -98,6 +111,44 @@ describe('configDirFor', () => {
 
   test('a different token for the same email yields a different dir', () => {
     expect(configDirFor(a)).not.toBe(configDirFor({ email: a.email, token: 'other' }));
+  });
+});
+
+// ─── Route gate (createHttpServer) ───────────────────────────────────────────
+
+describe('GET /health', () => {
+  test('200 with the package version', () => {
+    const res = route('GET', '/health');
+
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['Content-Type']).toBe('application/json');
+    expect(JSON.parse(res.body)).toEqual({ status: 'ok', version: pkgVersion });
+  });
+
+  test('needs no credentials — a probe cannot send any', () => {
+    // Same call as above with an explicitly empty header set: the 401 gate in
+    // handleMcpRequest must never be reached for /health.
+    const res = route('GET', '/health', {});
+
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['WWW-Authenticate']).toBeUndefined();
+  });
+
+  test('leaks nothing but status and version', () => {
+    expect(Object.keys(JSON.parse(route('GET', '/health').body)).sort()).toEqual(['status', 'version']);
+  });
+
+  test('405 on a method other than GET', () => {
+    const res = route('POST', '/health');
+
+    expect(res.statusCode).toBe(405);
+    expect(res.body).toContain('Only GET /health');
+  });
+
+  test('an unknown path still 404s', () => {
+    const res = route('GET', '/healthz');
+
+    expect(res.statusCode).toBe(404);
   });
 });
 
