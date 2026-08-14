@@ -15,6 +15,7 @@ import * as config from '../../lib/config';
 import * as safety from '../../lib/safety';
 import WidgetsAPI from '../../lib/widgets-api';
 import BoardsAPI from '../../lib/boards-api';
+import FavroHttpClient from '../../lib/http-client';
 import { passThroughScopeResolution } from '../../test-support/scope-passthrough';
 
 jest.mock('../../lib/http-client');
@@ -25,6 +26,28 @@ jest.mock('../../lib/boards-api');
 
 const MockWidgets = WidgetsAPI as jest.MockedClass<typeof WidgetsAPI>;
 const MockBoards = BoardsAPI as jest.MockedClass<typeof BoardsAPI>;
+const MockClient = FavroHttpClient as jest.MockedClass<typeof FavroHttpClient>;
+
+/**
+ * The two card references this file drives, and what `GET /cards/<ref>` answers
+ * for each — the read `add-board-instance` now makes to settle the card to a
+ * `cardCommonId` (#162 item 8).
+ *
+ * `ccid-1` answering `403 Access denied` is the wire's own shape, not a
+ * convenience: that is what Favro returns for a `cardCommonId` on this path, and
+ * `classifyFavroError` reads it as a classified not-found, which is what tells
+ * the resolver the reference was already a `cardCommonId`. Serving a 200 here
+ * would model an endpoint Favro does not have.
+ */
+const CARD_GET: Record<string, { cardId: string; cardCommonId: string }> = {
+  'card-1': { cardId: 'card-1', cardCommonId: 'ccid-1' },
+};
+
+const accessDenied = () =>
+  Object.assign(new Error('Request failed with status code 403'), {
+    isAxiosError: true,
+    response: { status: 403, data: { message: 'Access denied' } },
+  });
 
 /** What the one board in this file is called, and what it settles to. */
 const BOARD_NAME = 'Backlog - Web Hub';
@@ -85,6 +108,13 @@ beforeEach(() => {
   (safety.dryRunLog as jest.Mock).mockImplementation((verb: string, noun: string, detail: string) =>
     console.log(`[dry-run] ${verb} ${noun}: ${detail}`),
   );
+
+  MockClient.prototype.get = jest.fn(async (url: string) => {
+    const ref = /\/cards\/(.+)$/.exec(url)?.[1];
+    const card = ref ? CARD_GET[ref] : undefined;
+    if (!card) throw accessDenied();
+    return card;
+  }) as unknown as typeof MockClient.prototype.get;
 
   MockWidgets.prototype.listWidgetsForCard = jest.fn().mockResolvedValue([
     { widgetCommonId: 'w-1', boardId: 'board-a', type: 'board', name: 'Platform' },
@@ -200,6 +230,67 @@ describe('widgets add', () => {
     expect(payload).toMatchObject({ cardId: 'card-1' });
     expect(payload.widgetCommonId).toBeUndefined();
     // The format does not change what the command claims.
+    expect(process.exitCode).toBe(1);
+  });
+
+  /**
+   * The identifier half of #162 item 8.
+   *
+   * `addWidgetToBoard`'s first step is `GET /cards?cardCommonId=<x>`, which Favro
+   * answers `403 Access denied` for a `cardId` — and a `cardId` is what `cards
+   * list --json` prints as a card's own identity, so it is the reference a caller
+   * pastes back. The intent settles the reference first, so the commit is handed
+   * the id the endpoint actually takes.
+   *
+   * Both polarities, because the pass-through arm above already drives a
+   * `cardCommonId`: `card-1` must NOT reach the write, and `ccid-1` must.
+   */
+  test('a cardId is settled to its cardCommonId before the commit', async () => {
+    await runCli(['widgets', 'add', 'board-b', 'card-1', '-y']);
+
+    expect(MockWidgets.prototype.addWidgetToBoard).toHaveBeenCalledWith('board-b', 'ccid-1', undefined);
+    expect(MockWidgets.prototype.addWidgetToBoard).not.toHaveBeenCalledWith(
+      'board-b',
+      'card-1',
+      undefined,
+    );
+    expect(output()).toContain('✓ Widget added to board (w-3)');
+  });
+
+  /**
+   * The message half of #162 item 8, at the command that reported it.
+   *
+   * The table used to put `error.message` into the result raw, so a 403 arrived
+   * as axios' `Request failed with status code 403` — a sentence about a socket
+   * — while every read command said `Favro said "Access denied" …` for the same
+   * response. Agents are told to reason about a 403; the reasoning was not
+   * available on this path.
+   *
+   * Asserted on the MACHINE shape, which is the one an agent parses, and with
+   * the raw sentence asserted absent: a message that merely CONTAINS the
+   * classification while still leaking the axios line is the same defect.
+   */
+  test('a wire refusal reports Favro’s own message, not axios’ status line', async () => {
+    MockWidgets.prototype.addWidgetToBoard = jest.fn().mockRejectedValue(accessDenied());
+
+    await runJson(['widgets', 'add', 'board-b', 'ccid-1', '-y']);
+
+    const reported = JSON.parse(output());
+    expect(reported.error).toContain('Favro said "Access denied"');
+    expect(reported.error).not.toContain('Request failed with status code');
+    expect(process.exitCode).toBe(1);
+  });
+
+  test('a failure with no wire response keeps its own wording', async () => {
+    // The foreign arm: only a classified response is reworded. Without this the
+    // rewrite could swallow every message and nothing would notice.
+    MockWidgets.prototype.addWidgetToBoard = jest
+      .fn()
+      .mockRejectedValue(new Error('socket hang up'));
+
+    await runJson(['widgets', 'add', 'board-b', 'ccid-1', '-y']);
+
+    expect(JSON.parse(output()).error).toBe('socket hang up');
     expect(process.exitCode).toBe(1);
   });
 

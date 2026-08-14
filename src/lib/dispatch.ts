@@ -65,7 +65,7 @@ import FavroHttpClient from './http-client';
 import { FavroConfig } from './config';
 import CardsAPI, { Card } from './cards-api';
 import { assertScope } from './safety';
-import { classifyThrownError, isTransientStatus, isWireFailure } from './favro-error';
+import { classifyThrownError, failureMessage, isTransientStatus, isWireFailure } from './favro-error';
 import { foldName } from './fold-name';
 import { CompensationLog, Orphan, ReadTx, TxCards, TxOutcome } from './tx-cards';
 import { CommittedWidget } from './widgets-api';
@@ -453,7 +453,11 @@ export async function dispatch<T = unknown>(
       intent: name,
       outcome,
       retryable: retryAdvice(outcome, error),
-      error: error instanceof Error ? error.message : String(error),
+      // `failureMessage`, not `error.message`: the raw axios sentence names a
+      // status code and nothing else, and it is what `widgets add` leaked as
+      // `"error":"Request failed with status code 403"` while every read command
+      // said `Favro said "Access denied" …` for the same response (#162 item 8).
+      error: failureMessage(error),
       ...(orphans.length > 0 ? { orphans } : {}),
     };
   }
@@ -1546,7 +1550,16 @@ registerIntent<AddBoardInstanceArgs, CommittedWidget>({
   ],
   board: async (a, tx) => tx.resolveBoardId(a.board),
   // Last statement, for `move-board`'s reason.
-  run: (a, tx) => tx.commitToBoard(a.board, a.card, a.column),
+  //
+  // The card SETTLES to a `cardCommonId` first (#162 item 8). `commitToBoard`'s
+  // first step is `GET /cards?cardCommonId=<x>`, and Favro answers that with
+  // `403 Access denied` for a `cardId` — so `widgets add <board> <cardId>`, with
+  // the id `cards list` prints as a card's own identity, failed at an honest exit
+  // code and a message about neither the card nor the identifier. `tx` already
+  // owns the translation the comments, tasks and tasklists paths take; asking for
+  // it here costs one card read and also makes a `CLA-1804` reference reach this
+  // intent, which no spelling of the argument could before.
+  run: async (a, tx) => tx.commitToBoard(a.board, await tx.resolveCardCommonId(a.card), a.column),
 });
 
 export interface RemoveAllEdgesArgs {

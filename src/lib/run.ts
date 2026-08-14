@@ -29,7 +29,7 @@ import { capRows, noteTruncation, Unreachable, writeEnvelope } from './read-shap
 import { reportDispatch } from './report-dispatch';
 import { DispatchResult, retryAdvice } from './dispatch';
 import { isVerbose, logError } from './error-handler';
-import { classifyThrownError } from './favro-error';
+import { failureMessage } from './favro-error';
 import { RefusalError } from './refusal';
 
 import { CardsAPI } from './cards-api';
@@ -486,12 +486,13 @@ const stringify = (value: unknown, pretty: boolean): string =>
 
 // ─── errors ──────────────────────────────────────────────────────────────────
 
-/** The same wording `logError` puts on stderr — one message, both modes. */
-function messageOf(error: unknown): string {
-  const classified = classifyThrownError(error);
-  if (classified?.isFailure) return classified.message;
-  return error instanceof Error ? error.message : String(error);
-}
+/**
+ * The same wording `logError` puts on stderr — one message, both modes.
+ *
+ * The expression moved to `favro-error.ts` in #162 so the dispatch table could
+ * ask the same question; this alias is what keeps the name this file reads by.
+ */
+const messageOf = failureMessage;
 
 /**
  * "Should I try again?" — `retryAdvice`, the ONE expression (#134, and the

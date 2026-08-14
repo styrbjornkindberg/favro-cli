@@ -173,6 +173,29 @@ export function classifyThrownError(error: unknown): FavroErrorClassification | 
 }
 
 /**
+ * What a caller should be TOLD a failure was — the classifier's wording when it
+ * recognises the response, and the error's own message otherwise.
+ *
+ * One expression, two readers, and they disagreed until #162: the CLI's error
+ * boundary (`run.ts`) has always asked the classifier, while the dispatch table
+ * reported `error.message` raw. So the same 403 read `Favro said "Access denied"
+ * — the resource is missing or not visible to your key.` on a read command and
+ * `Request failed with status code 403` from `widgets add`, which is axios'
+ * sentence about a socket rather than Favro's about the request. The wording an
+ * agent is told to reason about must not depend on which of the two paths a
+ * command happens to take.
+ *
+ * Lives here rather than in `run.ts` because `run.ts` imports `dispatch.ts`; a
+ * shared expression in either of those is a cycle, and this module is the leaf
+ * both already depend on.
+ */
+export function failureMessage(error: unknown): string {
+  const classified = classifyThrownError(error);
+  if (classified?.isFailure) return classified.message;
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
  * Did this failure come off the wire AT ALL? (#134)
  *
  * `classifyThrownError` answers "which kind of HTTP failure", and returns
