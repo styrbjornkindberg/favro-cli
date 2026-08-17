@@ -114,6 +114,38 @@ request-logging stand, config lock `coll-file`: `favro health` issued `GET
 /collections/coll-file` with the variable unset and `GET /collections/coll-env` with
 `FAVRO_SCOPE_COLLECTION_ID=coll-env` exported.
 
+### Internal
+
+- **The test harness inherited the developer's own `FAVRO_SCOPE_COLLECTION_ID`, so having a
+  lock exported — the whole point of the feature above — failed suites that never mentioned
+  it.** Jest hands each worker the ambient environment and `readConfig()` reads the variable
+  on every call, so the lock walked into suites as a config value nobody wrote. Measured on
+  `7e8fe93` with `npx jest src/__tests__/run.test.ts` (52 tests): **4 failed** with
+  `FAVRO_SCOPE_COLLECTION_ID=coll-ambient` — two of them the new scope-refusal ratchets,
+  since `checkCollectionScope` now reaches the env through `scopeRemedy()`, and two of them
+  older than #175 — and **42 failed** with the variable set EMPTY, because an empty value is
+  an error by design (above) and every `readConfig()` therefore throws. Across the whole
+  pre-change suite (185 suites / 3762 tests) a `coll-ambient` lock failed **14 suites / 142
+  tests**, not just `run.test.ts`'s 4. All are 0 now, and a full run is 186 suites / 3765
+  tests passing with the variable unset, set, or empty.
+
+  The scrub is a `setupFiles` entry (`src/test-support/scrub-ambient-env.ts`) and not a
+  hook: the four suites that drive the variable capture it at MODULE scope and restore what
+  they captured, so a `beforeAll` scrub would have each teardown faithfully hand the ambient
+  value to the next test. `jest.integration.config.js` is left alone deliberately — those
+  tests do real writes against a real org, where the lock is the guardrail rather than noise.
+
+- **`FAVRO_API_TOKEN` was the same bug one variable over, and likelier to bite.** It is the
+  CLI's credential, `.github/workflows/ci.yml` exports it under that exact name, and
+  `resolveApiKey` falls back to it last — so an authenticated shell failed exactly the suites
+  asserting that an UNSET credential refuses. Measured on `7e8fe93`,
+  `FAVRO_API_TOKEN=ambient-tok npx jest`: **8 tests across 4 suites** (`auth-commands`, `run`,
+  `refusal-drift`, `config.integration`). Suites scrubbed it one at a time and one had the gap
+  (`refusal-drift.test.ts:169` deletes `FAVRO_API_KEY` and not the token), so it is deleted in
+  the same setup file. Two named deletes rather than a loop over `FAVRO_*`: the rest of the
+  family was measured clean, and a loop would also take `FAVRO_JEST_TMPROOT`, which
+  `jest.global-setup.js` sets and the run needs.
+
 ### Fixed
 
 #### A scope refusal under the override told you to run a command that refuses (#175)
