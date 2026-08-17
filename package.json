@@ -1,6 +1,6 @@
 {
   "name": "@square-moon/favro-cli",
-  "version": "5.0.1",
+  "version": "5.1.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/styrbjornkindberg/favro-cli.git"
