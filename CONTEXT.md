@@ -236,7 +236,13 @@ Four consequences, each a decision rather than a side effect:
   consumer already read `scopeCollectionName ?? scopeCollectionId`. `scope set` and `scope
   clear` **refuse** under an active override rather than writing a value nothing in that
   shell reads, and `scope show` names the SOURCE of the effective lock — without that the
-  two disagree and no output explains why.
+  two disagree and no output explains why. Every scope refusal's remediation line names the
+  source as well (#175): under the override it says to re-export the variable, because `Run
+  'favro scope set …'` is advice that refuses. The wordings are `commands/scope.ts`'s own,
+  exported from `config.ts` — one string per instruction, and one module that knows where the
+  lock came from. The ORG-WIDE guard's line names two steps, not one: unsetting the variable
+  drops only the session lock, and the file's lock then refuses the same write again, so
+  `unset …` alone would have been the very second refusal #175 exists to remove.
 
 The override's reach is **wider than the write guard**, and that is worth knowing before
 exporting it: ten commands read `config.scopeCollectionId` as their DEFAULT READ SCOPE when

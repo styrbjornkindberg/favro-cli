@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { scopeOverride, writeConfig } from '../lib/config';
+import { RETARGET_SHELL, UNLOCK_SHELL, scopeOverride, writeConfig } from '../lib/config';
 import { Collection } from '../lib/collections-api';
 import { RefusalError } from '../lib/refusal';
 import { AnonymousCtx, Ctx, run } from '../lib/run';
@@ -35,8 +35,7 @@ export function registerScopeCommand(program: Command): void {
       // there is nothing to verify.
       refuseIfOverridden(
         'scope set',
-        'To retarget this shell: export FAVRO_SCOPE_COLLECTION_ID=<collectionId>. ' +
-          'To manage the file\n  lock instead: unset FAVRO_SCOPE_COLLECTION_ID.',
+        `${RETARGET_SHELL}. To manage the file\n  lock instead: unset FAVRO_SCOPE_COLLECTION_ID.`,
       );
       // On stderr: it prints while the command is still working, and stdout
       // carries the result.
@@ -89,7 +88,7 @@ export function registerScopeCommand(program: Command): void {
     .action(run({ anonymous: true }, async (ctx: AnonymousCtx) => {
       refuseIfOverridden(
         'scope clear',
-        'To unlock this shell: unset FAVRO_SCOPE_COLLECTION_ID.',
+        `${UNLOCK_SHELL}.`,
       );
       if (!ctx.config.scopeCollectionId) {
         return { item: { cleared: false }, human: () => 'No scope lock currently set.' };

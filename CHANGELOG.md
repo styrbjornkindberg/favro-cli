@@ -114,6 +114,65 @@ request-logging stand, config lock `coll-file`: `favro health` issued `GET
 /collections/coll-file` with the variable unset and `GET /collections/coll-env` with
 `FAVRO_SCOPE_COLLECTION_ID=coll-env` exported.
 
+### Fixed
+
+#### A scope refusal under the override told you to run a command that refuses (#175)
+
+Every scope-lock refusal ended with `Run 'favro scope set <collectionId>' to change it, or
+pass --force to override.` — advice that fails under `FAVRO_SCOPE_COLLECTION_ID`, because
+`scope set` refuses while the override is live (above, by design). The guardrail message
+every write can produce spent the user a second refusal to self-correct from.
+
+The remediation line now names the lock's SOURCE. Measured on `dist/cli.js` against a local
+stand, config lock `File Lock` (`coll-file`), both polarities of the same command:
+
+```
+$ FAVRO_SCOPE_COLLECTION_ID=coll-b favro boards delete brd-a --dry-run --human
+✗ Scope violation: board "Board brd-a" is not in locked collection "coll-b".
+  Run 'favro scope show' to see your current lock.
+  To retarget this shell: export FAVRO_SCOPE_COLLECTION_ID=<collectionId>, or pass --force to override.
+
+$ favro boards delete brd-a --dry-run --human        # variable unset
+✗ Scope violation: board "Board brd-a" is not in locked collection "File Lock".
+  Run 'favro scope show' to see your current lock.
+  Run 'favro scope set <collectionId>' to change it, or pass --force to override.
+```
+
+Following the new line verbatim works: `export FAVRO_SCOPE_COLLECTION_ID=coll-a` then the
+same command previews at exit 0. The file arm is byte-identical to what shipped.
+
+All three guards that carry a remediation line move together — the board guard
+(`assertScope`), the collection guard (`checkCollectionScope`, measured: `collections delete
+coll-other` refuses with the same two wordings), and the org-wide guard (`assertOrgScope`),
+whose advice was `Run 'favro scope clear' to unlock` — `scope clear` refuses under an
+override for exactly the same reason `scope set` does.
+
+The org-wide arm names TWO steps, and the second one is not padding. Unsetting the variable
+only drops the SESSION lock; the config file's lock then applies and refuses the same write
+again. Measured on `dist/cli.js`, config lock `File Lock` (`coll-file`):
+
+```
+$ FAVRO_SCOPE_COLLECTION_ID=coll-env favro tags delete tag-1 --dry-run --human -y
+✗ Scope violation: Deleting tag tag-1 is an ORGANIZATION-WIDE write — it reaches every board in the
+  organization, including every board outside your locked collection ("coll-env").
+  …
+  To unlock this shell: unset FAVRO_SCOPE_COLLECTION_ID — then 'favro scope clear' if the
+  config file still locks you. Or pass --force to allow this single write.
+
+$ favro tags delete tag-1 --dry-run --human -y       # step 1 done, file lock surfaces
+✗ Scope violation: Deleting tag tag-1 is an ORGANIZATION-WIDE write …
+  … outside your locked collection ("File Lock").
+```
+
+An earlier draft of this fix said only `unset FAVRO_SCOPE_COLLECTION_ID`, which is the whole
+answer for `scope clear`'s own refusal and NOT for this one — the same defect this entry
+closes, in the pair nobody had checked. `safety.test.ts` now walks both steps and asserts
+that step 1 alone still refuses, so the second step cannot be dropped again unnoticed.
+
+The env wordings are `commands/scope.ts`'s own, not a second phrasing of the same
+instruction: both refusals now read one exported string each, and `config.ts` stays the only
+module that asks where the lock came from.
+
 ### Not fixed, deliberately
 
 `writeConfig` is still a read-modify-write with no lock, so two near-simultaneous writers

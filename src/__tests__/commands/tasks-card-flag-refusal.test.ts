@@ -55,6 +55,17 @@ jest.mock('../../lib/config');
 jest.mock('../../lib/cards-api');
 jest.mock('../../lib/tasks-api');
 
+/**
+ * The two remedy lines every scope refusal ends with live in `config.ts` (#175),
+ * and this file AUTOMOCKS that module — which turns them into `jest.fn()`s
+ * returning `undefined`, so the real `assertScope` renders a last line of
+ * literal `  undefined`. Arms 4 and 5 compare the CLI's message to
+ * `assertScope`'s own, so both sides corrupt identically and the comparison
+ * still passes while measuring a mock artefact. Restoring the real
+ * implementations keeps "byte for byte" about PRODUCTION bytes.
+ */
+const realConfig = jest.requireActual<typeof config>('../../lib/config');
+
 // The reporter, recorded AND called through. `logError` is the single funnel every
 // legacy `catch` in `tasks.ts` uses, so its first argument is the error object the
 // user's refusal was rendered from — and rendering still happens, so the stream
@@ -127,6 +138,8 @@ beforeEach(() => {
 
   (config.resolveApiKey as jest.Mock).mockResolvedValue('test-token');
   (config.readConfig as jest.Mock).mockResolvedValue(LOCK);
+  (config.scopeRemedy as jest.Mock).mockImplementation(realConfig.scopeRemedy);
+  (config.scopeUnlockRemedy as jest.Mock).mockImplementation(realConfig.scopeUnlockRemedy);
 
   // `board-x` sits in `coll-other`; nothing sits in `coll-locked`.
   MockHttpClient.prototype.get = jest
@@ -323,6 +336,11 @@ describe.each(WRITES)('tasks %s with --card at a board outside the lock', (_name
 
     const error = refusal();
     expect(error.message).toBe(await sharedGuardSays('board-x'));
+    // Two identically corrupted strings compare equal. `config.ts` is automocked
+    // here and owns the remedy line (#175), so this is what keeps the assertion
+    // above about production bytes rather than about `jest.fn()`'s `undefined`.
+    expect(error.message).toContain("Run 'favro scope set <collectionId>' to change it");
+    expect(error.message).not.toContain('undefined');
     // A non-empty boardId is the proof the board RESOLVED and the out-of-lock
     // arm fired, rather than the write falling into the boardless arm again.
     expect((error as ScopeError).boardId).toBe('board-x');

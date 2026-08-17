@@ -86,6 +86,55 @@ export function scopeOverride(): string | undefined {
 }
 
 /**
+ * The two remedies for a lock that came from the environment (#175), stated
+ * once. `commands/scope.ts` prints them from `refuseIfOverridden` and the guards
+ * in `safety.ts` print them through the two helpers below, so there is ONE
+ * wording per instruction rather than one per site. Trailing punctuation is the
+ * caller's, since each site continues the sentence differently.
+ */
+export const RETARGET_SHELL = 'To retarget this shell: export FAVRO_SCOPE_COLLECTION_ID=<collectionId>';
+export const UNLOCK_SHELL = 'To unlock this shell: unset FAVRO_SCOPE_COLLECTION_ID';
+
+/**
+ * The remediation line a scope refusal ends with, aware of WHERE THE LOCK CAME
+ * FROM (#175).
+ *
+ * `Run 'favro scope set …'` is wrong advice under `FAVRO_SCOPE_COLLECTION_ID`:
+ * `scope set` refuses while the override is live (#174, by design), so following
+ * the guardrail's own advice produced a second refusal. The source is known here
+ * and nowhere else — the same reason #174 put the merge in `readConfig` rather
+ * than in each reader — so the guards ask for a line instead of reading the
+ * variable a second time.
+ *
+ * `scopeRemedy` is the retarget-or-force flavour (board and collection guards);
+ * `scopeUnlockRemedy` the unlock-or-force one (`assertOrgScope`, whose write
+ * cannot be narrowed to any lock). Both file arms are byte-identical to what
+ * shipped — two ratchets pin them.
+ *
+ * The unlock arm names TWO steps, and that is not padding. `UNLOCK_SHELL` alone
+ * is the right whole answer for `scope clear`'s own refusal — unset the variable
+ * and the command works — but it is NOT the whole answer for an org-wide write:
+ * unsetting only drops the session lock, and the config file's lock then applies
+ * and refuses the same write again. Measured on `dist/cli.js`: file lock
+ * `coll-file`, `FAVRO_SCOPE_COLLECTION_ID=coll-env`, `tags delete tag-1` refused;
+ * unset the variable and it refused a second time. One sentence per instruction
+ * still holds — the two sites share `UNLOCK_SHELL`, and only this one continues
+ * it.
+ */
+export function scopeRemedy(): string {
+  return scopeOverride() === undefined
+    ? `Run 'favro scope set <collectionId>' to change it, or pass --force to override.`
+    : `${RETARGET_SHELL}, or pass --force to override.`;
+}
+
+export function scopeUnlockRemedy(): string {
+  return scopeOverride() === undefined
+    ? `Run 'favro scope clear' to unlock, or pass --force to allow this single write.`
+    : `${UNLOCK_SHELL} — then 'favro scope clear' if the\n` +
+      `  config file still locks you. Or pass --force to allow this single write.`;
+}
+
+/**
  * Read config from ~/.favro/config.json, with the `FAVRO_SCOPE_COLLECTION_ID`
  * override applied. Returns empty config if file doesn't exist. Throws on
  * permission errors, corrupted JSON, or an empty override.

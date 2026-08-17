@@ -4,7 +4,18 @@
  * The interesting case is the boardless write: the lock cannot be checked, so it
  * has to refuse rather than fall through. See issue #77.
  */
-import { assertScope, checkScope, ScopeError } from '../../lib/safety';
+import fs from 'fs';
+import path from 'path';
+import { tempConfigDir } from '../../test-support/config-dir';
+
+// `assertOrgScope` is the one guard here that reads the config file itself, so
+// the suite gets a private one rather than the developer's own.
+const CONFIG_DIR = tempConfigDir('favro-safety-', {
+  scopeCollectionId: 'col-1',
+  scopeCollectionName: 'Locked',
+});
+
+import { assertOrgScope, assertScope, checkCollectionScope, checkScope, ScopeError } from '../../lib/safety';
 import { RefusalError } from '../../lib/refusal';
 import { isRetryable } from '../../lib/dispatch';
 
@@ -277,5 +288,121 @@ describe('boardOfCard', () => {
 
     await expect(boardOfCard(makeClient(), '')).resolves.toBe('');
     expect(getCard).not.toHaveBeenCalled();
+  });
+});
+
+// ─── the remediation line names the lock's SOURCE (#175) ─────────────────────
+
+/**
+ * `Run 'favro scope set <collectionId>'` is WRONG advice under
+ * `FAVRO_SCOPE_COLLECTION_ID`: `scope set` refuses while the override is live
+ * (#174, by design), so a user who follows the guardrail's own advice hits a
+ * second refusal — on the message that matters most.
+ *
+ * BOTH POLARITIES PER SUBJECT. "It names the variable" asserted alone would pass
+ * for a message that names it unconditionally, and the file arm has to stay
+ * byte-identical to what shipped — two ratchets elsewhere pin that string.
+ */
+describe('the remediation line is source-aware (#175)', () => {
+  const orig = process.env.FAVRO_SCOPE_COLLECTION_ID;
+  beforeEach(() => {
+    // `checkResolvedScope` above `doMock`s config into the registry, and
+    // `assertOrgScope` reads it through a dynamic import — so without this the
+    // org-wide arm below measures that suite's stub instead of the real file.
+    jest.resetModules();
+    jest.dontMock('../../lib/config');
+  });
+  afterEach(() => {
+    if (orig === undefined) delete process.env.FAVRO_SCOPE_COLLECTION_ID;
+    else process.env.FAVRO_SCOPE_COLLECTION_ID = orig;
+  });
+
+  const refusalOf = async (subject: () => unknown): Promise<string> => {
+    try {
+      await subject();
+    } catch (err) {
+      return (err as Error).message;
+    }
+    throw new Error('expected a scope refusal');
+  };
+
+  /** The three guards that end in a remediation line, one call each. */
+  const board = () => assertScope('board-1', makeClient(['col-other']), LOCKED);
+  const collection = () => checkCollectionScope('col-other', LOCKED);
+  const orgWide = async () => {
+    const { assertOrgScope: fresh } = await import('../../lib/safety');
+    return fresh('Deleting tag tag-1');
+  };
+
+  it('tells an env-locked shell to re-export the variable, not to run `scope set`', async () => {
+    process.env.FAVRO_SCOPE_COLLECTION_ID = 'coll-env';
+
+    for (const subject of [board, collection]) {
+      const message = await refusalOf(subject);
+      expect(message).toContain(
+        'To retarget this shell: export FAVRO_SCOPE_COLLECTION_ID=<collectionId>, or pass --force to override.',
+      );
+      expect(message).not.toContain('favro scope set');
+    }
+  });
+
+  /**
+   * BOTH STEPS, in order. Unsetting the variable is not the whole answer here:
+   * the config file's lock then applies and refuses the same org-wide write
+   * again — the exact second refusal this ticket exists to remove, in the pair
+   * nobody checked. `scope clear` may not be named as the FIRST step (it refuses
+   * while the variable is live), but it has to be named as the second.
+   */
+  it('tells an env-locked shell to unset it AND then clear the file lock, in that order', async () => {
+    process.env.FAVRO_SCOPE_COLLECTION_ID = 'coll-env';
+
+    const message = await refusalOf(orgWide);
+
+    expect(message).toContain(
+      "  To unlock this shell: unset FAVRO_SCOPE_COLLECTION_ID — then 'favro scope clear' if the\n" +
+        '  config file still locks you. Or pass --force to allow this single write.',
+    );
+    expect(message.indexOf('unset FAVRO_SCOPE_COLLECTION_ID')).toBeLessThan(
+      message.indexOf("'favro scope clear'"),
+    );
+  });
+
+  /**
+   * The criterion the wording exists to meet, walked rather than asserted: a
+   * message can name both steps and still be wrong about what they do. Step 2
+   * is measured by its own polarity — after step 1 alone the write is STILL
+   * refused, which is what makes naming step 2 necessary rather than wordy.
+   */
+  it('following the org-wide advice verbatim ends in no refusal, and step 1 alone does not', async () => {
+    const configPath = path.join(CONFIG_DIR, 'config.json');
+    const seeded = fs.readFileSync(configPath, 'utf-8');
+    process.env.FAVRO_SCOPE_COLLECTION_ID = 'coll-env';
+    await refusalOf(orgWide);
+
+    // Step 1: unset the variable. The file lock surfaces and refuses again.
+    delete process.env.FAVRO_SCOPE_COLLECTION_ID;
+    expect(await refusalOf(orgWide)).toContain('ORGANIZATION-WIDE');
+
+    // Step 2: `favro scope clear`, i.e. the lock leaves the file.
+    try {
+      fs.writeFileSync(configPath, JSON.stringify({}));
+      await expect(orgWide()).resolves.toBeUndefined();
+    } finally {
+      fs.writeFileSync(configPath, seeded);
+    }
+  });
+
+  it('leaves the FILE-lock advice byte-identical', async () => {
+    delete process.env.FAVRO_SCOPE_COLLECTION_ID;
+
+    expect(await refusalOf(board)).toContain(
+      "  Run 'favro scope set <collectionId>' to change it, or pass --force to override.",
+    );
+    expect(await refusalOf(collection)).toContain(
+      "  Run 'favro scope set <collectionId>' to change it, or pass --force to override.",
+    );
+    expect(await refusalOf(orgWide)).toContain(
+      "  Run 'favro scope clear' to unlock, or pass --force to allow this single write.",
+    );
   });
 });

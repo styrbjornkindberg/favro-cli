@@ -1,5 +1,5 @@
 import * as readline from 'readline';
-import { FavroConfig } from './config';
+import { FavroConfig, scopeRemedy, scopeUnlockRemedy } from './config';
 import FavroHttpClient from './http-client';
 import { RefusalError } from './refusal';
 import { c } from './theme';
@@ -224,7 +224,7 @@ export async function assertScope(
   throw new ScopeError(
     `Scope violation: board "${raw?.name ?? boardId}" is not in locked collection "${locked}".\n` +
       `  Run 'favro scope show' to see your current lock.\n` +
-      `  Run 'favro scope set <collectionId>' to change it, or pass --force to override.`,
+      `  ${scopeRemedy()}`,
     boardId,
     config.scopeCollectionId,
   );
@@ -333,7 +333,7 @@ export async function assertOrgScope(what: string, force: boolean = false): Prom
       `  The collection lock cannot narrow this one: the write names no board, so there is nothing\n` +
       `  to resolve against the lock. It is refused rather than widened.\n` +
       `  Run 'favro scope show' to see your current lock.\n` +
-      `  Run 'favro scope clear' to unlock, or pass --force to allow this single write.`,
+      `  ${scopeUnlockRemedy()}`,
     '',
     config.scopeCollectionId,
   );
@@ -380,7 +380,7 @@ export function checkCollectionScope(
   throw new ScopeError(
     `Scope violation: target collection "${collectionId}" is not the locked collection "${locked}".\n` +
       `  Run 'favro scope show' to see your current lock.\n` +
-      `  Run 'favro scope set <collectionId>' to change it, or pass --force to override.`,
+      `  ${scopeRemedy()}`,
     '',
     config.scopeCollectionId,
   );

@@ -308,3 +308,51 @@ describe('scope show names the source of the effective lock', () => {
     expect(r.stdout).not.toContain('FAVRO_SCOPE_COLLECTION_ID');
   });
 });
+
+// ─── the refusal's own advice has to WORK under the override (#175) ───────────
+
+/**
+ * `Run 'favro scope set <collectionId>'` is advice that fails under
+ * `FAVRO_SCOPE_COLLECTION_ID`: `scope set` refuses while the override is live
+ * (the suite above measures that), so the guardrail message every write can
+ * produce sent the user into a second refusal.
+ *
+ * Driven on the real command tree rather than asserted on a helper, and the
+ * middle arm FOLLOWS the printed advice instead of merely matching it — a
+ * message can name the variable and still be wrong about what to do with it.
+ */
+describe('the remediation line names the source of the lock', () => {
+  test('under the session lock it names the variable, never `favro scope set`', async () => {
+    process.env.FAVRO_SCOPE_COLLECTION_ID = 'coll-a';
+
+    const r = await drive(['boards', 'delete', 'brd-b', '--dry-run']);
+
+    expect(r.code).toBe(1);
+    expect(r.stdout).toContain(
+      'To retarget this shell: export FAVRO_SCOPE_COLLECTION_ID=<collectionId>, or pass --force to override.',
+    );
+    expect(r.stdout).not.toContain('favro scope set');
+  });
+
+  test('following it verbatim retargets the lock, with no second refusal', async () => {
+    process.env.FAVRO_SCOPE_COLLECTION_ID = 'coll-a';
+    expect((await drive(['boards', 'delete', 'brd-b', '--dry-run'])).code).toBe(1);
+
+    // Exactly what the line says to do.
+    process.env.FAVRO_SCOPE_COLLECTION_ID = 'coll-b';
+    const after = await drive(['boards', 'delete', 'brd-b', '--dry-run']);
+
+    expect(after.stdout).toContain('[dry-run] Would delete board brd-b');
+    expect(after.code).toBeUndefined();
+  });
+
+  test('with the var UNSET the file advice is byte-identical to what shipped', async () => {
+    const r = await drive(['boards', 'delete', 'brd-a', '--dry-run']);
+
+    expect(r.code).toBe(1);
+    expect(r.stdout).toContain(
+      "Run 'favro scope set <collectionId>' to change it, or pass --force to override.",
+    );
+    expect(r.stdout).not.toContain('FAVRO_SCOPE_COLLECTION_ID');
+  });
+});
