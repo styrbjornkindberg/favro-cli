@@ -419,6 +419,37 @@ favro boards list
 favro cards list --board abc123
 ```
 
+### Give Each Shell Its Own Scope Lock
+
+`favro scope set` writes `~/.favro/config.json`, which every shell on the machine shares —
+so in one terminal it retargets the write guard in all the others. When two windows (or two
+agents) work different collections at the same time, export the lock instead:
+
+```bash
+# terminal A
+export FAVRO_SCOPE_COLLECTION_ID=coll-platform
+
+# terminal B
+export FAVRO_SCOPE_COLLECTION_ID=coll-marketing
+
+# each shell now refuses the other's boards
+favro scope show          # names the effective lock AND its source (env vs file)
+```
+
+The variable overrides the config file for that shell and every child process, writes
+nothing, and dies with the window. Notes:
+
+- Setting it to an **empty** or whitespace-only value is an error, not "no lock" — a typo
+  cannot silently unlock every board.
+- `favro scope set` / `favro scope clear` **refuse** while it is set: they manage the file
+  lock, which nothing in that shell reads. Change the export instead.
+- `--force` still overrides it, exactly as it overrides a file lock.
+- The id is not verified against the wire the way `scope set` verifies it. A wrong id fails
+  closed — every board mismatches and every write refuses.
+- It is also the **default read scope** for `health`, `next`, `my-cards`, `my-standup`,
+  `overview`, `team`, `stale`, `workload` and `init`, so those retarget too when you pass no
+  `--collection`.
+
 ### Scripting with CSV/JSON
 
 **Bash script to archive "Done" cards:**

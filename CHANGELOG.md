@@ -8,6 +8,121 @@ that set that version, `a13a02a`) and this release. Commands were driven with
 `FAVRO_CONFIG_DIR` pointed at a throwaway config and no real credentials, so exit codes
 and streams are real and no request reached a live org.
 
+## 5.1.0 — unreleased
+
+### Added
+
+#### `FAVRO_SCOPE_COLLECTION_ID` — a scope lock that belongs to one shell (#174)
+
+The scope lock was process-global state stored in one file. `scopeCollectionId` lived only
+in `~/.favro/config.json` and every reader loaded it fresh per invocation, so **two
+concurrent CLI sessions could not hold different locks** — two terminals, or two agents
+driving the CLI in parallel, shared one, and `favro scope set X` in window A silently
+retargeted window B's next write. The only isolation that existed was `FAVRO_CONFIG_DIR`,
+which forks the *entire* config including credentials: the wrong granularity for one string.
+
+Exporting `FAVRO_SCOPE_COLLECTION_ID` now overrides the file lock for that shell and every
+child process. An env var **is** session state — per-shell, inherited, dies with the window
+— so there is no session id, lockfile, registry, TTL or stale-session GC, and the lock
+finally joins the priority order every other config field already used (flag > `FAVRO_*`
+env > file).
+
+Measured on `dist/cli.js` against a local stand, `FAVRO_CONFIG_DIR` pointed at a throwaway
+config whose file lock is `coll-file`, both shells and both polarities:
+
+| exported | `boards delete brd-a --dry-run` | `brd-b` | `brd-file` |
+|---|---|---|---|
+| `coll-a` | previews, exit 0 | refuses, exit 1 | refuses, exit 1 |
+| `coll-b` | refuses, exit 1 | previews, exit 0 | refuses, exit 1 |
+| *(unset)* | refuses, exit 1 | refuses, exit 1 | previews, exit 0 |
+
+The third row is the unchanged-behaviour arm and the third column is the one that shows the
+two locks do **not** union. `--force` still overrides (`⚠ Warning: Board brd-b is outside
+your locked scope (coll-a)` then the preview, exit 0), and an unresolvable board is still
+*uncheckable, not exempt* — `brd-ghost --dry-run --force` exits 1 with `Scope check failed:
+Board brd-ghost not found.` Where the lock comes from changed; nothing about how it is
+enforced did.
+
+**Empty or whitespace-only is an error, not "no lock".** `FAVRO_SCOPE_COLLECTION_ID= favro
+boards delete brd-file --dry-run` exits 1 with `FAVRO_SCOPE_COLLECTION_ID is set but empty.
+Unset it or provide a collectionId.` — measured, and note that `brd-file` is inside the FILE
+lock, so a fall-through would have previewed there. Falling back would make a typo silently
+name another collection; resolving to "no lock" would silently unlock every board in the
+organization. It mirrors the existing empty-`FAVRO_API_KEY` throw, and for the same reason
+is a bare `Error` rather than a refusal: `--dry-run`'s credential deferral only swallows
+refusals, so a malformed environment cannot become a silent preview.
+
+**The session lock never reaches disk**, which is the half that would have turned this fix
+back into the bug. `readConfig()` feeds `writeConfig()` at six call sites, every one
+spreading a readConfig-derived object — `resolveUserId`, `tracker-init`, `scope set`, `scope
+clear`, `auth login`, `auth logout` — and `resolveUserId`'s auto-resolve fires with no flag
+and no prompt on `next`, `my-cards`, `my-standup` and every `@me`. One guard in `writeConfig`
+preserves the file's own `scopeCollectionId` / `scopeCollectionName` whenever the variable is
+set, rather than six guards at the callers. Measured on the built CLI with `coll-a` exported:
+`auth logout` removed the `apiKey` and left `"scopeCollectionId":"coll-file"` and
+`"scopeCollectionName":"File Lock"` byte-identical on disk.
+
+The merge sits in `readConfig`, **not** `loadConfig`. `loadConfig` is the function that looks
+like the merge point and it is dead outside tests — every real reader, including all 26
+guarded command registrations, calls `readConfig` directly, so an override merged in
+`loadConfig` would be one no scope guard ever saw.
+
+### Changed
+
+#### `scope show` names the source of the lock; `scope set` / `scope clear` refuse under an override (#174)
+
+`scope show` prints a second line — `Source: FAVRO_SCOPE_COLLECTION_ID — this shell only, and
+it overrides the config file.` or `Source: config file — shared by every shell on this
+machine.` — and the JSON surface gains a `source` field (`"env"` / `"file"`). Without it the
+file and the environment disagree and no output explains why.
+
+`scope set` and `scope clear` manage the FILE lock, and under an active override nothing in
+that shell will ever read it. Both now exit 1 naming the variable and the effective lock,
+with the file untouched, instead of writing and reporting success — measured on the built
+CLI, `scope set coll-b` under `FAVRO_SCOPE_COLLECTION_ID=coll-a` left the config file
+byte-identical. `scope set`'s refusal comes before its verifying `GET /collections/{id}`, so
+it costs no request either.
+
+Two consequences, stated rather than discovered later.
+
+**Exporting the variable IS a configured lock for the credential gate #135 measured.** All
+seven commands whose guard resolves its target over the wire want a credential for
+`--dry-run` while it is exported, exactly as they do under a file lock — measured on the
+built CLI against an EMPTY config (`{}`), so the only lock present is the one exported:
+
+| invocation, each with `--dry-run` | var unset | `FAVRO_SCOPE_COLLECTION_ID=coll-a` |
+|---|---|---|
+| `boards update brd-a --name X` | previews, exit 0 | `API key not found`, exit 1 |
+| `boards delete brd-a` | previews, exit 0 | `API key not found`, exit 1 |
+| `dependencies delete crd-1 crd-2` | previews, exit 0 | `API key not found`, exit 1 |
+| `dependencies delete-all crd-1` | previews, exit 0 | `API key not found`, exit 1 |
+| `custom-fields set crd-1 f1 v` | previews, exit 0 | `API key not found`, exit 1 |
+| `git todos --board brd-a` | report, exit 0 | report, then exit 1 |
+| `git sync` | report, exit 0 | report, then exit 1 |
+
+The two `git` rows still print their local report before refusing, unchanged: that output
+describes the repo, not the write. With nothing locked either way the credential-free
+preview is unchanged, which is the whole left-hand column.
+
+**The lock is also the default READ scope for ten commands, so the override retargets those
+reads too.** `health`, `next`, `my-cards`, `my-standup`, `overview`, `team`, `stale`,
+`workload`, the interactive menu and `init`'s default collection all fall back to
+`config.scopeCollectionId` when no `--collection` is given. That is the same field, so it
+follows the same override — intended, and consistent with "the effective lock", but it is a
+read retargeting and not only a write guard. Measured on the built CLI against a
+request-logging stand, config lock `coll-file`: `favro health` issued `GET
+/collections/coll-file` with the variable unset and `GET /collections/coll-env` with
+`FAVRO_SCOPE_COLLECTION_ID=coll-env` exported.
+
+### Not fixed, deliberately
+
+`writeConfig` is still a read-modify-write with no lock, so two near-simultaneous writers
+still clobber each other's `userId`, `apiKey`, `organizationId` and `tracker`. The env path
+sidesteps that race for the *scope* field because it writes nothing at all; the general race
+is a separate ticket. And the env-supplied collection id is **not** verified against the
+wire the way `scope set` verifies it — a bad id fails closed, since every board mismatches
+and every write refuses, which is the safe direction.
+
 ## 5.0.1 — 2026-08-14
 
 ### Docs

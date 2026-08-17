@@ -204,6 +204,62 @@ happens; a batch that straddles the lock refuses as a whole, and a write that na
 board it cannot resolve is *uncheckable*, not exempt. `--force` is the only escape
 hatch, and it does not rescue the no-board case. `assertScope` in `src/lib/safety.ts`.
 
+**Where the lock comes from, since #174: `FAVRO_SCOPE_COLLECTION_ID` first, then
+`~/.favro/config.json`.** It was the file alone, and the file is one file that every
+reader loads fresh per invocation — so two shells, or two agents driving the CLI in
+parallel, *could not hold different locks*, and `favro scope set X` in one silently
+retargeted the other's next write. An env var **is** session state (per-shell, inherited
+by children, dies with the window), which is the whole of the mechanism: no session id,
+no lockfile, no registry, no TTL. It also joins the lock to the priority order every
+other config field already used — flag > `FAVRO_*` env > file.
+
+Four consequences, each a decision rather than a side effect:
+
+- **The merge is in `readConfig`, not `loadConfig`.** `loadConfig` is the function that
+  looks like the merge point and it is dead outside tests; every real reader — all 26
+  guarded registrations included — calls `readConfig`. An override merged in `loadConfig`
+  is one no scope guard ever sees.
+- **Empty or whitespace-only THROWS.** Falling through to the file value would make a typo
+  silently name another collection, and resolving to "no lock" would silently unlock every
+  board in the organization. Mirrors `resolveApiKey`'s empty-`FAVRO_API_KEY` throw, a bare
+  `Error` for the same reason: a malformed environment is not a refusal, and `withClient`'s
+  dry-run deferral only swallows `RefusalError`, so this stays loud on the preview path too.
+- **The env value must not reach disk, and the guard for that is in `writeConfig`.**
+  `readConfig()` feeds `writeConfig()` at six call sites, every one spreading a
+  readConfig-derived object — so merged naively, the next `auth login`, or any
+  `resolveUserId` auto-resolve (which fires on `next`, `my-cards`, `my-standup` and `@me`),
+  would persist the session lock as the GLOBAL one: this same bug, arriving later and
+  harder to see. `writeConfig` preserves the file's own `scopeCollectionId` /
+  `scopeCollectionName` whenever the variable is set. One guard in the shared writer, not
+  six at the callers, so a seventh caller inherits it.
+- **`scopeCollectionName` is unknown on the env path**, so refusals print the raw id. Every
+  consumer already read `scopeCollectionName ?? scopeCollectionId`. `scope set` and `scope
+  clear` **refuse** under an active override rather than writing a value nothing in that
+  shell reads, and `scope show` names the SOURCE of the effective lock — without that the
+  two disagree and no output explains why.
+
+The override's reach is **wider than the write guard**, and that is worth knowing before
+exporting it: ten commands read `config.scopeCollectionId` as their DEFAULT READ SCOPE when
+no `--collection` is given — `health`, `next`, `my-cards`, `my-standup`, `overview`, `team`,
+`stale`, `workload`, the interactive menu, and `init`'s default collection. Same field, same
+override, so those reads retarget too. Consistent with "the effective lock" rather than a
+surprise, but stated because "an override for the write guard" would be too narrow a
+reading. Measured against a request-logging stand with `coll-file` in the file: `favro
+health` asked `GET /collections/coll-file` unset and `GET /collections/coll-env` exported.
+
+Deliberately NOT done: the general lost-update race in `writeConfig` (read-modify-write
+with no lock) is untouched. The env path sidesteps it for scope because it writes nothing;
+`userId` and `apiKey` still clobber, and that is its own ticket. Nor is the env-supplied
+id verified against the wire — `scope set` verifies, the env path does not, and a bad id
+fails closed: every board mismatches and every write refuses.
+
+Measured on `dist/cli.js` against a local stand, both shells and both polarities: with
+`coll-a` exported, `brd-a` previews at exit 0 and `brd-b` refuses; with `coll-b` exported
+the two swap; the FILE's collection refuses under either, so the two locks do not union.
+`--force` still overrides, an unresolvable board is still uncheckable under `--force`, an
+empty variable refuses instead of falling back, and with the variable unset every arm is
+byte-identical — including the credential-free `--dry-run` with nothing locked.
+
 `--dry-run` is a preview, never a safety wall, and it is not a way around the lock —
 because a preview writes nothing for the lock to guard. The lock runs **before** the
 preview, so a preview carries the verdict rather than contradicting it. Migrated writes
@@ -253,7 +309,10 @@ over the wire: `boards update/delete`, `dependencies delete/delete-all`, `custom
 set`, `git todos` and `git sync` need a credential for `--dry-run` *when a lock is
 configured*, and refuse without one. Every one of those call sites therefore gates on
 `config.scopeCollectionId` — with nothing locked there is no verdict to produce, the client
-is never constructed, and the credential-free preview #135 measured is unchanged. The gate
+is never constructed, and the credential-free preview #135 measured is unchanged. Since
+#174 that field carries the env override too, so exporting `FAVRO_SCOPE_COLLECTION_ID` is
+a lock for this purpose exactly as a file lock is: the same seven commands then want a
+credential for `--dry-run`, measured. The gate
 is not tidiness: `ctx.client` / `createFavroClient()` is evaluated before the guard can
 decide it has nothing to do, and `checkResolvedScope` cannot absorb it because its own
 `client` parameter is eager too. `collections update/delete` pay nothing either way:

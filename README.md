@@ -273,6 +273,18 @@ favro collections list        # Find your collection ID
 favro scope set <id>          # Lock writes to that collection
 ```
 
+`scope set` writes `~/.favro/config.json`, so the lock is shared by every shell on the
+machine. For a lock that belongs to **one** terminal — two windows, or two agents working
+different collections at once — export it instead:
+
+```bash
+export FAVRO_SCOPE_COLLECTION_ID=<id>   # this shell only; overrides the file
+favro scope show                        # names the effective lock and its source
+```
+
+An empty value is an error rather than "no lock", and `scope set` / `scope clear` refuse
+while the variable is set. See [EXAMPLES.md](EXAMPLES.md#give-each-shell-its-own-scope-lock).
+
 ---
 
 ## LLM Tool Setup

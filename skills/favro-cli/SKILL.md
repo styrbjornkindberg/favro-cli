@@ -78,6 +78,29 @@ only unique within one.
 
 **collection** — the container boards belong to, and what the scope lock locks.
 
+**the scope lock is per-SHELL if you want it to be.** `favro scope set <id>` writes
+`~/.favro/config.json`, which every shell on the machine shares — so if you are one of
+several agents working the same workspace, `scope set` retargets everybody else's next
+write, not just yours. Export the variable instead:
+
+```bash
+export FAVRO_SCOPE_COLLECTION_ID=<collectionId>
+```
+
+It overrides the file for this shell and every child process, needs no write, and dies
+with the session. `favro scope show` reports the effective lock **and its source**, so
+check that rather than assuming. Three things worth knowing before you rely on it:
+
+- Setting it to an EMPTY or whitespace-only value is an **error**, not "no lock" — a typo
+  cannot silently unlock every board.
+- `scope set` and `scope clear` **refuse** while it is set, because they write a file lock
+  nothing in that shell will read. Change the export instead.
+- The id is not verified against the wire (`scope set` verifies; this does not). A wrong
+  id fails closed: every board mismatches and every write refuses.
+- It retargets READS too, not just the write guard: `health`, `next`, `my-cards`,
+  `my-standup`, `overview`, `team`, `stale`, `workload` and `init` all default to the
+  effective lock when given no `--collection`.
+
 **tag** — an org-wide label, written **by name**. Names are the vocabulary: an
 unknown name is refused client-side, because on a tag write Favro reads an unknown
 name as a tag *creation*. The triage vocabulary rides tags because the column
