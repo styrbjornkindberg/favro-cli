@@ -9,7 +9,7 @@
  * - resolveApiKey respects priority: flag > env > config
  * - Permission error handling
  */
-import { readConfig, writeConfig, loadConfig, resolveApiKey, configFile, configDir } from '../lib/config';
+import { readConfig, writeConfig, loadConfig, resolveApiKey, scopeOverride, configFile, configDir } from '../lib/config';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
@@ -259,5 +259,135 @@ describe('FAVRO_CONFIG_DIR override', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const os = require('os');
     expect(configDir()).toBe(path.join(os.homedir(), '.favro'));
+  });
+});
+
+/**
+ * `FAVRO_SCOPE_COLLECTION_ID` — the per-session scope lock (#174).
+ *
+ * Two halves, and the second is the one that bites: the override has to reach
+ * every read (so `readConfig`, the function every scope guard actually calls),
+ * and it must never reach DISK — six writers spread a `readConfig()`-derived
+ * object into `writeConfig`, so a naive merge would promote a session lock to the
+ * global one on the next `auth login` or `resolveUserId` auto-resolve.
+ */
+describe('FAVRO_SCOPE_COLLECTION_ID', () => {
+  const orig = process.env.FAVRO_SCOPE_COLLECTION_ID;
+
+  /** What `writeConfig` actually handed the filesystem. */
+  function written(): Record<string, unknown> {
+    const calls = (mockFs.writeFile as jest.Mock).mock.calls;
+    return JSON.parse(calls[calls.length - 1][1]);
+  }
+
+  const FILE_LOCK = { apiKey: 'k', scopeCollectionId: 'coll-file', scopeCollectionName: 'File Lock' };
+
+  beforeEach(() => {
+    jest.resetAllMocks();
+    mockFs.mkdir.mockResolvedValue(undefined as any);
+    mockFs.writeFile.mockResolvedValue(undefined);
+    delete process.env.FAVRO_SCOPE_COLLECTION_ID;
+  });
+
+  afterEach(() => {
+    if (orig === undefined) delete process.env.FAVRO_SCOPE_COLLECTION_ID;
+    else process.env.FAVRO_SCOPE_COLLECTION_ID = orig;
+  });
+
+  describe('scopeOverride', () => {
+    test('undefined when the var is unset — the file lock is untouched', () => {
+      expect(scopeOverride()).toBeUndefined();
+    });
+
+    test('trims, so a shell-quoting accident still names a collection', () => {
+      process.env.FAVRO_SCOPE_COLLECTION_ID = '  coll-env  ';
+      expect(scopeOverride()).toBe('coll-env');
+    });
+
+    test('an EMPTY value throws — it must not resolve to "no lock"', () => {
+      process.env.FAVRO_SCOPE_COLLECTION_ID = '';
+      expect(() => scopeOverride()).toThrow('FAVRO_SCOPE_COLLECTION_ID is set but empty');
+    });
+
+    test('a WHITESPACE-ONLY value throws too — trimming must not unlock', () => {
+      process.env.FAVRO_SCOPE_COLLECTION_ID = '   ';
+      expect(() => scopeOverride()).toThrow('FAVRO_SCOPE_COLLECTION_ID is set but empty');
+    });
+  });
+
+  describe('readConfig', () => {
+    test('the env value IS the lock, and the file lock is not consulted', async () => {
+      process.env.FAVRO_SCOPE_COLLECTION_ID = 'coll-env';
+      mockFs.readFile.mockResolvedValueOnce(JSON.stringify(FILE_LOCK) as any);
+
+      const config = await readConfig();
+      expect(config.scopeCollectionId).toBe('coll-env');
+      // The cached name belongs to the FILE's collection. Carrying it forward
+      // would make every refusal name the wrong collection.
+      expect(config.scopeCollectionName).toBeUndefined();
+      // Unrelated fields survive — this is an override, not a replacement.
+      expect(config.apiKey).toBe('k');
+    });
+
+    test('locks even when the file has NO lock — the env cannot be a downgrade', async () => {
+      process.env.FAVRO_SCOPE_COLLECTION_ID = 'coll-env';
+      const noFile = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+      mockFs.readFile.mockRejectedValueOnce(noFile);
+
+      await expect(readConfig()).resolves.toEqual({
+        scopeCollectionId: 'coll-env',
+        scopeCollectionName: undefined,
+      });
+    });
+
+    test('an empty value REFUSES rather than falling through to the file lock', async () => {
+      process.env.FAVRO_SCOPE_COLLECTION_ID = '  ';
+      mockFs.readFile.mockResolvedValueOnce(JSON.stringify(FILE_LOCK) as any);
+
+      await expect(readConfig()).rejects.toThrow('FAVRO_SCOPE_COLLECTION_ID is set but empty');
+    });
+
+    test('unset — byte-identical to the file contents', async () => {
+      mockFs.readFile.mockResolvedValueOnce(JSON.stringify(FILE_LOCK) as any);
+      await expect(readConfig()).resolves.toEqual(FILE_LOCK);
+    });
+  });
+
+  describe('writeConfig does not leak the session lock to disk', () => {
+    test("the file's OWN lock survives a write carrying the env one", async () => {
+      process.env.FAVRO_SCOPE_COLLECTION_ID = 'coll-env';
+      mockFs.readFile.mockResolvedValue(JSON.stringify(FILE_LOCK) as any);
+
+      // The exact shape all six callers use: spread a `readConfig()` result and
+      // add a field. `userId` is `resolveUserId`'s auto-resolve, which fires on
+      // `next`, `my-cards`, `my-standup` and `@me`.
+      await writeConfig({ ...(await readConfig()), userId: 'user-9' });
+
+      expect(written()).toEqual({
+        apiKey: 'k',
+        userId: 'user-9',
+        scopeCollectionId: 'coll-file',
+        scopeCollectionName: 'File Lock',
+      });
+    });
+
+    test('a file with NO lock stays unlocked — the key is absent, not blanked', async () => {
+      process.env.FAVRO_SCOPE_COLLECTION_ID = 'coll-env';
+      mockFs.readFile.mockResolvedValue(JSON.stringify({ apiKey: 'k' }) as any);
+
+      await writeConfig({ ...(await readConfig()), userId: 'user-9' });
+
+      const after = written();
+      expect('scopeCollectionId' in after).toBe(false);
+      expect('scopeCollectionName' in after).toBe(false);
+      expect(after).toEqual({ apiKey: 'k', userId: 'user-9' });
+    });
+
+    test('with the var UNSET the write is unchanged, and no file read happens', async () => {
+      await writeConfig({ ...FILE_LOCK, userId: 'user-9' });
+
+      expect(mockFs.readFile).not.toHaveBeenCalled();
+      expect(written()).toEqual({ ...FILE_LOCK, userId: 'user-9' });
+    });
   });
 });

@@ -54,11 +54,67 @@ export function configFile(): string {
 }
 
 /**
- * Read config from ~/.favro/config.json.
- * Returns empty config if file doesn't exist.
- * Throws on permission errors or corrupted JSON.
+ * The per-session scope lock override, or `undefined` when the var is unset (#174).
+ *
+ * The lock lives in one file and every reader loads it fresh per invocation, so
+ * two shells — two terminals, or two agents driving the CLI in parallel — could
+ * not hold different locks: `favro scope set X` in one silently retargeted the
+ * other's next write. An env var IS session state (per-shell, inherited by
+ * children, dies with the window), so this is the whole of the fix; there is no
+ * session id, lockfile, registry or TTL. It also joins the lock to the priority
+ * order every other field already uses — flag > `FAVRO_*` env > config file.
+ *
+ * FAIL-CLOSED on empty or whitespace-only, and that is the point rather than
+ * tidiness: falling through to the file value would make a typo silently mean
+ * something else, and resolving to "no lock" would silently unlock every board
+ * in the organization. A bare `Error`, mirroring `resolveApiKey`'s empty
+ * `FAVRO_API_KEY` throw below — a malformed environment is not a refusal, and
+ * `withClient`'s dry-run deferral only swallows `RefusalError`, so this stays
+ * loud on the preview path too.
+ */
+export function scopeOverride(): string | undefined {
+  const raw = process.env.FAVRO_SCOPE_COLLECTION_ID;
+  if (raw === undefined) return undefined;
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    throw new Error(
+      'FAVRO_SCOPE_COLLECTION_ID is set but empty. Unset it or provide a collectionId.\n' +
+        '  Run `favro scope show` to see the effective lock.',
+    );
+  }
+  return trimmed;
+}
+
+/**
+ * Read config from ~/.favro/config.json, with the `FAVRO_SCOPE_COLLECTION_ID`
+ * override applied. Returns empty config if file doesn't exist. Throws on
+ * permission errors, corrupted JSON, or an empty override.
+ *
+ * The merge is HERE and not in `loadConfig` (#174): `loadConfig` looks like the
+ * merge point and is dead outside tests — every real reader, including all 26
+ * guarded command registrations, calls `readConfig` directly, so an override
+ * merged there is one no scope guard would ever see.
+ *
+ * `scopeCollectionName` is unknown on the env path, so refusals print the raw
+ * id. Every consumer already handles that: `config.scopeCollectionName ??
+ * config.scopeCollectionId`.
  */
 export async function readConfig(): Promise<FavroConfig> {
+  const fileConfig = await readConfigFile();
+  const envScope = scopeOverride();
+  if (envScope === undefined) return fileConfig;
+  return { ...fileConfig, scopeCollectionId: envScope, scopeCollectionName: undefined };
+}
+
+/** Just the two lock fields, so spreading them restores absence as absence. */
+function scopeFieldsOnDisk(
+  file: FavroConfig,
+): Pick<FavroConfig, 'scopeCollectionId' | 'scopeCollectionName'> {
+  return { scopeCollectionId: file.scopeCollectionId, scopeCollectionName: file.scopeCollectionName };
+}
+
+/** The file's contents, before any env override — what `writeConfig` must preserve. */
+async function readConfigFile(): Promise<FavroConfig> {
   try {
     const raw = await fs.readFile(configFile(), 'utf-8');
     return JSON.parse(raw) as FavroConfig;
@@ -80,11 +136,28 @@ export async function readConfig(): Promise<FavroConfig> {
 /**
  * Write config to ~/.favro/config.json.
  * Creates ~/.favro directory if it doesn't exist.
+ *
+ * THE SESSION LOCK MUST NOT REACH DISK (#174). Six call sites feed this a
+ * `readConfig()`-derived object — `resolveUserId` below, `tracker-init`,
+ * `scope set`/`scope clear`, `auth login` and `auth logout` — so a naive merge in
+ * `readConfig` would let the next `auth login`, or any `resolveUserId`
+ * auto-resolve (which fires on `next`, `my-cards`, `my-standup` and `@me`),
+ * persist the session lock as the GLOBAL one: exactly the bug #174 closes,
+ * arriving later and harder to see.
+ *
+ * One guard in the shared writer rather than six at the callers — a smaller diff,
+ * and it covers callers added later. `JSON.stringify` drops `undefined` values,
+ * so restoring an absent file field removes the key rather than blanking it.
  */
 export async function writeConfig(config: FavroConfig): Promise<void> {
+  // Outside the try on purpose: the read's own message ("not readable") must not
+  // be re-wrapped as the write's ("cannot write to").
+  const onDisk = scopeOverride() === undefined
+    ? config
+    : { ...config, ...scopeFieldsOnDisk(await readConfigFile()) };
   try {
     await fs.mkdir(configDir(), { recursive: true });
-    await fs.writeFile(configFile(), JSON.stringify(config, null, 2), { mode: 0o600 });
+    await fs.writeFile(configFile(), JSON.stringify(onDisk, null, 2), { mode: 0o600 });
   } catch (err: any) {
     if (err.code === 'EACCES' || err.code === 'EPERM') {
       throw new Error(`Config file permission error: cannot write to ${configFile()}. Check directory permissions.`);
