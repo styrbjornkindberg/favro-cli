@@ -89,7 +89,7 @@ export FAVRO_SCOPE_COLLECTION_ID=<collectionId>
 
 It overrides the file for this shell and every child process, needs no write, and dies
 with the session. `favro scope show` reports the effective lock **and its source**, so
-check that rather than assuming. Three things worth knowing before you rely on it:
+check that rather than assuming. Four things worth knowing before you rely on it:
 
 - Setting it to an EMPTY or whitespace-only value is an **error**, not "no lock" — a typo
   cannot silently unlock every board.

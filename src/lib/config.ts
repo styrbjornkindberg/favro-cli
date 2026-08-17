@@ -79,7 +79,7 @@ export function scopeOverride(): string | undefined {
   if (!trimmed) {
     throw new Error(
       'FAVRO_SCOPE_COLLECTION_ID is set but empty. Unset it or provide a collectionId.\n' +
-        '  Run `favro scope show` to see the effective lock.',
+        '  Unset it first: every command refuses while it is empty, `favro scope show` included.',
     );
   }
   return trimmed;

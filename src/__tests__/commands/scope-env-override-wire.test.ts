@@ -47,10 +47,14 @@ const BOARDS: Record<string, string[]> = {
 
 const running: http.Server[] = [];
 
+/** Every path the stand was asked for, so "refused before the GET" is falsifiable. */
+const seen: string[] = [];
+
 /** A Favro stand-in. An unknown board 404s — that is the uncheckable arm. */
 async function startStand(): Promise<FavroHttpClient> {
   const server = http.createServer((req, res) => {
     const url = (req.url ?? '').split('?')[0];
+    seen.push(url);
     const widget = /\/widgets\/(.+)$/.exec(url);
     if (widget) {
       const id = decodeURIComponent(widget[1]);
@@ -121,6 +125,7 @@ beforeEach(async () => {
   jest.spyOn(console, 'error').mockImplementation(() => {});
   jest.spyOn(console, 'warn').mockImplementation(() => {});
   seed({ apiKey: 'k', ...FILE_LOCK });
+  seen.length = 0;
   (createFavroClient as jest.Mock).mockResolvedValue(await startStand());
 });
 
@@ -250,6 +255,10 @@ describe('the session lock does not reach the config file', () => {
     expect(r.stdout).toContain('FAVRO_SCOPE_COLLECTION_ID');
     expect(r.stdout).toContain('coll-a');
     expect(onDisk()).toEqual({ apiKey: 'k', ...FILE_LOCK });
+    // BEFORE the verifying GET, not after: an override makes the write pointless,
+    // so there is nothing to verify and the refusal costs no request. Asserted
+    // because "it also refuses" would pass with the GET still paid for.
+    expect(seen.filter((p) => p.includes('/collections/'))).toEqual([]);
   });
 
   test('`scope clear` refuses and writes nothing', async () => {
