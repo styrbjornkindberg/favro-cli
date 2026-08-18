@@ -8,7 +8,7 @@ that set that version, `a13a02a`) and this release. Commands were driven with
 `FAVRO_CONFIG_DIR` pointed at a throwaway config and no real credentials, so exit codes
 and streams are real and no request reached a live org.
 
-## 5.1.1 — unreleased
+## 5.1.1 — 2026-08-18
 
 ### Fixed
 
