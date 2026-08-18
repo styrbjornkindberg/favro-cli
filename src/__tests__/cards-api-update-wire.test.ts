@@ -16,10 +16,14 @@
  *                               re-adding and removing-what-is-absent both 200.
  * - `PUT {status:"Done"}`     → 200, nothing written. The column IS the status,
  *                               so a write has to become `columnId`.
- * - `PUT {dependencies}`      → silent no-op; `parentCardId` → 202 "Access denied";
- *                               `parentCardId: null` → 400. Hence no `--parent`
- *                               on update and no unparent flag — nothing to test
- *                               here beyond the field being gone from the type.
+ * - `PUT {dependencies}`      → silent no-op. `parentCardId: null` → 400, hence no
+ *                               unparent flag. `parentCardId` was recorded here as
+ *                               202 "Access denied" — WITHOUT a `widgetCommonId`,
+ *                               which is #162's shape; with one it is honoured
+ *                               (#176, 2026-08-18). There is still no `--parent` on
+ *                               update, but the field is no longer merely refused:
+ *                               see the last describe, where a board-carrying write
+ *                               has to CARRY the card's own parent.
  * - `PUT {columnId}`          → 202 "Access denied", card unmoved;
  *   (#162, 2026-08-13)          `PUT {columnId, widgetCommonId}` → 200 and moved;
  *                               a WRONG `widgetCommonId` → 202 "Invalid column".
@@ -53,6 +57,9 @@ const TODO = 'col-todo';
 const DONE = 'col-done';
 const SHIPPED = 'col-shipped';
 const ALICE = 'aaaaaaaaaaaaaaaaa';
+// The parent card the #176 stand hangs CARD under. A cardId, not a
+// cardCommonId — `parentCardId` follows the same id rule as the create path.
+const PARENT = 'ppppppppppppppppppppppppp';
 const BOB = 'bbbbbbbbbbbbbbbbb';
 
 function startServer(
@@ -363,17 +370,24 @@ describe('updateCard status writes are a column move (no client mock)', () => {
  * rights check. All three branches are modelled below, so this stand can express
  * a 2xx denial that the rest of the suite has no vocabulary for.
  */
-function favroResolvingColumns(): {
+function favroResolvingColumns(seed: { parentCardId?: string | null } = {}): {
   handler: (req: Received) => { status: number; body?: unknown };
-  state: { columnId: string; name: string };
+  state: { columnId: string; name: string; parentCardId?: string | null };
 } {
-  const state = { columnId: TODO, name: 'probe' };
+  const state = {
+    columnId: TODO,
+    name: 'probe',
+    // Absent unless a test seeds one, so every existing case here still stands on
+    // a card with no parent.
+    parentCardId: seed.parentCardId,
+  };
   const routes = favro();
   const row = () => ({
     cardId: CARD,
     name: state.name,
     widgetCommonId: BOARD,
     columnId: state.columnId,
+    parentCardId: state.parentCardId,
     assignments: [{ userId: ALICE }],
   });
   return {
@@ -391,6 +405,19 @@ function favroResolvingColumns(): {
           if (body.widgetCommonId === undefined) return { status: 202, body: { message: 'Access denied' } };
           if (body.widgetCommonId !== BOARD) return { status: 202, body: { message: 'Invalid column' } };
           state.columnId = String(body.columnId);
+        }
+        // The COMMIT, measured for #176 and modelled where it lives — on the far
+        // side of the wire. A PUT carrying `widgetCommonId` commits the card into
+        // that widget, and a commit naming no `parentCardId` commits it at the
+        // widget ROOT, clearing the parent. Live 2026-08-18: `PUT {columnId,
+        // widgetCommonId}` answered 200 with `parentCardId: null` in the write's own
+        // echo, `PUT {widgetCommonId}` alone cleared it too, and every boardless
+        // shape kept it — so this reads the BOARD, not the column. Behaviour rather
+        // than a byte assertion on purpose: a test that only pinned the payload
+        // would still pass if the field silently stopped being sent
+        // (cf. `guard-tests-must-pin-the-wiring`).
+        if (body.widgetCommonId !== undefined) {
+          state.parentCardId = body.parentCardId as string | undefined;
         }
         return { status: 200, body: row() };
       }
@@ -604,6 +631,113 @@ describe('updateCard shared read and description bytes', () => {
       expect(JSON.parse(put.body)).toEqual({ detailedDescription: description });
       expect(put.body).not.toContain('​');
       expect(put.url).toContain('descriptionFormat=markdown');
+    } finally {
+      await close();
+    }
+  });
+});
+
+/**
+ * #176 — a column move re-commits the card, and a commit that names no parent
+ * commits it at the widget ROOT.
+ *
+ * Probed live 2026-08-18, org `b0b311ac98a0250191573541`, board
+ * `5dd75f0d5116020817ebe70a` (`docs/research/tracker-contract-favro-carriers.md`
+ * §6d): `PUT {columnId, widgetCommonId}` answered **200 with `parentCardId: null`
+ * in the write's own echo**, and `PUT {widgetCommonId}` alone cleared it too, while
+ * every boardless shape KEPT the parent. `PUT {columnId, widgetCommonId,
+ * parentCardId}` was **honoured** — 200, column moved, parent kept — which is what
+ * makes the re-send one PUT rather than a second write plus a compensation entry.
+ *
+ * `favroResolvingColumns` models that clear, so these cases assert the SEMANTICS
+ * and not only the bytes.
+ */
+describe('a column move re-commits the card and must carry its parent (#176)', () => {
+  test('the `status` spelling carries parentCardId, and the card keeps its parent', async () => {
+    // The claim/resolve path: `status` → `columnId` + the card's own board.
+    const { handler, state } = favroResolvingColumns({ parentCardId: PARENT });
+    const { api, received, close } = await startServer(handler);
+    try {
+      await api.updateCard(CARD, { status: 'Done' });
+      expect(putBody(received)).toEqual({
+        columnId: DONE,
+        widgetCommonId: BOARD,
+        parentCardId: PARENT,
+      });
+      // The measurement, not the bytes: the card moved AND kept its parent.
+      expect(state.columnId).toBe(DONE);
+      expect(state.parentCardId).toBe(PARENT);
+      // Still one card read — the re-send rides the read `status` already took.
+      expect(cardReads(received)).toHaveLength(1);
+    } finally {
+      await close();
+    }
+  });
+
+  test('an explicit columnId carries it too — the shape TxCards.moveColumn and its unwind send', async () => {
+    const { handler, state } = favroResolvingColumns({ parentCardId: PARENT });
+    const { api, received, close } = await startServer(handler);
+    try {
+      await api.updateCard(CARD, { columnId: DONE });
+      expect(putBody(received)).toEqual({
+        columnId: DONE,
+        widgetCommonId: BOARD,
+        parentCardId: PARENT,
+      });
+      expect(state.parentCardId).toBe(PARENT);
+    } finally {
+      await close();
+    }
+  });
+
+  test('a card with no parent sends no parentCardId — nothing is fabricated', async () => {
+    const { handler } = favroResolvingColumns();
+    const { api, received, close } = await startServer(handler);
+    try {
+      await api.updateCard(CARD, { status: 'Done' });
+      expect(putBody(received)).toEqual({ columnId: DONE, widgetCommonId: BOARD });
+    } finally {
+      await close();
+    }
+  });
+
+  test('Favro spells "no parent" as null on the read row, and a null is never forwarded', async () => {
+    // `POST /cards` and `GET /cards/:id` both answer `parentCardId: null` for a
+    // card that is not a child — measured in the same probe. Forwarding that
+    // would send `parentCardId: null`, which is recorded as a 400.
+    const { handler } = favroResolvingColumns({ parentCardId: null });
+    const { api, received, close } = await startServer(handler);
+    try {
+      await api.updateCard(CARD, { status: 'Done' });
+      expect(putBody(received)).toEqual({ columnId: DONE, widgetCommonId: BOARD });
+    } finally {
+      await close();
+    }
+  });
+
+  test('a write that names ANOTHER board does not carry the old parent', async () => {
+    // Favro's own rule: the parent "must belong to the widget specified in the
+    // widgetCommonId parameter". Re-sending a parent from the source board would
+    // be invalid, and what a cross-board commit does to the hierarchy is
+    // unmeasured — so this path is left exactly as it was.
+    const { api, received, close } = await startServer(favro({ parentCardId: PARENT }));
+    try {
+      await api.updateCard(CARD, { boardId: OTHER_BOARD, status: 'Shipped' });
+      expect(putBody(received)).toEqual({ widgetCommonId: OTHER_BOARD, columnId: SHIPPED });
+    } finally {
+      await close();
+    }
+  });
+
+  test('a boardless write never carries a parent, and buys no read to decide that', async () => {
+    // No `widgetCommonId` means no commit: `{name}`, `{archive}`, `{dueDate}`,
+    // `{detailedDescription}` and the assignment verbs all keep the parent on the
+    // live wire, so these writes must stay exactly as narrow as they were.
+    const { api, received, close } = await startServer(favro({ parentCardId: PARENT }));
+    try {
+      await api.updateCard(CARD, { name: 'renamed' });
+      expect(putBody(received)).toEqual({ name: 'renamed' });
+      expect(cardReads(received)).toHaveLength(0);
     } finally {
       await close();
     }

@@ -250,9 +250,19 @@ export interface Card {
  * **no card created** on a bad tag, assignee, column or dependency target, which
  * is what makes these flags safe without a compensation entry.
  *
- * The same fields are refused on `PUT`: `dependencies` is a silent no-op,
- * `parentCardId` answers 202 `Access denied`, `assignees`/`assignmentIds` are
- * silent no-ops. So this shape is create-only by measurement, not by taste.
+ * The same fields are refused on `PUT`: `dependencies` is a silent no-op, and
+ * `assignees`/`assignmentIds` are silent no-ops. So this shape is create-only by
+ * measurement, not by taste.
+ *
+ * `parentCardId` is the ONE that has since moved. It was recorded here as
+ * `202 "Access denied"` on `PUT` — but that probe sent no `widgetCommonId`, the
+ * identical shape to #162's `columnId` denial. Re-probed with one, 2026-08-18
+ * (#176): `PUT {columnId, widgetCommonId, parentCardId}` is **honoured**, 200,
+ * and `PUT {parentCardId, widgetCommonId}` alone is too
+ * (`docs/research/tracker-contract-favro-carriers.md` §6d). It is still not on
+ * `UpdateCardRequest` — no caller re-parents — but `updateCard` now re-sends the
+ * card's OWN parent on any board-carrying write, because such a write is a commit
+ * that would otherwise clear it.
  */
 export interface CreateCardRequest {
   name: string;
@@ -1256,6 +1266,13 @@ export class CardsAPI {
     // across a fixed move changed only `columnId`, `listPosition`, time counters
     // and one board-automation custom field.
     //
+    // That diff was INCOMPLETE, and #176 is what it missed: it was taken on a
+    // probe card with no parent, so a cleared `parentCardId` was absent from both
+    // sides and invisible in it. Re-run on a child card, the same diff reproduces
+    // every field above AND loses the parent — see the guard below and
+    // `docs/research/tracker-contract-favro-carriers.md` §6d, which now records
+    // both halves rather than leaving this comment as the only account of them.
+    //
     // Filled here rather than at the call sites because this is the seam every
     // column move funnels through — `cards update --status`/`--column`,
     // `resolve`, `claim`, bulk CSV `status` rows, and `TxCards.moveColumn`'s own
@@ -1272,9 +1289,45 @@ export class CardsAPI {
     // this method, which is what the #82 ratchet reads. Resolution is not needed
     // on this value: it is an id off the card's own GET row, never a board name.
     if (payload.columnId !== undefined && !boardId) {
-      boardId = (await currentCard()).boardId;
-      if (boardId) payload.widgetCommonId = boardId;
+      const card = await currentCard();
+      boardId = card.boardId;
+      if (boardId) {
+        payload.widgetCommonId = boardId;
+        // …and the board we just added is what would CLEAR THE PARENT, so the
+        // parent goes with it. A PUT carrying `widgetCommonId` is a COMMIT into
+        // that widget, and a commit naming no `parentCardId` commits the card at
+        // the widget ROOT. MEASURED 2026-08-18 (#176), raw HTTP on a child card:
+        // `PUT {columnId, widgetCommonId}` answered 200 with `parentCardId: null`
+        // in the write's OWN echo, and a following GET agreed. `PUT
+        // {widgetCommonId}` alone did it too, so the trigger is the BOARD, not the
+        // column; every boardless shape KEPT the parent (`{name}`, `{archive}`,
+        // `{dueDate}`, `{detailedDescription}`, `{addAssignmentIds}`), which is why
+        // `setText`, `setDueDate`, `setArchived` and the custom-field write neither
+        // need this nor buy a read for it.
+        //
+        // Re-sent in the SAME PUT and honoured: `PUT {columnId, widgetCommonId,
+        // parentCardId}` → 200, column moved, parent kept. So there is no window in
+        // which the card sits parentless, and nothing to compensate. (The note on
+        // `CreateCardRequest` recording `PUT {parentCardId}` as `202 "Access
+        // denied"` was the SAME #162 shape — that probe sent no board.)
+        //
+        // Inside THIS branch, not after the settle, and that placement is the whole
+        // guard: here the board is one we just read off the card, so it is the
+        // card's own by construction and the parent provably belongs to it. Favro
+        // requires the parent to "belong to the widget specified in the
+        // widgetCommonId parameter", so on a write that names ANOTHER board — which
+        // is what `boardId` on this request means — the current parent is not a
+        // valid value, and what a cross-board commit does to the hierarchy is
+        // unmeasured. That path therefore keeps today's behaviour, and pays no read
+        // to find that out.
+        //
+        // Truthy, not `!== undefined`: a card that is not a child reads back
+        // `parentCardId: null`, and forwarding that would send `parentCardId: null`,
+        // which is recorded as a 400.
+        if (card.parentCardId) payload.parentCardId = card.parentCardId;
+      }
     }
+
 
     // Favro ignores both `assignees` and `assignmentIds` on PUT (200, no change)
     // and honours only the verb fields — which is also the only way an

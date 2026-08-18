@@ -320,6 +320,18 @@ function startServer(
           // the wrong spelling pass every test in this file.
           if (typeof b.archive === 'boolean' && !opts.ignoreArchiveWrites) next.archived = b.archive;
           if (b.widgetCommonId !== undefined) next.widgetCommonId = b.widgetCommonId;
+          // MEASURED (#176), and modelled on the far side for the same reason
+          // `unarchiveOnColumnWrite` is: it is Favro's behaviour, not ours. A PUT
+          // carrying `widgetCommonId` COMMITS the card into that widget, and a
+          // commit naming no `parentCardId` commits it at the widget ROOT — so the
+          // parent is cleared. Live 2026-08-18 on the #105 board: `PUT {columnId,
+          // widgetCommonId}` answered 200 with `parentCardId: null` in the write's
+          // own echo; `PUT {widgetCommonId}` alone cleared it too; every boardless
+          // shape kept it. Unconditional rather than an opt, because the default
+          // cards here have no parent and a test that gives one wants the real
+          // semantics — `moveColumn`'s `columnId` compare passes straight through
+          // this, exactly as it does the un-archive.
+          if (b.widgetCommonId !== undefined) next.parentCardId = b.parentCardId;
           for (const id2 of b.addTagIds ?? []) if (!next.tags.includes(id2)) next.tags.push(id2);
           for (const id2 of b.removeTagIds ?? []) next.tags = next.tags.filter((t) => t !== id2);
           for (const u of b.addAssignmentIds ?? []) {
@@ -1142,6 +1154,67 @@ describe('claim and resolve act on the tracker-board instance', () => {
     expect(stand.cards.get(CARD)!.columnId).toBe(DOING);
   });
 
+  it('the `update` intent moves a CHILD card without unhooking it (#176)', async () => {
+    // The third and fourth callers of the chokepoint: `cards update --status` /
+    // `--column`, and every bulk CSV `status` row — `cli.ts` builds those rows into
+    // this same intent, so one case covers both.
+    const stand = await startServer();
+    stand.cards.get(CARD)!.parentCardId = FAR;
+    await useTracker();
+
+    const result = await dispatch('update', { card: CARD, status: 'Done' }, ctx(stand));
+
+    expect(result.outcome).toBe('ok');
+    expect(puts(stand.received).map((r) => r.body)).toEqual([
+      { columnId: DONE, widgetCommonId: BOARD, parentCardId: FAR },
+    ]);
+    expect(stand.cards.get(CARD)!.columnId).toBe(DONE);
+    expect(stand.cards.get(CARD)!.parentCardId).toBe(FAR);
+  });
+
+  it('claiming a CHILD card keeps it under its parent (#176)', async () => {
+    // The reported defect: `claim` on a child unhooked it from its map card and
+    // left it at the board root. The move is a re-commit into the widget, and a
+    // commit that names no parent commits at the root — so the parent has to ride
+    // the same PUT. The stand models that clear (see `startServer`), which is what
+    // makes this fail if the re-send is ever dropped.
+    const stand = await startServer();
+    stand.cards.get(CARD)!.parentCardId = FAR;
+    await useTracker();
+
+    const result = await dispatch<{ columnId?: string }>(
+      'claim',
+      { card: CARD, assignee: 'Alice Ahlberg' },
+      ctx(stand),
+    );
+
+    expect(result.outcome).toBe('ok');
+    expect(puts(stand.received).map((r) => r.body)).toEqual([
+      { addAssignmentIds: [ALICE] },
+      { columnId: DOING, widgetCommonId: BOARD, parentCardId: FAR },
+    ]);
+    // The card claim OBSERVED, and the stored row behind it: moved, assigned,
+    // still a child.
+    expect(stand.cards.get(CARD)!.columnId).toBe(DOING);
+    expect(stand.cards.get(CARD)!.parentCardId).toBe(FAR);
+  });
+
+  it('resolving a CHILD card keeps it under its parent too (#176)', async () => {
+    // Same chokepoint, the other intent — and the rollback path shares it, so a
+    // move that unwinds re-commits with the parent as well.
+    const stand = await startServer();
+    stand.cards.get(CARD)!.parentCardId = FAR;
+    await useTracker();
+
+    const result = await dispatch('resolve', { card: CARD }, ctx(stand));
+
+    expect(result.outcome).toBe('ok');
+    expect(puts(stand.received).map((r) => r.body)).toEqual([
+      { columnId: DONE, widgetCommonId: BOARD, parentCardId: FAR },
+    ]);
+    expect(stand.cards.get(CARD)!.parentCardId).toBe(FAR);
+  });
+
   it('resolve moves the card to the mapped done column in one call', async () => {
     const stand = await startServer();
     await useTracker();
@@ -1420,6 +1493,45 @@ describe('a column move is confirmed by RE-READING the card, never by the PUT ec
     expect(stand.cards.get(CARD)!.columnId).toBe(TODO);
     expect(stand.cards.get(CARD)!.assignments).toEqual([]);
     expect(result.orphans).toBeUndefined();
+  });
+
+  it('the UNWIND of a column move keeps the parent too — the rollback re-cleared it (#176)', async () => {
+    // The half of #176 the ticket named separately: `applyInverse` is a column
+    // write like any other, so before this it re-committed the card parentless
+    // while putting the column back. A rollback that restores the column and
+    // drops the parent is not "the world back where it was", which is what
+    // `rolled-back` claims.
+    //
+    // Same recipe as the test above — the confirmation read fails, so the entry
+    // stands and the unwind runs — with a card that has a parent.
+    let written = false;
+    let refused = false;
+    const stand = await startServer({
+      fail: (r) => {
+        if (r.method === 'PUT' && r.body?.columnId !== undefined) written = true;
+        if (written && !refused && r.method === 'GET' && r.path === `/cards/${CARD}`) {
+          refused = true;
+          return { status: 400, message: 'Malformed backend response' };
+        }
+        return undefined;
+      },
+    });
+    stand.cards.get(CARD)!.parentCardId = FAR;
+    await useTracker();
+
+    const result = await dispatch('claim', { card: CARD, assignee: ALICE }, ctx(stand));
+
+    expect(result.outcome).toBe('rolled-back');
+    expect(puts(stand.received).map((r) => r.body)).toEqual([
+      { addAssignmentIds: [ALICE] },
+      { columnId: DOING, widgetCommonId: BOARD, parentCardId: FAR },
+      // The one that matters here: the restoring write carries the parent for the
+      // same reason it carries the board.
+      { columnId: TODO, widgetCommonId: BOARD, parentCardId: FAR },
+      { removeAssignmentIds: [ALICE] },
+    ]);
+    expect(stand.cards.get(CARD)!.columnId).toBe(TODO);
+    expect(stand.cards.get(CARD)!.parentCardId).toBe(FAR);
   });
 });
 

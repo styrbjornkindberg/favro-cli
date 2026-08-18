@@ -8,6 +8,67 @@ that set that version, `a13a02a`) and this release. Commands were driven with
 `FAVRO_CONFIG_DIR` pointed at a throwaway config and no real credentials, so exit codes
 and streams are real and no request reached a live org.
 
+## 5.1.1 — unreleased
+
+### Fixed
+
+#### Every column move unhooked a child card from its parent (#176)
+
+`favro cards claim` on a card nested under another card left it at the board root. So did
+`resolve`, `cards update --status` / `--column`, a bulk CSV `status` row, and
+`TxCards.moveColumn`'s own rollback — **the unwind re-cleared it too**. Any child card this
+CLI moved between columns lost its parent, not only a claimed one.
+
+The cause is not the column. Favro resolves `columnId` against `widgetCommonId`, so since
+#162 every column move carries the card's own board — and a `PUT` carrying
+`widgetCommonId` is a **commit into that widget**. Favro's own update docs say
+`parentCardId` is where "the card will be commited", so a commit naming no parent commits
+the card at the widget **root**. The board we added to make the move land is what cleared
+the parent.
+
+Measured live 2026-08-18, raw HTTP on a throwaway parent/child pair
+(`docs/research/tracker-contract-favro-carriers.md` §6d):
+
+| request | status | `parentCardId` after |
+|---|---|---|
+| `PUT {columnId, widgetCommonId}` — what the CLI sent | **200** | **`null`** — in the write's own echo |
+| `PUT {columnId, widgetCommonId, parentCardId}` — what it sends now | **200** | **kept**, and the column moved |
+| `PUT {name}` / `{archive}` / `{dueDate}` / `{detailedDescription}` / `{addAssignmentIds}` | 200 | kept |
+| `PUT {widgetCommonId}` alone, no column at all | 200 | **`null`** |
+
+The trigger is the **board**, not the column, which is what bounds this: `setText`,
+`setDueDate`, `setArchived` and the custom-field write send no board and were never
+affected. `cards move` and `widgets add` do name a board, but both are cross-board by
+purpose and a parent cannot cross boards by Favro's own rule, so there is no valid parent for
+them to carry; neither was probed, and §6d(v) says so rather than leaving this entry to imply
+every board-carrying write is now covered. Re-sending the parent in the same PUT is honoured, so the fix is one write with
+no window in which the card sits parentless — no second request and no compensation entry.
+It is filled at the single chokepoint in `updateCard` that every column move funnels
+through, and it rides the card read that path already takes, so it costs no extra request.
+
+Two recorded claims were overturned by the same probe. `PUT {parentCardId}` was on file as
+`202 "Access denied"`; that probe sent no `widgetCommonId`, making it #162's shape exactly —
+"Access denied" as a resolution failure wearing a rights message — and with a board the
+field is honoured. And the code comment asserting that sending the card's own board is a
+no-op ("a field diff changed only `columnId`, `listPosition`, time counters and one
+board-automation custom field") was taken on a probe card with **no parent**, so the cleared
+parent was absent from both sides of that diff and invisible in it. Re-run on a child card,
+the diff reproduces every field it listed and loses the parent; nothing else instance-scoped
+goes — `dependencies`, `tags`, `assignments`, `dueDate` and the body all survive.
+
+Guarded on both sides. The wire stands now model the clear as **Favro's behaviour**, on the
+far side of the wire, so a test fails if the payload construction is dropped and the field
+merely stops being sent — a byte assertion alone would still pass. A cross-board write is
+deliberately left alone: Favro requires the parent to belong to the widget named, and what a
+cross-board commit does to the hierarchy is unmeasured.
+
+Verified end to end on the built CLI, not only at the wire: `favro cards update <child>
+--status Doing` against the live API answered `{"wrote":["status"]}`, and the follow-up read
+showed the card in the new column **with its parent intact**. `cards claim` refuses any card
+that is not on the configured tracker board, so it cannot be driven on a scratch board — it
+reaches the same chokepoint, and `dispatch-tx-wire.test.ts` drives `claim` and `resolve` on a
+child card over a stand that models the clear.
+
 ## 5.1.0 — 2026-08-17
 
 ### Added

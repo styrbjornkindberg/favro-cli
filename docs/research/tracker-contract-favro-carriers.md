@@ -165,7 +165,7 @@ tables can stay terse. "One call" means: present on a row of a single
 | **`assignments[].completed`** | `PUT {completeAssignments:[{userId,completed}]}` (a)(d, §1.4-iv) | **Yes** — nested in `assignments` (d) | Yes — per-assignee tick (e) inference | No |
 | **custom field** (`customFields`) | `PUT {customFields:[{customFieldId,value}]}` (a); definitions read via `GET /customfields` (`src/lib/custom-fields-api.ts`) | **Yes** — `customFields` on every row, as `{customFieldId, value}` pairs with **no name** (d) | Yes — a named field on the card face | No |
 | **dependency edge** (`dependencies[].isBefore`) | `POST /cards/:cardId/dependencies {dependencies:[{cardId,isBefore}]}` (a), verified live in #12 | **Yes — settled by §1.3** (d) | Yes, and this is *why* wayfinder wants it (capability C). **Direction settled 2026-08-13, both halves** — see the note below the table | No |
-| **`parentCardId`** | `POST`/`PUT /cards` `{parentCardId}` (a); **same-widget only, never cross-board** (#4) | **Yes** — `parentCardId` on every row (d) | Yes — nesting under the parent | (c) unknown — whether dragging a child out of its parent clears `parentCardId`. Plausible and untested |
+| **`parentCardId`** | `POST`/`PUT /cards` `{parentCardId}` (a); **same-widget only, never cross-board** (#4) | **Yes** — `parentCardId` on every row (d) | Yes — nesting under the parent | **Yes — and OUR OWN column write did it too, until #176.** A PUT carrying `widgetCommonId` re-commits the card and a commit naming no parent commits it at the widget root, clearing `parentCardId` (§6d). Dragging in the UI is still untested, but the API half is now measured |
 | **`archived`** | `PUT {archive:true}` (a)(d) | **Yes** — `archived` on every row; but the default list **includes** archived cards, so exclusion is client-side (d, §1.4-ii) | Yes — the card leaves the board view | (c) unknown — archiving is a menu action, not a drag; low risk |
 | **comment** | `POST /comments {cardCommonId, comment}` (a); `src/api/comments.ts:100` | **No.** Comments are a separate endpoint keyed on **`cardCommonId`**, one call per card — **derived N** across a frontier | Yes — the card's comment thread | No |
 
@@ -603,6 +603,106 @@ for protection: both compute a delta against the card's read state and send
 sends `{tags:[…]}` or a whole-array `assignmentIds` — rows 1 and the `tags` no-op of
 §1.4 (iii) are unreachable through the intents. But the delta is not a read-back: nothing
 re-reads afterwards, so a refused `removeTagIds` would still report success.
+
+---
+
+## 6d. A `widgetCommonId` on a card PUT is a COMMIT, and it clears `parentCardId` — 2026-08-18
+
+Raw `fetch`, not `FavroHttpClient`, for §6b's reason: the question is what the wire says.
+Org `b0b311ac98a0250191573541`, board `5dd75f0d5116020817ebe70a` (`Kanban`), throwaway
+cards prefixed `probe: #176`, each deleted with `?everywhere=true` and the follow-up `GET`
+verified gone. Probed for #176, which was filed as a **report, not a reproduction** — this
+is the reproduction.
+
+### (i) The reproduction, and the fix's own shape
+
+A parent `P` and a child `C` created with `parentCardId: P` (the POST echo carries it):
+
+| step | request | status | `message` | `parentCardId` in the echo | `columnId` |
+|---|---|---|---|---|---|
+| 1 | `GET /cards/C` (baseline) | 200 | *(none)* | `P` | `Todo` |
+| 2 | `PUT {columnId:Doing, widgetCommonId}` | **200** | *(none)* | **`null`** | `Doing` |
+| 2′ | `GET /cards/C` | 200 | *(none)* | **`null`** | `Doing` |
+| 3 | `PUT {columnId:Todo, widgetCommonId, parentCardId:P}` | **200** | *(none)* | **`P`** | `Todo` |
+| 3′ | `GET /cards/C` | 200 | *(none)* | `P` | `Todo` |
+| 4 | `PUT {parentCardId:P, widgetCommonId}` after another move | **200** | *(none)* | `P` | — |
+
+Measurement: step 2 is the defect, and the clear is in the **write's own echo**, not
+something a later read discovers — the same shape as §6b(ii)'s un-archive, and the same
+cause. Step 3 is the fix: the parent re-sent in the SAME PUT is **honoured**, so #176 is
+one write with no window in which the card sits parentless, and needs no compensation entry.
+
+Step 4 also **overturns a recorded claim**. `PUT {parentCardId}` was recorded as
+`202 "Access denied"` (`src/__tests__/cards-api-update-wire.test.ts` header, and the
+`CreateCardRequest` note in `cards-api.ts`). That probe sent **no `widgetCommonId`** — the
+identical shape to #162's `columnId` denial, where "Access denied" is a resolution failure
+wearing a rights message. With a board, the field is honoured.
+
+### (ii) The trigger is the BOARD, not the column
+
+One fresh child per case, so no case can mask the next:
+
+| request | status | `parentCardId` after |
+|---|---|---|
+| `PUT {name}` | 200 | **kept** |
+| `PUT {archive:true}` | 200 | **kept** |
+| `PUT {dueDate}` | 200 | **kept** |
+| `PUT {detailedDescription}` | 200 | **kept** |
+| `PUT {addAssignmentIds}` | 200 | **kept** |
+| `PUT {widgetCommonId}` *(no column at all)* | 200 | **CLEARED** |
+| `PUT {columnId, widgetCommonId}` | 200 | **CLEARED** |
+
+Measurement: `widgetCommonId` in the body is the whole trigger. This is what bounds the
+blast radius — `setText`, `setDueDate`, `setArchived` and the custom-field write send no
+board and are unaffected — and it is why the guard in `updateCard` reads
+`payload.widgetCommonId` rather than `payload.columnId`.
+
+### (iii) Nothing else instance-scoped is lost
+
+A child seeded with a parent, an assignee, a tag, a dependency, a due date and a body, then
+`PUT {columnId, widgetCommonId}` — full `GET` row diffed before and after:
+
+| lost | `parentCardId` (→ `null`) |
+|---|---|
+| **kept** | `dependencies`, `tags`, `assignments`, `dueDate`, `detailedDescription`, `name`, `archived` |
+| also changed | `columnId` (intended), `position` / `listPosition` / `sheetPosition`, `timeOnBoard` / `timeOnColumns`, one board-automation `customFields` entry |
+
+### (iv) The fix verified end to end on the built CLI
+
+Not only at the wire: `dist/cli.js` (built from the #176 fix) run against the live API on a
+fresh parent/child pair, `FAVRO_SCOPE_COLLECTION_ID` pointed at the scratch board's
+collection:
+
+| step | result |
+|---|---|
+| `favro cards update <child> --status Doing --yes` | `{"cardId":"…","wrote":["status"]}` |
+| `GET /cards/<child>` after it | `columnId` = `Doing` **and** `parentCardId` still the parent |
+
+`cards claim` cannot be exercised here — it refuses any card that is not on the configured
+tracker board, by design — but it reaches the same `updateCard` chokepoint through
+`TxCards.moveColumn`, and `dispatch-tx-wire.test.ts` drives both `claim` and `resolve` on a
+child card over a stand that models the clear.
+
+All probe cards from every run above were deleted with `?everywhere=true` and each
+follow-up `GET` verified `403`.
+
+Measurement: the fix is **one field**. This also explains why the code comment at
+`cards-api.ts` ("a field diff across a fixed move changed only `columnId`, `listPosition`,
+time counters and one board-automation custom field") missed the defect — that diff is
+reproduced here exactly, and it was taken on a probe card with **no parent**, so a cleared
+parent was invisible on both sides of it.
+
+### (v) What is deliberately NOT closed by this
+
+`updateCard` is not the only sender of a board on a card PUT. `CardsAPI.moveCard`
+(`{widgetCommonId, dragMode:'move'}`) and `WidgetsAPI.addWidgetToBoard`
+(`{widgetCommonId, dragMode:'commit'}`, behind `widgets add`) both name a board, and neither
+was probed here — every measurement above was taken with **no `dragMode`**, i.e. the default
+`commit`. Both are cross-board by purpose, and Favro's own rule is that a parent "must belong
+to the widget specified in the `widgetCommonId` parameter", so there is no valid parent for
+them to carry: `parentCardId` is same-widget only (#4, the carrier table above). They are
+listed here so the next reader does not mistake §6d for a claim about every board-carrying
+write. What a cross-board commit does to the SOURCE instance's hierarchy is open.
 
 ---
 
